@@ -368,13 +368,18 @@ class ProfileEmbedder(private val context: Context) {
      * @param config Merged config to inject
      * @param outputDir Directory for output file
      * @param info 3MF analysis info
+     * @param extruderRemap Optional 1-based extruder remap applied to model_settings.config.
+     *        E.g. mapOf(1 to 3, 2 to 4) maps compact T0/T1 assignments to physical E3/E4.
+     *        When provided, Slic3r_PE_model.config is converted and emitted as
+     *        model_settings.config so OrcaSlicer uses the correct is_extruder_used[N] slots.
      * @return Embedded 3MF file
      */
     fun embed(
         inputFile: File,
         config: Map<String, Any>,
         outputDir: File,
-        info: ThreeMfInfo
+        info: ThreeMfInfo,
+        extruderRemap: Map<Int, Int>? = null
     ): File {
         val outputFile = File(outputDir, "embedded_${inputFile.name}")
         val configIni = serializeConfig(config)
@@ -401,6 +406,33 @@ class ProfileEmbedder(private val context: Context) {
                             destZip.closeEntry()
                         }
 
+                        // Convert Slic3r_PE_model.config → model_settings.config (OrcaSlicer format),
+                        // applying extruder remap so OrcaSlicer uses correct is_extruder_used[N] slots.
+                        name == "Metadata/Slic3r_PE_model.config" -> {
+                            val modelSettings = convertToModelSettings(content, extruderRemap)
+                            destZip.putNextEntry(ZipEntry("Metadata/model_settings.config"))
+                            destZip.write(modelSettings.toByteArray())
+                            destZip.closeEntry()
+                            Log.i(TAG, "Converted Slic3r_PE_model.config → model_settings.config" +
+                                    if (extruderRemap != null) " (remap=$extruderRemap)" else "")
+                        }
+
+                        // Sanitize existing model_settings.config (extractPlate path):
+                        // - Clear stale plater_name values (prevents OrcaSlicer segfault)
+                        // - Clamp off-bed assemble_item transforms (Bambu multi-plate global coords)
+                        // - Apply extruder remap if provided
+                        name == "Metadata/model_settings.config" -> {
+                            var sanitized = BambuSanitizer.sanitizeModelSettings(content)
+                            if (extruderRemap != null) {
+                                sanitized = remapModelSettingsExtruders(sanitized, extruderRemap)
+                            }
+                            destZip.putNextEntry(ZipEntry(name))
+                            destZip.write(sanitized)
+                            destZip.closeEntry()
+                            Log.i(TAG, "Sanitized model_settings.config" +
+                                    if (extruderRemap != null) " (remap=$extruderRemap)" else "")
+                        }
+
                         // Pass through
                         else -> {
                             destZip.putNextEntry(ZipEntry(name))
@@ -419,6 +451,64 @@ class ProfileEmbedder(private val context: Context) {
 
         Log.i(TAG, "Embedded ${config.size} config keys into ${outputFile.name}")
         return outputFile
+    }
+
+    /**
+     * Convert BambuSanitizer's Slic3r_PE_model.config XML into OrcaSlicer's model_settings.config
+     * format, optionally remapping extruder indices.
+     *
+     * Input format (from BambuSanitizer.buildSlic3rModelConfig):
+     *   <object id="N"><metadata type="object" key="extruder" value="M"/></object>
+     *
+     * Output format (OrcaSlicer model_settings.config):
+     *   <object id="N"><metadata key="extruder" value="M"/></object>
+     */
+    internal fun convertToModelSettings(
+        slic3rConfigBytes: ByteArray,
+        extruderRemap: Map<Int, Int>?
+    ): String {
+        val text = String(slic3rConfigBytes)
+        val sb = StringBuilder()
+        sb.appendLine("""<?xml version="1.0" encoding="utf-8"?>""")
+        sb.appendLine("<config>")
+
+        // Match each <object id="N"> block and extract its first extruder metadata value
+        val objectRe = Regex("""<object id="(\d+)"[^>]*>([\s\S]*?)</object>""")
+        val extruderRe = Regex("""key="extruder"\s+value="(\d+)"|value="(\d+)"\s+key="extruder"""")
+
+        for (objMatch in objectRe.findAll(text)) {
+            val objectId = objMatch.groupValues[1]
+            val body = objMatch.groupValues[2]
+            val extMatch = extruderRe.find(body)
+            val rawExt = (extMatch?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() })?.toIntOrNull() ?: 1
+            val remapped = extruderRemap?.get(rawExt) ?: rawExt
+            sb.appendLine("""  <object id="$objectId">""")
+            sb.appendLine("""    <metadata key="extruder" value="$remapped"/>""")
+            sb.appendLine("""  </object>""")
+        }
+
+        sb.appendLine("</config>")
+        return sb.toString()
+    }
+
+    /**
+     * Apply extruder remap to an existing OrcaSlicer model_settings.config.
+     * Rewrites extruder values in `key="extruder" value="N"` metadata elements.
+     * Used for the extractPlate path where model_settings.config is preserved from
+     * the original Bambu 3MF and needs extruder values updated.
+     */
+    private fun remapModelSettingsExtruders(
+        content: ByteArray,
+        extruderRemap: Map<Int, Int>
+    ): ByteArray {
+        // Match key="extruder" followed by value="N" (any whitespace between, any attr order)
+        val re = Regex("""(key="extruder"[^>]*?value="|value="(?=[^"]*"[^>]*key="extruder"))(\d+)""")
+        val text = re.replace(String(content)) { mr ->
+            val raw = mr.groupValues[2].toIntOrNull() ?: return@replace mr.value
+            val remapped = extruderRemap[raw] ?: return@replace mr.value
+            mr.groupValues[1] + remapped
+        }
+        return text.toByteArray()
     }
 
 }

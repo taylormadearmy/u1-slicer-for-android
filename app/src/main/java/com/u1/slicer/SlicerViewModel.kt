@@ -107,6 +107,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Custom wipe tower position (null = use config defaults)
     private var customWipeTowerPos: Pair<Float, Float>? = null
 
+    // Tool remap: maps compact T-index (0,1,…) → actual printer slot index (e.g. 2,3 for E3+E4).
+    // Null / identity mapping → no post-processing needed.
+    private var toolRemapSlots: List<Int>? = null
+
     private val makerWorldClient = MakerWorldClient()
 
     // Filament library
@@ -332,6 +336,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _showMultiColorDialog.value = false
         val usedSlots = modelColorToExtruder.distinct().sorted()
         val extCount = usedSlots.size.coerceIn(1, 4)
+        // Store remap only if it's non-identity (e.g. [2,3] for E3+E4 — T0→T2, T1→T3)
+        val isIdentity = usedSlots == (0 until extCount).toList()
+        toolRemapSlots = if (isIdentity) null else usedSlots
         val temps = IntArray(extCount) { i ->
             val slotIndex = usedSlots.getOrElse(i) { i }
             val preset = extruderPresets.firstOrNull { it.index == slotIndex }
@@ -352,7 +359,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 ?: detectedColors.getOrElse(slotIndex) { "#808080" }
         }
         _activeExtruderColors.value = slotColors
-        Log.i("SlicerVM", "Applied color mapping: $extCount extruders used=${usedSlots}, temps=${temps.toList()}, colors=$slotColors")
+        Log.i("SlicerVM", "Applied color mapping: $extCount extruders used=${usedSlots}, remap=${toolRemapSlots}, temps=${temps.toList()}, colors=$slotColors")
     }
 
     fun dismissMultiColorDialog() {
@@ -408,23 +415,40 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun embedProfile(file: java.io.File, info: ThreeMfInfo, context: android.app.Application): java.io.File {
         val cfg = _config.value
         val extCount = cfg.extruderCount.coerceAtLeast(1)
+        val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
+        // targetExtruderCount covers all slots up to the highest used one (e.g. 4 for E3+E4).
+        // OrcaSlicer uses this to set is_extruder_used[N] in start G-code template macros.
+        val targetCount = if (usedSlots != null) (usedSlots.maxOrNull()!! + 1) else extCount
+        // 1-based remap for model_settings.config: compact extruder → physical slot
+        val extruderRemap = usedSlots?.mapIndexed { i, slot -> (i + 1) to (slot + 1) }?.toMap()
         val sourceConfig = if (info.isBambu) {
             java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
         } else null
         val embeddedConfig = profileEmbedder.buildConfig(
             info = info,
             sourceConfig = sourceConfig,
-            overrides = buildProfileOverrides(cfg, extCount),
-            targetExtruderCount = extCount
+            overrides = buildProfileOverrides(cfg, extCount, usedSlots),
+            targetExtruderCount = targetCount
         )
-        return profileEmbedder.embed(file, embeddedConfig, context.filesDir, info)
+        return profileEmbedder.embed(file, embeddedConfig, context.filesDir, info, extruderRemap)
     }
 
-    private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int): Map<String, Any> {
-        val temps = if (cfg.extruderTemps.size >= extCount) {
-            cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
+    private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null): Map<String, Any> {
+        val temps: MutableList<String>
+        if (usedSlots != null && (usedSlots.maxOrNull() ?: 0) >= extCount) {
+            // Non-identity slot mapping (e.g. E3+E4): build array of size maxSlot+1 with
+            // "0" for unused slots and actual temps at the physical slot positions.
+            val targetCount = (usedSlots.maxOrNull()!! + 1)
+            temps = MutableList(targetCount) { "0" }
+            usedSlots.forEachIndexed { compactIdx, slotIdx ->
+                temps[slotIdx] = (cfg.extruderTemps.getOrElse(compactIdx) { cfg.nozzleTemp }).toString()
+            }
         } else {
-            MutableList(extCount) { cfg.nozzleTemp.toString() }
+            temps = if (cfg.extruderTemps.size >= extCount) {
+                cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
+            } else {
+                MutableList(extCount) { cfg.nozzleTemp.toString() }
+            }
         }
         return mapOf(
             "layer_height" to cfg.layerHeight.toString(),

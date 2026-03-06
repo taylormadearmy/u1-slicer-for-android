@@ -697,7 +697,7 @@ object BambuSanitizer {
      * - Clear stale plater_name values
      * - Clamp packed transforms (>370mm) to bed center
      */
-    private fun sanitizeModelSettings(content: ByteArray): ByteArray {
+    internal fun sanitizeModelSettings(content: ByteArray): ByteArray {
         var text = String(content)
 
         // Clear plater_name to prevent OrcaSlicer/PrusaSlicer segfaults

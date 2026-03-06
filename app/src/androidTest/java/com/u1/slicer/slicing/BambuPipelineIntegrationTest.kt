@@ -317,4 +317,104 @@ class BambuPipelineIntegrationTest {
             result.success)
         assertTrue(GcodeValidator.hasNonZeroNozzleTemps(File(result.gcodePath).readText()))
     }
+
+    // ─── Extruder remap regression (bridge: multicolour-slice.spec.ts line 98) ──
+
+    /**
+     * Regression: extruder_assignments [2,3] must produce G-code with T2/T3,
+     * not T0/T1. Tests that model_settings.config extruder values are remapped
+     * before OrcaSlicer slices so is_extruder_used[2/3] is set correctly.
+     *
+     * Before the fix, OrcaSlicer emitted T0/T1 (compact ordering) and
+     * start G-code referenced SM_PRINT_AUTO_FEED EXTRUDER=0/1, causing
+     * "Toolhead N nozzle temperature insufficient" on the physical printer.
+     */
+    @Test
+    fun calibCube_dualColour_withExtruderRemap_usesT2andT3() {
+        val input = asset("calib-cube-10-dual-colour-merged.3mf")
+        val sanitized = BambuSanitizer.process(input, outDir)
+
+        val info = ThreeMfParser.parse(input)
+        // Remap: compact extruder 1 → physical slot 3 (E3), compact 2 → slot 4 (E4)
+        val extruderRemap = mapOf(1 to 3, 2 to 4)
+        val config = embedder.buildConfig(
+            info = info,
+            overrides = mapOf(
+                "nozzle_temperature" to mutableListOf("0", "0", "220", "220"),
+                "nozzle_temperature_initial_layer" to mutableListOf("0", "0", "220", "220")
+            ),
+            targetExtruderCount = 4
+        )
+        val embedded = embedder.embed(sanitized, config, outDir, info, extruderRemap)
+        assertTrue("Embedded 3MF must exist", embedded.exists())
+
+        // Verify model_settings.config was written with remapped values
+        java.util.zip.ZipFile(embedded).use { zip ->
+            val entry = zip.getEntry("Metadata/model_settings.config")
+            assertNotNull("model_settings.config must be present after remap", entry)
+            val text = zip.getInputStream(entry).bufferedReader().readText()
+            assertTrue("model_settings.config must contain value=\"3\"", text.contains("value=\"3\""))
+            assertTrue("model_settings.config must contain value=\"4\"", text.contains("value=\"4\""))
+            assertFalse("model_settings.config must not contain value=\"1\"",
+                Regex("""value="1"""").containsMatchIn(text))
+            assertFalse("model_settings.config must not contain value=\"2\"",
+                Regex("""value="2"""").containsMatchIn(text))
+        }
+
+        // Slice and verify G-code uses T2/T3 natively (no post-processing)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(dualConfig().copy(extruderCount = 4,
+            extruderTemps = intArrayOf(0, 0, 220, 220)))
+        assertNotNull(result)
+        result!!
+        assertTrue("Slice with extruder remap must succeed: ${result.errorMessage}", result.success)
+
+        val gcode = File(result.gcodePath).readText()
+        // T2 and T3 must appear as standalone tool changes
+        assertTrue("G-code must contain T2 tool changes",
+            GcodeValidator.hasToolChanges(gcode, "T2", "T3"))
+        // T0 and T1 must NOT appear as standalone tool changes
+        assertTrue("G-code must not contain T0/T1 tool changes",
+            GcodeValidator.lacksToolChanges(gcode, "T0", "T1"))
+
+        // Start G-code macros must reference EXTRUDER=2/3, not EXTRUDER=0/1 (bridge regression)
+        assertTrue("SM_PRINT_AUTO_FEED must use EXTRUDER=2",
+            gcode.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=2""")))
+        assertTrue("SM_PRINT_AUTO_FEED must use EXTRUDER=3",
+            gcode.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=3""")))
+        assertFalse("SM_PRINT_AUTO_FEED must not use EXTRUDER=0",
+            gcode.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=0""")))
+        assertFalse("SM_PRINT_AUTO_FEED must not use EXTRUDER=1",
+            gcode.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=1""")))
+    }
+
+    /**
+     * Regression: nozzle_temperature array for non-default slots must have 0s for unused
+     * extruders and real temps at the physical slot positions.
+     * E.g. E3+E4 → [0, 0, 220, 220], not [220, 220].
+     */
+    @Test
+    fun calibCube_dualColour_withExtruderRemap_hasNonZeroTempsForActiveSlots() {
+        val input = asset("calib-cube-10-dual-colour-merged.3mf")
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val info = ThreeMfParser.parse(input)
+        val extruderRemap = mapOf(1 to 3, 2 to 4)
+        val config = embedder.buildConfig(
+            info = info,
+            overrides = mapOf(
+                "nozzle_temperature" to mutableListOf("0", "0", "220", "220"),
+                "nozzle_temperature_initial_layer" to mutableListOf("0", "0", "220", "220")
+            ),
+            targetExtruderCount = 4
+        )
+        val embedded = embedder.embed(sanitized, config, outDir, info, extruderRemap)
+        assertTrue(lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(dualConfig().copy(extruderCount = 4,
+            extruderTemps = intArrayOf(0, 0, 220, 220)))
+        assertNotNull(result); result!!
+        assertTrue(result.success)
+        val gcode = File(result.gcodePath).readText()
+        assertTrue("Active extruder slots must have non-zero temperatures",
+            GcodeValidator.hasNonZeroNozzleTemps(gcode))
+    }
 }
