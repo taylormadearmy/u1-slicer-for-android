@@ -259,7 +259,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
 bool SlicerEngine::loadProfile(const std::string& ini_path) {
     try {
-        pImpl->print_config.load(ini_path, Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
+        pImpl->print_config.load_from_ini(ini_path, Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
         return true;
     } catch (const std::exception& e) {
         return false;
