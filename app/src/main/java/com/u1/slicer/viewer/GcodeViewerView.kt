@@ -36,6 +36,11 @@ class GcodeViewerView(context: Context) : GLSurfaceView(context) {
         requestRender()
     }
 
+    fun setExtruderColors(hexColors: List<String>) {
+        renderer.pendingExtruderColors = hexColors
+        requestRender()
+    }
+
     fun setLayerRange(min: Int, max: Int) {
         renderer.minLayer = min
         renderer.maxLayer = max

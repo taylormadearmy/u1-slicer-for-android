@@ -107,7 +107,9 @@ dependencies {
     implementation 'androidx.compose.ui:ui'
     implementation 'androidx.compose.ui:ui-graphics'
     implementation 'androidx.compose.ui:ui-tooling-preview'
-    implementation 'androidx.compose.material3:material3'
+    // Pin material3 to 1.2.1: navigation-compose:2.7.6 constrains it to 1.1.2 which was
+    // compiled against the old keyframes.at(Object,Int) API, crashing on Compose 1.6.0 runtime.
+    implementation 'androidx.compose.material3:material3:1.2.1'
     implementation 'androidx.compose.material:material-icons-extended'
     implementation 'androidx.compose.animation:animation'
 
@@ -126,6 +128,8 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    // org.json standalone JVM jar — needed for unit tests that exercise JSON parsing code
+    testImplementation 'org.json:json:20231013'
 
     // Testing - Instrumented tests (on-device)
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

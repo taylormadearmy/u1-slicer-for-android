@@ -1,6 +1,9 @@
 package com.u1.slicer.bambu
 
 import android.util.Log
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.File
@@ -74,19 +77,53 @@ object ThreeMfParser {
                     gcodeEntry != null && detectLayerToolChanges(zip.getInputStream(gcodeEntry))
                 } else false
 
-                // Detect colors from filament_sequence.json or project_settings.config
+                // Detect colors from multiple sources (priority order)
                 val detectedColors = mutableListOf<String>()
+
+                // 1. Bambu filament_sequence.json
                 val filamentSeqEntry = zip.getEntry("Metadata/filament_sequence.json")
                 if (filamentSeqEntry != null) {
                     detectColorsFromFilamentSequence(
                         zip.getInputStream(filamentSeqEntry), detectedColors
                     )
                 }
+                // 2. Bambu project_settings.config — JSON format
                 if (detectedColors.isEmpty()) {
                     val projEntry = zip.getEntry("Metadata/project_settings.config")
                     if (projEntry != null) {
-                        detectColorsFromProjectSettings(
+                        detectColorsFromJsonSettings(
                             zip.getInputStream(projEntry), detectedColors
+                        )
+                    }
+                }
+                // 3. PrusaSlicer Slic3r_PE.config — semicolon-delimited INI
+                //    Also check Slic3r_PE_model.config for per-object extruder assignments.
+                if (detectedColors.isEmpty()) {
+                    val slic3rEntry = zip.getEntry("Metadata/Slic3r_PE.config")
+                    if (slic3rEntry != null) {
+                        val slic3rColors = mutableListOf<String>()
+                        detectColorsFromSlic3rConfig(zip.getInputStream(slic3rEntry), slic3rColors)
+                        if (slic3rColors.size > 1) {
+                            // Only add if file has per-object assignments or paint data
+                            val hasAssignment = run {
+                                val modelCfgEntry = zip.getEntry("Metadata/Slic3r_PE_model.config")
+                                modelCfgEntry != null && detectSlic3rModelAssignments(zip.getInputStream(modelCfgEntry))
+                            }
+                            if (hasAssignment || hasPaintData) {
+                                detectedColors.addAll(slic3rColors)
+                            }
+                        } else {
+                            detectedColors.addAll(slic3rColors)
+                        }
+                    }
+                }
+                // 4. OrcaSlicer / generic config.ini — INI format
+                if (detectedColors.isEmpty()) {
+                    val configEntry = zip.getEntry("config.ini")
+                        ?: zip.getEntry("Metadata/config.ini")
+                    if (configEntry != null) {
+                        detectColorsFromIniConfig(
+                            zip.getInputStream(configEntry), detectedColors
                         )
                     }
                 }
@@ -108,11 +145,19 @@ object ThreeMfParser {
                 }
 
                 // Count unique extruders
+                // Bambu uses 1-based extruder indices, so max value = total extruder count
                 val extruderCount = maxOf(
                     1,
-                    extruderAssignments.values.maxOrNull()?.plus(1) ?: 0,
+                    extruderAssignments.values.maxOrNull() ?: 0,
                     detectedColors.size
                 )
+
+                // 5. Synthesize placeholder colors when multi-extruder but no colors detected
+                //    so the dialog always shows assignable rows instead of 0 rows.
+                if (detectedColors.isEmpty() && extruderCount > 1) {
+                    val palette = listOf("#CC3333", "#3399CC", "#33AA55", "#DDAA22")
+                    repeat(extruderCount) { i -> detectedColors.add(palette[i % palette.size]) }
+                }
 
                 ThreeMfInfo(
                     objects = objects,
@@ -238,24 +283,107 @@ object ThreeMfParser {
         }
     }
 
-    private fun detectColorsFromProjectSettings(
+    /**
+     * Bambu project_settings.config is JSON. Extract filament_colour or extruder_colour arrays.
+     * Prefers colors for extruders actually assigned to objects (extruder_assignments from
+     * model_settings.config are passed in via the caller's extruderAssignments map).
+     */
+    private fun detectColorsFromJsonSettings(
+        inputStream: InputStream,
+        colors: MutableList<String>
+    ) {
+        try {
+            val content = inputStream.bufferedReader().readText().trim()
+            val json = try { JSONObject(content) } catch (_: JSONException) { return }
+            val colorRegex = Regex("#[0-9A-Fa-f]{6,8}")
+            fun addFromArray(arr: JSONArray?) {
+                if (arr == null) return
+                for (i in 0 until arr.length()) {
+                    val v = arr.optString(i, "")
+                    colorRegex.find(v)?.value?.take(7)?.let { c ->
+                        if (c !in colors) colors.add(c)
+                    }
+                }
+            }
+            // filament_colour takes priority (per-filament), then extruder_colour (per-slot)
+            addFromArray(json.optJSONArray("filament_colour"))
+            if (colors.isEmpty()) addFromArray(json.optJSONArray("extruder_colour"))
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse project_settings.config as JSON: ${e.message}")
+        }
+    }
+
+    /**
+     * PrusaSlicer Slic3r_PE.config — semicolon-delimited INI.
+     * extruder_colour = #CC0000;#33AAFF
+     */
+    private fun detectColorsFromSlic3rConfig(
         inputStream: InputStream,
         colors: MutableList<String>
     ) {
         try {
             val content = inputStream.bufferedReader().readText()
-            // Look for filament_colour or extruder_colour lines
+            val colorRegex = Regex("#[0-9A-Fa-f]{6,8}")
+            for (line in content.lines()) {
+                val stripped = line.trimStart(';', ' ')
+                if (stripped.startsWith("extruder_colour") || stripped.startsWith("filament_colour")) {
+                    val value = stripped.substringAfter('=').trim()
+                    value.split(";").forEach { part ->
+                        colorRegex.find(part.trim())?.value?.take(7)?.let { c ->
+                            if (c !in colors) colors.add(c)
+                        }
+                    }
+                    break
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse Slic3r_PE.config: ${e.message}")
+        }
+    }
+
+    /** Returns true if Slic3r_PE_model.config has objects with different extruder assignments. */
+    private fun detectSlic3rModelAssignments(inputStream: InputStream): Boolean {
+        return try {
+            val parser = createParser(inputStream)
+            val assignedExtruders = mutableSetOf<String>()
+            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+                if (parser.eventType == XmlPullParser.START_TAG && parser.name == "metadata") {
+                    val key = parser.getAttributeValue(null, "key") ?: ""
+                    val type = parser.getAttributeValue(null, "type") ?: ""
+                    val value = parser.getAttributeValue(null, "value") ?: ""
+                    if (key == "extruder" && type == "object" && value.isNotBlank()) {
+                        assignedExtruders.add(value)
+                    }
+                }
+                parser.next()
+            }
+            assignedExtruders.size > 1
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Generic INI-style config (OrcaSlicer config.ini).
+     * Looks for filament_colour or extruder_colour = #hex;#hex lines.
+     */
+    private fun detectColorsFromIniConfig(
+        inputStream: InputStream,
+        colors: MutableList<String>
+    ) {
+        try {
+            val content = inputStream.bufferedReader().readText()
             val lineRegex = Regex("""(?:filament_colour|extruder_colour)\s*=\s*(.+)""")
+            val colorRegex = Regex("#[0-9A-Fa-f]{6,8}")
             lineRegex.findAll(content).forEach { match ->
                 val valStr = match.groupValues[1].trim()
-                val colorRegex = Regex("#[0-9A-Fa-f]{6,8}")
                 colorRegex.findAll(valStr).forEach { colorMatch ->
-                    val color = colorMatch.value.take(7) // Take #RRGGBB, ignore alpha
+                    val color = colorMatch.value.take(7)
                     if (color !in colors) colors.add(color)
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse project_settings.config: ${e.message}")
+            Log.w(TAG, "Failed to parse ini config: ${e.message}")
         }
     }
 
@@ -295,7 +423,9 @@ object ThreeMfParser {
                                     }
                                     key == "extruder" && currentObjectId != null -> {
                                         value.toIntOrNull()?.let { ext ->
-                                            extruderAssignments[currentObjectId!!] = ext
+                                            // Track max extruder seen for this object (covers part-level assignments)
+                                            val current = extruderAssignments[currentObjectId!!] ?: 0
+                                            if (ext > current) extruderAssignments[currentObjectId!!] = ext
                                         }
                                     }
                                 }

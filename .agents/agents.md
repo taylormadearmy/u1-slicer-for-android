@@ -30,6 +30,19 @@ u1-slicer-for-android/
 │       └── data/              # SliceConfig, ModelInfo, SliceResult
 ```
 
+## MANDATORY: End-to-end testing before marking features done
+
+Every new feature MUST be tested on the physical device **43211JEKB00954** (Pixel 8a, Android 16) before it is considered complete. Do NOT mark a feature done based only on a successful build or passing unit tests.
+
+Steps:
+1. `./gradlew installDebug --no-daemon` — confirm BUILD SUCCESSFUL + "Installed on 1 device"
+2. Launch app on device, navigate to the feature's screen, exercise the happy path
+3. Test at least one error case or edge case
+4. Run `adb -s 43211JEKB00954 logcat -s "SlicerVM" -d` to check for exceptions
+5. Only then mark the feature complete
+
+**NEVER deploy to NE12442001324 (NF22E1) — that is the user's personal device.**
+
 ## Current Status (as of 2026-03-04)
 - ✅ Project scaffolding complete (Gradle, git, .gitignore)
 - ✅ SAPIL JNI layer complete — now using **real PrusaSlicer APIs**

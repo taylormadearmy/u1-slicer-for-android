@@ -66,6 +66,7 @@ fun U1NavGraph(
                     viewModel.applyFilament(it)
                     navController.popBackStack()
                 },
+                onImport = { viewModel.importFilaments(it) },
                 onBack = { navController.popBackStack() }
             )
         }
@@ -90,9 +91,11 @@ fun U1NavGraph(
         }
         composable(Routes.GCODE_VIEWER_3D) {
             val parsedGcode by viewModel.parsedGcode.collectAsState()
+            val extruderColors by viewModel.activeExtruderColors.collectAsState()
             if (parsedGcode != null) {
                 GcodeViewer3DScreen(
                     parsedGcode = parsedGcode!!,
+                    extruderColors = extruderColors,
                     onBack = { navController.popBackStack() }
                 )
             }

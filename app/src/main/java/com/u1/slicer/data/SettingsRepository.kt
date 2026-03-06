@@ -38,6 +38,7 @@ class SettingsRepository(private val context: Context) {
         val WIPE_TOWER_Y = floatPreferencesKey("wipe_tower_y")
         val WIPE_TOWER_WIDTH = floatPreferencesKey("wipe_tower_width")
         val PRINTER_URL = stringPreferencesKey("printer_url")
+        val EXTRUDER_PRESETS = stringPreferencesKey("extruder_presets")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.dataStore.data.map { prefs ->
@@ -72,6 +73,16 @@ class SettingsRepository(private val context: Context) {
 
     val printerUrl: Flow<String> = context.dataStore.data.map { prefs ->
         prefs[Keys.PRINTER_URL] ?: ""
+    }
+
+    val extruderPresets: Flow<List<ExtruderPreset>> = context.dataStore.data.map { prefs ->
+        parseExtruderPresets(prefs[Keys.EXTRUDER_PRESETS] ?: "")
+    }
+
+    suspend fun saveExtruderPresets(presets: List<ExtruderPreset>) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.EXTRUDER_PRESETS] = serializeExtruderPresets(presets)
+        }
     }
 
     suspend fun saveSliceConfig(config: SliceConfig) {

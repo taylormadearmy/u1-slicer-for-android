@@ -1,8 +1,11 @@
 package com.u1.slicer.bambu
 
 import android.util.Log
+import org.xmlpull.v1.XmlPullParser
+import org.xmlpull.v1.XmlPullParserFactory
 import java.io.File
 import java.io.FileOutputStream
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -91,7 +94,14 @@ object BambuSanitizer {
         try {
             ZipFile(inputFile).use { srcZip ->
                 ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
+                    // 3MF requires STORED compression — PrusaSlicer rejects DEFLATED entries
                     var projectSettingsWritten = false
+                    // objectId → ordered list of (faceCount, extruder) per part, built while processing model_settings.config
+                    val bambuObjectParts = mutableMapOf<String, MutableList<PartInfo>>()
+                    // Buffer the main model file for restructuring after we know the extruder assignments
+                    var mainModelContent: ByteArray? = null
+                    // Buffer other .model files so we can inline mesh data during restructuring
+                    val componentFiles = mutableMapOf<String, ByteArray>()
 
                     for (entry in srcZip.entries()) {
                         val name = entry.name
@@ -107,40 +117,111 @@ object BambuSanitizer {
                             continue
                         }
 
+                        // Drop model relationship files — after restructuring (mesh
+                        // inlining) these reference component files that are no longer
+                        // used, which can confuse PrusaSlicer's 3MF loader.
+                        if (name.endsWith(".rels") && name.contains("3dmodel.model")) {
+                            Log.d(TAG, "Dropping stale rels: $name")
+                            continue
+                        }
+
+                        // Drop Bambu Auxiliaries — thumbnails/images not needed
+                        if (name.startsWith("Auxiliaries/")) {
+                            continue
+                        }
+
                         // Read the entry content
                         val content = srcZip.getInputStream(entry).readBytes()
 
                         when {
-                            // Sanitize project_settings.config
+                            // Read project_settings.config for data but don't write to output
+                            // (Bambu JSON/INI config can confuse PrusaSlicer's 3MF loader)
                             name == "Metadata/project_settings.config" -> {
-                                val sanitized = sanitizeProjectSettings(String(content))
-                                destZip.putNextEntry(ZipEntry(name))
-                                destZip.write(sanitized.toByteArray())
-                                destZip.closeEntry()
                                 projectSettingsWritten = true
                             }
 
-                            // Sanitize model_settings.config
+                            // Read model_settings.config for extruder assignments but don't write
+                            // (references pre-restructured object IDs that no longer exist)
                             name == "Metadata/model_settings.config" -> {
-                                val sanitized = sanitizeModelSettings(content)
-                                destZip.putNextEntry(ZipEntry(name))
-                                destZip.write(sanitized)
-                                destZip.closeEntry()
+                                parseModelSettingsExtruders(content, bambuObjectParts)
                             }
 
-                            // Convert mmu_segmentation in .model files
+                            // Buffer all .model files — main one for restructuring,
+                            // others for mesh inlining during restructuring
                             name.endsWith(".model") -> {
-                                val converted = convertMmuSegmentation(content)
-                                destZip.putNextEntry(ZipEntry(name))
-                                destZip.write(converted)
-                                destZip.closeEntry()
+                                if (name == "3D/3dmodel.model") {
+                                    mainModelContent = content
+                                    // Don't write yet — written after restructuring below
+                                } else {
+                                    componentFiles[name] = content
+                                    // Don't write yet — component files are only needed if
+                                    // restructuring doesn't inline their meshes (written below)
+                                }
+                            }
+
+                            // Clean _rels/.rels: keep only the main model relationship
+                            name == "_rels/.rels" -> {
+                                val cleanRels = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Target="/3D/3dmodel.model" Id="rel-1" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>
+</Relationships>"""
+                                writeStored(destZip, name, cleanRels.toByteArray())
+                            }
+
+                            // Clean [Content_Types].xml: only model and rels types
+                            name == "[Content_Types].xml" -> {
+                                val cleanTypes = """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+ <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+ <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
+</Types>"""
+                                writeStored(destZip, name, cleanTypes.toByteArray())
                             }
 
                             // Pass through everything else
                             else -> {
-                                destZip.putNextEntry(ZipEntry(name))
-                                destZip.write(content)
-                                destZip.closeEntry()
+                                writeStored(destZip, name, content)
+                            }
+                        }
+                    }
+
+                    // Write (possibly restructured) main model file
+                    if (mainModelContent != null) {
+                        // Restructure compound multi-color objects into separate build items
+                        val hasMultiColorComponents = bambuObjectParts.values.any { parts ->
+                            parts.map { it.extruder }.distinct().size > 1
+                        }
+                        val (finalModelBytes, newObjectExtruders) = if (hasMultiColorComponents) {
+                            restructureForMultiColor(mainModelContent!!, bambuObjectParts, componentFiles)
+                        } else {
+                            Pair(convertMmuSegmentation(mainModelContent!!), emptyMap())
+                        }
+
+                        // Clean model XML: strip production extension, Bambu metadata etc.
+                        writeStored(destZip, "3D/3dmodel.model", cleanModelXml(finalModelBytes))
+
+                        // Write component files:
+                        // - If restructured (meshes inlined): skip component files entirely
+                        //   (PrusaSlicer scans for .model files and extra ones cause load failures)
+                        // - If not restructured: write them through (needed for component refs)
+                        if (newObjectExtruders.isEmpty()) {
+                            for ((path, data) in componentFiles) {
+                                writeStored(destZip, path, cleanModelXml(convertMmuSegmentation(data)))
+                            }
+                        } else {
+                            Log.d(TAG, "Skipping ${componentFiles.size} component file(s) — meshes inlined")
+                        }
+
+                        // Override bambuObjectParts with the new per-object extruder assignments
+                        if (newObjectExtruders.isNotEmpty()) {
+                            // Collect face counts from original parts before clearing
+                            val originalParts = bambuObjectParts.values.flatMap { it }
+                            bambuObjectParts.clear()
+                            var idx = 0
+                            for ((objId, ext) in newObjectExtruders.entries.sortedBy { it.key.toIntOrNull() ?: 0 }) {
+                                val faceCount = originalParts.getOrNull(idx)?.faceCount ?: 128
+                                bambuObjectParts[objId] = mutableListOf(PartInfo(faceCount, ext))
+                                idx++
                             }
                         }
                     }
@@ -148,6 +229,17 @@ object BambuSanitizer {
                     // If no project_settings.config existed, that's fine
                     if (!projectSettingsWritten) {
                         Log.d(TAG, "No project_settings.config found in source")
+                    }
+
+                    // Inject Slic3r_PE_model.config so PrusaSlicer sees per-object extruder assignments.
+                    // After restructuring, bambuObjectParts contains simple object-level extruder values.
+                    val needsModelConfig = bambuObjectParts.values.any { parts ->
+                        parts.any { it.extruder > 1 }
+                    }
+                    if (needsModelConfig) {
+                        val slic3rModelConfig = buildSlic3rModelConfig(bambuObjectParts)
+                        writeStored(destZip, "Metadata/Slic3r_PE_model.config", slic3rModelConfig.toByteArray())
+                        Log.i(TAG, "Generated Slic3r_PE_model.config:\n$slic3rModelConfig")
                     }
                 }
             }
@@ -162,14 +254,383 @@ object BambuSanitizer {
         }
     }
 
+    /** Per-part info extracted from Bambu model_settings.config. */
+    private data class PartInfo(val faceCount: Int, val extruder: Int)
+
     /**
-     * Sanitize project_settings.config (INI-like key=value format).
-     * - Clamp Bambu "-1" auto values
-     * - Replace 'nil' strings
-     * - Normalize per-filament arrays
-     * - Strip Bambu-specific G-code macros
+     * Parse Bambu model_settings.config XML for per-object, per-part extruder assignments.
+     *
+     * Bambu stores assignments at two levels:
+     *  - <object id="N"><metadata key="extruder" value="M"/> — whole-object default
+     *  - <object id="N"><part ...><metadata key="extruder" value="M"/> — per-volume
+     *
+     * Parts are collected in order with their face counts so we can compute cumulative face
+     * ranges for PrusaSlicer's Slic3r_PE_model.config <volume firstid/lastid> entries.
+     */
+    private fun parseModelSettingsExtruders(
+        content: ByteArray,
+        objectParts: MutableMap<String, MutableList<PartInfo>>
+    ) {
+        try {
+            val factory = XmlPullParserFactory.newInstance()
+            factory.isNamespaceAware = false
+            val parser = factory.newPullParser()
+            parser.setInput(content.inputStream(), "UTF-8")
+
+            var currentObjectId: String? = null
+            var objectDefaultExtruder = 1
+            var inPart = false
+            var partExtruder = 1
+            var partFaceCount = 0
+
+            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+                when (parser.eventType) {
+                    XmlPullParser.START_TAG -> when (parser.name) {
+                        "object" -> {
+                            currentObjectId = parser.getAttributeValue(null, "id")
+                            objectDefaultExtruder = 1
+                            currentObjectId?.let { objectParts.getOrPut(it) { mutableListOf() } }
+                        }
+                        "part" -> {
+                            inPart = true
+                            partExtruder = objectDefaultExtruder
+                            partFaceCount = 0
+                        }
+                        "metadata" -> {
+                            val key = parser.getAttributeValue(null, "key") ?: ""
+                            val value = parser.getAttributeValue(null, "value") ?: ""
+                            if (key == "extruder" && value.isNotBlank()) {
+                                val ext = value.toIntOrNull() ?: 1
+                                if (inPart) {
+                                    partExtruder = ext
+                                } else if (currentObjectId != null) {
+                                    objectDefaultExtruder = ext
+                                }
+                            }
+                        }
+                        "mesh_stat" -> {
+                            if (inPart) {
+                                partFaceCount = parser.getAttributeValue(null, "face_count")?.toIntOrNull() ?: 0
+                            }
+                        }
+                    }
+                    XmlPullParser.END_TAG -> when (parser.name) {
+                        "part" -> {
+                            if (inPart && currentObjectId != null) {
+                                objectParts[currentObjectId]?.add(PartInfo(partFaceCount, partExtruder))
+                            }
+                            inPart = false
+                        }
+                        "object" -> {
+                            // If no parts were found, represent the whole object as one entry
+                            val parts = objectParts[currentObjectId]
+                            if (parts != null && parts.isEmpty()) {
+                                parts.add(PartInfo(0, objectDefaultExtruder))
+                            }
+                            currentObjectId = null
+                        }
+                    }
+                }
+                parser.next()
+            }
+
+            Log.d(TAG, "Parsed model_settings: ${objectParts.map { (id, parts) ->
+                "$id=[${parts.joinToString { "${it.faceCount}f→T${it.extruder}" }}]"
+            }}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse model_settings extruders: ${e.message}")
+        }
+    }
+
+    /**
+     * Build PrusaSlicer Slic3r_PE_model.config XML.
+     * After restructuring, each entry in objectParts is a single-extruder object,
+     * so we only need simple object-level extruder assignments.
+     */
+    private fun buildSlic3rModelConfig(objectParts: Map<String, List<PartInfo>>): String {
+        val sb = StringBuilder()
+        sb.appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
+        sb.appendLine("<config>")
+
+        for ((objectId, parts) in objectParts.entries.sortedBy { it.key.toIntOrNull() ?: 0 }) {
+            if (parts.isEmpty()) continue
+            val extruder = parts.maxOf { it.extruder }
+            val faceCount = parts.sumOf { it.faceCount }
+            val lastId = maxOf(0, faceCount - 1)
+            sb.appendLine("""  <object id="$objectId">""")
+            sb.appendLine("""    <metadata type="object" key="extruder" value="$extruder"/>""")
+            // PrusaSlicer uses volume firstid/lastid to map triangle ranges
+            sb.appendLine("""    <volume firstid="0" lastid="$lastId">""")
+            sb.appendLine("""      <metadata type="volume" key="extruder" value="$extruder"/>""")
+            sb.appendLine("""    </volume>""")
+            sb.appendLine("""  </object>""")
+        }
+
+        sb.appendLine("</config>")
+        return sb.toString()
+    }
+
+    // ---- Multi-color restructuring ----
+
+    /** A single <component> reference within a 3MF object. */
+    private data class ComponentRef(
+        val path: String,
+        val objectId: String,
+        val transform: FloatArray
+    )
+
+    /**
+     * Restructure a Bambu 3D/3dmodel.model that has compound objects (one object, multiple
+     * component parts with different extruders) into separate top-level build items.
+     *
+     * For example, a Calicube stored as:
+     *   Object 2 → {Component→mesh, extruder=1}, {Component→mesh, extruder=2}
+     *   Build: item objectid=2, transform=T
+     *
+     * becomes:
+     *   Object 100 → single component (mesh at combined transform T*T1), extruder=1
+     *   Object 101 → single component (mesh at combined transform T*T2), extruder=2
+     *   Build: item objectid=100 | item objectid=101
+     *
+     * Returns (new model bytes, objectId→extruder map for Slic3r_PE_model.config).
+     */
+    private fun restructureForMultiColor(
+        modelContent: ByteArray,
+        objectParts: Map<String, List<PartInfo>>,
+        componentFiles: Map<String, ByteArray> = emptyMap()
+    ): Pair<ByteArray, Map<String, Int>> {
+        // Identify compound objects that need splitting
+        val splitTargets = objectParts.filter { (_, parts) ->
+            parts.map { it.extruder }.distinct().size > 1
+        }
+        if (splitTargets.isEmpty()) {
+            return Pair(convertMmuSegmentation(modelContent), emptyMap())
+        }
+
+        val modelStr = String(modelContent)
+        val newObjectExtruders = mutableMapOf<String, Int>()
+
+        // Parse component refs and build transforms from the model
+        val objectComponents = mutableMapOf<String, List<ComponentRef>>()
+        val buildTransforms = mutableMapOf<String, FloatArray>()
+        parseMainModelStructure(modelContent, objectComponents, buildTransforms)
+
+        var result = modelStr
+        // Use small sequential IDs (starting at 1) — PrusaSlicer's Slic3r_PE_model.config
+        // maps by these IDs and breaks with large IDs that don't match internal indices
+        var nextId = 1
+
+        for ((objectId, parts) in splitTargets) {
+            val components = objectComponents[objectId]
+            val buildTransform = buildTransforms[objectId]
+            if (components == null || buildTransform == null) {
+                Log.w(TAG, "Cannot restructure object $objectId: missing component/build data")
+                continue
+            }
+            if (components.size != parts.size) {
+                Log.w(TAG, "Component/part count mismatch for object $objectId (${components.size} vs ${parts.size}), skipping")
+                continue
+            }
+
+            val newObjectDefs = StringBuilder()
+            val newBuildItems = StringBuilder()
+
+            for ((idx, component) in components.withIndex()) {
+                val newId = (nextId++).toString()
+                val extruder = parts[idx].extruder
+                newObjectExtruders[newId] = extruder
+
+                val combined = combineTransforms(buildTransform, component.transform)
+                val tStr = combined.joinToString(" ") { "%.9f".format(it) }
+
+                // Try to inline the mesh so PrusaSlicer tracks each object independently.
+                // Component references to the same objectid get deduplicated by PrusaSlicer's
+                // 3MF reader, breaking per-object extruder assignment via Slic3r_PE_model.config.
+                val meshXml = componentFiles[component.path.trimStart('/')]
+                    ?.let { extractMeshXml(it, component.objectId) }
+
+                if (meshXml != null) {
+                    newObjectDefs.append("""  <object id="$newId" type="model">
+    $meshXml
+  </object>
+""")
+                } else {
+                    // Fallback: component reference (may not work for extruder assignment)
+                    Log.w(TAG, "Could not inline mesh for component ${component.path}/${component.objectId}, using component ref")
+                    newObjectDefs.append("""  <object id="$newId" type="model">
+    <components>
+      <component p:path="${component.path}" objectid="${component.objectId}"/>
+    </components>
+  </object>
+""")
+                }
+                newBuildItems.append("""    <item objectid="$newId" transform="$tStr"/>
+""")
+            }
+
+            // Remove original compound object and its build item; insert new ones
+            result = removeObjectBlock(result, objectId)
+            result = removeBuildItem(result, objectId)
+            result = result.replace("</resources>", "${newObjectDefs}</resources>")
+            result = result.replace("</build>", "${newBuildItems}</build>")
+
+            Log.i(TAG, "Restructured object $objectId into ${components.size} separate build items: ${newObjectExtruders.entries.toList().takeLast(components.size)}")
+        }
+
+        return Pair(convertMmuSegmentation(result.toByteArray()), newObjectExtruders)
+    }
+
+    /**
+     * Extract the <mesh>...</mesh> XML block for a given objectId from a component model file.
+     * Used to inline geometry directly into 3dmodel.model so PrusaSlicer treats each inlined
+     * object as independent (component-reference deduplication prevents per-object extruder assignment).
+     */
+    private fun extractMeshXml(componentContent: ByteArray, objectId: String): String? {
+        val text = String(componentContent)
+        val objStart = text.indexOf("""<object id="$objectId"""")
+        if (objStart < 0) return null
+        val meshStart = text.indexOf("<mesh", objStart)
+        if (meshStart < 0) return null
+        val meshEnd = text.indexOf("</mesh>", meshStart)
+        if (meshEnd < 0) return null
+        return text.substring(meshStart, meshEnd + "</mesh>".length).trim()
+    }
+
+    /** Parse component refs and build item transforms from 3D/3dmodel.model. */
+    private fun parseMainModelStructure(
+        content: ByteArray,
+        objectComponents: MutableMap<String, List<ComponentRef>>,
+        buildTransforms: MutableMap<String, FloatArray>
+    ) {
+        try {
+            val factory = XmlPullParserFactory.newInstance()
+            factory.isNamespaceAware = false
+            val parser = factory.newPullParser()
+            parser.setInput(content.inputStream(), "UTF-8")
+
+            var currentObjectId: String? = null
+            var currentComponents: MutableList<ComponentRef>? = null
+            var inComponents = false
+            var inBuild = false
+
+            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+                when (parser.eventType) {
+                    XmlPullParser.START_TAG -> when (parser.name) {
+                        "object" -> {
+                            currentObjectId = parser.getAttributeValue(null, "id")
+                            currentComponents = mutableListOf()
+                        }
+                        "components" -> inComponents = true
+                        "component" -> if (inComponents && currentObjectId != null) {
+                            // Handle both "path" and "p:path" attribute names
+                            val path = parser.getAttributeValue(null, "p:path")
+                                ?: parser.getAttributeValue(null, "path") ?: ""
+                            val refId = parser.getAttributeValue(null, "objectid") ?: ""
+                            val tStr = parser.getAttributeValue(null, "transform") ?: ""
+                            currentComponents?.add(ComponentRef(path, refId, parseTransformStr(tStr)))
+                        }
+                        "build" -> inBuild = true
+                        "item" -> if (inBuild) {
+                            val oid = parser.getAttributeValue(null, "objectid") ?: ""
+                            val tStr = parser.getAttributeValue(null, "transform") ?: ""
+                            buildTransforms[oid] = parseTransformStr(tStr)
+                        }
+                    }
+                    XmlPullParser.END_TAG -> when (parser.name) {
+                        "components" -> inComponents = false
+                        "object" -> {
+                            if (currentObjectId != null && !currentComponents.isNullOrEmpty()) {
+                                objectComponents[currentObjectId!!] = currentComponents!!
+                            }
+                            currentObjectId = null
+                            currentComponents = null
+                        }
+                        "build" -> inBuild = false
+                    }
+                }
+                parser.next()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse main model structure: ${e.message}")
+        }
+    }
+
+    /** Find the highest object id integer in a model XML string. */
+    private fun findMaxObjectId(modelStr: String): Int {
+        val regex = Regex("""<(?:object|item)[^>]+(?:id|objectid)="(\d+)"""")
+        return regex.findAll(modelStr).mapNotNull { it.groupValues[1].toIntOrNull() }.maxOrNull() ?: 10
+    }
+
+    /** Remove the <object id="N">...</object> block from the model string. */
+    private fun removeObjectBlock(modelStr: String, objectId: String): String {
+        val start = modelStr.indexOf("""<object id="$objectId"""")
+        if (start < 0) return modelStr
+        var depth = 0
+        var i = start
+        while (i < modelStr.length) {
+            if (modelStr.startsWith("<object", i) && i + 7 < modelStr.length &&
+                (modelStr[i + 7] == ' ' || modelStr[i + 7] == '>')) depth++
+            if (modelStr.startsWith("</object>", i)) {
+                depth--
+                if (depth == 0) {
+                    return modelStr.substring(0, start) + modelStr.substring(i + "</object>".length)
+                }
+            }
+            i++
+        }
+        return modelStr
+    }
+
+    /** Remove the <item objectid="N" .../> build item from the model string. */
+    private fun removeBuildItem(modelStr: String, objectId: String): String {
+        return modelStr.replace(
+            Regex("""[ \t]*<item[^>]*objectid="$objectId"[^>]*/>\r?\n?"""), ""
+        )
+    }
+
+    /**
+     * Combine two 3MF affine transforms (each 12 floats: 3x3 rotation + translation).
+     * Result = assembly * component (i.e. apply component in assembly space).
+     */
+    private fun combineTransforms(assembly: FloatArray, component: FloatArray): FloatArray {
+        // Identity fallback
+        val a = if (assembly.size == 12) assembly else floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f)
+        val c = if (component.size == 12) component else floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f)
+
+        // R = Ra * Rc  (both stored row-major: a[0..2]=row0, a[3..5]=row1, a[6..8]=row2)
+        val r = FloatArray(9)
+        for (row in 0..2) {
+            for (col in 0..2) {
+                r[row * 3 + col] = a[row*3+0]*c[0*3+col] + a[row*3+1]*c[1*3+col] + a[row*3+2]*c[2*3+col]
+            }
+        }
+        // T = Ra * Tc + Ta
+        val tx = a[0]*c[9] + a[1]*c[10] + a[2]*c[11] + a[9]
+        val ty = a[3]*c[9] + a[4]*c[10] + a[5]*c[11] + a[10]
+        val tz = a[6]*c[9] + a[7]*c[10] + a[8]*c[11] + a[11]
+        return floatArrayOf(r[0],r[1],r[2], r[3],r[4],r[5], r[6],r[7],r[8], tx,ty,tz)
+    }
+
+    /** Parse a 3MF transform string into a 12-float array, or identity if blank/invalid. */
+    private fun parseTransformStr(str: String): FloatArray {
+        if (str.isBlank()) return floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f)
+        val v = str.trim().split("\\s+".toRegex()).mapNotNull { it.toFloatOrNull() }
+        return if (v.size == 12) v.toFloatArray()
+        else floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f)
+    }
+
+    /**
+     * Sanitize project_settings.config.
+     * Bambu newer files use JSON; older use INI. JSON files are passed through (PrusaSlicer ignores
+     * them anyway); INI files get the full sanitization pass.
      */
     private fun sanitizeProjectSettings(content: String): String {
+        // Newer BambuStudio stores project_settings.config as JSON — PrusaSlicer doesn't read it,
+        // so pass it through unchanged rather than mangling it with the INI parser.
+        if (content.trimStart().startsWith("{")) {
+            Log.d(TAG, "project_settings.config is JSON, passing through unchanged")
+            return content
+        }
         val config = parseIniConfig(content)
 
         // 1. Clamp parameters
@@ -251,6 +712,31 @@ object BambuSanitizer {
         text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
         text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
 
+        return text.toByteArray()
+    }
+
+    /**
+     * Clean model XML for PrusaSlicer compatibility.
+     *
+     * Strips Bambu-specific extensions that PrusaSlicer cannot handle:
+     * - Production extension (p:UUID, p:path, requiredextensions="p")
+     * - BambuStudio namespace and metadata elements
+     * - Other non-core metadata that can cause load failures
+     *
+     * After this, the file is a plain 3MF core document.
+     */
+    private fun cleanModelXml(content: ByteArray): ByteArray {
+        var text = String(content)
+        // Remove requiredextensions attribute
+        text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
+        // Remove production extension namespace and attributes
+        text = text.replace(Regex("""\s+xmlns:p="[^"]*""""), "")
+        text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
+        text = text.replace(Regex("""\s+p:path="[^"]*""""), "")
+        // Remove BambuStudio namespace declaration
+        text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
+        // Remove all <metadata> elements (Bambu-specific, not needed by PrusaSlicer)
+        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*">[^<]*</metadata>\r?\n?"""), "")
         return text.toByteArray()
     }
 
@@ -438,6 +924,20 @@ object BambuSanitizer {
      * Extract a single plate from a multi-plate 3MF by marking other plates as non-printable.
      * This preserves all Bambu metadata links.
      */
+    /** Write a ZIP entry using STORED (no compression) method — required by 3MF spec. */
+    private fun writeStored(zip: ZipOutputStream, name: String, data: ByteArray) {
+        val entry = ZipEntry(name)
+        entry.method = ZipEntry.STORED
+        entry.size = data.size.toLong()
+        entry.compressedSize = data.size.toLong()
+        val crc = CRC32()
+        crc.update(data)
+        entry.crc = crc.value
+        zip.putNextEntry(entry)
+        zip.write(data)
+        zip.closeEntry()
+    }
+
     fun extractPlate(inputFile: File, targetPlateId: Int, outputDir: File): File {
         val outputFile = File(outputDir, "plate${targetPlateId}_${inputFile.name}")
 
@@ -463,13 +963,9 @@ object BambuSanitizer {
                                 """<item printable="$newPrintable"${attrs}"""
                             }
                         }
-                        destZip.putNextEntry(ZipEntry(entry.name))
-                        destZip.write(text.toByteArray())
-                        destZip.closeEntry()
+                        writeStored(destZip, entry.name, text.toByteArray())
                     } else {
-                        destZip.putNextEntry(ZipEntry(entry.name))
-                        destZip.write(content)
-                        destZip.closeEntry()
+                        writeStored(destZip, entry.name, content)
                     }
                 }
             }

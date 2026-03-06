@@ -175,6 +175,7 @@ fun SlicerScreen(
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val filaments by viewModel.filaments.collectAsState(initial = emptyList())
+    val extruderPresets by viewModel.extruderPresets.collectAsState()
     val importLoading by viewModel.importLoading.collectAsState()
     val importProgress by viewModel.importProgress.collectAsState()
     val importError by viewModel.importError.collectAsState()
@@ -218,9 +219,11 @@ fun SlicerScreen(
     if (showMultiColorDialog && threeMfInfo != null) {
         com.u1.slicer.ui.MultiColorDialog(
             detectedColors = threeMfInfo!!.detectedColors,
-            extruderCount = threeMfInfo!!.detectedExtruderCount.coerceAtMost(4),
+            extruderPresets = extruderPresets,
             filaments = filaments,
-            onConfirm = { viewModel.applyMultiColorAssignments(it) },
+            onConfirm = { mapping ->
+                viewModel.applyMultiColorAssignments(mapping, extruderPresets, filaments)
+            },
             onDismiss = { viewModel.dismissMultiColorDialog() }
         )
     }

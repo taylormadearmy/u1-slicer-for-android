@@ -28,8 +28,30 @@ class MoonrakerClient {
 
     var baseUrl: String = ""
         set(value) {
-            field = value.trimEnd('/')
+            field = normalizeUrl(value)
         }
+
+    companion object {
+        /** Normalizes a printer URL: adds http:// scheme and :7125 port if missing. */
+        fun normalizeUrl(raw: String): String {
+            var url = raw.trim()
+            if (url.isBlank()) return ""
+            // Add scheme if missing
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                url = "http://$url"
+            }
+            // Add default Moonraker port if no port present
+            try {
+                val uri = java.net.URI(url)
+                if (uri.port == -1) {
+                    // Insert :7125 before any path
+                    val path = if (uri.rawPath.isNullOrEmpty()) "" else uri.rawPath
+                    url = "${uri.scheme}://${uri.host}:7125$path"
+                }
+            } catch (_: Exception) { /* keep as-is */ }
+            return url.trimEnd('/')
+        }
+    }
 
     private fun url(path: String): String = "$baseUrl$path"
 
@@ -120,6 +142,139 @@ class MoonrakerClient {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to get status: ${e.message}")
             PrinterStatus(state = "disconnected", progress = 0f)
+        }
+    }
+
+    /**
+     * Query per-extruder filament information from the printer.
+     * Primary source: print_task_config (Snapmaker U1 firmware).
+     * Fallback: AFC (Automatic Filament Changer) Klipper objects.
+     * Returns null if neither source is available.
+     */
+    suspend fun queryFilamentSlots(): List<FilamentSlot>? = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank()) return@withContext null
+        // Try print_task_config first (native Snapmaker U1 source)
+        val fromTask = queryPrintTaskConfig()
+        if (!fromTask.isNullOrEmpty()) return@withContext fromTask
+        // Fallback to AFC
+        queryAfcSlots()
+    }
+
+    private fun queryPrintTaskConfig(): List<FilamentSlot>? {
+        return try {
+            val request = Request.Builder()
+                .url(url("/printer/objects/query?print_task_config=&filament_detect="))
+                .get().build()
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) { response.close(); return null }
+            val json = JSONObject(response.body?.string() ?: "{}")
+            response.close()
+
+            val status = json.optJSONObject("result")?.optJSONObject("status") ?: return null
+            val ptc = status.optJSONObject("print_task_config") ?: return null
+
+            val colors = ptc.optJSONArray("filament_color_rgba")
+            val types = ptc.optJSONArray("filament_type")
+            val subTypes = ptc.optJSONArray("filament_sub_type")
+            val vendors = ptc.optJSONArray("filament_vendor")
+            val exist = ptc.optJSONArray("filament_exist")
+
+            if (colors == null || colors.length() == 0) return null
+
+            val slots = mutableListOf<FilamentSlot>()
+            for (i in 0 until colors.length()) {
+                val rgba = colors.optString(i, "")
+                val loaded = exist?.optInt(i, 0) != 0
+                slots.add(FilamentSlot(
+                    index = i,
+                    label = "E${i + 1}",
+                    color = normalizeRgbaHex(rgba),
+                    loaded = loaded,
+                    materialType = normalizeMaterialType(types?.optString(i, "PLA") ?: "PLA"),
+                    subType = subTypes?.optString(i, "") ?: "",
+                    manufacturer = vendors?.optString(i, "") ?: ""
+                ))
+            }
+            slots.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.w(TAG, "print_task_config query failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun queryAfcSlots(): List<FilamentSlot>? {
+        return try {
+            // Discover AFC objects via /printer/objects/list
+            val listReq = Request.Builder().url(url("/printer/objects/list")).get().build()
+            val listResp = client.newCall(listReq).execute()
+            if (!listResp.isSuccessful) { listResp.close(); return null }
+            val listJson = JSONObject(listResp.body?.string() ?: "{}")
+            listResp.close()
+
+            val objects = listJson.optJSONObject("result")?.optJSONArray("objects") ?: return null
+            val afcObjects = mutableListOf<String>()
+            for (i in 0 until objects.length()) {
+                val name = objects.optString(i)
+                if (name.startsWith("AFC_stepper ") || name.startsWith("AFC ")) {
+                    afcObjects.add(name)
+                }
+            }
+            if (afcObjects.isEmpty()) return null
+
+            // Query all AFC objects at once
+            val queryStr = afcObjects.joinToString("&") { java.net.URLEncoder.encode(it, "UTF-8") + "=" }
+            val afcReq = Request.Builder().url(url("/printer/objects/query?$queryStr")).get().build()
+            val afcResp = client.newCall(afcReq).execute()
+            if (!afcResp.isSuccessful) { afcResp.close(); return null }
+            val afcJson = JSONObject(afcResp.body?.string() ?: "{}")
+            afcResp.close()
+
+            val afcStatus = afcJson.optJSONObject("result")?.optJSONObject("status") ?: return null
+            val slots = mutableListOf<FilamentSlot>()
+            var idx = 0
+            for (objName in afcObjects) {
+                val obj = afcStatus.optJSONObject(objName) ?: continue
+                val color = obj.optString("color", "").let {
+                    if (it.isNotBlank()) "#${it.uppercase().trimStart('#')}" else "#808080"
+                }
+                val material = normalizeMaterialType(obj.optString("material", "PLA"))
+                val loaded = obj.optBoolean("load_state", false) ||
+                             obj.optString("status", "") == "Loaded"
+                val laneNum = objName.substringAfterLast(" ").filter { it.isDigit() }
+                slots.add(FilamentSlot(
+                    index = idx++,
+                    label = if (laneNum.isNotEmpty()) "E$laneNum" else "E${idx}",
+                    color = color,
+                    loaded = loaded,
+                    materialType = material
+                ))
+            }
+            slots.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.w(TAG, "AFC query failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Convert Bambu RGBA hex (e.g. "E72F1DFF") to #RRGGBB */
+    private fun normalizeRgbaHex(rgba: String): String {
+        val cleaned = rgba.trimStart('#').uppercase()
+        return when {
+            cleaned.length == 8 -> "#${cleaned.take(6)}"  // RRGGBBAA → #RRGGBB
+            cleaned.length == 6 -> "#$cleaned"
+            else -> "#808080"
+        }
+    }
+
+    /** Normalize material type strings to canonical forms */
+    private fun normalizeMaterialType(raw: String): String {
+        return when (raw.uppercase().trim()) {
+            "PLA+", "PLA PLUS", "PLAP" -> "PLA"
+            "PET-G", "PETG-", "PETG+" -> "PETG"
+            "ABS+", "ABS PLUS" -> "ABS"
+            "FLEX", "TPU95A", "TPU87A" -> "TPU"
+            "HIPS-", "HIPS+" -> "HIPS"
+            else -> raw.trim().ifEmpty { "PLA" }
         }
     }
 

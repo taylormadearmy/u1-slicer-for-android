@@ -19,6 +19,7 @@ import kotlin.math.roundToInt
 @Composable
 fun GcodeViewer3DScreen(
     parsedGcode: ParsedGcode,
+    extruderColors: List<String> = emptyList(),
     onBack: () -> Unit
 ) {
     val totalLayers = parsedGcode.layers.size
@@ -26,9 +27,12 @@ fun GcodeViewer3DScreen(
     var minLayer by remember { mutableIntStateOf(0) }
     var maxLayer by remember { mutableIntStateOf(totalLayers - 1) }
 
-    // Send gcode to GL view when ready
-    LaunchedEffect(parsedGcode, viewerView) {
-        viewerView?.setGcode(parsedGcode)
+    // Apply colors first (pending on GL thread), then queue gcode upload.
+    // Single effect guarantees ordering — colors are baked into VBOs at upload time.
+    LaunchedEffect(parsedGcode, extruderColors, viewerView) {
+        val v = viewerView ?: return@LaunchedEffect
+        if (extruderColors.isNotEmpty()) v.setExtruderColors(extruderColors)
+        v.setGcode(parsedGcode)
     }
 
     Scaffold(

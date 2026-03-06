@@ -16,101 +16,121 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentProfile
 
 /**
- * Data class for per-extruder assignment.
+ * Per-extruder assignment used by the slicer.
+ * Index = extruder slot (0-based). Color from the slot, temperature from the filament profile.
  */
 data class ExtruderAssignment(
     val extruderIndex: Int,
-    val color: String, // hex color e.g. "#FF0000"
+    val color: String,        // from ExtruderPreset.color
     val temperature: Int = 210,
     val filamentName: String = ""
 )
 
 /**
+ * Euclidean color distance in RGB space. Returns 0..441 (max sqrt(255²×3)).
+ */
+fun colorDistance(hex1: String, hex2: String): Double {
+    fun parse(h: String): Triple<Int, Int, Int>? = try {
+        val c = android.graphics.Color.parseColor(if (h.startsWith("#")) h else "#$h")
+        Triple(android.graphics.Color.red(c), android.graphics.Color.green(c), android.graphics.Color.blue(c))
+    } catch (_: Exception) { null }
+    val (r1, g1, b1) = parse(hex1) ?: return Double.MAX_VALUE
+    val (r2, g2, b2) = parse(hex2) ?: return Double.MAX_VALUE
+    val dr = (r1 - r2).toDouble(); val dg = (g1 - g2).toDouble(); val db = (b1 - b2).toDouble()
+    return kotlin.math.sqrt(dr * dr + dg * dg + db * db)
+}
+
+/** Find the extruder preset whose color is closest to the given hex color. */
+fun findClosestExtruder(color: String, presets: List<ExtruderPreset>): ExtruderPreset? =
+    presets.minByOrNull { colorDistance(color, it.color) }
+
+/**
  * Dialog shown when a multi-color 3MF is loaded.
- * Shows detected colors and lets users assign filament profiles to each extruder.
+ *
+ * Shows each detected model color and lets the user choose which extruder slot it maps to.
+ * Extruder dropdowns display the slot's physical filament color.
+ * Auto-maps by color distance between model color and slot color.
+ *
+ * @param detectedColors  Hex colors detected from the 3MF (one per object/extruder)
+ * @param extruderPresets Current extruder slot config (color + material type from Printer page)
+ * @param filaments       Filament library, used to look up temperature for the assigned slot's profile
+ * @param onConfirm       Called with (extruderIndex per detected color)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MultiColorDialog(
     detectedColors: List<String>,
-    extruderCount: Int,
+    extruderPresets: List<ExtruderPreset>,
     filaments: List<FilamentProfile>,
-    onConfirm: (List<ExtruderAssignment>) -> Unit,
+    onConfirm: (List<Int>) -> Unit,   // extruderIndex for each detectedColor
     onDismiss: () -> Unit
 ) {
-    val assignments = remember(detectedColors, extruderCount) {
-        mutableStateListOf<ExtruderAssignment>().apply {
-            for (i in 0 until extruderCount) {
-                add(ExtruderAssignment(
-                    extruderIndex = i,
-                    color = detectedColors.getOrElse(i) { "#808080" },
-                    temperature = 210
-                ))
-            }
+    // Auto-map: for each model color, find the closest extruder slot by color distance
+    val initialMapping = remember(detectedColors, extruderPresets) {
+        detectedColors.map { modelColor ->
+            val closest = findClosestExtruder(modelColor, extruderPresets)
+            closest?.index ?: 0
         }
     }
+
+    val mapping = remember(initialMapping) { initialMapping.toMutableStateList() }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text(
-                    "Multi-Color Detected",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
+                Text("Multi-Color Detected", style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
+                val hasPresetColors = extruderPresets.any { it.color != "#FFFFFF" && it.color != "#ffffff" }
                 Text(
-                    "$extruderCount extruder(s) detected. Assign filament to each.",
+                    if (hasPresetColors)
+                        "${detectedColors.size} color(s) detected. Mapped to nearest extruder — override if needed."
+                    else
+                        "${detectedColors.size} color(s) detected. Assign each to an extruder slot.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(16.dp))
 
                 LazyColumn(
-                    modifier = Modifier.heightIn(max = 400.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    itemsIndexed(assignments) { index, assignment ->
-                        ExtruderRow(
-                            assignment = assignment,
-                            filaments = filaments,
-                            onUpdate = { updated -> assignments[index] = updated }
+                    itemsIndexed(detectedColors) { colorIdx, modelColor ->
+                        ColorToExtruderRow(
+                            modelColor = modelColor,
+                            colorIndex = colorIdx,
+                            selectedExtruder = mapping.getOrElse(colorIdx) { 0 },
+                            extruderPresets = extruderPresets,
+                            onSelect = { extruderIdx -> if (colorIdx < mapping.size) mapping[colorIdx] = extruderIdx }
                         )
                     }
                 }
 
                 Spacer(Modifier.height(16.dp))
 
-                // Wipe tower note
-                if (extruderCount > 1) {
+                val uniqueExtruders = mapping.distinct().size
+                if (uniqueExtruders > 1) {
                     Text(
-                        "A wipe tower will be generated for color transitions.",
+                        "Using $uniqueExtruders extruders — a wipe tower will be added.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(12.dp))
                 }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = { onConfirm(assignments.toList()) }) {
-                        Text("Apply")
-                    }
+                    Button(onClick = { onConfirm(mapping.toList()) }) { Text("Apply") }
                 }
             }
         }
@@ -119,91 +139,74 @@ fun MultiColorDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ExtruderRow(
-    assignment: ExtruderAssignment,
-    filaments: List<FilamentProfile>,
-    onUpdate: (ExtruderAssignment) -> Unit
+private fun ColorToExtruderRow(
+    modelColor: String,
+    colorIndex: Int,
+    selectedExtruder: Int,
+    extruderPresets: List<ExtruderPreset>,
+    onSelect: (Int) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val selectedPreset = extruderPresets.firstOrNull { it.index == selectedExtruder }
+        ?: extruderPresets.firstOrNull()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                RoundedCornerShape(8.dp)
-            )
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+            .padding(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Color swatch
+        // Model color swatch
         Box(
             modifier = Modifier
-                .size(32.dp)
+                .size(36.dp)
                 .clip(CircleShape)
-                .background(parseHexColor(assignment.color))
+                .background(parseHexColor(modelColor))
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
         )
 
-        Spacer(Modifier.width(12.dp))
-
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                "Extruder ${assignment.extruderIndex + 1}",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium
-            )
+            Text("Color ${colorIndex + 1}", style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(modelColor.uppercase(), style = MaterialTheme.typography.bodySmall)
+        }
 
-            // Filament selector
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { expanded = it }
-            ) {
-                OutlinedTextField(
-                    value = assignment.filamentName.ifEmpty { "Default (${assignment.temperature}C)" },
-                    onValueChange = {},
-                    readOnly = true,
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                    modifier = Modifier
-                        .menuAnchor()
-                        .fillMaxWidth(),
-                    textStyle = MaterialTheme.typography.bodySmall,
-                    singleLine = true
-                )
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Default (210C)") },
-                        onClick = {
-                            onUpdate(assignment.copy(temperature = 210, filamentName = ""))
-                            expanded = false
-                        }
+        // Extruder slot picker
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+            OutlinedTextField(
+                value = selectedPreset?.label ?: "E1",
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                leadingIcon = {
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .clip(CircleShape)
+                            .background(selectedPreset?.let { parseHexColor(it.color) } ?: Color.White)
                     )
-                    filaments.forEach { filament ->
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(12.dp)
-                                            .clip(CircleShape)
-                                            .background(parseHexColor(filament.color))
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("${filament.name} (${filament.nozzleTemp}C)")
-                                }
-                            },
-                            onClick = {
-                                onUpdate(assignment.copy(
-                                    temperature = filament.nozzleTemp,
-                                    filamentName = filament.name
-                                ))
-                                expanded = false
+                },
+                modifier = Modifier.menuAnchor().width(110.dp),
+                textStyle = MaterialTheme.typography.bodySmall,
+                singleLine = true
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                extruderPresets.forEach { preset ->
+                    DropdownMenuItem(
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(modifier = Modifier.size(14.dp).clip(CircleShape)
+                                    .background(parseHexColor(preset.color))
+                                    .border(0.5.dp, MaterialTheme.colorScheme.outline, CircleShape))
+                                Text("${preset.label} · ${preset.materialType}",
+                                    style = MaterialTheme.typography.bodySmall)
                             }
-                        )
-                    }
+                        },
+                        onClick = { onSelect(preset.index); expanded = false }
+                    )
                 }
             }
         }

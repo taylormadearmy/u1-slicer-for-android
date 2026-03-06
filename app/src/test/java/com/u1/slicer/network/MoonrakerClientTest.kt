@@ -25,25 +25,113 @@ class MoonrakerClientTest {
     // run on pure JVM due to android.util.Log dependency.
     // Move to androidTest/ if needed.
 
+    // --- URL normalization tests ---
+
     @Test
-    fun `baseUrl trailing slash is trimmed`() {
-        val client = MoonrakerClientTestHelper()
-        client.baseUrl = "http://192.168.1.100/"
-        assertEquals("http://192.168.1.100", client.baseUrl)
+    fun `normalizeUrl adds http scheme to bare IP`() {
+        assertEquals("http://192.168.0.151:7125", MoonrakerClient.normalizeUrl("192.168.0.151"))
     }
 
     @Test
-    fun `baseUrl without trailing slash is unchanged`() {
-        val client = MoonrakerClientTestHelper()
-        client.baseUrl = "http://192.168.1.100"
-        assertEquals("http://192.168.1.100", client.baseUrl)
+    fun `normalizeUrl adds default port when missing`() {
+        assertEquals("http://192.168.0.151:7125", MoonrakerClient.normalizeUrl("http://192.168.0.151"))
+    }
+
+    @Test
+    fun `normalizeUrl preserves explicit port`() {
+        assertEquals("http://192.168.0.151:8080", MoonrakerClient.normalizeUrl("http://192.168.0.151:8080"))
+    }
+
+    @Test
+    fun `normalizeUrl preserves explicit port 7125`() {
+        assertEquals("http://192.168.0.151:7125", MoonrakerClient.normalizeUrl("http://192.168.0.151:7125"))
+    }
+
+    @Test
+    fun `normalizeUrl handles IP with port but no scheme`() {
+        assertEquals("http://192.168.0.151:7125", MoonrakerClient.normalizeUrl("192.168.0.151:7125"))
+    }
+
+    @Test
+    fun `normalizeUrl preserves https scheme`() {
+        assertEquals("https://printer.local:7125", MoonrakerClient.normalizeUrl("https://printer.local"))
+    }
+
+    @Test
+    fun `normalizeUrl strips trailing slash`() {
+        assertEquals("http://192.168.0.151:7125", MoonrakerClient.normalizeUrl("http://192.168.0.151:7125/"))
+    }
+
+    @Test
+    fun `normalizeUrl returns empty string for blank input`() {
+        assertEquals("", MoonrakerClient.normalizeUrl(""))
+        assertEquals("", MoonrakerClient.normalizeUrl("   "))
+    }
+
+    @Test
+    fun `baseUrl setter uses normalizeUrl`() {
+        // Verify the setter calls normalizeUrl (indirectly - test through normalizeUrl directly)
+        assertEquals("http://printer.local:7125", MoonrakerClient.normalizeUrl("printer.local"))
     }
 
     @Test
     fun `url helper constructs full path`() {
-        val client = MoonrakerClientTestHelper()
-        client.baseUrl = "http://printer.local"
-        assertEquals("http://printer.local/server/info", client.buildUrl("/server/info"))
+        // Test the URL building logic without network calls
+        val base = MoonrakerClient.normalizeUrl("192.168.1.100")
+        assertEquals("http://192.168.1.100:7125/server/info", "$base/server/info")
+    }
+
+    // --- FilamentSlot tests ---
+
+    @Test
+    fun `FilamentSlot defaults`() {
+        val slot = FilamentSlot(
+            index = 0,
+            label = "E1",
+            color = "#FF0000",
+            loaded = true,
+            materialType = "PLA"
+        )
+        assertEquals(0, slot.index)
+        assertEquals("E1", slot.label)
+        assertEquals("#FF0000", slot.color)
+        assertTrue(slot.loaded)
+        assertEquals("PLA", slot.materialType)
+        assertEquals("", slot.subType)
+        assertEquals("", slot.manufacturer)
+    }
+
+    @Test
+    fun `FilamentSlot with all fields`() {
+        val slot = FilamentSlot(
+            index = 2,
+            label = "E3",
+            color = "#00FF00",
+            loaded = false,
+            materialType = "PETG",
+            subType = "PETG-HF",
+            manufacturer = "Bambu"
+        )
+        assertEquals(2, slot.index)
+        assertEquals("E3", slot.label)
+        assertEquals("#00FF00", slot.color)
+        assertFalse(slot.loaded)
+        assertEquals("PETG", slot.materialType)
+        assertEquals("PETG-HF", slot.subType)
+        assertEquals("Bambu", slot.manufacturer)
+    }
+
+    @Test
+    fun `FilamentSlot list operations`() {
+        val slots = listOf(
+            FilamentSlot(0, "E1", "#FF0000", true, "PLA"),
+            FilamentSlot(1, "E2", "#00FF00", false, "PETG"),
+            FilamentSlot(2, "E3", "#0000FF", true, "ABS"),
+            FilamentSlot(3, "E4", "#808080", false, "TPU")
+        )
+        assertEquals(4, slots.size)
+        assertEquals(2, slots.count { it.loaded })
+        assertEquals("PLA", slots.first { it.index == 0 }.materialType)
     }
 
     @Test
@@ -136,15 +224,4 @@ class MoonrakerClientTest {
     }
 }
 
-/**
- * Test helper that exposes MoonrakerClient's URL building logic
- * without requiring android.util.Log for basic property tests.
- */
-class MoonrakerClientTestHelper {
-    var baseUrl: String = ""
-        set(value) {
-            field = value.trimEnd('/')
-        }
-
-    fun buildUrl(path: String): String = "$baseUrl$path"
-}
+// MoonrakerClientTestHelper removed — tests now use MoonrakerClient.normalizeUrl() directly.

@@ -20,12 +20,14 @@ import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.model.CopyArrangeCalculator
-import com.u1.slicer.ui.ExtruderAssignment
+import com.u1.slicer.data.ExtruderPreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -82,6 +84,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _showMultiColorDialog = MutableStateFlow(false)
     val showMultiColorDialog: StateFlow<Boolean> = _showMultiColorDialog.asStateFlow()
 
+    // Active extruder colors for G-code viewers (hex strings, one per extruder slot)
+    private val _activeExtruderColors = MutableStateFlow<List<String>>(emptyList())
+    val activeExtruderColors: StateFlow<List<String>> = _activeExtruderColors.asStateFlow()
+
     // Multiple copies
     private val _copyCount = MutableStateFlow(1)
     val copyCount: StateFlow<Int> = _copyCount.asStateFlow()
@@ -99,6 +105,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     // Job history
     val sliceJobs = sliceJobDao.getAll()
+
+    // Extruder slot config (from printer page, used for color mapping dialog)
+    val extruderPresets: StateFlow<List<ExtruderPreset>> = settingsRepo.extruderPresets
+        .stateIn(viewModelScope, SharingStarted.Eagerly, com.u1.slicer.data.defaultExtruderPresets())
 
     // Track the current working file (may be sanitized copy)
     private var currentModelFile: File? = null
@@ -298,17 +308,41 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun applyMultiColorAssignments(assignments: List<ExtruderAssignment>) {
+    /**
+     * Called when user confirms the color-to-extruder mapping.
+     * @param modelColorToExtruder  For each detected model color, the extruder index (0-based) it maps to.
+     * @param extruderPresets       Current printer slot config (for looking up temps via profile).
+     * @param filaments             Filament library (for temp lookup from profile id).
+     */
+    fun applyMultiColorAssignments(
+        modelColorToExtruder: List<Int>,
+        extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+        filaments: List<FilamentProfile>
+    ) {
         _showMultiColorDialog.value = false
-        val extCount = assignments.size.coerceAtMost(4)
+        val usedSlots = modelColorToExtruder.distinct().sorted()
+        val extCount = usedSlots.size.coerceIn(1, 4)
+        val temps = IntArray(extCount) { i ->
+            val slotIndex = usedSlots.getOrElse(i) { i }
+            val preset = extruderPresets.firstOrNull { it.index == slotIndex }
+            val profileId = preset?.filamentProfileId
+            filaments.firstOrNull { it.id == profileId }?.nozzleTemp ?: 210
+        }
         _config.value = _config.value.copy(
             extruderCount = extCount,
-            extruderTemps = IntArray(extCount) { assignments[it].temperature },
+            extruderTemps = temps,
             extruderRetractLength = FloatArray(extCount) { _config.value.retractLength },
             extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
             wipeTowerEnabled = extCount > 1
         )
-        Log.i("SlicerVM", "Applied multi-color: $extCount extruders, temps=${assignments.map { it.temperature }}")
+        // Store per-extruder colors for G-code viewers: map slot index → slot color
+        val detectedColors = _threeMfInfo.value?.detectedColors ?: emptyList()
+        val slotColors = usedSlots.map { slotIndex ->
+            extruderPresets.firstOrNull { it.index == slotIndex }?.color
+                ?: detectedColors.getOrElse(slotIndex) { "#808080" }
+        }
+        _activeExtruderColors.value = slotColors
+        Log.i("SlicerVM", "Applied color mapping: $extCount extruders used=${usedSlots}, temps=${temps.toList()}, colors=$slotColors")
     }
 
     fun dismissMultiColorDialog() {
@@ -424,6 +458,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun importFilaments(profiles: List<FilamentProfile>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            profiles.forEach { filamentDao.insert(it) }
+        }
+    }
+
     fun updateFilament(profile: FilamentProfile) {
         viewModelScope.launch(Dispatchers.IO) {
             filamentDao.update(profile)
@@ -487,6 +527,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _state.value = SlicerState.Idle
         _gcodePreview.value = ""
         _parsedGcode.value = null
+        _activeExtruderColors.value = emptyList()
         _threeMfInfo.value = null
         _showPlateSelector.value = false
         _showMultiColorDialog.value = false

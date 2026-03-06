@@ -39,7 +39,10 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingGcode: ParsedGcode? = null
 
-    // Extruder colors (matching 2D viewer)
+    @Volatile
+    var pendingExtruderColors: List<String>? = null
+
+    // Extruder colors — defaults match the 2D viewer; overridden via setExtruderColors()
     private val extruderColors = arrayOf(
         floatArrayOf(1.0f, 0.6f, 0.0f, 1.0f),  // T0: orange
         floatArrayOf(0.2f, 0.7f, 1.0f, 1.0f),  // T1: blue
@@ -47,6 +50,22 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         floatArrayOf(0.9f, 0.2f, 0.5f, 1.0f)   // T3: pink
     )
     private val travelColor = floatArrayOf(0.3f, 0.3f, 0.3f, 0.4f)
+
+    /** Override extruder colors from the confirmed multi-color assignment. */
+    fun setExtruderColors(hexColors: List<String>) {
+        hexColors.forEachIndexed { i, hex ->
+            if (i >= extruderColors.size) return@forEachIndexed
+            try {
+                val c = android.graphics.Color.parseColor(if (hex.startsWith("#")) hex else "#$hex")
+                extruderColors[i] = floatArrayOf(
+                    android.graphics.Color.red(c) / 255f,
+                    android.graphics.Color.green(c) / 255f,
+                    android.graphics.Color.blue(c) / 255f,
+                    1.0f
+                )
+            } catch (_: Exception) { /* keep default */ }
+        }
+    }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0.059f, 0.059f, 0.118f, 1f)
@@ -67,6 +86,11 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        pendingExtruderColors?.let { colors ->
+            setExtruderColors(colors)
+            pendingExtruderColors = null
+        }
+
         pendingGcode?.let { gcode ->
             uploadGcode(gcode)
             pendingGcode = null

@@ -1,5 +1,18 @@
 package com.u1.slicer.network
 
+/**
+ * Per-extruder filament slot as reported by Moonraker (print_task_config or AFC).
+ */
+data class FilamentSlot(
+    val index: Int,            // 0-based extruder index
+    val label: String,         // "E1", "E2", …
+    val color: String,         // "#RRGGBB"
+    val loaded: Boolean,
+    val materialType: String,  // "PLA", "PETG", "ABS", …
+    val subType: String = "",
+    val manufacturer: String = ""
+)
+
 data class PrinterStatus(
     val state: String,           // "standby", "printing", "paused", "complete", "error"
     val progress: Float,         // 0.0 - 1.0

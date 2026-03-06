@@ -1,6 +1,7 @@
 package com.u1.slicer.printer
 
 import com.u1.slicer.data.SettingsRepository
+import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.MoonrakerClient
 import com.u1.slicer.network.PrinterStatus
 import kotlinx.coroutines.*
@@ -29,9 +30,10 @@ class PrinterRepository(
     }
 
     suspend fun updateUrl(url: String) {
-        _printerUrl.value = url
-        client.baseUrl = url
-        settingsRepo.savePrinterUrl(url)
+        val normalized = MoonrakerClient.normalizeUrl(url)
+        _printerUrl.value = normalized
+        client.baseUrl = normalized
+        settingsRepo.savePrinterUrl(normalized)
     }
 
     /** Returns null on success, or an error message string on failure. */
@@ -59,6 +61,8 @@ class PrinterRepository(
         if (!uploaded) return false
         return client.startPrint(filename)
     }
+
+    suspend fun queryFilamentSlots(): List<FilamentSlot>? = client.queryFilamentSlots()
 
     suspend fun pausePrint(): Boolean = client.pausePrint()
     suspend fun resumePrint(): Boolean = client.resumePrint()
