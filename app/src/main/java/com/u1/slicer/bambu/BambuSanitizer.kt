@@ -751,42 +751,10 @@ object BambuSanitizer {
         return text.toByteArray()
     }
 
-    /**
-     * Clean model XML for PrusaSlicer compatibility.
-     *
-     * Strips Bambu-specific extensions that PrusaSlicer cannot handle:
-     * - Production extension (p:UUID, p:path, requiredextensions="p")
-     * - BambuStudio namespace and metadata elements
-     * - Other non-core metadata that can cause load failures
-     *
-     * After this, the file is a plain 3MF core document.
-     */
-    private fun cleanModelXml(content: ByteArray): ByteArray {
-        var text = String(content)
-        text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
-        text = text.replace(Regex("""\s+xmlns:p="[^"]*""""), "")
-        text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
-        text = text.replace(Regex("""\s+p:path="[^"]*""""), "")
-        text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
-        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
-        // PrusaSlicer only accepts type="model"; Bambu uses "other" for support geometry
-        text = text.replace("""type="other"""", """type="model"""")
-        return text.toByteArray()
-    }
+    // ---- INI Config Helpers (public accessors for ProfileEmbedder) ----
 
-    /** Like cleanModelXml but preserves p:path and xmlns:p (needed for component refs). */
-    private fun cleanModelXmlPreserveComponentRefs(content: ByteArray): ByteArray {
-        var text = String(content)
-        text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
-        text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
-        text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
-        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
-        // PrusaSlicer only accepts type="model"; Bambu uses "other" for support geometry
-        text = text.replace("""type="other"""", """type="model"""")
-        return text.toByteArray()
-    }
-
-    // ---- INI Config Helpers ----
+    fun parseIniConfigPublic(content: String) = parseIniConfig(content)
+    fun sanitizeModelSettingsPublic(content: ByteArray) = sanitizeModelSettings(content)
 
     /**
      * Parse a Bambu/OrcaSlicer project_settings.config into a map.

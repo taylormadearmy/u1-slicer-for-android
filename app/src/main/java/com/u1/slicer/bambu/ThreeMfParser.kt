@@ -145,7 +145,8 @@ object ThreeMfParser {
                 }
 
                 // Count unique extruders
-                // Bambu uses 1-based extruder indices, so max value = total extruder count
+                val uniqueExtruders = extruderAssignments.values.toSet()
+                val hasMultiExtruderAssignments = uniqueExtruders.size > 1
                 val extruderCount = maxOf(
                     1,
                     extruderAssignments.values.maxOrNull() ?: 0,
@@ -166,6 +167,7 @@ object ThreeMfParser {
                     isMultiPlate = isMultiPlate,
                     hasPaintData = hasPaintData,
                     hasLayerToolChanges = hasLayerToolChanges,
+                    hasMultiExtruderAssignments = hasMultiExtruderAssignments,
                     detectedColors = detectedColors,
                     detectedExtruderCount = extruderCount
                 )

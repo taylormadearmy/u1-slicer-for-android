@@ -26,6 +26,14 @@ data class ThreeMfInfo(
     val isMultiPlate: Boolean,
     val hasPaintData: Boolean = false,
     val hasLayerToolChanges: Boolean = false,
+    val hasMultiExtruderAssignments: Boolean = false,
     val detectedColors: List<String> = emptyList(),
     val detectedExtruderCount: Int = 1
-)
+) {
+    /** Whether the original Bambu structure must be preserved (not rebuilt with trimesh) */
+    val needsPreserve: Boolean get() = isBambu && (
+        hasMultiExtruderAssignments ||
+        hasLayerToolChanges ||
+        isMultiPlate
+    )
+}
