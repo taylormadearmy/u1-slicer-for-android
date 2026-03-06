@@ -178,6 +178,12 @@ object BambuSanitizer {
                                 writeStored(destZip, name, cleanTypes.toByteArray())
                             }
 
+                            // Drop unknown Metadata files (Bambu-specific configs like
+                            // brim_ear_points.txt, filament_settings can confuse PrusaSlicer)
+                            name.startsWith("Metadata/") -> {
+                                Log.d(TAG, "Dropping unknown metadata: $name")
+                            }
+
                             // Pass through everything else
                             else -> {
                                 writeStored(destZip, name, content)
@@ -222,11 +228,17 @@ object BambuSanitizer {
                         // - If restructured (meshes inlined): skip component files + rels entirely
                         // - If not restructured: write them (needed for component refs)
                         if (!wasRestructured) {
-                            // Copy component files from source ZIP — stream without full decompression
-                            // to avoid OOM on large files (e.g. 27MB Turtle → 150MB uncompressed)
+                            // Copy component files — use streaming for large files to avoid OOM
                             for (path in componentFileNames) {
                                 val srcEntry = srcZip.getEntry(path) ?: continue
-                                copyZipEntry(srcZip, srcEntry, destZip)
+                                if (srcEntry.size > 10_000_000) {
+                                    // Large file: stream-copy with line-by-line cleaning
+                                    copyZipEntry(srcZip, srcEntry, destZip)
+                                } else {
+                                    // Small file: load into memory and clean fully
+                                    val data = srcZip.getInputStream(srcEntry).readBytes()
+                                    writeStored(destZip, path, cleanModelXmlPreserveComponentRefs(convertMmuSegmentation(data)))
+                                }
                             }
                             // Write the model rels file so PrusaSlicer can discover component files
                             if (modelRelsContent != null) {
@@ -757,6 +769,8 @@ object BambuSanitizer {
         text = text.replace(Regex("""\s+p:path="[^"]*""""), "")
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
         text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
+        // PrusaSlicer only accepts type="model"; Bambu uses "other" for support geometry
+        text = text.replace("""type="other"""", """type="model"""")
         return text.toByteArray()
     }
 
@@ -767,6 +781,8 @@ object BambuSanitizer {
         text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
         text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
+        // PrusaSlicer only accepts type="model"; Bambu uses "other" for support geometry
+        text = text.replace("""type="other"""", """type="model"""")
         return text.toByteArray()
     }
 
@@ -956,32 +972,35 @@ object BambuSanitizer {
      */
     /**
      * Stream-copy a component .model ZIP entry as STORED, cleaning Bambu extensions.
-     * Strips p:UUID from ALL chunks (appears on every object/component element)
-     * and requiredextensions/BambuStudio from the header chunk.
+     * Uses line-by-line processing to avoid chunk-boundary attribute splitting.
+     * Strips p:UUID, requiredextensions, BambuStudio namespace, and metadata from every line.
      * Uses temp file + streaming to avoid OOM on 100MB+ entries.
      */
     private fun copyZipEntry(srcZip: ZipFile, srcEntry: ZipEntry, destZip: ZipOutputStream) {
         val tmpFile = File.createTempFile("3mf_component_", ".model")
         val pUuidRegex = Regex("""\s+p:UUID="[^"]*"""")
+        val reqExtRegex = Regex("""\s+requiredextensions="[^"]*"""")
+        val bambuNsRegex = Regex("""\s+xmlns:BambuStudio="[^"]*"""")
+        val slic3rpeNsRegex = Regex("""\s+xmlns:slic3rpe="[^"]*"""")
+        val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
         try {
-            // Pass 1: stream-clean and write to temp file
-            tmpFile.outputStream().use { out ->
-                srcZip.getInputStream(srcEntry).use { input ->
-                    var headerCleaned = false
-                    val buf = ByteArray(65536)
-                    var n: Int
-                    while (input.read(buf).also { n = it } >= 0) {
-                        var chunk = String(buf, 0, n)
-                        // Strip p:UUID from every chunk (appears on all object/component elements)
-                        chunk = chunk.replace(pUuidRegex, "")
-                        if (!headerCleaned) {
-                            // Additional header-only cleanups
-                            chunk = chunk.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
-                            chunk = chunk.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
-                            chunk = chunk.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
-                            headerCleaned = true
+            // Line-by-line streaming clean to avoid OOM on 100MB+ entries
+            tmpFile.bufferedWriter().use { out ->
+                srcZip.getInputStream(srcEntry).bufferedReader().use { reader ->
+                    reader.forEachLine { line ->
+                        var cleaned = line.replace(pUuidRegex, "")
+                        cleaned = cleaned.replace(reqExtRegex, "")
+                        cleaned = cleaned.replace(bambuNsRegex, "")
+                        cleaned = cleaned.replace(slic3rpeNsRegex, "")
+                        cleaned = cleaned.replace(metadataRegex, "")
+                        // Convert MMU segmentation attributes for PrusaSlicer
+                        cleaned = cleaned.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+                        // PrusaSlicer only accepts type="model"; Bambu uses "other" for support geometry
+                        cleaned = cleaned.replace("""type="other"""", """type="model"""")
+                        if (cleaned.isNotBlank()) {
+                            out.write(cleaned)
+                            out.newLine()
                         }
-                        out.write(chunk.toByteArray())
                     }
                 }
             }
