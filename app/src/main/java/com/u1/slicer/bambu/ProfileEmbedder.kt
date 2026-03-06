@@ -45,8 +45,9 @@ class ProfileEmbedder(private val context: Context) {
             "Metadata/slice_info.config",
             "Metadata/cut_information.xml",
             "Metadata/filament_sequence.json",
-            "Metadata/Slic3r_PE.config",
-            "Metadata/Slic3r_PE_model.config"
+            "Metadata/Slic3r_PE.config"
+            // NOTE: Slic3r_PE_model.config is NOT dropped here — the embed() when-block
+            // converts it to model_settings.config (OrcaSlicer format) with extruder remap applied.
         )
 
         private val DROP_PREFIXES = listOf(
