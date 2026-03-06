@@ -1,0 +1,3 @@
+[submodule "app/src/main/cpp/orcaslicer"]
+	path = app/src/main/cpp/orcaslicer
+	url = https://github.com/Snapmaker/OrcaSlicer.git
