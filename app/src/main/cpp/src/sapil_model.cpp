@@ -23,6 +23,7 @@ namespace sapil {
 static Slic3r::Model g_model;
 static ModelInfo g_model_info;
 static bool g_model_loaded = false;
+static std::string g_files_dir;  // App files directory, derived from model path
 
 bool SlicerEngine::loadModel(const std::string& filepath) {
     SAPIL_LOGI("Loading model: %s", filepath.c_str());
@@ -56,8 +57,12 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
             return false;
         }
 
+        // Store the files directory from the model path
+        auto last_sep = filepath.find_last_of("/\\");
+        g_files_dir = (last_sep != std::string::npos) ? filepath.substr(0, last_sep) : ".";
+
         // Extract model info
-        g_model_info.filename = filepath.substr(filepath.find_last_of("/\\") + 1);
+        g_model_info.filename = filepath.substr(last_sep + 1);
         g_model_info.format = ext;
 
         // Calculate bounding box across all objects
@@ -106,6 +111,9 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
 ModelInfo SlicerEngine::getModelInfo() const {
     return g_model_info;
 }
+
+// Accessor for sapil_print.cpp to get the app files directory
+std::string getFilesDir() { return g_files_dir; }
 
 void SlicerEngine::clearModel() {
     g_model.clear_objects();

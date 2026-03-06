@@ -181,8 +181,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         if (progress) progress(90, "Generating G-code");
 
-        // Generate G-code
-        std::string output_path = "/data/data/com.u1.slicer/files/output.gcode";
+        // Generate G-code — use the same directory as the loaded model
+        extern std::string getFilesDir();
+        std::string output_path = getFilesDir() + "/output.gcode";
         print.export_gcode(output_path, nullptr, nullptr);
 
         if (progress) progress(95, "Reading results");
