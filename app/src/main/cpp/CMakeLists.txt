@@ -37,7 +37,10 @@ set(CLIPPER_DIR "${PRUSA_DIR}/deps_src/clipper")
 # =============================================================================
 if(SLICER_BACKEND STREQUAL "orca")
     set(BUNDLED_INCLUDES
+        # Android header overrides must come FIRST to shadow real OCCT-dependent headers
+        ${CMAKE_CURRENT_SOURCE_DIR}/extern/libslic3r_android
         ${BUNDLED_DIR}
+        ${PRUSA_DIR}/src
         ${BUNDLED_DIR}/admesh
         ${BUNDLED_DIR}/semver
         ${BUNDLED_DIR}/miniz
@@ -226,7 +229,7 @@ if(SLICER_BACKEND STREQUAL "orca")
         ${BUNDLED_DIR}/admesh/stlinit.cpp
         ${BUNDLED_DIR}/admesh/util.cpp
     )
-    target_include_directories(admesh PUBLIC ${BUNDLED_DIR}/admesh ${BUNDLED_INCLUDES})
+    target_include_directories(admesh PUBLIC ${BUNDLED_DIR}/admesh ${BUNDLED_INCLUDES} ${PRUSA_DIR}/src)
 
     # --- semver ---
     add_library(semver STATIC ${BUNDLED_DIR}/semver/semver.c)
@@ -266,7 +269,7 @@ if(SLICER_BACKEND STREQUAL "orca")
         ${CLIPPER_DIR}/clipper.cpp
         ${CLIPPER_DIR}/clipper_z.cpp
     )
-    target_include_directories(clipper PUBLIC ${CLIPPER_DIR} ${BUNDLED_INCLUDES})
+    target_include_directories(clipper PUBLIC ${CLIPPER_DIR} ${BUNDLED_INCLUDES} ${PRUSA_DIR}/src)
 
     # --- qhull (C reentrant + C++ wrapper) ---
     add_library(qhull STATIC
@@ -730,7 +733,7 @@ if(SLICER_BACKEND STREQUAL "orca")
         ${LIBSLIC3R_DIR}/calib.cpp
         ${LIBSLIC3R_DIR}/Feature/Interlocking/InterlockingGenerator.cpp
         ${LIBSLIC3R_DIR}/Feature/Interlocking/VoxelUtils.cpp
-        ${LIBSLIC3R_DIR}/Feature/FuzzySkin/FuzzySkin.cpp
+        # FuzzySkin/FuzzySkin.cpp excluded — requires libnoise (not available on Android)
     )
 else()
     # PrusaSlicer source list (unchanged from original)
@@ -1002,6 +1005,7 @@ target_compile_definitions(libslic3r PUBLIC
 )
 
 target_include_directories(libslic3r PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern/libslic3r_android
     ${PRUSA_DIR}/src
     ${LIBSLIC3R_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
