@@ -33,9 +33,11 @@ import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
+import com.u1.slicer.printer.PrinterViewModel
 
 class MainActivity : ComponentActivity() {
     private val viewModel: SlicerViewModel by viewModels()
+    private val printerViewModel: PrinterViewModel by viewModels()
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -77,6 +79,7 @@ class MainActivity : ComponentActivity() {
                 U1NavGraph(
                     navController = navController,
                     viewModel = viewModel,
+                    printerViewModel = printerViewModel,
                     onPickFile = {
                         filePickerLauncher.launch(arrayOf(
                             "application/sla",
@@ -109,6 +112,10 @@ class MainActivity : ComponentActivity() {
                             },
                             onNavigateSettings = { navController.navigate(Routes.SETTINGS) },
                             onNavigatePrinter = { navController.navigate(Routes.PRINTER) },
+                            onSendToPrinter = { gcodePath ->
+                                printerViewModel.sendAndPrint(gcodePath)
+                                navController.navigate(Routes.PRINT_MONITOR)
+                            },
                             onNavigateFilaments = { navController.navigate(Routes.FILAMENTS) },
                             onNavigateJobs = { navController.navigate(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
@@ -156,6 +163,7 @@ fun SlicerScreen(
     onPickFile: () -> Unit,
     onNavigateSettings: () -> Unit,
     onNavigatePrinter: () -> Unit,
+    onSendToPrinter: (gcodePath: String) -> Unit = {},
     onNavigateFilaments: () -> Unit,
     onNavigateJobs: () -> Unit,
     onNavigateGcodeViewer3D: () -> Unit,
@@ -370,7 +378,7 @@ fun SlicerScreen(
                         result = s.result,
                         onShare = onShareGcode,
                         onSave = onSaveGcode,
-                        onSendToPrinter = onNavigatePrinter
+                        onSendToPrinter = { onSendToPrinter(s.result.gcodePath) }
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),

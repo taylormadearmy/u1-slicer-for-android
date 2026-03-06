@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -24,6 +25,10 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     val status: StateFlow<PrinterStatus> = printerRepo.status
     val printerUrl: StateFlow<String> = printerRepo.printerUrl
+
+    val webcamSnapshotUrl: StateFlow<String> = printerUrl
+        .map { url -> if (url.isBlank()) "" else "$url/webcam/?action=snapshot" }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /** Persisted per-extruder slot config (color + material type + optional profile). */
     val extruderPresets: StateFlow<List<ExtruderPreset>> = settingsRepo.extruderPresets

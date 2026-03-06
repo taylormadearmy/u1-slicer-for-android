@@ -31,6 +31,9 @@ class MoonrakerClient {
             field = normalizeUrl(value)
         }
 
+    /** URL for MJPEG snapshot frame — empty string if no printer configured. */
+    val webcamSnapshotUrl: String get() = if (baseUrl.isBlank()) "" else "$baseUrl/webcam/?action=snapshot"
+
     companion object {
         /** Normalizes a printer URL: adds http:// scheme and :7125 port if missing. */
         fun normalizeUrl(raw: String): String {

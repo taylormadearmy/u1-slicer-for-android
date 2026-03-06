@@ -3,7 +3,6 @@ package com.u1.slicer.navigation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -13,6 +12,7 @@ import com.u1.slicer.ui.FilamentScreen
 import com.u1.slicer.ui.GcodeViewer3DScreen
 import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.ModelViewerScreen
+import com.u1.slicer.ui.PrintMonitorScreen
 import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
 
@@ -20,6 +20,7 @@ object Routes {
     const val SLICER = "slicer"
     const val SETTINGS = "settings"
     const val PRINTER = "printer"
+    const val PRINT_MONITOR = "print_monitor"
     const val FILAMENTS = "filaments"
     const val JOBS = "jobs"
     const val GCODE_VIEWER_3D = "gcode_viewer_3d"
@@ -30,6 +31,7 @@ object Routes {
 fun U1NavGraph(
     navController: NavHostController,
     viewModel: SlicerViewModel,
+    printerViewModel: PrinterViewModel,
     @Suppress("UNUSED_PARAMETER") onPickFile: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onSaveGcode: () -> Unit,
     slicerContent: @Composable () -> Unit
@@ -45,8 +47,13 @@ fun U1NavGraph(
             )
         }
         composable(Routes.PRINTER) {
-            val printerViewModel: PrinterViewModel = viewModel()
             PrinterScreen(
+                viewModel = printerViewModel,
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(Routes.PRINT_MONITOR) {
+            PrintMonitorScreen(
                 viewModel = printerViewModel,
                 onBack = { navController.popBackStack() }
             )
