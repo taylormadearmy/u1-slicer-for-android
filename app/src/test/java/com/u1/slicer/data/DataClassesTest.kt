@@ -1,5 +1,6 @@
 package com.u1.slicer.data
 
+import com.u1.slicer.viewer.ModelRenderer
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -116,6 +117,38 @@ class DataClassesTest {
         val gcode = com.u1.slicer.gcode.ParsedGcode(layers = emptyList())
         assertEquals(270f, gcode.bedWidth, 0.001f)
         assertEquals(270f, gcode.bedHeight, 0.001f)
+    }
+
+    // --- ModelInfo ---
+
+    // --- ModelRenderer.WipeTowerInfo ---
+
+    @Test
+    fun `WipeTowerInfo stores fields correctly`() {
+        val info = ModelRenderer.WipeTowerInfo(x = 170f, y = 140f, width = 60f, depth = 60f)
+        assertEquals(170f, info.x, 0.001f)
+        assertEquals(140f, info.y, 0.001f)
+        assertEquals(60f, info.width, 0.001f)
+        assertEquals(60f, info.depth, 0.001f)
+    }
+
+    @Test
+    fun `WipeTowerInfo equality and copy`() {
+        val a = ModelRenderer.WipeTowerInfo(x = 10f, y = 20f, width = 30f, depth = 40f)
+        val b = a.copy()
+        assertEquals(a, b)
+        val c = a.copy(x = 50f)
+        assertNotEquals(a, c)
+        assertEquals(50f, c.x, 0.001f)
+        assertEquals(20f, c.y, 0.001f)
+    }
+
+    @Test
+    fun `WipeTowerInfo hashCode consistent with equals`() {
+        val a = ModelRenderer.WipeTowerInfo(1f, 2f, 3f, 4f)
+        val b = ModelRenderer.WipeTowerInfo(1f, 2f, 3f, 4f)
+        assertEquals(a, b)
+        assertEquals(a.hashCode(), b.hashCode())
     }
 
     // --- ModelInfo ---
