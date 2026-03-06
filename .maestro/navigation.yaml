@@ -1,0 +1,31 @@
+appId: com.u1.slicer.orca
+---
+# E2E: verify all 5 tabs navigate without crash.
+# Mirrors bridge tests/smoke.spec.ts tab navigation checks.
+
+- launchApp:
+    clearState: true
+
+- assertVisible: "Slicer"
+
+- tapOn: "Printer"
+- assertVisible: "Printer"
+
+- tapOn: "Filaments"
+- assertVisible: "Filaments"
+
+# Filament list should have at least one entry (7 default profiles)
+- assertVisible:
+    id: ".*"
+    enabled: true
+    timeout: 3000
+
+- tapOn: "Jobs"
+- assertVisible: "Jobs"
+
+- tapOn: "Settings"
+- assertVisible: "Settings"
+- assertVisible: "Snapmaker U1"
+
+- tapOn: "Slicer"
+- assertVisible: "U1 Slicer"

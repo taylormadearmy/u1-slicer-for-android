@@ -1,0 +1,27 @@
+{
+    "type": "filament",
+    "name": "Test PLA Custom",
+    "filament_type": ["PLA"],
+    "nozzle_temperature": ["215"],
+    "bed_temperature": ["65"],
+    "filament_max_volumetric_speed": ["12"],
+    "filament_flow_ratio": ["0.98"],
+    "filament_density": ["1.24"],
+    "filament_cost": ["25"],
+    "filament_retraction_length": ["0.8"],
+    "filament_retraction_speed": ["30"],
+    "filament_deretraction_speed": ["25"],
+    "fan_max_speed": ["100"],
+    "fan_min_speed": ["35"],
+    "overhang_fan_speed": ["100"],
+    "close_fan_the_first_x_layers": ["1"],
+    "full_fan_speed_layer": ["3"],
+    "filament_colour": ["#FF6600"],
+    "cool_plate_temp": ["35"],
+    "cool_plate_temp_initial_layer": ["40"],
+    "textured_plate_temp": ["60"],
+    "textured_plate_temp_initial_layer": ["65"],
+    "compatible_printers": [
+        "Snapmaker U1 (0.4 nozzle) - multiplate"
+    ]
+}

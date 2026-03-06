@@ -1,0 +1,37 @@
+appId: com.u1.slicer.orca
+---
+# E2E: load a single-colour Bambu 3MF (u1-auxiliary-fan-cover-hex_mw.3mf),
+# slice it, verify result.
+# Mirrors bridge tests/slicing.spec.ts "single-color Bambu file slices via browser UI"
+#
+# Prerequisites:
+#   adb push u1-auxiliary-fan-cover-hex_mw.3mf //sdcard/Download/
+#   Get content URI ID and launch as VIEW intent (see slice_stl.yaml)
+
+- launchApp
+
+# Model loaded
+- assertVisible: "3MF"
+
+# Scroll to slice
+- scrollUntilVisible:
+    element:
+      text: "Slice Model"
+    direction: DOWN
+    timeout: 5000
+
+- tapOn: "Slice Model"
+
+# Slicing in progress
+- assertVisible:
+    text: "Slicing"
+    timeout: 10000
+
+# Complete within 3 minutes
+- assertVisible:
+    text: "Complete"
+    timeout: 180000
+
+# Result shown
+- assertVisible: "layers"
+- assertNotVisible: "Error"

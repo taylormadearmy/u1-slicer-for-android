@@ -1,0 +1,28 @@
+appId: com.u1.slicer.orca
+---
+# Smoke test: app launches, shows correct title and version string.
+# Mirrors bridge tests/smoke.spec.ts
+
+- launchApp:
+    clearState: true
+
+# Title is visible
+- assertVisible: "U1 Slicer"
+
+# Version string must mention OrcaSlicer (not PrusaSlicer)
+- assertVisible:
+    text: "Snapmaker Orca"
+    enabled: true
+
+# Bottom nav bar has all 5 tabs
+- assertVisible: "Slicer"
+- assertVisible: "Printer"
+- assertVisible: "Filaments"
+- assertVisible: "Jobs"
+- assertVisible: "Settings"
+
+# Navigate to Settings and back
+- tapOn: "Settings"
+- assertVisible: "Settings"
+- tapOn: "Slicer"
+- assertVisible: "U1 Slicer"
