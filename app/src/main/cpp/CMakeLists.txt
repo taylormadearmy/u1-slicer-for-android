@@ -22,15 +22,15 @@ set(ABI_DIR "${ANDROID_ABI}")
 
 if(SLICER_BACKEND STREQUAL "orca")
     set(PRUSA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/orcaslicer")
-    # OrcaSlicer puts bundled deps under src/, not bundled_deps/
-    set(BUNDLED_DIR "${PRUSA_DIR}/src")
+    # Snapmaker Orca 2.x moved bundled deps from src/ to deps_src/
+    set(BUNDLED_DIR "${PRUSA_DIR}/deps_src")
 else()
     set(PRUSA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/prusaslicer")
     set(BUNDLED_DIR "${PRUSA_DIR}/bundled_deps")
 endif()
 
 set(LIBSLIC3R_DIR "${PRUSA_DIR}/src/libslic3r")
-set(CLIPPER_DIR "${PRUSA_DIR}/src/clipper")
+set(CLIPPER_DIR "${PRUSA_DIR}/deps_src/clipper")
 
 # =============================================================================
 # Consolidate all bundled include paths for core targets
@@ -484,11 +484,11 @@ endif()
 if(SLICER_BACKEND STREQUAL "orca")
     set(SLIC3R_APP_NAME "SnapmakerOrcaSlicer")
     set(SLIC3R_APP_KEY "SnapmakerOrcaSlicer")
-    set(SLIC3R_VERSION "2.2.0")
-    set(Snapmaker_VERSION "2.2.0")
-    set(SLIC3R_VERSION_FULL "2.2.0-sm-android")
+    set(SLIC3R_VERSION "2.2.4")
+    set(Snapmaker_VERSION "2.2.4")
+    set(SLIC3R_VERSION_FULL "2.2.4-sm-android")
     set(SLIC3R_BUILD_ID "android-arm64")
-    set(SLIC3R_BUILD_TIME "20260305")
+    set(SLIC3R_BUILD_TIME "20260306")
     set(BBL_RELEASE_TO_PUBLIC 0)
     set(BBL_INTERNAL_TESTING 0)
     set(ORCA_CHECK_GCODE_PLACEHOLDERS 0)
@@ -498,10 +498,19 @@ else()
     set(SLIC3R_BUILD_ID "android-arm64")
 endif()
 
-configure_file(
-    ${LIBSLIC3R_DIR}/libslic3r_version.h.in
-    ${CMAKE_CURRENT_BINARY_DIR}/libslic3r_version.h
-    @ONLY
+# libslic3r_version.h.in was removed in Snapmaker Orca 2.2.x — generate directly
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/libslic3r_version.h
+"#ifndef __SLIC3R_VERSION_H\n#define __SLIC3R_VERSION_H\n\
+#define SLIC3R_APP_NAME \"${SLIC3R_APP_NAME}\"\n\
+#define SLIC3R_APP_KEY \"${SLIC3R_APP_KEY}\"\n\
+#define SLIC3R_VERSION \"${SLIC3R_VERSION}\"\n\
+#define Snapmaker_VERSION \"${Snapmaker_VERSION}\"\n\
+#define SLIC3R_BUILD_ID \"${SLIC3R_BUILD_ID}\"\n\
+#define SLIC3R_BUILD_TIME \"${SLIC3R_BUILD_TIME}\"\n\
+#define BBL_RELEASE_TO_PUBLIC ${BBL_RELEASE_TO_PUBLIC}\n\
+#define BBL_INTERNAL_TESTING ${BBL_INTERNAL_TESTING}\n\
+#define ORCA_CHECK_GCODE_PLACEHOLDERS ${ORCA_CHECK_GCODE_PLACEHOLDERS}\n\
+#endif /* __SLIC3R_VERSION_H */\n"
 )
 
 # =============================================================================
@@ -524,10 +533,8 @@ if(SLICER_BACKEND STREQUAL "orca")
         ${LIBSLIC3R_DIR}/Circle.cpp
         ${LIBSLIC3R_DIR}/clipper.cpp
         ${LIBSLIC3R_DIR}/ClipperUtils.cpp
-        ${LIBSLIC3R_DIR}/Clipper2Utils.cpp
         ${LIBSLIC3R_DIR}/Color.cpp
         ${LIBSLIC3R_DIR}/Config.cpp
-        ${LIBSLIC3R_DIR}/CurveAnalyzer.cpp
         ${LIBSLIC3R_DIR}/EdgeGrid.cpp
         ${LIBSLIC3R_DIR}/ElephantFootCompensation.cpp
         ${LIBSLIC3R_DIR}/Emboss.cpp
@@ -556,6 +563,8 @@ if(SLICER_BACKEND STREQUAL "orca")
         ${LIBSLIC3R_DIR}/Fill/Lightning/Layer.cpp
         ${LIBSLIC3R_DIR}/Fill/Lightning/TreeNode.cpp
         ${LIBSLIC3R_DIR}/Fill/FillRectilinear.cpp
+        ${LIBSLIC3R_DIR}/Fill/FillTpmsD.cpp
+        ${LIBSLIC3R_DIR}/Fill/FillTpmsFK.cpp
         ${LIBSLIC3R_DIR}/Flow.cpp
         ${LIBSLIC3R_DIR}/FlushVolCalc.cpp
 
@@ -709,7 +718,6 @@ if(SLICER_BACKEND STREQUAL "orca")
         ${LIBSLIC3R_DIR}/Arachne/BeadingStrategy/OuterWallInsetBeadingStrategy.cpp
         ${LIBSLIC3R_DIR}/Arachne/BeadingStrategy/RedistributeBeadingStrategy.cpp
         ${LIBSLIC3R_DIR}/Arachne/BeadingStrategy/WideningBeadingStrategy.cpp
-        ${LIBSLIC3R_DIR}/Arachne/utils/ExtrusionJunction.cpp
         ${LIBSLIC3R_DIR}/Arachne/utils/ExtrusionLine.cpp
         ${LIBSLIC3R_DIR}/Arachne/utils/SquareGrid.cpp
         ${LIBSLIC3R_DIR}/Arachne/utils/PolylineStitcher.cpp
@@ -720,8 +728,9 @@ if(SLICER_BACKEND STREQUAL "orca")
         # OrcaSlicer-specific
         # Shape/TextShape.cpp excluded — requires OCCT 7.6 + FreeType
         ${LIBSLIC3R_DIR}/calib.cpp
-        ${LIBSLIC3R_DIR}/Interlocking/InterlockingGenerator.cpp
-        ${LIBSLIC3R_DIR}/Interlocking/VoxelUtils.cpp
+        ${LIBSLIC3R_DIR}/Feature/Interlocking/InterlockingGenerator.cpp
+        ${LIBSLIC3R_DIR}/Feature/Interlocking/VoxelUtils.cpp
+        ${LIBSLIC3R_DIR}/Feature/FuzzySkin/FuzzySkin.cpp
     )
 else()
     # PrusaSlicer source list (unchanged from original)

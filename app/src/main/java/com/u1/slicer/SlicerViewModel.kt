@@ -129,7 +129,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         _coreVersion.value = if (NativeLibrary.isLoaded) {
-            "Snapmaker Orca 1.2.2 (Android ARM64)"
+            "Snapmaker Orca 2.2.4 (Android ARM64)"
         } else {
             "Native library not available"
         }
