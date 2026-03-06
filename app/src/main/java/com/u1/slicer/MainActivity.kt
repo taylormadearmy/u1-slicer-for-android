@@ -338,11 +338,16 @@ fun SlicerScreen(
                             onReassign = { viewModel.showMultiColorReassign() }
                         )
                     }
-                    // Inline 3D model preview (STL only)
-                    if (viewModel.currentModelPath?.endsWith(".stl", ignoreCase = true) == true) {
+                    // Inline 3D model preview (STL and 3MF)
+                    val modelPath = viewModel.currentModelPath
+                    if (modelPath != null && (
+                        modelPath.endsWith(".stl", ignoreCase = true) ||
+                        modelPath.endsWith(".3mf", ignoreCase = true)
+                    )) {
                         InlineModelPreview(
-                            modelFilePath = viewModel.currentModelPath!!,
-                            onFullScreen = onNavigateModelViewer
+                            modelFilePath = modelPath,
+                            onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
+                                onNavigateModelViewer else ({})
                         )
                     }
                     // Arrange button — always available when model is loaded
@@ -1043,7 +1048,14 @@ fun InlineModelPreview(
     LaunchedEffect(modelFilePath) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                mesh = com.u1.slicer.viewer.StlParser.parse(java.io.File(modelFilePath))
+                val file = java.io.File(modelFilePath)
+                mesh = when {
+                    modelFilePath.endsWith(".stl", ignoreCase = true) ->
+                        com.u1.slicer.viewer.StlParser.parse(file)
+                    modelFilePath.endsWith(".3mf", ignoreCase = true) ->
+                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(file)
+                    else -> null
+                }
             } catch (_: Throwable) { }
         }
     }

@@ -955,30 +955,33 @@ object BambuSanitizer {
      * This preserves all Bambu metadata links.
      */
     /**
-     * Stream-copy a component .model ZIP entry as STORED, cleaning just the XML
-     * header to remove Bambu extensions. Uses temp file + two-pass streaming to
-     * avoid OOM on 100MB+ entries.
+     * Stream-copy a component .model ZIP entry as STORED, cleaning Bambu extensions.
+     * Strips p:UUID from ALL chunks (appears on every object/component element)
+     * and requiredextensions/BambuStudio from the header chunk.
+     * Uses temp file + streaming to avoid OOM on 100MB+ entries.
      */
     private fun copyZipEntry(srcZip: ZipFile, srcEntry: ZipEntry, destZip: ZipOutputStream) {
         val tmpFile = File.createTempFile("3mf_component_", ".model")
+        val pUuidRegex = Regex("""\s+p:UUID="[^"]*"""")
         try {
-            // Pass 1: stream-clean header and write to temp file
+            // Pass 1: stream-clean and write to temp file
             tmpFile.outputStream().use { out ->
                 srcZip.getInputStream(srcEntry).use { input ->
                     var headerCleaned = false
-                    val buf = ByteArray(8192)
+                    val buf = ByteArray(65536)
                     var n: Int
                     while (input.read(buf).also { n = it } >= 0) {
+                        var chunk = String(buf, 0, n)
+                        // Strip p:UUID from every chunk (appears on all object/component elements)
+                        chunk = chunk.replace(pUuidRegex, "")
                         if (!headerCleaned) {
-                            var chunk = String(buf, 0, n)
+                            // Additional header-only cleanups
                             chunk = chunk.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
                             chunk = chunk.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
-                            chunk = chunk.replace(Regex("""\s+p:UUID="[^"]*""""), "")
-                            out.write(chunk.toByteArray())
+                            chunk = chunk.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
                             headerCleaned = true
-                        } else {
-                            out.write(buf, 0, n)
                         }
+                        out.write(chunk.toByteArray())
                     }
                 }
             }

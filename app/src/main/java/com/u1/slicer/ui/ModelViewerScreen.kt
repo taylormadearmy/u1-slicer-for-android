@@ -36,11 +36,13 @@ fun ModelViewerScreen(
         withContext(Dispatchers.IO) {
             try {
                 val file = File(modelFilePath)
-                if (file.name.endsWith(".stl", ignoreCase = true)) {
-                    mesh = StlParser.parse(file)
-                } else {
-                    error = "3D preview currently supports STL files only"
+                mesh = when {
+                    file.name.endsWith(".stl", ignoreCase = true) -> StlParser.parse(file)
+                    file.name.endsWith(".3mf", ignoreCase = true) ->
+                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(file)
+                    else -> null
                 }
+                if (mesh == null) error = "Unsupported file format for 3D preview"
             } catch (e: Throwable) {
                 Log.e("ModelViewer", "Parse failed", e)
                 error = "Failed to load model: ${e.message}"

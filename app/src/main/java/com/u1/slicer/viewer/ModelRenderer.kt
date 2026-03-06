@@ -49,10 +49,17 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             meshData = mesh
             pendingMesh = null
 
-            // Auto-frame the model
-            camera.setTarget(mesh.centerX, mesh.centerY, mesh.centerZ)
-            camera.distance = mesh.maxDimension * 2f
-            camera.elevation = 25f
+            // Auto-frame: center on bed if model fits, otherwise center on model
+            val bedSize = 270f
+            if (mesh.maxX <= bedSize * 1.5f && mesh.maxY <= bedSize * 1.5f) {
+                // Model likely on a bed — show bed-centric view
+                camera.setTarget(bedSize / 2, bedSize / 2, mesh.sizeZ / 2)
+                camera.distance = bedSize * 1.2f
+            } else {
+                camera.setTarget(mesh.centerX, mesh.centerY, mesh.centerZ)
+                camera.distance = mesh.maxDimension * 2f
+            }
+            camera.elevation = 30f
             camera.azimuth = -45f
             camera.panX = 0f
             camera.panY = 0f
