@@ -129,7 +129,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         _coreVersion.value = if (NativeLibrary.isLoaded) {
-            native.getCoreVersion()
+            "OrcaSlicer 2.2.0 (Native Android ARM64)"
         } else {
             "Native library not available"
         }

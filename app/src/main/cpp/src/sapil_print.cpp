@@ -38,7 +38,7 @@ SlicerEngine::~SlicerEngine() {
 }
 
 std::string SlicerEngine::getCoreVersion() const {
-    return "PrusaSlicer 2.8.1 (Native Android ARM64)";
+    return "OrcaSlicer 2.2.0 (Native Android ARM64)";
 }
 
 // Map SliceConfig to PrusaSlicer DynamicPrintConfig

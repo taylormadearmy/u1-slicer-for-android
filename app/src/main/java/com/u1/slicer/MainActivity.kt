@@ -130,9 +130,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun U1SlicerTheme(content: @Composable () -> Unit) {
     val darkColorScheme = darkColorScheme(
-        primary = Color(0xFFE87A00),
+        primary = Color(0xFF2196F3),
         onPrimary = Color.White,
-        primaryContainer = Color(0xFF3D2000),
+        primaryContainer = Color(0xFF0D3A6E),
         secondary = Color(0xFF4FC3F7),
         surface = Color(0xFF1A1A2E),
         surfaceVariant = Color(0xFF222240),
