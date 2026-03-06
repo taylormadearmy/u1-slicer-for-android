@@ -128,6 +128,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private var currentModelName: String = ""
     private var lastModelInfo: ModelInfo? = null
 
+    // Source file and info before embedding — kept so we can re-embed with extruder remap
+    // when the user sets non-identity slot assignments after initial load.
+    private var sourceModelFile: File? = null
+    private var sourceModelInfo: ThreeMfInfo? = null
+
     /** Exposed for 3D viewer navigation */
     val currentModelPath: String? get() = currentModelFile?.absolutePath
 
@@ -170,6 +175,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 Log.i("SlicerVM", "MakerWorld 3MF: bambu=${info.isBambu}, multiPlate=${info.isMultiPlate}")
 
+                sourceModelFile = result.file
+                sourceModelInfo = info
+                toolRemapSlots = null
                 val sanitized = embedProfile(result.file, info, context)
 
                 if (info.isMultiPlate && info.plates.size > 1) {
@@ -241,7 +249,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         "colors=${info.detectedColors.size}, extruders=${info.detectedExtruderCount}, " +
                         "paint=${info.hasPaintData}, toolChanges=${info.hasLayerToolChanges}")
 
-                    // Embed Snapmaker profile and strip incompatible Bambu metadata
+                    // Embed Snapmaker profile and strip incompatible Bambu metadata.
+                    // Store source before embedding so startSlicing() can re-embed with
+                    // the correct extruder remap once the user has picked their slots.
+                    sourceModelFile = file
+                    sourceModelInfo = info
+                    toolRemapSlots = null  // reset on each new file load
                     val sanitized = embedProfile(file, info, context)
 
                     // Show plate selector for multi-plate files
@@ -277,6 +290,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val context = getApplication<Application>()
                 val plateFile = BambuSanitizer.extractPlate(file, plateId, context.filesDir)
+                // plateFile is now the source for any subsequent re-embed with remap
+                sourceModelFile = plateFile
+                sourceModelInfo = ThreeMfParser.parse(plateFile)
+                toolRemapSlots = null
                 currentModelFile = plateFile
                 loadNativeModel(plateFile)
             } catch (e: Throwable) {
@@ -477,6 +494,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             _state.value = SlicerState.Slicing(0, "Preparing...")
+
+            // If the user assigned non-identity extruder slots (e.g. E3+E4), we must
+            // re-embed the 3MF now — embedProfile() ran at load time with no remap.
+            val remap = toolRemapSlots
+            if (remap != null) {
+                val src = sourceModelFile
+                val srcInfo = sourceModelInfo
+                val context = getApplication<Application>()
+                if (src != null && srcInfo != null) {
+                    Log.i("SlicerVM", "Re-embedding 3MF with extruder remap $remap before slicing")
+                    val reembedded = embedProfile(src, srcInfo, context)
+                    currentModelFile = reembedded
+                    native.loadModel(reembedded.absolutePath)
+                }
+            }
 
             // Apply object positions (custom from placement viewer, or auto grid if copies > 1)
             val copies = _copyCount.value
