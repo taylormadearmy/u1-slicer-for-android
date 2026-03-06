@@ -102,6 +102,8 @@ object BambuSanitizer {
                     var mainModelContent: ByteArray? = null
                     // Buffer other .model files so we can inline mesh data during restructuring
                     val componentFiles = mutableMapOf<String, ByteArray>()
+                    // Buffer model rels file — only dropped when restructuring inlines meshes
+                    var modelRelsContent: ByteArray? = null
 
                     for (entry in srcZip.entries()) {
                         val name = entry.name
@@ -117,11 +119,10 @@ object BambuSanitizer {
                             continue
                         }
 
-                        // Drop model relationship files — after restructuring (mesh
-                        // inlining) these reference component files that are no longer
-                        // used, which can confuse PrusaSlicer's 3MF loader.
+                        // Buffer model rels file — decision to keep/drop made after
+                        // restructuring (only drop when meshes are inlined)
                         if (name.endsWith(".rels") && name.contains("3dmodel.model")) {
-                            Log.d(TAG, "Dropping stale rels: $name")
+                            modelRelsContent = srcZip.getInputStream(entry).readBytes()
                             continue
                         }
 
@@ -197,16 +198,28 @@ object BambuSanitizer {
                             Pair(convertMmuSegmentation(mainModelContent!!), emptyMap())
                         }
 
-                        // Clean model XML: strip production extension, Bambu metadata etc.
-                        writeStored(destZip, "3D/3dmodel.model", cleanModelXml(finalModelBytes))
+                        // Clean model XML: strip Bambu extensions.
+                        // For restructured files: strip everything including p:path.
+                        // For non-restructured files: preserve p:path (needed for component refs).
+                        val cleanedModel = if (hasMultiColorComponents && newObjectExtruders.isNotEmpty()) {
+                            cleanModelXml(finalModelBytes)
+                        } else {
+                            cleanModelXmlPreserveComponentRefs(finalModelBytes)
+                        }
+                        writeStored(destZip, "3D/3dmodel.model", cleanedModel)
 
-                        // Write component files:
-                        // - If restructured (meshes inlined): skip component files entirely
-                        //   (PrusaSlicer scans for .model files and extra ones cause load failures)
-                        // - If not restructured: write them through (needed for component refs)
-                        if (newObjectExtruders.isEmpty()) {
+                        val wasRestructured = newObjectExtruders.isNotEmpty()
+
+                        // Write component files and rels:
+                        // - If restructured (meshes inlined): skip component files + rels entirely
+                        // - If not restructured: write them (needed for component refs)
+                        if (!wasRestructured) {
                             for ((path, data) in componentFiles) {
-                                writeStored(destZip, path, cleanModelXml(convertMmuSegmentation(data)))
+                                writeStored(destZip, path, cleanModelXmlPreserveComponentRefs(convertMmuSegmentation(data)))
+                            }
+                            // Write the model rels file so PrusaSlicer can discover component files
+                            if (modelRelsContent != null) {
+                                writeStored(destZip, "3D/_rels/3dmodel.model.rels", modelRelsContent!!)
                             }
                         } else {
                             Log.d(TAG, "Skipping ${componentFiles.size} component file(s) — meshes inlined")
@@ -727,15 +740,21 @@ object BambuSanitizer {
      */
     private fun cleanModelXml(content: ByteArray): ByteArray {
         var text = String(content)
-        // Remove requiredextensions attribute
         text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
-        // Remove production extension namespace and attributes
         text = text.replace(Regex("""\s+xmlns:p="[^"]*""""), "")
         text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
         text = text.replace(Regex("""\s+p:path="[^"]*""""), "")
-        // Remove BambuStudio namespace declaration
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
-        // Remove all <metadata> elements (Bambu-specific, not needed by PrusaSlicer)
+        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*">[^<]*</metadata>\r?\n?"""), "")
+        return text.toByteArray()
+    }
+
+    /** Like cleanModelXml but preserves p:path and xmlns:p (needed for component refs). */
+    private fun cleanModelXmlPreserveComponentRefs(content: ByteArray): ByteArray {
+        var text = String(content)
+        text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
+        text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
+        text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
         text = text.replace(Regex("""[ \t]*<metadata name="[^"]*">[^<]*</metadata>\r?\n?"""), "")
         return text.toByteArray()
     }
