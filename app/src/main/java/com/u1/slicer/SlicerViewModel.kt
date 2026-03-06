@@ -504,6 +504,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val context = getApplication<Application>()
                 if (src != null && srcInfo != null) {
                     Log.i("SlicerVM", "Re-embedding 3MF with extruder remap $remap before slicing")
+                    // Free the old model from native memory before loading the new one.
+                    // loadModel does g_model = read_from_file(...) which holds both old and
+                    // new models in memory simultaneously — enough to OOM on a large 3MF.
+                    native.clearModel()
                     val reembedded = embedProfile(src, srcInfo, context)
                     currentModelFile = reembedded
                     native.loadModel(reembedded.absolutePath)
