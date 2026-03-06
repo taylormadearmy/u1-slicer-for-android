@@ -26,8 +26,14 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     val status: StateFlow<PrinterStatus> = printerRepo.status
     val printerUrl: StateFlow<String> = printerRepo.printerUrl
 
-    val webcamSnapshotUrl: StateFlow<String> = printerUrl
-        .map { url -> if (url.isBlank()) "" else "$url/webcam/?action=snapshot" }
+    // Resolved webcam snapshot URL candidates (primary + optional alt with port).
+    // Populated by resolveWebcam() which queries /server/webcams/list.
+    private val _webcamCandidates = MutableStateFlow<List<String>>(emptyList())
+    val webcamCandidates: StateFlow<List<String>> = _webcamCandidates.asStateFlow()
+
+    // Kept for backward compat — primary candidate or empty
+    val webcamSnapshotUrl: StateFlow<String> = _webcamCandidates
+        .map { it.firstOrNull() ?: "" }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /** Persisted per-extruder slot config (color + material type + optional profile). */
@@ -79,13 +85,21 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         printerRepo.startPolling(viewModelScope)
+        // Resolve webcam URLs for the already-saved printer URL (if any)
+        viewModelScope.launch(Dispatchers.IO) { resolveWebcam() }
     }
 
     fun updateUrl(url: String) {
         viewModelScope.launch(Dispatchers.IO) {
             printerRepo.updateUrl(url)
             _connectionState.value = ConnectionState.Unknown
+            resolveWebcam()
         }
+    }
+
+    private suspend fun resolveWebcam() {
+        val candidates = printerRepo.queryWebcamSnapshotCandidates()
+        _webcamCandidates.value = candidates
     }
 
     fun testConnection() {

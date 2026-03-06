@@ -62,6 +62,8 @@ class PrinterRepository(
         return client.startPrint(filename)
     }
 
+    suspend fun queryWebcamSnapshotCandidates(): List<String> = client.queryWebcamSnapshotCandidates()
+
     suspend fun queryFilamentSlots(): List<FilamentSlot>? = client.queryFilamentSlots()
 
     suspend fun pausePrint(): Boolean = client.pausePrint()

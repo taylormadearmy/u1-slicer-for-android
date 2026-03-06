@@ -31,8 +31,63 @@ class MoonrakerClient {
             field = normalizeUrl(value)
         }
 
-    /** URL for MJPEG snapshot frame — empty string if no printer configured. */
-    val webcamSnapshotUrl: String get() = if (baseUrl.isBlank()) "" else "$baseUrl/webcam/?action=snapshot"
+    /**
+     * Query Moonraker's webcam list and return snapshot URL candidates for the first webcam.
+     * Returns up to 2 candidates: [primary, alt] where alt keeps the original port.
+     * Falls back to legacy mjpeg-streamer path if the list is unavailable.
+     * Mirrors the bridge's moonraker.py get_webcams() + _resolve_moonraker_url() logic.
+     */
+    suspend fun queryWebcamSnapshotCandidates(): List<String> = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank()) return@withContext emptyList()
+        try {
+            val request = Request.Builder().url(url("/server/webcams/list")).get().build()
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            response.close()
+            if (response.isSuccessful && body != null) {
+                val webcams = org.json.JSONObject(body)
+                    .getJSONObject("result")
+                    .getJSONArray("webcams")
+                if (webcams.length() > 0) {
+                    val cam = webcams.getJSONObject(0)
+                    val rawUrl = cam.optString("snapshot_url", "")
+                        .ifBlank { cam.optString("snapshotUrl", "") }
+                    if (rawUrl.isNotBlank()) {
+                        val primary = resolveWebcamUrl(rawUrl, keepPort = false)
+                        val alt = resolveWebcamUrl(rawUrl, keepPort = true)
+                        val candidates = listOfNotNull(
+                            primary.ifBlank { null },
+                            alt.takeIf { it.isNotBlank() && it != primary }
+                        )
+                        if (candidates.isNotEmpty()) {
+                            Log.d(TAG, "Webcam candidates: $candidates")
+                            return@withContext candidates
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Webcam list unavailable, using legacy fallback: ${e.message}")
+        }
+        // Legacy fallback: mjpeg-streamer style
+        listOf("$baseUrl/webcam/?action=snapshot")
+    }
+
+    /** Resolve a possibly-relative webcam URL against baseUrl. Mirrors bridge's _resolve_moonraker_url(). */
+    private fun resolveWebcamUrl(value: String, keepPort: Boolean): String {
+        if (value.isBlank()) return ""
+        // Already absolute
+        if (value.startsWith("http://") || value.startsWith("https://")) return value
+        // Relative — resolve against base, optionally stripping the port
+        return try {
+            val base = java.net.URI(baseUrl)
+            val host = if (keepPort) base.host + (if (base.port != -1) ":${base.port}" else "")
+                       else base.host
+            "${base.scheme}://$host/${value.trimStart('/')}"
+        } catch (_: Exception) {
+            "$baseUrl/${value.trimStart('/')}"
+        }
+    }
 
     companion object {
         /** Normalizes a printer URL: adds http:// scheme and :7125 port if missing. */

@@ -37,33 +37,39 @@ fun PrintMonitorScreen(
 ) {
     val status by viewModel.status.collectAsState()
     val sendingState by viewModel.sendingState.collectAsState()
-    val webcamUrl by viewModel.webcamSnapshotUrl.collectAsState()
+    val webcamCandidates by viewModel.webcamCandidates.collectAsState()
 
-    // Periodic camera snapshot polling
+    // Periodic camera snapshot polling with candidate fallback (mirrors bridge logic)
     var cameraFrame by remember { mutableStateOf<Bitmap?>(null) }
-    var cameraError by remember { mutableStateOf(false) }
+    var candidateIndex by remember { mutableStateOf(0) }
 
-    LaunchedEffect(webcamUrl) {
-        if (webcamUrl.isBlank()) return@LaunchedEffect
+    LaunchedEffect(webcamCandidates) {
+        candidateIndex = 0  // reset on URL change
+        if (webcamCandidates.isEmpty()) return@LaunchedEffect
         val http = OkHttpClient.Builder()
             .connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(3, TimeUnit.SECONDS)
             .build()
         while (true) {
+            val baseUrl = webcamCandidates.getOrNull(candidateIndex)
+                ?: webcamCandidates.last()
+            // Append cache-buster so each poll fetches a fresh frame
+            val sep = if (baseUrl.contains('?')) '&' else '?'
+            val pollUrl = "$baseUrl${sep}_cb=${System.currentTimeMillis()}"
             try {
                 val bytes = withContext(Dispatchers.IO) {
-                    val resp = http.newCall(Request.Builder().url(webcamUrl).build()).execute()
+                    val resp = http.newCall(Request.Builder().url(pollUrl).build()).execute()
                     val b = resp.body?.bytes()
                     resp.close()
                     b
                 }
                 if (bytes != null) {
                     val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bmp != null) { cameraFrame = bmp; cameraError = false }
-                    else cameraError = true
-                }
+                    if (bmp != null) cameraFrame = bmp
+                    else if (candidateIndex < webcamCandidates.size - 1) candidateIndex++
+                } else if (candidateIndex < webcamCandidates.size - 1) candidateIndex++
             } catch (_: Exception) {
-                cameraError = true
+                if (candidateIndex < webcamCandidates.size - 1) candidateIndex++
             }
             delay(500)
         }
@@ -160,7 +166,7 @@ fun PrintMonitorScreen(
                                 tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
                                 modifier = Modifier.size(40.dp))
                             Text(
-                                if (webcamUrl.isBlank()) "No printer connected" else "Connecting to camera…",
+                                if (webcamCandidates.isEmpty()) "No printer connected" else "Connecting to camera…",
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
                                 style = MaterialTheme.typography.bodySmall
                             )
