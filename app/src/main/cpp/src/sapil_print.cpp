@@ -21,6 +21,7 @@
 namespace sapil {
     extern Slic3r::Model& getGlobalModel();
     extern bool isModelLoaded();
+    extern Slic3r::DynamicPrintConfig& getModelConfig();
 }
 
 namespace sapil {
@@ -140,9 +141,35 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
     }
 
     try {
-        // Apply config
+        // Build config: defaults → 3MF embedded config → user overrides.
+        // The embedded config (from ProfileEmbedder) contains machine_start_gcode,
+        // change_filament_gcode, and all Snapmaker profile settings.  Without this,
+        // OrcaSlicer uses its built-in default start G-code which lacks SM_ commands.
         Slic3r::DynamicPrintConfig dpc;
         dpc.apply(Slic3r::FullPrintConfig::defaults());
+        // Only apply G-code template keys from the embedded config.
+        // Applying all 391 keys causes SIGSEGV — many have array sizes, feature flags,
+        // or template macros that conflict with our minimal Print pipeline.
+        auto& model_config = getModelConfig();
+        if (!model_config.empty()) {
+            static const char* gcode_keys[] = {
+                "machine_start_gcode",
+                "machine_end_gcode",
+                "change_filament_gcode",
+                "before_layer_change_gcode",
+                "layer_change_gcode",
+                nullptr
+            };
+            int applied = 0;
+            for (const char** k = gcode_keys; *k; ++k) {
+                auto* opt = model_config.option(*k);
+                if (opt) {
+                    dpc.set_key_value(*k, opt->clone());
+                    applied++;
+                }
+            }
+            SAPIL_LOGI("Applied %d G-code template keys from embedded config (%zu total available)", applied, model_config.keys().size());
+        }
         applyConfigToPrusa(dpc, config);
 
         if (progress) progress(5, "Preparing print configuration");

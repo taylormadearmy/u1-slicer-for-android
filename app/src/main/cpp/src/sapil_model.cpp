@@ -13,6 +13,9 @@
 #include "libslic3r/Format/STEP.hpp"
 #include "libslic3r/BoundingBox.hpp"
 
+// miniz for direct ZIP extraction of project_settings.config
+#include "miniz.h"
+
 // =============================================================================
 // sapil_model.cpp — Model loading using PrusaSlicer's Slic3r::Model
 // =============================================================================
@@ -21,6 +24,7 @@ namespace sapil {
 
 // Persistent model state
 static Slic3r::Model g_model;
+static Slic3r::DynamicPrintConfig g_model_config;  // Config from 3MF project_settings.config
 static ModelInfo g_model_info;
 static bool g_model_loaded = false;
 static std::string g_files_dir;  // App files directory, derived from model path
@@ -51,7 +55,54 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
         Slic3r::ConfigSubstitutionContext config_substitutions(Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
 
         g_model = Slic3r::Model::read_from_file(filepath, &config, &config_substitutions,
-            Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::AddDefaultInstances);
+            Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::LoadConfig | Slic3r::LoadStrategy::AddDefaultInstances);
+
+        // Store the embedded config (from 3MF project_settings.config).
+        // This contains machine_start_gcode, change_filament_gcode, and all profile
+        // settings embedded by ProfileEmbedder.  sapil_print.cpp uses this as the base
+        // config for slicing, overlaying user SliceConfig on top.
+        //
+        // OrcaSlicer's BBS 3MF reader may fail to extract the config on Android
+        // (backup_path / temp directory issues), so we fall back to direct ZIP extraction.
+        if (config.empty() && ext == "3mf") {
+            SAPIL_LOGI("BBS reader returned empty config — extracting project_settings.config directly");
+            mz_zip_archive zip;
+            mz_zip_zero_struct(&zip);
+            if (mz_zip_reader_init_file(&zip, filepath.c_str(), 0)) {
+                int idx = mz_zip_reader_locate_file(&zip, "Metadata/project_settings.config", nullptr, 0);
+                if (idx >= 0) {
+                    size_t uncomp_size = 0;
+                    void* data = mz_zip_reader_extract_to_heap(&zip, idx, &uncomp_size, 0);
+                    if (data && uncomp_size > 0) {
+                        // Write to a temp file for load_from_json
+                        std::string tmp_path = filepath + ".config.tmp";
+                        std::ofstream tmp(tmp_path, std::ios::binary);
+                        tmp.write(static_cast<const char*>(data), uncomp_size);
+                        tmp.close();
+                        mz_free(data);
+
+                        std::map<std::string, std::string> key_values;
+                        std::string reason;
+                        Slic3r::ConfigSubstitutionContext subs(Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
+                        int ret = config.load_from_json(tmp_path, subs, true, key_values, reason);
+                        std::remove(tmp_path.c_str());
+                        if (ret == 0) {
+                            SAPIL_LOGI("Direct extraction: loaded %zu config keys", config.keys().size());
+                        } else {
+                            SAPIL_LOGW("Direct extraction: load_from_json failed: %s", reason.c_str());
+                        }
+                    } else {
+                        if (data) mz_free(data);
+                        SAPIL_LOGW("Direct extraction: failed to extract entry");
+                    }
+                } else {
+                    SAPIL_LOGI("No Metadata/project_settings.config in 3MF");
+                }
+                mz_zip_reader_end(&zip);
+            }
+        }
+        g_model_config = config;
+        SAPIL_LOGI("Stored embedded config with %zu keys", g_model_config.keys().size());
 
         if (g_model.objects.empty()) {
             SAPIL_LOGE("No objects found in file");
@@ -118,6 +169,7 @@ std::string getFilesDir() { return g_files_dir; }
 
 void SlicerEngine::clearModel() {
     g_model.clear_objects();
+    g_model_config = Slic3r::DynamicPrintConfig();
     g_model_info = ModelInfo();
     g_model_loaded = false;
     SAPIL_LOGI("Model cleared");
@@ -130,6 +182,11 @@ Slic3r::Model& getGlobalModel() {
 
 bool isModelLoaded() {
     return g_model_loaded;
+}
+
+// Config embedded in the 3MF (machine_start_gcode, change_filament_gcode, etc.)
+Slic3r::DynamicPrintConfig& getModelConfig() {
+    return g_model_config;
 }
 
 jobject modelInfoToJava(JNIEnv* env, const ModelInfo& info) {

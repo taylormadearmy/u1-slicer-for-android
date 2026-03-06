@@ -131,4 +131,81 @@ class GcodeToolRemapperTest {
         assertTrue(result.contains("T1"))
         assertFalse(result.contains("T2"))
     }
+
+    // ── SM command remapping ─────────────────────────────────────────────────
+
+    @Test
+    fun `SM_PRINT_AUTO_FEED EXTRUDER remapped`() {
+        assertEquals(
+            "SM_PRINT_AUTO_FEED EXTRUDER=2",
+            GcodeToolRemapper.remapLine("SM_PRINT_AUTO_FEED EXTRUDER=0", shift2)
+        )
+        assertEquals(
+            "SM_PRINT_AUTO_FEED EXTRUDER=3",
+            GcodeToolRemapper.remapLine("SM_PRINT_AUTO_FEED EXTRUDER=1", shift2)
+        )
+    }
+
+    @Test
+    fun `SM_PRINT_FLOW_CALIBRATE INDEX remapped`() {
+        assertEquals(
+            "SM_PRINT_FLOW_CALIBRATE INDEX=2 TARGET_TEMP=210",
+            GcodeToolRemapper.remapLine("SM_PRINT_FLOW_CALIBRATE INDEX=0 TARGET_TEMP=210", shift2)
+        )
+    }
+
+    @Test
+    fun `SM_PRINT_START_LINE INDEX remapped`() {
+        assertEquals(
+            "SM_PRINT_START_LINE INDEX=3 TARGET_TEMP=210",
+            GcodeToolRemapper.remapLine("SM_PRINT_START_LINE INDEX=1 TARGET_TEMP=210", shift2)
+        )
+    }
+
+    @Test
+    fun `SM commands not remapped with identity map`() {
+        assertEquals(
+            "SM_PRINT_AUTO_FEED EXTRUDER=0",
+            GcodeToolRemapper.remapLine("SM_PRINT_AUTO_FEED EXTRUDER=0", identity)
+        )
+    }
+
+    @Test
+    fun `non-SM line with EXTRUDER= is not remapped`() {
+        // Only SM_ lines should have EXTRUDER/INDEX remapping
+        assertEquals(
+            "BED_MESH_CALIBRATE EXTRUDER=0",
+            GcodeToolRemapper.remapLine("BED_MESH_CALIBRATE EXTRUDER=0", shift2)
+        )
+    }
+
+    @Test
+    fun `full file remap includes SM commands`() {
+        val gcode = listOf(
+            "T0",
+            "SM_PRINT_AUTO_FEED EXTRUDER=0",
+            "SM_PRINT_AUTO_FEED EXTRUDER=1",
+            "SM_PRINT_FLOW_CALIBRATE INDEX=0 TARGET_TEMP=210",
+            "SM_PRINT_FLOW_CALIBRATE INDEX=1 TARGET_TEMP=210",
+            "SM_PRINT_START_LINE INDEX=1 TARGET_TEMP=210",
+            "G1 X0 Y0",
+            "M104 S210 T0",
+        )
+        val tmp = File.createTempFile("test", ".gcode")
+        tmp.writeText(gcode.joinToString("\n"))
+
+        GcodeToolRemapper.remap(tmp.absolutePath, listOf(2, 3))
+
+        val lines = tmp.readLines()
+        tmp.delete()
+
+        assertEquals("T2", lines[0])
+        assertEquals("SM_PRINT_AUTO_FEED EXTRUDER=2", lines[1])
+        assertEquals("SM_PRINT_AUTO_FEED EXTRUDER=3", lines[2])
+        assertEquals("SM_PRINT_FLOW_CALIBRATE INDEX=2 TARGET_TEMP=210", lines[3])
+        assertEquals("SM_PRINT_FLOW_CALIBRATE INDEX=3 TARGET_TEMP=210", lines[4])
+        assertEquals("SM_PRINT_START_LINE INDEX=3 TARGET_TEMP=210", lines[5])
+        assertEquals("G1 X0 Y0", lines[6])
+        assertEquals("M104 S210 T2", lines[7])
+    }
 }

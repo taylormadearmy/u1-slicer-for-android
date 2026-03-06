@@ -51,10 +51,11 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     )
     private val travelColor = floatArrayOf(0.3f, 0.3f, 0.3f, 0.4f)
 
-    /** Override extruder colors from the confirmed multi-color assignment. */
+    /** Override extruder colors from the confirmed multi-color assignment.
+     *  Empty/blank entries are skipped (unused slots keep their defaults). */
     fun setExtruderColors(hexColors: List<String>) {
         hexColors.forEachIndexed { i, hex ->
-            if (i >= extruderColors.size) return@forEachIndexed
+            if (i >= extruderColors.size || hex.isBlank()) return@forEachIndexed
             try {
                 val c = android.graphics.Color.parseColor(if (hex.startsWith("#")) hex else "#$hex")
                 extruderColors[i] = floatArrayOf(
@@ -117,7 +118,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         drawToolpaths()
     }
 
-    private fun uploadGcode(gcode: ParsedGcode) {
+    fun uploadGcode(gcode: ParsedGcode) {
         // Clean up old VBOs
         for (lv in layerVBOs) {
             val vaos = intArrayOf(lv.vao)

@@ -18,6 +18,8 @@ object GcodeToolRemapper {
     private val TOOL_LINE_RE = Regex("""^T(\d+)\s*(?:;.*)?$""")
     // Captures the M104/M109 prefix up to (but not including) the T parameter
     private val MTEMP_T_RE = Regex("""(M10[49]\b.*?)\bT(\d+)""")
+    // Snapmaker SM_ commands: SM_PRINT_AUTO_FEED EXTRUDER=N, SM_PRINT_FLOW_CALIBRATE INDEX=N, etc.
+    private val SM_PARAM_RE = Regex("""((?:EXTRUDER|INDEX)=)(\d+)""")
 
     /**
      * Rewrite [gcodePath] in-place, replacing compact tool indices with [targetSlots].
@@ -62,6 +64,14 @@ object GcodeToolRemapper {
                 val compact = mr.groupValues[2].toIntOrNull() ?: return@replace mr.value
                 val actual = toolMap[compact] ?: compact
                 "${mr.groupValues[1]}T$actual"
+            }
+        }
+        // Snapmaker SM_ commands with EXTRUDER=N or INDEX=N
+        if (line.startsWith("SM_") && SM_PARAM_RE.containsMatchIn(line)) {
+            return SM_PARAM_RE.replace(line) { mr ->
+                val compact = mr.groupValues[2].toIntOrNull() ?: return@replace mr.value
+                val actual = toolMap[compact] ?: compact
+                "${mr.groupValues[1]}$actual"
             }
         }
         return line

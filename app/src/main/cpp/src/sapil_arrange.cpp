@@ -65,7 +65,8 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
             obj->clear_instances();
 
             for (const auto& pos : positions) {
-                auto* inst = obj->add_instance(trafo);
+                auto* inst = obj->add_instance();
+                inst->set_transformation(trafo);
                 inst->set_offset(Slic3r::Vec3d(
                     static_cast<double>(pos.first),
                     static_cast<double>(pos.second),

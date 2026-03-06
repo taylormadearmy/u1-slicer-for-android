@@ -14,6 +14,7 @@ import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.gcode.GcodeParser
+import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.network.MakerWorldClient
 import com.u1.slicer.data.ModelInfo
@@ -369,14 +370,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
             wipeTowerEnabled = extCount > 1
         )
-        // Store per-extruder colors for G-code viewers: map slot index → slot color
+        // Store per-extruder colors for G-code viewers, indexed by physical slot.
+        // After tool remapping the G-code uses physical T-indices (e.g. T2, T3),
+        // so the color list must have entries at those positions.
         val detectedColors = _threeMfInfo.value?.detectedColors ?: emptyList()
-        val slotColors = usedSlots.map { slotIndex ->
-            extruderPresets.firstOrNull { it.index == slotIndex }?.color
-                ?: detectedColors.getOrElse(slotIndex) { "#808080" }
+        val fullColors = MutableList(4) { "" }  // 4 slots on Snapmaker U1
+        usedSlots.forEachIndexed { compactIdx, slotIndex ->
+            fullColors[slotIndex] = extruderPresets.firstOrNull { it.index == slotIndex }?.color
+                ?: detectedColors.getOrElse(compactIdx) { "#808080" }
         }
-        _activeExtruderColors.value = slotColors
-        Log.i("SlicerVM", "Applied color mapping: $extCount extruders used=${usedSlots}, remap=${toolRemapSlots}, temps=${temps.toList()}, colors=$slotColors")
+        _activeExtruderColors.value = fullColors
+        Log.i("SlicerVM", "Applied color mapping: $extCount extruders used=${usedSlots}, remap=${toolRemapSlots}, temps=${temps.toList()}, colors=$fullColors")
     }
 
     fun dismissMultiColorDialog() {
@@ -433,11 +437,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val cfg = _config.value
         val extCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
-        // targetExtruderCount covers all slots up to the highest used one (e.g. 4 for E3+E4).
-        // OrcaSlicer uses this to set is_extruder_used[N] in start G-code template macros.
-        val targetCount = if (usedSlots != null) (usedSlots.maxOrNull()!! + 1) else extCount
-        // 1-based remap for model_settings.config: compact extruder → physical slot
-        val extruderRemap = usedSlots?.mapIndexed { i, slot -> (i + 1) to (slot + 1) }?.toMap()
+        // Always use compact extruder count (= number of used extruders, not physical slot max).
+        // OrcaSlicer's toolpath optimizer scales badly with extruder count — using maxSlot+1
+        // (e.g. 4 for E3+E4) causes OOM even on small models.  Compact mode slices as N-extruder
+        // and we post-process the G-code to remap T-commands + SM indices to physical slots.
+        val targetCount = if (usedSlots != null) usedSlots.size else extCount
+        // No extruder remap in the 3MF — keep compact numbering (1,2,…).
+        // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.
+        val extruderRemap: Map<Int, Int>? = null
         val sourceConfig = if (info.isBambu) {
             java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
         } else null
@@ -451,21 +458,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null): Map<String, Any> {
-        val temps: MutableList<String>
-        if (usedSlots != null && (usedSlots.maxOrNull() ?: 0) >= extCount) {
-            // Non-identity slot mapping (e.g. E3+E4): build array of size maxSlot+1 with
-            // "0" for unused slots and actual temps at the physical slot positions.
-            val targetCount = (usedSlots.maxOrNull()!! + 1)
-            temps = MutableList(targetCount) { "0" }
-            usedSlots.forEachIndexed { compactIdx, slotIdx ->
-                temps[slotIdx] = (cfg.extruderTemps.getOrElse(compactIdx) { cfg.nozzleTemp }).toString()
-            }
+        // Always use compact temp arrays (one entry per used extruder, in order).
+        // Non-identity slot mapping (E3+E4) is handled by G-code post-processing,
+        // not by padding the array to physical slot positions.
+        val temps: MutableList<String> = if (cfg.extruderTemps.size >= extCount) {
+            cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
         } else {
-            temps = if (cfg.extruderTemps.size >= extCount) {
-                cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
-            } else {
-                MutableList(extCount) { cfg.nozzleTemp.toString() }
-            }
+            MutableList(extCount) { cfg.nozzleTemp.toString() }
         }
         return mapOf(
             "layer_height" to cfg.layerHeight.toString(),
@@ -524,6 +523,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // causing SIGSEGV in export_gcode for multi-object models.
                 val path = currentModelPath
                 if (path != null) {
+                    native.clearModel()
                     native.loadModel(path)
                     Log.i("SlicerVM", "Reloaded model for clean state before placement")
                 }
@@ -543,6 +543,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             native.progressListener = null
 
             if (result != null && result.success) {
+                // Post-process G-code to remap compact tool indices to physical slots.
+                // OrcaSlicer sliced in compact mode (T0,T1,…) — remap to actual printer
+                // slots (e.g. T2,T3 for E3+E4) and fix SM_ command EXTRUDER/INDEX params.
+                val slots = toolRemapSlots
+                if (slots != null) {
+                    GcodeToolRemapper.remap(result.gcodePath, slots)
+                    Log.i("SlicerVM", "Post-processed G-code: remapped tools to physical slots $slots")
+                }
                 _state.value = SlicerState.SliceComplete(result)
                 _gcodePreview.value = native.getGcodePreview(50)
                 // Parse G-code for layer viewer

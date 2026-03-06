@@ -27,12 +27,18 @@ fun GcodeViewer3DScreen(
     var minLayer by remember { mutableIntStateOf(0) }
     var maxLayer by remember { mutableIntStateOf(totalLayers - 1) }
 
-    // Apply colors first (pending on GL thread), then queue gcode upload.
-    // Single effect guarantees ordering — colors are baked into VBOs at upload time.
+    // Set colors + upload gcode atomically on the GL thread.
+    // Using queueEvent ensures both run in the same frame — no race where VBOs
+    // get built with default colors before the real extruder colors are applied.
     LaunchedEffect(parsedGcode, extruderColors, viewerView) {
         val v = viewerView ?: return@LaunchedEffect
-        if (extruderColors.isNotEmpty()) v.setExtruderColors(extruderColors)
-        v.setGcode(parsedGcode)
+        val colors = extruderColors
+        val gcode = parsedGcode
+        v.queueEvent {
+            if (colors.isNotEmpty()) v.renderer.setExtruderColors(colors)
+            v.renderer.uploadGcode(gcode)
+        }
+        v.requestRender()
     }
 
     Scaffold(
@@ -83,7 +89,9 @@ fun GcodeViewer3DScreen(
                 factory = { ctx ->
                     GcodeViewerView(ctx).also { view ->
                         viewerView = view
-                        view.setGcode(parsedGcode)
+                        // Don't upload gcode here — the LaunchedEffect handles both
+                        // colors and gcode atomically to avoid a race where VBOs are
+                        // built with default colors before the real colors are set.
                     }
                 },
                 modifier = Modifier.fillMaxWidth().weight(1f)
