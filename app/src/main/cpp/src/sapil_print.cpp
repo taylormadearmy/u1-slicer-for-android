@@ -163,11 +163,15 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Apply the config to the print
         print.apply(model, dpc);
 
-        // Set up progress callback
-        print.set_status_callback([&progress](const Slic3r::PrintBase::SlicingStatus& status) {
+        // Set up progress callback — monotonic (never goes backwards).
+        // PrusaSlicer resets status.percent to 0 at each new step, so we
+        // track the high-water mark and only advance forward.
+        int max_pct_seen = 15;
+        print.set_status_callback([&progress, &max_pct_seen](const Slic3r::PrintBase::SlicingStatus& status) {
             if (progress) {
-                int pct = 10 + (int)(status.percent * 0.82); // Map 0-100 to 10-90 approx
-                progress(pct, status.text);
+                int pct = 10 + (int)(status.percent * 0.75); // Map 0-100 to 10-85
+                if (pct > max_pct_seen) max_pct_seen = pct;
+                progress(max_pct_seen, status.text);
             }
         });
 
@@ -232,6 +236,8 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     num = 0;
                 }
             }
+            // Guard against INT_MAX overflow from PrusaSlicer (multi-extruder bug)
+            if (total_seconds > 86400.0f * 365.0f) total_seconds = 0.0f;
             result.estimated_time_seconds = total_seconds;
         }
 

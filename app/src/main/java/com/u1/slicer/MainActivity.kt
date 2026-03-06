@@ -113,7 +113,6 @@ class MainActivity : ComponentActivity() {
                             onNavigateJobs = { navController.navigate(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
                             onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
-                            onNavigatePlacementViewer = { navController.navigate(Routes.PLACEMENT_VIEWER) },
                             onShareGcode = { viewModel.shareGcode() },
                             onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") }
                         )
@@ -161,7 +160,6 @@ fun SlicerScreen(
     onNavigateJobs: () -> Unit,
     onNavigateGcodeViewer3D: () -> Unit,
     onNavigateModelViewer: () -> Unit,
-    onNavigatePlacementViewer: () -> Unit,
     onShareGcode: () -> Unit,
     onSaveGcode: () -> Unit
 ) {
@@ -338,27 +336,28 @@ fun SlicerScreen(
                             onReassign = { viewModel.showMultiColorReassign() }
                         )
                     }
-                    // Inline 3D model preview (STL and 3MF)
+                    // Inline 3D model preview with interactive placement
                     val modelPath = viewModel.currentModelPath
                     if (modelPath != null && (
                         modelPath.endsWith(".stl", ignoreCase = true) ||
                         modelPath.endsWith(".3mf", ignoreCase = true)
                     )) {
+                        val positions = viewModel.getPlacementPositions()
                         InlineModelPreview(
                             modelFilePath = modelPath,
                             onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
-                                onNavigateModelViewer else ({})
+                                onNavigateModelViewer else ({}),
+                            objectPositions = positions,
+                            modelSizeX = s.info.sizeX,
+                            modelSizeY = s.info.sizeY,
+                            wipeTowerEnabled = config.wipeTowerEnabled,
+                            wipeTowerX = config.wipeTowerX,
+                            wipeTowerY = config.wipeTowerY,
+                            wipeTowerWidth = config.wipeTowerWidth,
+                            onPositionsChanged = { pos, towerPos ->
+                                viewModel.applyPlacementPositions(pos, towerPos)
+                            }
                         )
-                    }
-                    // Arrange button — always available when model is loaded
-                    OutlinedButton(
-                        onClick = onNavigatePlacementViewer,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Default.GridOn, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Arrange on Bed")
                     }
                     ConfigCard(config, viewModel::updateConfig, copyCount, viewModel::setCopyCount)
                     SliceButton(onClick = { viewModel.startSlicing() })
@@ -762,6 +761,31 @@ fun SliceButton(onClick: () -> Unit) {
 
 @Composable
 fun SlicingProgressCard(progress: Int, stage: String) {
+    // Track elapsed time so user knows slicing is still active even when
+    // PrusaSlicer doesn't report sub-step progress for a while.
+    var elapsedSeconds by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1000L)
+            elapsedSeconds++
+        }
+    }
+    fun formatTime(totalSec: Int): String {
+        val m = totalSec / 60
+        val s = totalSec % 60
+        return if (m > 0) "${m}m ${s}s" else "${s}s"
+    }
+    val elapsed = remember(elapsedSeconds) { formatTime(elapsedSeconds) }
+    // Estimate remaining time from elapsed + progress. Wait until we have
+    // meaningful data (>5% progress and >5s elapsed) to avoid wild swings.
+    val estimate = remember(elapsedSeconds, progress) {
+        if (progress > 5 && elapsedSeconds > 5) {
+            val totalEstSec = (elapsedSeconds * 100.0 / progress).toInt()
+            val remainingSec = (totalEstSec - elapsedSeconds).coerceAtLeast(0)
+            "~${formatTime(remainingSec)} remaining"
+        } else null
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -770,19 +794,47 @@ fun SlicingProgressCard(progress: Int, stage: String) {
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(
-            modifier = Modifier.padding(24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            CircularProgressIndicator(
-                progress = progress / 100f,
-                modifier = Modifier.size(80.dp),
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 6.dp
-            )
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(80.dp)) {
+                // Indeterminate ring behind the determinate one — always spinning
+                // so user sees motion even when % is "stuck" on a long step.
+                CircularProgressIndicator(
+                    modifier = Modifier.size(80.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    strokeWidth = 6.dp
+                )
+                CircularProgressIndicator(
+                    progress = { progress / 100f },
+                    modifier = Modifier.size(80.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 6.dp
+                )
+            }
             Text("$progress%", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            Text(stage, style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+            Text(
+                stage,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (estimate != null) {
+                Text(
+                    estimate,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+            Text(
+                "Elapsed: $elapsed",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+            )
         }
     }
 }
@@ -1040,10 +1092,28 @@ fun ErrorCard(message: String, onRetry: () -> Unit) {
 @Composable
 fun InlineModelPreview(
     modelFilePath: String,
-    onFullScreen: () -> Unit
+    onFullScreen: () -> Unit,
+    // Placement mode
+    objectPositions: FloatArray? = null,
+    modelSizeX: Float = 0f,
+    modelSizeY: Float = 0f,
+    wipeTowerEnabled: Boolean = false,
+    wipeTowerX: Float = 0f,
+    wipeTowerY: Float = 0f,
+    wipeTowerWidth: Float = 60f,
+    wipeTowerDepth: Float = 60f,
+    onPositionsChanged: ((FloatArray, Pair<Float, Float>) -> Unit)? = null
 ) {
     var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
+    val placementEnabled = objectPositions != null && onPositionsChanged != null
+
+    // Mutable copies of positions for drag interaction
+    val objPositions = remember(objectPositions) {
+        objectPositions?.copyOf() ?: floatArrayOf()
+    }
+    var towerX by remember(wipeTowerX) { mutableFloatStateOf(wipeTowerX) }
+    var towerY by remember(wipeTowerY) { mutableFloatStateOf(wipeTowerY) }
 
     LaunchedEffect(modelFilePath) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -1065,6 +1135,45 @@ fun InlineModelPreview(
         if (m != null && v != null) v.setMesh(m)
     }
 
+    // Update renderer with placement data
+    LaunchedEffect(viewerView, placementEnabled, objPositions, towerX, towerY) {
+        val v = viewerView ?: return@LaunchedEffect
+        if (placementEnabled) {
+            v.placementMode = true
+            v.renderer.instancePositions = objPositions
+            if (wipeTowerEnabled) {
+                v.renderer.wipeTower = com.u1.slicer.viewer.ModelRenderer.WipeTowerInfo(
+                    towerX, towerY, wipeTowerWidth, wipeTowerDepth
+                )
+            }
+            v.onObjectMoved = { index, dx, dy ->
+                val count = objPositions.size / 2
+                if (index < count) {
+                    // Move object
+                    val i = index
+                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, 270f - modelSizeX)
+                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, 270f - modelSizeY)
+                    v.renderer.instancePositions = objPositions.copyOf()
+                    onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY))
+                } else {
+                    // Move wipe tower
+                    towerX = (towerX + dx).coerceIn(0f, 270f - wipeTowerWidth)
+                    towerY = (towerY + dy).coerceIn(0f, 270f - wipeTowerDepth)
+                    v.renderer.wipeTower = com.u1.slicer.viewer.ModelRenderer.WipeTowerInfo(
+                        towerX, towerY, wipeTowerWidth, wipeTowerDepth
+                    )
+                    onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY))
+                }
+            }
+            v.requestRender()
+        } else {
+            v.placementMode = false
+            v.renderer.instancePositions = null
+            v.renderer.wipeTower = null
+            v.onObjectMoved = null
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1072,7 +1181,7 @@ fun InlineModelPreview(
     ) {
         Box(modifier = Modifier
             .fillMaxWidth()
-            .height(220.dp)
+            .height(if (placementEnabled) 300.dp else 220.dp)
         ) {
             androidx.compose.ui.viewinterop.AndroidView(
                 factory = { ctx ->
@@ -1094,6 +1203,17 @@ fun InlineModelPreview(
                     Icons.Default.Fullscreen,
                     "Full screen",
                     tint = Color.White.copy(alpha = 0.8f)
+                )
+            }
+            // Placement mode indicator
+            if (placementEnabled) {
+                Text(
+                    "Drag to move objects",
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.7f)
                 )
             }
         }

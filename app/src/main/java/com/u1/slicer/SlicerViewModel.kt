@@ -372,7 +372,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         customObjectPositions = null // reset custom positions when count changes
     }
 
-    /** Called from PlacementViewerScreen when user confirms positions. */
+    /** Called from inline 3D placement viewer when user drags objects. */
     fun applyPlacementPositions(positions: FloatArray, wipeTowerPos: Pair<Float, Float>) {
         customObjectPositions = positions
         customWipeTowerPos = wipeTowerPos
@@ -384,7 +384,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         Log.i("SlicerVM", "Custom placement applied: ${positions.size / 2} objects, tower=(${wipeTowerPos.first},${wipeTowerPos.second})")
     }
 
-    /** Returns initial positions for PlacementViewerScreen (custom or auto-calculated). */
+    /** Returns initial positions for inline 3D placement (custom or auto-calculated). */
     fun getPlacementPositions(): FloatArray {
         customObjectPositions?.let { return it }
         val mi = lastModelInfo ?: return floatArrayOf(5f, 5f)
@@ -446,16 +446,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startSlicing() {
         viewModelScope.launch(Dispatchers.IO) {
+            var maxPct = 0
             native.progressListener = { pct, stage ->
-                _state.value = SlicerState.Slicing(pct, stage)
+                if (pct > maxPct) maxPct = pct
+                _state.value = SlicerState.Slicing(maxPct, stage)
             }
 
             _state.value = SlicerState.Slicing(0, "Preparing...")
 
             // Apply object positions (custom from placement viewer, or auto grid if copies > 1)
             val copies = _copyCount.value
+            // Apply object positions (custom from placement viewer, or auto grid if copies > 1)
             val custom = customObjectPositions
             if (custom != null) {
+                // Reload model from file to ensure clean state — modifying the global
+                // model's instance offsets can corrupt PrusaSlicer's internal state,
+                // causing SIGSEGV in export_gcode for multi-object models.
+                val path = currentModelPath
+                if (path != null) {
+                    native.loadModel(path)
+                    Log.i("SlicerVM", "Reloaded model for clean state before placement")
+                }
                 native.setModelInstances(custom)
                 Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances")
             } else if (copies > 1) {

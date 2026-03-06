@@ -59,7 +59,19 @@ android {
     tasks.whenTaskAdded { task ->
         if (task.name.startsWith("buildCMakeDebug") || task.name.startsWith("buildCMakeRelWithDebInfo")) {
             task.doLast {
-                def src = new File("${projectDir}/build/intermediates/cmake/debug/obj/arm64-v8a/libprusaslicer-jni.so")
+                // Try new Gradle path first, fall back to legacy path
+                def src = new File("${projectDir}/build/intermediates/cxx/Debug/165e6b6y/obj/arm64-v8a/libprusaslicer-jni.so")
+                if (!src.exists()) {
+                    // Walk the cxx/Debug directory to find the .so regardless of hash
+                    def cxxDir = new File("${projectDir}/build/intermediates/cxx/Debug")
+                    if (cxxDir.exists()) {
+                        cxxDir.eachDirRecurse { dir ->
+                            def candidate = new File(dir, "libprusaslicer-jni.so")
+                            if (candidate.exists() && candidate.length() > 1_000_000) src = candidate
+                        }
+                    }
+                }
+                if (!src.exists()) src = new File("${projectDir}/build/intermediates/cmake/debug/obj/arm64-v8a/libprusaslicer-jni.so")
                 def dst = new File("${projectDir}/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so")
                 if (src.exists()) {
                     dst.parentFile.mkdirs()
