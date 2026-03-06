@@ -329,26 +329,36 @@ class ProfileEmbedder(private val context: Context) {
     }
 
     /**
-     * Serialize config to OrcaSlicer INI format (key = value, semicolon-separated lists).
+     * Serialize config to OrcaSlicer JSON format (required by load_from_json in bbs_3mf.cpp).
      */
     fun serializeConfig(config: Map<String, Any>): String {
-        val sb = StringBuilder()
-        for ((key, value) in config.toSortedMap()) {
+        val json = org.json.JSONObject()
+        for ((key, value) in config) {
             when (value) {
-                is List<*> -> sb.appendLine("$key = ${value.joinToString(";")}")
-                else -> sb.appendLine("$key = $value")
+                is List<*> -> {
+                    val arr = org.json.JSONArray()
+                    value.forEach { arr.put(it.toString()) }
+                    json.put(key, arr)
+                }
+                else -> json.put(key, value.toString())
             }
         }
-        return sb.toString()
+        return json.toString(2)
     }
 
     /**
      * Parse an existing project_settings.config from a 3MF file.
+     * Bambu/OrcaSlicer 3MF config is JSON format.
      */
     fun parseSourceConfig(zipFile: ZipFile): Map<String, Any>? {
         val entry = zipFile.getEntry("Metadata/project_settings.config") ?: return null
         val content = zipFile.getInputStream(entry).bufferedReader().readText()
-        return BambuSanitizer.parseIniConfigPublic(content)
+        return try {
+            jsonToMap(org.json.JSONObject(content))
+        } catch (e: Exception) {
+            Log.w(TAG, "Source config is not valid JSON, skipping: ${e.message}")
+            null
+        }
     }
 
     /**
@@ -381,29 +391,13 @@ class ProfileEmbedder(private val context: Context) {
                     val content = srcZip.getInputStream(entry).readBytes()
 
                     when {
-                        // Sanitize model_settings.config
-                        name == "Metadata/model_settings.config" -> {
-                            val sanitized = BambuSanitizer.sanitizeModelSettingsPublic(content)
-                            destZip.putNextEntry(ZipEntry(name))
-                            destZip.write(sanitized)
-                            destZip.closeEntry()
-                        }
-
-                        // Convert mmu_segmentation in .model files
+                        // Convert mmu_segmentation in .model files (only when paint data present)
                         name.endsWith(".model") && info.hasPaintData -> {
                             var text = String(content)
                             text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
                             text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
                             destZip.putNextEntry(ZipEntry(name))
                             destZip.write(text.toByteArray())
-                            destZip.closeEntry()
-                        }
-
-                        // Strip non-printable build items (Bambu hidden copies)
-                        name.endsWith("3dmodel.model") && info.isBambu -> {
-                            val cleaned = stripNonPrintableItems(content)
-                            destZip.putNextEntry(ZipEntry(name))
-                            destZip.write(cleaned)
                             destZip.closeEntry()
                         }
 
@@ -427,16 +421,4 @@ class ProfileEmbedder(private val context: Context) {
         return outputFile
     }
 
-    /**
-     * Strip build items with printable="0" (Bambu hidden copies).
-     */
-    private fun stripNonPrintableItems(modelContent: ByteArray): ByteArray {
-        var text = String(modelContent)
-        // Remove <item ... printable="0" ... /> entries
-        text = text.replace(
-            Regex("""<item\b[^>]*\bprintable="0"[^>]*/?>"""),
-            ""
-        )
-        return text.toByteArray()
-    }
 }

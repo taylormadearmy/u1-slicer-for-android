@@ -9,6 +9,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.u1.slicer.bambu.BambuSanitizer
+import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.FilamentProfile
@@ -38,6 +39,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val settingsRepo = container.settingsRepository
     private val filamentDao = container.filamentDao
     private val sliceJobDao = container.sliceJobDao
+    private val profileEmbedder by lazy { ProfileEmbedder(getApplication()) }
 
     // ---- UI State ----
     sealed class SlicerState {
@@ -164,7 +166,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 Log.i("SlicerVM", "MakerWorld 3MF: bambu=${info.isBambu}, multiPlate=${info.isMultiPlate}")
 
-                val sanitized = BambuSanitizer.process(result.file, context.filesDir)
+                val sanitized = embedProfile(result.file, info, context)
 
                 if (info.isMultiPlate && info.plates.size > 1) {
                     currentModelFile = sanitized
@@ -235,8 +237,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         "colors=${info.detectedColors.size}, extruders=${info.detectedExtruderCount}, " +
                         "paint=${info.hasPaintData}, toolChanges=${info.hasLayerToolChanges}")
 
-                    // Sanitize Bambu files
-                    val sanitized = BambuSanitizer.process(file, context.filesDir)
+                    // Embed Snapmaker profile and strip incompatible Bambu metadata
+                    val sanitized = embedProfile(file, info, context)
 
                     // Show plate selector for multi-plate files
                     if (info.isMultiPlate && info.plates.size > 1) {
@@ -397,6 +399,49 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.saveSliceConfig(_config.value)
         }
+    }
+
+    /**
+     * Build Snapmaker profile config and embed it into the 3MF file.
+     * Replaces BambuSanitizer.process() for the OrcaSlicer backend.
+     */
+    private fun embedProfile(file: java.io.File, info: ThreeMfInfo, context: android.app.Application): java.io.File {
+        val cfg = _config.value
+        val extCount = cfg.extruderCount.coerceAtLeast(1)
+        val sourceConfig = if (info.isBambu) {
+            java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
+        } else null
+        val embeddedConfig = profileEmbedder.buildConfig(
+            info = info,
+            sourceConfig = sourceConfig,
+            overrides = buildProfileOverrides(cfg, extCount),
+            targetExtruderCount = extCount
+        )
+        return profileEmbedder.embed(file, embeddedConfig, context.filesDir, info)
+    }
+
+    private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int): Map<String, Any> {
+        val temps = if (cfg.extruderTemps.size >= extCount) {
+            cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
+        } else {
+            MutableList(extCount) { cfg.nozzleTemp.toString() }
+        }
+        return mapOf(
+            "layer_height" to cfg.layerHeight.toString(),
+            "initial_layer_print_height" to cfg.firstLayerHeight.toString(),
+            "wall_loops" to cfg.perimeters.toString(),
+            "top_shell_layers" to cfg.topSolidLayers.toString(),
+            "bottom_shell_layers" to cfg.bottomSolidLayers.toString(),
+            "sparse_infill_density" to "${(cfg.fillDensity * 100).toInt()}%",
+            "travel_speed" to cfg.travelSpeed.toString(),
+            "nozzle_temperature" to temps,
+            "nozzle_temperature_initial_layer" to temps.toMutableList(),
+            "bed_temperature" to mutableListOf(cfg.bedTemp.toString()),
+            "bed_temperature_initial_layer" to mutableListOf(cfg.bedTemp.toString()),
+            "enable_support" to if (cfg.supportEnabled) "1" else "0",
+            "support_threshold_angle" to cfg.supportAngle.toInt().toString(),
+            "brim_width" to cfg.brimWidth.toString()
+        )
     }
 
     fun startSlicing() {

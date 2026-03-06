@@ -50,7 +50,8 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
         Slic3r::DynamicPrintConfig config;
         Slic3r::ConfigSubstitutionContext config_substitutions(Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
 
-        g_model = Slic3r::Model::read_from_file(filepath, &config, &config_substitutions);
+        g_model = Slic3r::Model::read_from_file(filepath, &config, &config_substitutions,
+            Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::AddDefaultInstances);
 
         if (g_model.objects.empty()) {
             SAPIL_LOGE("No objects found in file");
