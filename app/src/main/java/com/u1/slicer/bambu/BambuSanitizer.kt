@@ -100,8 +100,8 @@ object BambuSanitizer {
                     val bambuObjectParts = mutableMapOf<String, MutableList<PartInfo>>()
                     // Buffer the main model file for restructuring after we know the extruder assignments
                     var mainModelContent: ByteArray? = null
-                    // Buffer other .model files so we can inline mesh data during restructuring
-                    val componentFiles = mutableMapOf<String, ByteArray>()
+                    // Track component file names — content loaded on-demand from srcZip to reduce memory
+                    val componentFileNames = mutableListOf<String>()
                     // Buffer model rels file — only dropped when restructuring inlines meshes
                     var modelRelsContent: ByteArray? = null
 
@@ -154,9 +154,8 @@ object BambuSanitizer {
                                     mainModelContent = content
                                     // Don't write yet — written after restructuring below
                                 } else {
-                                    componentFiles[name] = content
-                                    // Don't write yet — component files are only needed if
-                                    // restructuring doesn't inline their meshes (written below)
+                                    componentFileNames.add(name)
+                                    // Don't read content yet — loaded on-demand below to save memory
                                 }
                             }
 
@@ -192,6 +191,15 @@ object BambuSanitizer {
                         val hasMultiColorComponents = bambuObjectParts.values.any { parts ->
                             parts.map { it.extruder }.distinct().size > 1
                         }
+                        // Load component files on-demand only when restructuring needs them
+                        val componentFiles = if (hasMultiColorComponents) {
+                            componentFileNames.associateWith { name ->
+                                srcZip.getEntry(name)?.let { srcZip.getInputStream(it).readBytes() } ?: ByteArray(0)
+                            }
+                        } else {
+                            emptyMap()
+                        }
+
                         val (finalModelBytes, newObjectExtruders) = if (hasMultiColorComponents) {
                             restructureForMultiColor(mainModelContent!!, bambuObjectParts, componentFiles)
                         } else {
@@ -214,15 +222,18 @@ object BambuSanitizer {
                         // - If restructured (meshes inlined): skip component files + rels entirely
                         // - If not restructured: write them (needed for component refs)
                         if (!wasRestructured) {
-                            for ((path, data) in componentFiles) {
-                                writeStored(destZip, path, cleanModelXmlPreserveComponentRefs(convertMmuSegmentation(data)))
+                            // Copy component files from source ZIP — stream without full decompression
+                            // to avoid OOM on large files (e.g. 27MB Turtle → 150MB uncompressed)
+                            for (path in componentFileNames) {
+                                val srcEntry = srcZip.getEntry(path) ?: continue
+                                copyZipEntry(srcZip, srcEntry, destZip)
                             }
                             // Write the model rels file so PrusaSlicer can discover component files
                             if (modelRelsContent != null) {
                                 writeStored(destZip, "3D/_rels/3dmodel.model.rels", modelRelsContent!!)
                             }
                         } else {
-                            Log.d(TAG, "Skipping ${componentFiles.size} component file(s) — meshes inlined")
+                            Log.d(TAG, "Skipping ${componentFileNames.size} component file(s) — meshes inlined")
                         }
 
                         // Override bambuObjectParts with the new per-object extruder assignments
@@ -745,7 +756,7 @@ object BambuSanitizer {
         text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
         text = text.replace(Regex("""\s+p:path="[^"]*""""), "")
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
-        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*">[^<]*</metadata>\r?\n?"""), "")
+        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
         return text.toByteArray()
     }
 
@@ -755,7 +766,7 @@ object BambuSanitizer {
         text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
         text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
-        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*">[^<]*</metadata>\r?\n?"""), "")
+        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
         return text.toByteArray()
     }
 
@@ -943,6 +954,67 @@ object BambuSanitizer {
      * Extract a single plate from a multi-plate 3MF by marking other plates as non-printable.
      * This preserves all Bambu metadata links.
      */
+    /**
+     * Stream-copy a component .model ZIP entry as STORED, cleaning just the XML
+     * header to remove Bambu extensions. Uses temp file + two-pass streaming to
+     * avoid OOM on 100MB+ entries.
+     */
+    private fun copyZipEntry(srcZip: ZipFile, srcEntry: ZipEntry, destZip: ZipOutputStream) {
+        val tmpFile = File.createTempFile("3mf_component_", ".model")
+        try {
+            // Pass 1: stream-clean header and write to temp file
+            tmpFile.outputStream().use { out ->
+                srcZip.getInputStream(srcEntry).use { input ->
+                    var headerCleaned = false
+                    val buf = ByteArray(8192)
+                    var n: Int
+                    while (input.read(buf).also { n = it } >= 0) {
+                        if (!headerCleaned) {
+                            var chunk = String(buf, 0, n)
+                            chunk = chunk.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
+                            chunk = chunk.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
+                            chunk = chunk.replace(Regex("""\s+p:UUID="[^"]*""""), "")
+                            out.write(chunk.toByteArray())
+                            headerCleaned = true
+                        } else {
+                            out.write(buf, 0, n)
+                        }
+                    }
+                }
+            }
+
+            // Pass 2: compute CRC + size from temp file
+            val crc = CRC32()
+            var totalSize = 0L
+            tmpFile.inputStream().use { input ->
+                val buf = ByteArray(8192)
+                var n: Int
+                while (input.read(buf).also { n = it } >= 0) {
+                    crc.update(buf, 0, n)
+                    totalSize += n
+                }
+            }
+
+            // Pass 3: write STORED entry from temp file
+            val entry = ZipEntry(srcEntry.name)
+            entry.method = ZipEntry.STORED
+            entry.size = totalSize
+            entry.compressedSize = totalSize
+            entry.crc = crc.value
+            destZip.putNextEntry(entry)
+            tmpFile.inputStream().use { input ->
+                val buf = ByteArray(8192)
+                var n: Int
+                while (input.read(buf).also { n = it } >= 0) {
+                    destZip.write(buf, 0, n)
+                }
+            }
+            destZip.closeEntry()
+        } finally {
+            tmpFile.delete()
+        }
+    }
+
     /** Write a ZIP entry using STORED (no compression) method — required by 3MF spec. */
     private fun writeStored(zip: ZipOutputStream, name: String, data: ByteArray) {
         val entry = ZipEntry(name)
