@@ -110,7 +110,6 @@ class MainActivity : ComponentActivity() {
                             onNavigatePrinter = { navController.navigate(Routes.PRINTER) },
                             onNavigateFilaments = { navController.navigate(Routes.FILAMENTS) },
                             onNavigateJobs = { navController.navigate(Routes.JOBS) },
-                            onNavigateGcodeViewer = { navController.navigate(Routes.GCODE_VIEWER) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
                             onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
                             onNavigatePlacementViewer = { navController.navigate(Routes.PLACEMENT_VIEWER) },
@@ -159,7 +158,6 @@ fun SlicerScreen(
     onNavigatePrinter: () -> Unit,
     onNavigateFilaments: () -> Unit,
     onNavigateJobs: () -> Unit,
-    onNavigateGcodeViewer: () -> Unit,
     onNavigateGcodeViewer3D: () -> Unit,
     onNavigateModelViewer: () -> Unit,
     onNavigatePlacementViewer: () -> Unit,
@@ -358,28 +356,14 @@ fun SlicerScreen(
                         onSendToPrinter = onNavigatePrinter
                     )
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
-                        Row(
+                        OutlinedButton(
+                            onClick = onNavigateGcodeViewer3D,
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = onNavigateGcodeViewer,
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.Layers, null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("2D Layers")
-                            }
-                            OutlinedButton(
-                                onClick = onNavigateGcodeViewer3D,
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.ViewInAr, null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("3D View")
-                            }
+                            Icon(Icons.Default.ViewInAr, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("3D G-code View")
                         }
                     }
                     if (gcodePreview.isNotEmpty()) {

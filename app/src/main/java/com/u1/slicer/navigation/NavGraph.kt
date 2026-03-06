@@ -11,7 +11,7 @@ import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.printer.PrinterViewModel
 import com.u1.slicer.ui.FilamentScreen
 import com.u1.slicer.ui.GcodeViewer3DScreen
-import com.u1.slicer.ui.GcodeViewerScreen
+
 import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.ModelViewerScreen
 import com.u1.slicer.ui.PlacementViewerScreen
@@ -24,7 +24,6 @@ object Routes {
     const val PRINTER = "printer"
     const val FILAMENTS = "filaments"
     const val JOBS = "jobs"
-    const val GCODE_VIEWER = "gcode_viewer"
     const val GCODE_VIEWER_3D = "gcode_viewer_3d"
     const val MODEL_VIEWER = "model_viewer"
     const val PLACEMENT_VIEWER = "placement_viewer"
@@ -79,15 +78,6 @@ fun U1NavGraph(
                 onShare = { viewModel.shareJobGcode(it) },
                 onBack = { navController.popBackStack() }
             )
-        }
-        composable(Routes.GCODE_VIEWER) {
-            val parsedGcode by viewModel.parsedGcode.collectAsState()
-            if (parsedGcode != null) {
-                GcodeViewerScreen(
-                    parsedGcode = parsedGcode!!,
-                    onBack = { navController.popBackStack() }
-                )
-            }
         }
         composable(Routes.GCODE_VIEWER_3D) {
             val parsedGcode by viewModel.parsedGcode.collectAsState()
