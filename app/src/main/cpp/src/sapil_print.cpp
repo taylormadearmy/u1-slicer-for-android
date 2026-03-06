@@ -5,10 +5,11 @@
 #include <fstream>
 #include <sstream>
 
-// PrusaSlicer includes
+// Slicer includes
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/GCode.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Config.hpp"
 
@@ -184,7 +185,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Generate G-code — use the same directory as the loaded model
         extern std::string getFilesDir();
         std::string output_path = getFilesDir() + "/output.gcode";
-        print.export_gcode(output_path, nullptr, nullptr);
+        // OrcaSlicer dereferences result without null check, so provide a real object
+        Slic3r::GCodeProcessorResult gcode_result;
+        print.export_gcode(output_path, &gcode_result, nullptr);
 
         if (progress) progress(95, "Reading results");
 
