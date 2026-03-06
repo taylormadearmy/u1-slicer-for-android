@@ -751,6 +751,30 @@ object BambuSanitizer {
         return text.toByteArray()
     }
 
+    // ---- Model XML Cleanup (used by process()) ----
+
+    private fun cleanModelXml(content: ByteArray): ByteArray {
+        var text = String(content)
+        text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
+        text = text.replace(Regex("""\s+xmlns:p="[^"]*""""), "")
+        text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
+        text = text.replace(Regex("""\s+p:path="[^"]*""""), "")
+        text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
+        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
+        text = text.replace("""type="other"""", """type="model"""")
+        return text.toByteArray()
+    }
+
+    private fun cleanModelXmlPreserveComponentRefs(content: ByteArray): ByteArray {
+        var text = String(content)
+        text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
+        text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
+        text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
+        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
+        text = text.replace("""type="other"""", """type="model"""")
+        return text.toByteArray()
+    }
+
     // ---- INI Config Helpers (public accessors for ProfileEmbedder) ----
 
     fun parseIniConfigPublic(content: String) = parseIniConfig(content)
