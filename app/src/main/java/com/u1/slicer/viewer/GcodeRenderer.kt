@@ -78,6 +78,12 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         gridShader = ShaderProgram(context, "shaders/grid.vert", "shaders/grid.frag")
 
         setupGrid()
+
+        // Default camera: center on 270mm bed
+        camera.setTarget(135f, 135f, 0f)
+        camera.distance = 400f
+        camera.elevation = 35f
+        camera.azimuth = -45f
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {

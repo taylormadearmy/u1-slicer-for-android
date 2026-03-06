@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -304,6 +305,23 @@ fun SlicerScreen(
                         onImportUrl = { showImportDialog = true }
                     )
                 }
+                is SlicerViewModel.SlicerState.Loading -> {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            Text("Loading ${s.filename}…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                        }
+                    }
+                }
                 is SlicerViewModel.SlicerState.ModelLoaded -> {
                     ModelInfoCard(s.info)
                     if (threeMfInfo != null && threeMfInfo!!.isBambu) {
@@ -320,17 +338,12 @@ fun SlicerScreen(
                             onReassign = { viewModel.showMultiColorReassign() }
                         )
                     }
-                    // 3D Preview button (STL only for now)
+                    // Inline 3D model preview (STL only)
                     if (viewModel.currentModelPath?.endsWith(".stl", ignoreCase = true) == true) {
-                        OutlinedButton(
-                            onClick = onNavigateModelViewer,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Default.ViewInAr, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("3D Preview")
-                        }
+                        InlineModelPreview(
+                            modelFilePath = viewModel.currentModelPath!!,
+                            onFullScreen = onNavigateModelViewer
+                        )
                     }
                     // Arrange button — always available when model is loaded
                     OutlinedButton(
@@ -355,15 +368,29 @@ fun SlicerScreen(
                         onSave = onSaveGcode,
                         onSendToPrinter = onNavigatePrinter
                     )
-                    if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         OutlinedButton(
-                            onClick = onNavigateGcodeViewer3D,
-                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { viewModel.backToModelLoaded() },
+                            modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Icon(Icons.Default.ViewInAr, null, modifier = Modifier.size(18.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("3D G-code View")
+                            Text("Re-slice")
+                        }
+                        if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
+                            OutlinedButton(
+                                onClick = onNavigateGcodeViewer3D,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.ViewInAr, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("3D View")
+                            }
                         }
                     }
                     if (gcodePreview.isNotEmpty()) {
@@ -1000,6 +1027,62 @@ fun ErrorCard(message: String, onRetry: () -> Unit) {
                 )
             ) {
                 Text("Try Again")
+            }
+        }
+    }
+}
+
+@Composable
+fun InlineModelPreview(
+    modelFilePath: String,
+    onFullScreen: () -> Unit
+) {
+    var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
+    var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
+
+    LaunchedEffect(modelFilePath) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                mesh = com.u1.slicer.viewer.StlParser.parse(java.io.File(modelFilePath))
+            } catch (_: Throwable) { }
+        }
+    }
+
+    LaunchedEffect(mesh, viewerView) {
+        val m = mesh; val v = viewerView
+        if (m != null && v != null) v.setMesh(m)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Box(modifier = Modifier
+            .fillMaxWidth()
+            .height(220.dp)
+        ) {
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { ctx ->
+                    com.u1.slicer.viewer.ModelViewerView(ctx).also { view ->
+                        viewerView = view
+                        mesh?.let { view.setMesh(it) }
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+            // Fullscreen button overlay
+            IconButton(
+                onClick = onFullScreen,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+            ) {
+                Icon(
+                    Icons.Default.Fullscreen,
+                    "Full screen",
+                    tint = Color.White.copy(alpha = 0.8f)
+                )
             }
         }
     }

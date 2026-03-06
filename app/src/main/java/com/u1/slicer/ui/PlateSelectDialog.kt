@@ -150,19 +150,19 @@ private fun PlateThumbnail(
         val offsetX = padding + (availW - bedW * scale) / 2
         val offsetY = padding + (availH - bedH * scale) / 2
 
-        // Bed background
+        // Bed background — lighter for better contrast
         drawRect(
-            color = Color(0xFF151525),
+            color = Color(0xFF1E1E2E),
             topLeft = Offset(offsetX, offsetY),
             size = Size(bedW * scale, bedH * scale)
         )
 
         // Bed border
         drawRect(
-            color = Color(0xFF333355),
+            color = Color(0xFF555577),
             topLeft = Offset(offsetX, offsetY),
             size = Size(bedW * scale, bedH * scale),
-            style = Stroke(width = 1f)
+            style = Stroke(width = 1.5f)
         )
 
         // Grid lines every 50mm
@@ -170,7 +170,7 @@ private fun PlateThumbnail(
         var gx = gridStep
         while (gx < bedW * scale) {
             drawLine(
-                Color(0xFF1A1A30),
+                Color(0xFF2A2A40),
                 Offset(offsetX + gx, offsetY),
                 Offset(offsetX + gx, offsetY + bedH * scale),
                 strokeWidth = 0.5f
@@ -180,7 +180,7 @@ private fun PlateThumbnail(
         var gy = gridStep
         while (gy < bedH * scale) {
             drawLine(
-                Color(0xFF1A1A30),
+                Color(0xFF2A2A40),
                 Offset(offsetX, offsetY + gy),
                 Offset(offsetX + bedW * scale, offsetY + gy),
                 strokeWidth = 0.5f
@@ -212,8 +212,8 @@ private fun DrawScope.drawPlateObject(
     tx: Float, ty: Float,
     color: Color, alpha: Float
 ) {
-    // Estimate object size — use a default 30mm square if we don't know
-    val objSize = 30f * scale
+    // Estimate object size — use a default 50mm square for visibility
+    val objSize = 50f * scale
     // Transform: tx,ty are in mm from bed origin. Y is flipped for Canvas (0 at top)
     val cx = offsetX + tx * scale
     val cy = offsetY + (bedH - ty) * scale
@@ -223,7 +223,7 @@ private fun DrawScope.drawPlateObject(
 
     // Filled rectangle
     drawRect(
-        color = color.copy(alpha = alpha * 0.3f),
+        color = color.copy(alpha = alpha * 0.5f),
         topLeft = Offset(left, top),
         size = Size(objSize, objSize)
     )
@@ -232,6 +232,6 @@ private fun DrawScope.drawPlateObject(
         color = color.copy(alpha = alpha),
         topLeft = Offset(left, top),
         size = Size(objSize, objSize),
-        style = Stroke(width = 1.5f)
+        style = Stroke(width = 2f)
     )
 }

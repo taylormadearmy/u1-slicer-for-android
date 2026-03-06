@@ -42,10 +42,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // ---- UI State ----
     sealed class SlicerState {
         object Idle : SlicerState()
+        data class Loading(val filename: String) : SlicerState()
         data class ModelLoaded(val info: ModelInfo) : SlicerState()
         data class Slicing(val progress: Int, val stage: String) : SlicerState()
         data class SliceComplete(val result: SliceResult) : SlicerState()
         data class Error(val message: String) : SlicerState()
+    }
+
+    /** Return to ModelLoaded state so the user can adjust settings and re-slice. */
+    fun backToModelLoaded() {
+        val info = lastModelInfo ?: return
+        _state.value = SlicerState.ModelLoaded(info)
     }
 
     private val _state = MutableStateFlow<SlicerState>(SlicerState.Idle)
@@ -194,6 +201,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val filename = getDisplayName(context, uri) ?: "model.stl"
                 currentModelName = filename
+                _state.value = SlicerState.Loading(filename)
                 val file = File(context.filesDir, filename)
                 // Copy via temp file to avoid self-referential truncation
                 // when the source URI points to our own FileProvider
