@@ -102,6 +102,10 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // Retraction (OrcaSlicer keys)
     dpc.set_key_value("retraction_length", new Slic3r::ConfigOptionFloats(retract_len));
     dpc.set_key_value("retraction_speed", new Slic3r::ConfigOptionFloats(retract_spd));
+    // Toolchange retraction — OrcaSlicer defaults to 10mm (bowden).  For the Snapmaker U1's
+    // direct-drive extruders this pulls filament past the heat break, causing heat-creep clogs
+    // during the standby period between tool changes.  Use the same length as normal retraction.
+    dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
 
     // Nozzle/filament diameter (per-extruder — same key names)
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(nozzle_diameters));

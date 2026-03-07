@@ -117,6 +117,68 @@ class GcodeValidatorTest {
         assertFalse(GcodeValidator.lacksToolChanges(gcode, "T0", "T1"))
     }
 
+    // ─── extractToolchangeRetractLength ────────────────────────────────────────
+
+    @Test
+    fun extractToolchangeRetractLength_parsesCommaList() {
+        val gcode = "; retract_length_toolchange = 0.8,0.8\n"
+        val vals = GcodeValidator.extractToolchangeRetractLength(gcode)
+        assertNotNull(vals)
+        assertEquals(2, vals!!.size)
+        assertEquals(0.8, vals[0], 0.001)
+        assertEquals(0.8, vals[1], 0.001)
+    }
+
+    @Test
+    fun extractToolchangeRetractLength_singleValue() {
+        val gcode = "; retract_length_toolchange = 0.8\n"
+        val vals = GcodeValidator.extractToolchangeRetractLength(gcode)
+        assertNotNull(vals)
+        assertEquals(1, vals!!.size)
+        assertEquals(0.8, vals[0], 0.001)
+    }
+
+    @Test
+    fun extractToolchangeRetractLength_nullWhenMissing() {
+        val gcode = "G28\nG1 X10\n"
+        assertNull(GcodeValidator.extractToolchangeRetractLength(gcode))
+    }
+
+    @Test
+    fun extractToolchangeRetractLength_detectsBowdenDefault() {
+        val gcode = "; retract_length_toolchange = 10\n"
+        val vals = GcodeValidator.extractToolchangeRetractLength(gcode)
+        assertNotNull(vals)
+        assertEquals(10.0, vals!![0], 0.001)
+    }
+
+    // ─── maxRetractionMm ────────────────────────────────────────────────────────
+
+    @Test
+    fun maxRetractionMm_findsLargestRetraction() {
+        val gcode = "G1 E-.8 F2700\nG1 X10 Y10 E1.5\nG1 E-2.0 F2700\n"
+        assertEquals(2.0, GcodeValidator.maxRetractionMm(gcode), 0.001)
+    }
+
+    @Test
+    fun maxRetractionMm_ignoresPositiveExtrusion() {
+        val gcode = "G1 E10 F2700\nG1 X10 Y10 E1.5\n"
+        assertEquals(0.0, GcodeValidator.maxRetractionMm(gcode), 0.001)
+    }
+
+    @Test
+    fun maxRetractionMm_zeroWhenNoRetractions() {
+        val gcode = "G28\nG1 X10 Y10\n"
+        assertEquals(0.0, GcodeValidator.maxRetractionMm(gcode), 0.001)
+    }
+
+    @Test
+    fun maxRetractionMm_detectsDangerousBowdenRetraction() {
+        // This is the bug we're guarding against — 10mm toolchange retraction
+        val gcode = "G1 E-.8 F2700\nG1 E-10 F2700\nG1 E10 F2700\n"
+        assertEquals(10.0, GcodeValidator.maxRetractionMm(gcode), 0.001)
+    }
+
     // ─── parsePrimeTowerFootprint ─────────────────────────────────────────────
 
     @Test

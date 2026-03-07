@@ -125,6 +125,39 @@ object GcodeValidator {
     /** True if the G-code has at least one executable M104/M109 with non-zero S value. */
     fun hasNonZeroNozzleTemps(gcode: String) = extractNozzleTemps(gcode).isNotEmpty()
 
+    /**
+     * Extract the retract_length_toolchange config value from G-code comments.
+     * Returns null if not found.  OrcaSlicer emits "; retract_length_toolchange = 0.8,0.8".
+     */
+    fun extractToolchangeRetractLength(gcode: String): List<Double>? {
+        for (line in gcode.lines()) {
+            val t = line.trim()
+            if (t.startsWith("; retract_length_toolchange = ")) {
+                val csv = t.substringAfter("= ").trim()
+                return csv.split(",").mapNotNull { it.trim().toDoubleOrNull() }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Find the largest retraction (most negative G1 E value) in the G-code.
+     * Only considers lines that are actual retractions (negative E), not de-retractions.
+     * Returns the magnitude (positive number) of the largest retraction, or 0 if none found.
+     */
+    fun maxRetractionMm(gcode: String): Double {
+        var maxRetract = 0.0
+        val eRegex = Regex("""^G1\s.*E(-\d+(?:\.\d+)?)""")
+        for (line in gcode.lines()) {
+            val t = line.trim()
+            val m = eRegex.find(t) ?: continue
+            val e = m.groupValues[1].toDoubleOrNull() ?: continue
+            val magnitude = -e  // e is negative, magnitude is positive
+            if (magnitude > maxRetract) maxRetract = magnitude
+        }
+        return maxRetract
+    }
+
     /** True if the G-code has tool-change lines for exactly the given set of tools. */
     fun hasToolChanges(gcode: String, vararg tools: String): Boolean {
         val actual = extractToolChanges(gcode)

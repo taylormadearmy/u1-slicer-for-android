@@ -179,6 +179,65 @@ class SlicingIntegrationTest {
         assertTrue(gcode!!.isNotEmpty())
     }
 
+    // ─── Toolchange retraction regression (direct-drive clog prevention) ──────
+
+    /**
+     * Regression: OrcaSlicer defaults retract_length_toolchange to 10mm (bowden).
+     * On the Snapmaker U1's direct-drive extruders, 10mm pulls filament past the
+     * heat break, causing heat-creep clogs during standby.  Must be ≤ 2mm.
+     */
+    @Test
+    fun singleExtruder_toolchangeRetractLength_notBowdenDefault() {
+        val (success, gcode) = sliceAsset("tetrahedron.stl")
+        assertTrue(success)
+        val vals = GcodeValidator.extractToolchangeRetractLength(gcode!!)
+        assertNotNull("retract_length_toolchange must be in G-code config", vals)
+        for (v in vals!!) {
+            assertTrue("retract_length_toolchange=$v must be ≤ 2mm (direct drive), not bowden 10mm", v <= 2.0)
+        }
+    }
+
+    @Test
+    fun singleExtruder_maxRetraction_notExcessive() {
+        val (success, gcode) = sliceAsset("tetrahedron.stl")
+        assertTrue(success)
+        val maxRetract = GcodeValidator.maxRetractionMm(gcode!!)
+        assertTrue("Max retraction ${maxRetract}mm must be ≤ 5mm for direct drive", maxRetract <= 5.0)
+    }
+
+    /**
+     * Regression: verify retract_length_toolchange is sane with 2 extruders.
+     * Uses STL with extruderCount=2 (avoids needing ProfileEmbedder pipeline).
+     */
+    @Test
+    fun dualExtruder_toolchangeRetractLength_notBowdenDefault() {
+        val file = asset("tetrahedron.stl")
+        assertTrue(lib.loadModel(file.absolutePath))
+        val config = DEFAULT_CONFIG.copy(extruderCount = 2)
+        val result = lib.slice(config)
+        assertNotNull(result)
+        assertTrue("Dual-extruder slice should succeed", result!!.success)
+        val gcode = File(result.gcodePath).readText()
+        val vals = GcodeValidator.extractToolchangeRetractLength(gcode)
+        assertNotNull("retract_length_toolchange must be in G-code config", vals)
+        for (v in vals!!) {
+            assertTrue("retract_length_toolchange=$v must be ≤ 2mm (direct drive), not bowden 10mm", v <= 2.0)
+        }
+    }
+
+    @Test
+    fun dualExtruder_maxRetraction_notExcessive() {
+        val file = asset("tetrahedron.stl")
+        assertTrue(lib.loadModel(file.absolutePath))
+        val config = DEFAULT_CONFIG.copy(extruderCount = 2)
+        val result = lib.slice(config)
+        assertNotNull(result)
+        assertTrue(result!!.success)
+        val gcode = File(result.gcodePath).readText()
+        val maxRetract = GcodeValidator.maxRetractionMm(gcode)
+        assertTrue("Max retraction ${maxRetract}mm must be ≤ 5mm for direct drive", maxRetract <= 5.0)
+    }
+
     // ─── SliceResult metadata ─────────────────────────────────────────────────
 
     @Test
