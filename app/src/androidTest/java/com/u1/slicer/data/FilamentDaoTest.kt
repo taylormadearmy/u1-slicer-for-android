@@ -113,4 +113,28 @@ class FilamentDaoTest {
         val result = dao.getById(999)
         assertNull(result)
     }
+
+    @Test
+    fun clearAllDefaults_clearsIsDefaultFlag() = runTest {
+        val id1 = dao.insert(testProfile(name = "A").copy(isDefault = true))
+        val id2 = dao.insert(testProfile(name = "B").copy(isDefault = true))
+
+        dao.clearAllDefaults()
+
+        assertFalse("Profile A should no longer be default", dao.getById(id1)!!.isDefault)
+        assertFalse("Profile B should no longer be default", dao.getById(id2)!!.isDefault)
+    }
+
+    @Test
+    fun setDefault_onlyOneProfileIsDefault() = runTest {
+        val id1 = dao.insert(testProfile(name = "A").copy(isDefault = true))
+        val id2 = dao.insert(testProfile(name = "B"))
+
+        // Simulate setDefaultFilament: clear all, then mark one
+        dao.clearAllDefaults()
+        dao.update(dao.getById(id2)!!.copy(isDefault = true))
+
+        assertFalse("Profile A should no longer be default", dao.getById(id1)!!.isDefault)
+        assertTrue("Profile B should now be default", dao.getById(id2)!!.isDefault)
+    }
 }

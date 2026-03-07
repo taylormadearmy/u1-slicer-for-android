@@ -138,12 +138,17 @@ class SlicingIntegrationTest {
     }
 
     @Test
-    fun benchy_stl_estimatedTimeIsNonZero() {
+    fun benchy_stl_estimatedTimeIsReasonable() {
         val file = asset("3DBenchy.stl")
         assertTrue(lib.loadModel(file.absolutePath))
         val result = lib.slice(DEFAULT_CONFIG)!!
         assertTrue(result.success)
-        assertTrue("Estimated time should be > 0", result.estimatedTimeSeconds > 0f)
+        // Time should be plausible: > 5 min and < 2 hours.
+        // If machine kinematic limits are missing from sapil_print.cpp the GCodeProcessor
+        // defaults to near-zero acceleration, inflating the estimate to 4+ hours.
+        val minutes = result.estimatedTimeSeconds / 60f
+        assertTrue("Estimated time should be > 5 min (was ${minutes}m)", result.estimatedTimeSeconds > 300f)
+        assertTrue("Estimated time should be < 120 min (was ${minutes}m)", result.estimatedTimeSeconds < 7200f)
     }
 
     // ─── Single-colour 3MF Tests ──────────────────────────────────────────────
