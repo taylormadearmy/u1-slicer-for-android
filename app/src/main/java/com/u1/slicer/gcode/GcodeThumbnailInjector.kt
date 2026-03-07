@@ -114,29 +114,62 @@ object GcodeThumbnailInjector {
     /**
      * Inject thumbnail blocks into the G-code file.
      * Inserts after HEADER_BLOCK_END if found, otherwise prepends.
+     *
+     * Streams line-by-line via a temp file to avoid loading the entire G-code
+     * into memory (large files can be 100MB+, causing OOM if read as a String).
      */
     private fun injectIntoGcode(gcodePath: String, blocks: String): Boolean {
+        val tmpFile = File("$gcodePath.tmp")
+        val prependFile = File("$gcodePath.pre")
         return try {
             val file = File(gcodePath)
-            val content = file.readText()
+            var injected = false
 
-            val headerEnd = content.indexOf("; HEADER_BLOCK_END")
-            val newContent = if (headerEnd >= 0) {
-                val insertPos = content.indexOf('\n', headerEnd)
-                if (insertPos >= 0) {
-                    content.substring(0, insertPos + 1) + blocks + content.substring(insertPos + 1)
-                } else {
-                    content + "\n" + blocks
+            // First pass: stream the file to tmpFile, injecting after HEADER_BLOCK_END
+            tmpFile.bufferedWriter(Charsets.UTF_8).use { writer ->
+                file.bufferedReader(Charsets.UTF_8).use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        writer.write(line!!)
+                        writer.newLine()
+                        if (!injected && line!!.contains("; HEADER_BLOCK_END")) {
+                            writer.write(blocks)
+                            injected = true
+                        }
+                    }
                 }
-            } else {
-                blocks + content
             }
 
-            file.writeText(newContent)
-            Log.i(TAG, "Injected thumbnails into G-code (${blocks.length} bytes)")
+            if (!injected) {
+                // No header found — prepend blocks by writing them first, then streaming tmpFile
+                prependFile.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    writer.write(blocks)
+                    tmpFile.bufferedReader(Charsets.UTF_8).use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            writer.write(line!!)
+                            writer.newLine()
+                        }
+                    }
+                }
+                tmpFile.delete()
+                if (!prependFile.renameTo(file)) {
+                    file.delete()
+                    prependFile.renameTo(file)
+                }
+            } else {
+                if (!tmpFile.renameTo(file)) {
+                    file.delete()
+                    tmpFile.renameTo(file)
+                }
+            }
+
+            Log.i(TAG, "Injected thumbnails into G-code (${blocks.length} bytes of thumbnail data)")
             true
         } catch (e: Exception) {
             Log.w(TAG, "Failed to inject thumbnails: ${e.message}")
+            tmpFile.delete()
+            prependFile.delete()
             false
         }
     }
