@@ -1,5 +1,9 @@
 package com.u1.slicer.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -7,10 +11,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -20,6 +27,9 @@ import androidx.compose.material.icons.filled.Error
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import com.u1.slicer.SlicerViewModel
+import com.u1.slicer.data.OverrideMode
+import com.u1.slicer.data.OverrideValue
+import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.printer.PrinterViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -27,6 +37,7 @@ import com.u1.slicer.printer.PrinterViewModel
 fun SettingsScreen(
     viewModel: SlicerViewModel,
     printerViewModel: PrinterViewModel? = null,
+    onNavigateFilaments: (() -> Unit)? = null,
     onBack: () -> Unit
 ) {
     val config by viewModel.config.collectAsState()
@@ -37,6 +48,9 @@ fun SettingsScreen(
     var firstLayerSpeed by remember(config) { mutableStateOf(config.firstLayerSpeed.toInt().toString()) }
     var retractLength by remember(config) { mutableStateOf("%.1f".format(config.retractLength)) }
     var retractSpeed by remember(config) { mutableStateOf(config.retractSpeed.toInt().toString()) }
+
+    val currentOverrides by viewModel.slicingOverrides.collectAsState()
+    var overrides by remember(currentOverrides) { mutableStateOf(currentOverrides) }
 
     Scaffold(
         topBar = {
@@ -61,6 +75,7 @@ fun SettingsScreen(
                             )
                         }
                         viewModel.saveConfig()
+                        viewModel.saveSlicingOverrides(overrides)
                         onBack()
                     }) {
                         Icon(Icons.Default.Save, "Save")
@@ -81,6 +96,39 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Filament Profiles
+            if (onNavigateFilaments != null) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigateFilaments() },
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Palette, null,
+                                tint = MaterialTheme.colorScheme.primary)
+                            Text("Filament Profiles", fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null,
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                    }
+                }
+            }
+
             // Printer info
             SettingsSection("Printer") {
                 InfoRow("Model", "Snapmaker U1")
@@ -105,6 +153,152 @@ fun SettingsScreen(
             SettingsSection("Retraction") {
                 SettingsTextField("Retract Length (mm)", retractLength) { retractLength = it }
                 SettingsTextField("Retract Speed (mm/s)", retractSpeed) { retractSpeed = it }
+            }
+
+            // Slicing Overrides
+            SettingsSection("Slicing Overrides") {
+                Text(
+                    "Override settings from loaded 3MF files",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+
+                OverrideRow(
+                    label = "Layer Height",
+                    override = overrides.layerHeight,
+                    defaultHint = "0.2 mm",
+                    onModeChange = { mode -> overrides = overrides.copy(layerHeight = overrides.layerHeight.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideFloatField(
+                            value = overrides.layerHeight.value ?: 0.2f,
+                            suffix = "mm",
+                            onValueChange = { overrides = overrides.copy(layerHeight = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Infill Density",
+                    override = overrides.infillDensity,
+                    defaultHint = "15%",
+                    onModeChange = { mode -> overrides = overrides.copy(infillDensity = overrides.infillDensity.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideFloatField(
+                            value = (overrides.infillDensity.value ?: 0.15f) * 100f,
+                            suffix = "%",
+                            onValueChange = { overrides = overrides.copy(infillDensity = OverrideValue(OverrideMode.OVERRIDE, it / 100f)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Wall Count",
+                    override = overrides.wallCount,
+                    defaultHint = "2",
+                    onModeChange = { mode -> overrides = overrides.copy(wallCount = overrides.wallCount.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideIntField(
+                            value = overrides.wallCount.value ?: 2,
+                            onValueChange = { overrides = overrides.copy(wallCount = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Infill Pattern",
+                    override = overrides.infillPattern,
+                    defaultHint = "gyroid",
+                    onModeChange = { mode -> overrides = overrides.copy(infillPattern = overrides.infillPattern.copy(mode = mode)) },
+                    valueContent = {
+                        val patterns = listOf("gyroid", "grid", "lines", "honeycomb", "cubic", "triangles", "rectilinear")
+                        OverrideDropdown(
+                            value = overrides.infillPattern.value ?: "gyroid",
+                            options = patterns,
+                            onValueChange = { overrides = overrides.copy(infillPattern = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Supports",
+                    override = overrides.supports,
+                    defaultHint = "Off",
+                    onModeChange = { mode -> overrides = overrides.copy(supports = overrides.supports.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideToggle(
+                            value = overrides.supports.value ?: false,
+                            onValueChange = { overrides = overrides.copy(supports = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Brim Width",
+                    override = overrides.brimWidth,
+                    defaultHint = "0 mm",
+                    onModeChange = { mode -> overrides = overrides.copy(brimWidth = overrides.brimWidth.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideFloatField(
+                            value = overrides.brimWidth.value ?: 0f,
+                            suffix = "mm",
+                            onValueChange = { overrides = overrides.copy(brimWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Skirt Loops",
+                    override = overrides.skirtLoops,
+                    defaultHint = "0",
+                    onModeChange = { mode -> overrides = overrides.copy(skirtLoops = overrides.skirtLoops.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideIntField(
+                            value = overrides.skirtLoops.value ?: 0,
+                            onValueChange = { overrides = overrides.copy(skirtLoops = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Bed Temp",
+                    override = overrides.bedTemp,
+                    defaultHint = "60\u00B0C",
+                    onModeChange = { mode -> overrides = overrides.copy(bedTemp = overrides.bedTemp.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideIntField(
+                            value = overrides.bedTemp.value ?: 60,
+                            suffix = "\u00B0C",
+                            onValueChange = { overrides = overrides.copy(bedTemp = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Prime Tower",
+                    override = overrides.primeTower,
+                    defaultHint = "Off",
+                    onModeChange = { mode -> overrides = overrides.copy(primeTower = overrides.primeTower.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideToggle(
+                            value = overrides.primeTower.value ?: false,
+                            onValueChange = { overrides = overrides.copy(primeTower = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Flow Calibration", style = MaterialTheme.typography.bodyMedium)
+                    Switch(
+                        checked = overrides.flowCalibration,
+                        onCheckedChange = { overrides = overrides.copy(flowCalibration = it) }
+                    )
+                }
             }
 
             // Printer Connection
@@ -138,7 +332,7 @@ fun SettingsScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp),
                                     strokeWidth = 2.dp)
-                                Text("Testing connection…",
+                                Text("Testing connection\u2026",
                                     style = MaterialTheme.typography.bodySmall)
                             }
                         }
@@ -167,7 +361,188 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            // Backup & Restore
+            val context = LocalContext.current
+            var backupStatus by remember { mutableStateOf<String?>(null) }
+
+            val exportLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.CreateDocument("application/json")
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    viewModel.exportBackupAsync { json ->
+                        context.contentResolver.openOutputStream(uri)?.use { out ->
+                            out.write(json.toByteArray())
+                            backupStatus = "Settings exported"
+                        }
+                    }
+                }
+            }
+
+            val importLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
+                    if (json != null) {
+                        viewModel.importBackup(json)
+                        backupStatus = "Settings imported"
+                    }
+                }
+            }
+
+            SettingsSection("Backup & Restore") {
+                Button(
+                    onClick = { exportLauncher.launch("u1-slicer-backup.json") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Export Settings") }
+
+                OutlinedButton(
+                    onClick = { importLauncher.launch("application/json") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Import Settings") }
+
+                if (backupStatus != null) {
+                    Text(
+                        backupStatus!!,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun <T> OverrideRow(
+    label: String,
+    override: OverrideValue<T>,
+    defaultHint: String,
+    onModeChange: (OverrideMode) -> Unit,
+    valueContent: @Composable () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            if (override.mode == OverrideMode.ORCA_DEFAULT) {
+                Text(
+                    defaultHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
+        }
+
+        val modes = OverrideMode.entries
+        val modeLabels = listOf("File", "Orca", "Override")
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            modes.forEachIndexed { index, mode ->
+                SegmentedButton(
+                    selected = override.mode == mode,
+                    onClick = { onModeChange(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index, modes.size)
+                ) {
+                    Text(modeLabels[index], style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+
+        if (override.mode == OverrideMode.OVERRIDE) {
+            valueContent()
+        }
+    }
+}
+
+@Composable
+private fun OverrideFloatField(
+    value: Float,
+    suffix: String = "",
+    onValueChange: (Float) -> Unit
+) {
+    var text by remember(value) { mutableStateOf(if (value == value.toInt().toFloat()) value.toInt().toString() else "%.2f".format(value)) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            it.toFloatOrNull()?.let { f -> onValueChange(f) }
+        },
+        suffix = if (suffix.isNotEmpty()) {{ Text(suffix) }} else null,
+        modifier = Modifier.fillMaxWidth(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true
+    )
+}
+
+@Composable
+private fun OverrideIntField(
+    value: Int,
+    suffix: String = "",
+    onValueChange: (Int) -> Unit
+) {
+    var text by remember(value) { mutableStateOf(value.toString()) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            it.toIntOrNull()?.let { i -> onValueChange(i) }
+        },
+        suffix = if (suffix.isNotEmpty()) {{ Text(suffix) }} else null,
+        modifier = Modifier.fillMaxWidth(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OverrideDropdown(
+    value: String,
+    options: List<String>,
+    onValueChange: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.fillMaxWidth().menuAnchor()
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        onValueChange(option)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun OverrideToggle(value: Boolean, onValueChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(if (value) "Enabled" else "Disabled",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+        Spacer(Modifier.width(8.dp))
+        Switch(checked = value, onCheckedChange = onValueChange)
     }
 }
 

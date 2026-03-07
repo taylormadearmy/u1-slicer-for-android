@@ -39,6 +39,7 @@ class SettingsRepository(private val context: Context) {
         val WIPE_TOWER_WIDTH = floatPreferencesKey("wipe_tower_width")
         val PRINTER_URL = stringPreferencesKey("printer_url")
         val EXTRUDER_PRESETS = stringPreferencesKey("extruder_presets")
+        val SLICING_OVERRIDES = stringPreferencesKey("slicing_overrides")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.dataStore.data.map { prefs ->
@@ -79,6 +80,11 @@ class SettingsRepository(private val context: Context) {
         parseExtruderPresets(prefs[Keys.EXTRUDER_PRESETS] ?: "")
     }
 
+    val slicingOverrides: Flow<SlicingOverrides> = context.dataStore.data.map { prefs ->
+        val json = prefs[Keys.SLICING_OVERRIDES] ?: ""
+        if (json.isNotEmpty()) SlicingOverrides.fromJson(json) else SlicingOverrides()
+    }
+
     suspend fun saveExtruderPresets(presets: List<ExtruderPreset>) {
         context.dataStore.edit { prefs ->
             prefs[Keys.EXTRUDER_PRESETS] = serializeExtruderPresets(presets)
@@ -112,6 +118,12 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.WIPE_TOWER_X] = config.wipeTowerX
             prefs[Keys.WIPE_TOWER_Y] = config.wipeTowerY
             prefs[Keys.WIPE_TOWER_WIDTH] = config.wipeTowerWidth
+        }
+    }
+
+    suspend fun saveSlicingOverrides(overrides: SlicingOverrides) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SLICING_OVERRIDES] = overrides.toJson()
         }
     }
 

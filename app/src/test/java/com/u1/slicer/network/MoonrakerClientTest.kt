@@ -222,6 +222,37 @@ class MoonrakerClientTest {
         // 0 minutes
         assertEquals("0m", PrinterStatus(state = "standby", progress = 0f, printDuration = 0f).printTimeFormatted)
     }
+    // --- LED state parsing ---
+
+    @Test
+    fun `LED color_data parsing - light on when W channel is positive`() {
+        // LED response: {"result":{"status":{"led cavity_led":{"color_data":[[0.0,0.0,0.0,1.0]]}}}}
+        val json = org.json.JSONObject("""{"result":{"status":{"led cavity_led":{"color_data":[[0.0,0.0,0.0,1.0]]}}}}""")
+        val colorData = json.getJSONObject("result").getJSONObject("status")
+            .getJSONObject("led cavity_led").getJSONArray("color_data")
+        val rgba = colorData.getJSONArray(0)
+        val w = rgba.getDouble(3)
+        assertTrue("W=1.0 means light is on", w > 0)
+    }
+
+    @Test
+    fun `LED color_data parsing - light off when W channel is zero`() {
+        val json = org.json.JSONObject("""{"result":{"status":{"led cavity_led":{"color_data":[[0.0,0.0,0.0,0.0]]}}}}""")
+        val colorData = json.getJSONObject("result").getJSONObject("status")
+            .getJSONObject("led cavity_led").getJSONArray("color_data")
+        val rgba = colorData.getJSONArray(0)
+        val w = rgba.getDouble(3)
+        assertFalse("W=0.0 means light is off", w > 0)
+    }
+
+    @Test
+    fun `LED gcode script format`() {
+        val on = "SET_LED LED=cavity_led WHITE=1.0 RED=0 GREEN=0 BLUE=0"
+        val off = "SET_LED LED=cavity_led WHITE=0 RED=0 GREEN=0 BLUE=0"
+        assertTrue(on.contains("WHITE=1.0"))
+        assertTrue(off.contains("WHITE=0"))
+        assertTrue(on.contains("LED=cavity_led"))
+    }
 }
 
 // MoonrakerClientTestHelper removed — tests now use MoonrakerClient.normalizeUrl() directly.

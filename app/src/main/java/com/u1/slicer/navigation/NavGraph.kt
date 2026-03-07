@@ -12,7 +12,6 @@ import com.u1.slicer.ui.FilamentScreen
 import com.u1.slicer.ui.GcodeViewer3DScreen
 import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.ModelViewerScreen
-import com.u1.slicer.ui.PrintMonitorScreen
 import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
 
@@ -20,7 +19,6 @@ object Routes {
     const val SLICER = "slicer"
     const val SETTINGS = "settings"
     const val PRINTER = "printer"
-    const val PRINT_MONITOR = "print_monitor"
     const val FILAMENTS = "filaments"
     const val JOBS = "jobs"
     const val GCODE_VIEWER_3D = "gcode_viewer_3d"
@@ -44,17 +42,12 @@ fun U1NavGraph(
             SettingsScreen(
                 viewModel = viewModel,
                 printerViewModel = printerViewModel,
+                onNavigateFilaments = { navController.navigate(Routes.FILAMENTS) },
                 onBack = { navController.popBackStack() }
             )
         }
         composable(Routes.PRINTER) {
             PrinterScreen(
-                viewModel = printerViewModel,
-                onBack = { navController.popBackStack() }
-            )
-        }
-        composable(Routes.PRINT_MONITOR) {
-            PrintMonitorScreen(
                 viewModel = printerViewModel,
                 onBack = { navController.popBackStack() }
             )

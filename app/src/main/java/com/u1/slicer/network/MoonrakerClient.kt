@@ -390,6 +390,52 @@ class MoonrakerClient {
         postCommand("/printer/print/cancel")
     }
 
+    suspend fun getLedState(): Boolean? = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank()) return@withContext null
+        try {
+            val request = Request.Builder()
+                .url(url("/printer/objects/query?led%20cavity_led"))
+                .get().build()
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+            response.close()
+            if (!response.isSuccessful || body == null) return@withContext null
+            val result = JSONObject(body).optJSONObject("result")?.optJSONObject("status")
+            val ledObj = result?.optJSONObject("led cavity_led") ?: return@withContext null
+            val colorData = ledObj.optJSONArray("color_data")
+            if (colorData != null && colorData.length() > 0) {
+                val rgba = colorData.getJSONArray(0)
+                // W channel is index 3 for RGBW
+                val w = if (rgba.length() > 3) rgba.getDouble(3) else 0.0
+                w > 0
+            } else null
+        } catch (e: Exception) {
+            Log.d(TAG, "LED state query failed: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun setLed(on: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank()) return@withContext false
+        val white = if (on) "1.0" else "0"
+        val script = "SET_LED LED=cavity_led WHITE=$white RED=0 GREEN=0 BLUE=0"
+        try {
+            val body = JSONObject().put("script", script).toString()
+                .toRequestBody("application/json".toMediaType())
+            val request = Request.Builder()
+                .url(url("/printer/gcode/script"))
+                .post(body)
+                .build()
+            val response = client.newCall(request).execute()
+            val ok = response.isSuccessful
+            response.close()
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "Set LED failed: ${e.message}")
+            false
+        }
+    }
+
     private fun postCommand(path: String): Boolean {
         return try {
             val request = Request.Builder()

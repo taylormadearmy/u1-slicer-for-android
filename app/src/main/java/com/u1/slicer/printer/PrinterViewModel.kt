@@ -46,6 +46,10 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     private val _sendingState = MutableStateFlow<SendingState>(SendingState.Idle)
     val sendingState: StateFlow<SendingState> = _sendingState.asStateFlow()
 
+    // LED light state (null = unknown/not connected)
+    private val _isLightOn = MutableStateFlow<Boolean?>(null)
+    val isLightOn: StateFlow<Boolean?> = _isLightOn.asStateFlow()
+
     sealed class ConnectionState {
         object Unknown : ConnectionState()
         object Testing : ConnectionState()
@@ -108,7 +112,20 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             val error = printerRepo.testConnection()
             _connectionState.value = if (error == null) ConnectionState.Connected
                                      else ConnectionState.Failed(error)
+            if (error == null) pollLedState()
         }
+    }
+
+    fun toggleLight() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = _isLightOn.value ?: false
+            val success = printerRepo.setLed(!current)
+            if (success) _isLightOn.value = !current
+        }
+    }
+
+    private suspend fun pollLedState() {
+        _isLightOn.value = printerRepo.getLedState()
     }
 
     /** Update a single extruder slot (color or material type edit on printer page). */

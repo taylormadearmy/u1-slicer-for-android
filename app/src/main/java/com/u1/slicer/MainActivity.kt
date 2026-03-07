@@ -114,9 +114,8 @@ class MainActivity : ComponentActivity() {
                             onNavigatePrinter = { navController.navigate(Routes.PRINTER) },
                             onSendToPrinter = { gcodePath ->
                                 printerViewModel.sendAndPrint(gcodePath)
-                                navController.navigate(Routes.PRINT_MONITOR)
+                                navController.navigate(Routes.PRINTER)
                             },
-                            onNavigateFilaments = { navController.navigate(Routes.FILAMENTS) },
                             onNavigateJobs = { navController.navigate(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
                             onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
@@ -164,7 +163,6 @@ fun SlicerScreen(
     onNavigateSettings: () -> Unit,
     onNavigatePrinter: () -> Unit,
     onSendToPrinter: (gcodePath: String) -> Unit = {},
-    onNavigateFilaments: () -> Unit,
     onNavigateJobs: () -> Unit,
     onNavigateGcodeViewer3D: () -> Unit,
     onNavigateModelViewer: () -> Unit,
@@ -274,12 +272,6 @@ fun SlicerScreen(
                     label = { Text("Printer") },
                     selected = false,
                     onClick = onNavigatePrinter
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Palette, null) },
-                    label = { Text("Filaments") },
-                    selected = false,
-                    onClick = onNavigateFilaments
                 )
                 NavigationBarItem(
                     icon = { Icon(Icons.Default.History, null) },

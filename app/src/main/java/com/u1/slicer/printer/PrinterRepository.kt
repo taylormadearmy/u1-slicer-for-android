@@ -69,4 +69,7 @@ class PrinterRepository(
     suspend fun pausePrint(): Boolean = client.pausePrint()
     suspend fun resumePrint(): Boolean = client.resumePrint()
     suspend fun cancelPrint(): Boolean = client.cancelPrint()
+
+    suspend fun getLedState(): Boolean? = client.getLedState()
+    suspend fun setLed(on: Boolean): Boolean = client.setLed(on)
 }

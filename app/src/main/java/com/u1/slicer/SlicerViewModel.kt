@@ -14,13 +14,17 @@ import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.gcode.GcodeParser
+import com.u1.slicer.gcode.GcodeThumbnailInjector
 import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.network.MakerWorldClient
 import com.u1.slicer.data.ModelInfo
+import com.u1.slicer.data.OverrideMode
+import com.u1.slicer.data.SettingsBackup
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
+import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.model.CopyArrangeCalculator
 import com.u1.slicer.data.ExtruderPreset
 import kotlinx.coroutines.Dispatchers
@@ -123,6 +127,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Extruder slot config (from printer page, used for color mapping dialog)
     val extruderPresets: StateFlow<List<ExtruderPreset>> = settingsRepo.extruderPresets
         .stateIn(viewModelScope, SharingStarted.Eagerly, com.u1.slicer.data.defaultExtruderPresets())
+
+    // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)
+    val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SlicingOverrides())
 
     // Track the current working file (may be sanitized copy)
     private var currentModelFile: File? = null
@@ -429,6 +437,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun saveSlicingOverrides(overrides: SlicingOverrides) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.saveSlicingOverrides(overrides)
+        }
+    }
+
     /**
      * Build Snapmaker profile config and embed it into the 3MF file.
      * Replaces BambuSanitizer.process() for the OrcaSlicer backend.
@@ -466,23 +480,51 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             MutableList(extCount) { cfg.nozzleTemp.toString() }
         }
+
+        val ov = slicingOverrides.value
+        val defaults = SlicingOverrides.ORCA_DEFAULTS
+
+        // Resolve an override: USE_FILE → use cfg value, ORCA_DEFAULT → factory default, OVERRIDE → user value
+        fun <T> resolve(override: com.u1.slicer.data.OverrideValue<T>, cfgValue: T, defaultKey: String): T {
+            return when (override.mode) {
+                OverrideMode.USE_FILE -> cfgValue
+                OverrideMode.ORCA_DEFAULT -> {
+                    @Suppress("UNCHECKED_CAST")
+                    (defaults[defaultKey] as? T) ?: cfgValue
+                }
+                OverrideMode.OVERRIDE -> override.value ?: cfgValue
+            }
+        }
+
+        val layerHeight = resolve(ov.layerHeight, cfg.layerHeight, "layerHeight")
+        val infillDensity = resolve(ov.infillDensity, cfg.fillDensity, "infillDensity")
+        val wallCount = resolve(ov.wallCount, cfg.perimeters, "wallCount")
+        val infillPattern = resolve(ov.infillPattern, cfg.fillPattern, "infillPattern")
+        val supportEnabled = resolve(ov.supports, cfg.supportEnabled, "supports")
+        val brimWidth = resolve(ov.brimWidth, cfg.brimWidth, "brimWidth")
+        val skirtLoops = resolve(ov.skirtLoops, cfg.skirtLoops, "skirtLoops")
+        val bedTemp = resolve(ov.bedTemp, cfg.bedTemp, "bedTemp")
+        val primeTower = resolve(ov.primeTower, cfg.wipeTowerEnabled, "primeTower")
+
         return mapOf(
-            "layer_height" to cfg.layerHeight.toString(),
+            "layer_height" to layerHeight.toString(),
             "initial_layer_print_height" to cfg.firstLayerHeight.toString(),
-            "wall_loops" to cfg.perimeters.toString(),
+            "wall_loops" to wallCount.toString(),
             "top_shell_layers" to cfg.topSolidLayers.toString(),
             "bottom_shell_layers" to cfg.bottomSolidLayers.toString(),
-            "sparse_infill_density" to "${(cfg.fillDensity * 100).toInt()}%",
+            "sparse_infill_density" to "${(infillDensity * 100).toInt()}%",
+            "sparse_infill_pattern" to infillPattern,
             "travel_speed" to cfg.travelSpeed.toString(),
             "nozzle_temperature" to temps,
             "nozzle_temperature_initial_layer" to temps.toMutableList(),
-            "bed_temperature" to mutableListOf(cfg.bedTemp.toString()),
-            "bed_temperature_initial_layer" to mutableListOf(cfg.bedTemp.toString()),
-            "enable_support" to if (cfg.supportEnabled) "1" else "0",
+            "bed_temperature" to mutableListOf(bedTemp.toString()),
+            "bed_temperature_initial_layer" to mutableListOf(bedTemp.toString()),
+            "enable_support" to if (supportEnabled) "1" else "0",
             "support_threshold_angle" to cfg.supportAngle.toInt().toString(),
-            "brim_width" to cfg.brimWidth.toString(),
+            "brim_width" to brimWidth.toString(),
+            "skirt_loops" to skirtLoops.toString(),
             // Prime tower (wipe_tower_x/y are ConfigOptionFloats arrays in OrcaSlicer)
-            "enable_prime_tower" to if (cfg.wipeTowerEnabled) "1" else "0",
+            "enable_prime_tower" to if (primeTower) "1" else "0",
             "prime_tower_width" to cfg.wipeTowerWidth.toString(),
             "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
             "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() }
@@ -556,6 +598,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     GcodeToolRemapper.remap(result.gcodePath, slots)
                     Log.i("SlicerVM", "Post-processed G-code: remapped tools to physical slots $slots")
                 }
+                // Inject preview thumbnails into G-code for Klipper/Moonraker
+                val sourcePath = sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
+                if (sourcePath != null) {
+                    val injected = GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
+                    if (injected) Log.i("SlicerVM", "Thumbnails injected into G-code")
+                }
+
                 _state.value = SlicerState.SliceComplete(result)
                 _gcodePreview.value = native.getGcodePreview(50)
                 // Parse G-code for layer viewer
@@ -657,6 +706,45 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    fun exportBackupAsync(onResult: (String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cfg = _config.value
+            val overrides = slicingOverrides.value
+            val presets = extruderPresets.value
+            val printerUrl = settingsRepo.printerUrl.first()
+            val profiles = filamentDao.getAll().first()
+            val json = SettingsBackup.export(cfg, overrides, printerUrl, presets, profiles)
+            onResult(json)
+        }
+    }
+
+    fun importBackup(json: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val data = SettingsBackup.import(json)
+                data.sliceConfig?.let {
+                    _config.value = it
+                    settingsRepo.saveSliceConfig(it)
+                }
+                data.slicingOverrides?.let {
+                    settingsRepo.saveSlicingOverrides(it)
+                }
+                data.printerUrl?.let {
+                    settingsRepo.savePrinterUrl(it)
+                }
+                data.extruderPresets?.let {
+                    settingsRepo.saveExtruderPresets(it)
+                }
+                data.filamentProfiles?.let { profiles ->
+                    profiles.forEach { filamentDao.insert(it) }
+                }
+                Log.i("SlicerVM", "Settings backup imported successfully")
+            } catch (e: Exception) {
+                Log.e("SlicerVM", "Failed to import backup: ${e.message}")
+            }
+        }
     }
 
     fun clearModel() {
