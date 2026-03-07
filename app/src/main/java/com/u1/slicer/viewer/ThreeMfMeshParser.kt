@@ -100,7 +100,8 @@ object ThreeMfMeshParser {
 
     private fun parseComponents(xml: String): List<ComponentRef> {
         val comps = mutableListOf<ComponentRef>()
-        val regex = Regex("""<component\s+([^/]+)/?>""")
+        // Use [^>]* so slashes inside attribute values (e.g. p:path="/3D/Objects/...") don't stop the match
+        val regex = Regex("""<component\b([^>]*)""")
         for (match in regex.findAll(xml)) {
             val attrs = match.groupValues[1]
             val objId = Regex("""objectid="(\d+)"""").find(attrs)?.groupValues?.get(1) ?: continue

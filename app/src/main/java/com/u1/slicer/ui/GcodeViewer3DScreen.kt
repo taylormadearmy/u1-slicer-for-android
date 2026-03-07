@@ -1,5 +1,6 @@
 package com.u1.slicer.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -8,8 +9,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.viewer.GcodeViewerView
@@ -24,12 +28,9 @@ fun GcodeViewer3DScreen(
 ) {
     val totalLayers = parsedGcode.layers.size
     var viewerView by remember { mutableStateOf<GcodeViewerView?>(null) }
-    var minLayer by remember { mutableIntStateOf(0) }
     var maxLayer by remember { mutableIntStateOf(totalLayers - 1) }
 
     // Set colors + upload gcode atomically on the GL thread.
-    // Using queueEvent ensures both run in the same frame — no race where VBOs
-    // get built with default colors before the real extruder colors are applied.
     LaunchedEffect(parsedGcode, extruderColors, viewerView) {
         val v = viewerView ?: return@LaunchedEffect
         val colors = extruderColors
@@ -48,7 +49,7 @@ fun GcodeViewer3DScreen(
                     Column {
                         Text("3D G-code View", fontWeight = FontWeight.Bold)
                         Text(
-                            "$totalLayers layers  Showing ${minLayer + 1}–${maxLayer + 1}",
+                            "$totalLayers layers  Layer ${maxLayer + 1}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -81,9 +82,65 @@ fun GcodeViewer3DScreen(
             )
         }
     ) { padding ->
-        Column(
+        Row(
             modifier = Modifier.fillMaxSize().padding(padding)
         ) {
+            // Vertical layer slider on the left
+            if (totalLayers > 1) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(52.dp)
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Top label: current max layer
+                    Text(
+                        "${maxLayer + 1}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // Vertical slider (rotated horizontal slider)
+                    BoxWithConstraints(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val sliderLength = maxHeight
+                        Slider(
+                            value = maxLayer.toFloat(),
+                            onValueChange = {
+                                maxLayer = it.roundToInt()
+                                viewerView?.setLayerRange(0, maxLayer)
+                            },
+                            valueRange = 0f..(totalLayers - 1).toFloat(),
+                            modifier = Modifier
+                                .requiredWidth(sliderLength)
+                                .graphicsLayer { rotationZ = -90f }
+                        )
+                    }
+                    // Bottom label: layer 1
+                    Text(
+                        "1",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    // Z height below bottom label
+                    val currentZ = parsedGcode.layers.getOrNull(maxLayer)?.z ?: 0f
+                    Text(
+                        "%.1fmm".format(currentZ),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+
             // GL view
             AndroidView(
                 factory = { ctx ->
@@ -94,82 +151,8 @@ fun GcodeViewer3DScreen(
                         // built with default colors before the real colors are set.
                     }
                 },
-                modifier = Modifier.fillMaxWidth().weight(1f)
+                modifier = Modifier.fillMaxHeight().weight(1f)
             )
-
-            // Layer range controls
-            if (totalLayers > 1) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 2.dp
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        // Max layer slider (which layer to show up to)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "Layer",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.width(48.dp)
-                            )
-                            Slider(
-                                value = maxLayer.toFloat(),
-                                onValueChange = {
-                                    maxLayer = it.roundToInt()
-                                    if (minLayer > maxLayer) minLayer = maxLayer
-                                    viewerView?.setLayerRange(minLayer, maxLayer)
-                                },
-                                valueRange = 0f..(totalLayers - 1).toFloat(),
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                "${maxLayer + 1}",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.width(48.dp)
-                            )
-                        }
-
-                        // Range slider for min layer
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "From",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.width(48.dp)
-                            )
-                            Slider(
-                                value = minLayer.toFloat(),
-                                onValueChange = {
-                                    minLayer = it.roundToInt()
-                                    if (maxLayer < minLayer) maxLayer = minLayer
-                                    viewerView?.setLayerRange(minLayer, maxLayer)
-                                },
-                                valueRange = 0f..(totalLayers - 1).toFloat(),
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                "${minLayer + 1}",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.width(48.dp)
-                            )
-                        }
-
-                        // Z height info
-                        val maxZ = parsedGcode.layers.getOrNull(maxLayer)?.z ?: 0f
-                        val minZ = parsedGcode.layers.getOrNull(minLayer)?.z ?: 0f
-                        Text(
-                            "Z: %.2f – %.2f mm".format(minZ, maxZ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.align(Alignment.CenterHorizontally)
-                        )
-                    }
-                }
-            }
         }
     }
 }

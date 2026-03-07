@@ -98,9 +98,11 @@ class FilamentJsonImportTest {
         parseFilamentJson("not json at all")
     }
 
-    @Test(expected = Exception::class)
-    fun `throws on JSON object without filaments key`() {
-        parseFilamentJson("""{"foo":"bar"}""")
+    @Test
+    fun `single object without name returns empty list`() {
+        // A plain object with no "name" key yields no profiles (not an error)
+        val profiles = parseFilamentJson("""{"foo":"bar"}""")
+        assertTrue(profiles.isEmpty())
     }
 
     @Test
@@ -116,5 +118,63 @@ class FilamentJsonImportTest {
         val profiles = parseFilamentJson(json)
         assertEquals(225, profiles[0].nozzleTemp)
         assertEquals(65, profiles[0].bedTemp)
+    }
+
+    @Test
+    fun `parses single Bambu OrcaSlicer profile object`() {
+        val json = """
+            {
+              "type": "filament",
+              "name": "Bambu PLA Basic @BBL P1S 0.4 nozzle",
+              "filament_type": ["PLA"],
+              "nozzle_temperature": ["nil", "220"],
+              "bed_temperature": ["35"],
+              "filament_max_volumetric_speed": ["21"],
+              "filament_retraction_length": ["nil", "0.4"],
+              "filament_retraction_speed": ["nil", "50"]
+            }
+        """.trimIndent()
+        val profiles = parseFilamentJson(json)
+        assertEquals(1, profiles.size)
+        assertEquals("Bambu PLA Basic @BBL P1S 0.4 nozzle", profiles[0].name)
+        assertEquals("PLA", profiles[0].material)
+        assertEquals(220, profiles[0].nozzleTemp)       // first non-nil from array
+        assertEquals(35, profiles[0].bedTemp)
+        assertEquals(0.4f, profiles[0].retractLength, 0.01f)  // first non-nil
+        assertEquals(50f, profiles[0].retractSpeed, 0.1f)
+    }
+
+    @Test
+    fun `infers material from name when filament_type absent`() {
+        val json = """{"type":"filament","name":"Generic PETG Filament","nozzle_temperature":["235"]}"""
+        val profiles = parseFilamentJson(json)
+        assertEquals(1, profiles.size)
+        assertEquals("PETG", profiles[0].material)
+        assertEquals(235, profiles[0].nozzleTemp)
+    }
+
+    @Test
+    fun `Bambu profile nil-only array uses material default`() {
+        val json = """{"type":"filament","name":"Mystery TPU","filament_type":["TPU"],"nozzle_temperature":["nil","nil"]}"""
+        val profiles = parseFilamentJson(json)
+        assertEquals(1, profiles.size)
+        assertEquals("TPU", profiles[0].material)
+        assertEquals(220, profiles[0].nozzleTemp)  // TPU default
+    }
+
+    @Test
+    fun `parses array of Bambu profile objects`() {
+        val json = """
+            [
+              {"type":"filament","name":"PLA A","filament_type":["PLA"],"nozzle_temperature":["215"],"bed_temperature":["60"]},
+              {"type":"filament","name":"ABS B","filament_type":["ABS"],"nozzle_temperature":["245"],"bed_temperature":["100"]}
+            ]
+        """.trimIndent()
+        val profiles = parseFilamentJson(json)
+        assertEquals(2, profiles.size)
+        assertEquals("PLA A", profiles[0].name)
+        assertEquals("ABS B", profiles[1].name)
+        assertEquals(215, profiles[0].nozzleTemp)
+        assertEquals(245, profiles[1].nozzleTemp)
     }
 }

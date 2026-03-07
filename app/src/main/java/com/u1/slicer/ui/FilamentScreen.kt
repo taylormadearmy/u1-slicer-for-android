@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.u1.slicer.data.FilamentProfile
 import org.json.JSONArray
 import org.json.JSONException
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -365,47 +366,157 @@ private fun FilamentEditDialog(
 }
 
 /**
- * Parses filament profiles from JSON. Supports both array-of-objects and a wrapper object
- * with a "filaments" key. Field names accept camelCase or snake_case.
+ * Parses filament profiles from JSON. Supports:
+ *  1. Array of simple objects: [{ "name": "...", "material": "PLA", "nozzle_temp": 220, ... }]
+ *  2. Wrapper object: { "filaments": [...] }
+ *  3. Single Bambu/OrcaSlicer profile object: { "type": "filament", "name": "...", "nozzle_temperature": ["220"], ... }
+ *  4. Array of Bambu/OrcaSlicer profile objects
  *
- * Example format:
- * [
- *   { "name": "Bambu PLA Basic", "material": "PLA", "nozzle_temp": 220, "bed_temp": 35,
- *     "print_speed": 150, "retract_length": 0.8, "retract_speed": 30 }
- * ]
+ * Simple keys accept camelCase or snake_case. Bambu/Orca keys use arrays — first non-nil value is used.
  */
 internal fun parseFilamentJson(json: String): List<FilamentProfile> {
-    val arr = try {
-        JSONArray(json.trim())
-    } catch (_: JSONException) {
-        // Try wrapper object with "filaments" key
-        try {
-            org.json.JSONObject(json.trim()).getJSONArray("filaments")
-        } catch (_: Exception) {
-            throw Exception("JSON must be an array of filament objects or an object with a \"filaments\" array")
+    val trimmed = json.trim()
+
+    // Try array first
+    val arr: JSONArray? = try { JSONArray(trimmed) } catch (_: JSONException) { null }
+    if (arr != null) {
+        val results = mutableListOf<FilamentProfile>()
+        for (i in 0 until arr.length()) {
+            val obj = try { arr.getJSONObject(i) } catch (_: Exception) { null } ?: continue
+            parseOneFilamentObject(obj)?.let { results += it }
         }
+        return results
     }
 
-    val results = mutableListOf<FilamentProfile>()
-    for (i in 0 until arr.length()) {
-        val obj = try { arr.getJSONObject(i) } catch (_: Exception) { null } ?: continue
-        val name = obj.optString("name")
-        if (name.isBlank()) continue
-        val material = obj.optString("material").let { if (it.isBlank()) "PLA" else it }
-        val nozzleTemp = obj.optInt("nozzle_temp", obj.optInt("nozzleTemp", 210))
-        val bedTemp = obj.optInt("bed_temp", obj.optInt("bedTemp", 60))
-        val printSpeed = obj.optDouble("print_speed", obj.optDouble("printSpeed", 60.0)).toFloat()
-        val retractLength = obj.optDouble("retract_length", obj.optDouble("retractLength", 0.8)).toFloat()
-        val retractSpeed = obj.optDouble("retract_speed", obj.optDouble("retractSpeed", 45.0)).toFloat()
-        results += FilamentProfile(
-            name = name,
-            material = material,
-            nozzleTemp = nozzleTemp,
-            bedTemp = bedTemp,
-            printSpeed = printSpeed,
-            retractLength = retractLength,
-            retractSpeed = retractSpeed
-        )
+    // Try single object
+    val obj: JSONObject? = try { JSONObject(trimmed) } catch (_: JSONException) { null }
+        ?: throw Exception("Could not parse file as JSON")
+
+    obj!!
+
+    // Wrapper object with "filaments" array
+    if (obj.has("filaments")) {
+        val inner = try { obj.getJSONArray("filaments") } catch (_: Exception) {
+            throw Exception("\"filaments\" key must be an array")
+        }
+        val results = mutableListOf<FilamentProfile>()
+        for (i in 0 until inner.length()) {
+            val item = try { inner.getJSONObject(i) } catch (_: Exception) { null } ?: continue
+            parseOneFilamentObject(item)?.let { results += it }
+        }
+        return results
     }
-    return results
+
+    // Single Bambu/Orca/simple profile object
+    return listOfNotNull(parseOneFilamentObject(obj))
+}
+
+/** Returns null if the object doesn't have enough data to form a profile. */
+private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
+    val name = obj.optString("name").trim()
+    if (name.isBlank()) return null
+
+    // Detect Bambu/OrcaSlicer format: has array-valued keys like nozzle_temperature
+    val isBambu = obj.has("nozzle_temperature") || obj.has("filament_type") ||
+                  obj.optString("type") == "filament"
+
+    val material: String
+    val nozzleTemp: Int
+    val bedTemp: Int
+    val printSpeed: Float
+    val retractLength: Float
+    val retractSpeed: Float
+
+    if (isBambu) {
+        material = (extractBambuValue(obj, "filament_type")
+            ?: inferMaterialFromName(name)).uppercase()
+
+        nozzleTemp = (extractBambuValue(obj, "nozzle_temperature")
+            ?.toIntOrNull() ?: materialNozzleDefault(material))
+            .coerceIn(100, 400)
+
+        bedTemp = (extractBambuValue(obj, "bed_temperature")
+            ?: extractBambuValue(obj, "cool_plate_temp")
+            ?.toIntOrNull()?.let { null }  // cool_plate_temp is not bed temp
+            .let { extractBambuValue(obj, "bed_temperature") })
+            ?.toIntOrNull() ?: materialBedDefault(material)
+
+        // Derive print speed from volumetric speed (mm³/s → mm/s at 0.4mm nozzle, 0.2mm layer)
+        val volSpeed = extractBambuValue(obj, "filament_max_volumetric_speed")?.toDoubleOrNull()
+        printSpeed = if (volSpeed != null && volSpeed > 0) {
+            (volSpeed / 0.08).toFloat().coerceIn(30f, 500f)
+        } else {
+            materialSpeedDefault(material)
+        }
+
+        retractLength = (extractBambuValue(obj, "filament_retraction_length")
+            ?.toFloatOrNull() ?: 0.8f).coerceIn(0f, 10f)
+
+        retractSpeed = (extractBambuValue(obj, "filament_retraction_speed")
+            ?.toFloatOrNull() ?: 45f).coerceIn(5f, 150f)
+    } else {
+        material = obj.optString("material").let { if (it.isBlank()) "PLA" else it }
+        nozzleTemp = obj.optInt("nozzle_temp", obj.optInt("nozzleTemp", 210))
+        bedTemp = obj.optInt("bed_temp", obj.optInt("bedTemp", 60))
+        printSpeed = obj.optDouble("print_speed", obj.optDouble("printSpeed", 60.0)).toFloat()
+        retractLength = obj.optDouble("retract_length", obj.optDouble("retractLength", 0.8)).toFloat()
+        retractSpeed = obj.optDouble("retract_speed", obj.optDouble("retractSpeed", 45.0)).toFloat()
+    }
+
+    return FilamentProfile(
+        name = name,
+        material = material,
+        nozzleTemp = nozzleTemp,
+        bedTemp = bedTemp,
+        printSpeed = printSpeed,
+        retractLength = retractLength,
+        retractSpeed = retractSpeed
+    )
+}
+
+/**
+ * Extracts the first non-nil string value from a key that may hold a string or a JSON array.
+ * Returns null if the key is absent or all values are "nil".
+ */
+private fun extractBambuValue(obj: JSONObject, key: String): String? {
+    if (!obj.has(key)) return null
+    return when (val v = obj.opt(key)) {
+        is JSONArray -> {
+            for (i in 0 until v.length()) {
+                val s = v.optString(i, "nil").trim()
+                if (s.isNotEmpty() && s != "nil") return s
+            }
+            null
+        }
+        null -> null
+        else -> v.toString().trim().takeIf { it.isNotEmpty() && it != "nil" }
+    }
+}
+
+private fun inferMaterialFromName(name: String): String {
+    val upper = name.uppercase()
+    return when {
+        "PETG" in upper -> "PETG"
+        "PVA" in upper -> "PVA"
+        "PLA" in upper -> "PLA"
+        "ASA" in upper -> "ASA"
+        "ABS" in upper -> "ABS"
+        "TPU" in upper -> "TPU"
+        "TPE" in upper -> "TPU"
+        "PA" in upper || "NYLON" in upper -> "PA"
+        "PC" in upper -> "PC"
+        else -> "PLA"
+    }
+}
+
+private fun materialNozzleDefault(material: String) = when (material) {
+    "PETG" -> 235; "ABS" -> 245; "ASA" -> 250; "PA" -> 260; "TPU" -> 220; "PVA" -> 200; else -> 210
+}
+
+private fun materialBedDefault(material: String) = when (material) {
+    "PETG" -> 80; "ABS" -> 100; "ASA" -> 100; "PA" -> 80; "TPU" -> 50; "PVA" -> 50; else -> 60
+}
+
+private fun materialSpeedDefault(material: String) = when (material) {
+    "TPU" -> 30f; "PA" -> 100f; "PVA" -> 30f; "ABS" -> 150f; "ASA" -> 150f; "PETG" -> 150f; else -> 200f
 }

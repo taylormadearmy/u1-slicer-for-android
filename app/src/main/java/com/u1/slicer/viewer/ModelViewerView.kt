@@ -2,6 +2,8 @@ package com.u1.slicer.viewer
 
 import android.content.Context
 import android.opengl.GLSurfaceView
+import android.view.GestureDetector
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 
@@ -9,12 +11,15 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
 
     val renderer = ModelRenderer(context)
     private val scaleDetector: ScaleGestureDetector
+    private val gestureDetector: GestureDetector
 
     private var previousX = 0f
     private var previousY = 0f
     private var pointerCount = 0
     private var previousMidX = 0f
     private var previousMidY = 0f
+    // When true, single-finger drag pans instead of rotating (activated by long-press)
+    private var isPanMode = false
 
     // Placement mode: when true, single-finger drag moves objects on the bed
     var placementMode = false
@@ -40,6 +45,16 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
                 return true
             }
         })
+
+        gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onLongPress(e: MotionEvent) {
+                // Long-press with one finger switches to pan mode
+                if (!placementMode && pointerCount == 1) {
+                    isPanMode = true
+                    performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                }
+            }
+        })
     }
 
     fun setMesh(mesh: MeshData) {
@@ -48,6 +63,7 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        gestureDetector.onTouchEvent(event)
         scaleDetector.onTouchEvent(event)
 
         when (event.actionMasked) {
@@ -55,6 +71,7 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
                 previousX = event.x
                 previousY = event.y
                 pointerCount = 1
+                isPanMode = false
 
                 if (placementMode) {
                     // Try to pick an object or wipe tower
@@ -71,12 +88,13 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
                 }
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                // Second finger → cancel any drag, switch to camera control
+                // Second finger → cancel any drag/pan, switch to camera control
                 if (draggingIndex >= 0) {
                     draggingIndex = -1
                     renderer.highlightIndex = -1
                     requestRender()
                 }
+                isPanMode = false
                 pointerCount = event.pointerCount
                 if (pointerCount >= 2) {
                     previousMidX = (event.getX(0) + event.getX(1)) / 2
@@ -96,10 +114,16 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
                         requestRender()
                     }
                 } else if (pointerCount == 1 && event.pointerCount == 1 && draggingIndex < 0) {
-                    // Single finger: rotate camera
                     val dx = event.x - previousX
                     val dy = event.y - previousY
-                    renderer.camera.rotate(-dx * 0.3f, dy * 0.3f)
+                    if (isPanMode) {
+                        // Long-press activated pan mode: translate camera
+                        val panScale = renderer.camera.distance * 0.003f
+                        renderer.camera.pan(-dx * panScale, dy * panScale)
+                    } else {
+                        // Normal single-finger: orbit/rotate
+                        renderer.camera.rotate(-dx * 0.3f, dy * 0.3f)
+                    }
                     requestRender()
                     previousX = event.x
                     previousY = event.y
@@ -117,6 +141,7 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                isPanMode = false
                 if (draggingIndex >= 0) {
                     draggingIndex = -1
                     renderer.highlightIndex = -1
