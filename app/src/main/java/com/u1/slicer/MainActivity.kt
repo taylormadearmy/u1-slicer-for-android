@@ -185,6 +185,7 @@ fun SlicerScreen(
     val importProgress by viewModel.importProgress.collectAsState()
     val importError by viewModel.importError.collectAsState()
     val copyCount by viewModel.copyCount.collectAsState()
+    val extruderColors by viewModel.activeExtruderColors.collectAsState()
     var showImportDialog by remember { mutableStateOf(false) }
 
     // MakerWorld import dialog
@@ -329,27 +330,13 @@ fun SlicerScreen(
                     }
                 }
                 is SlicerViewModel.SlicerState.ModelLoaded -> {
-                    ModelInfoCard(s.info)
-                    if (threeMfInfo != null && threeMfInfo!!.isBambu) {
-                        BambuInfoCard(threeMfInfo!!)
-                    }
-                    if (config.extruderCount > 1) {
-                        MultiColorInfoCard(
-                            extruderCount = config.extruderCount,
-                            colors = threeMfInfo?.detectedColors ?: emptyList(),
-                            wipeTowerEnabled = config.wipeTowerEnabled,
-                            onToggleWipeTower = {
-                                viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
-                            },
-                            onReassign = { viewModel.showMultiColorReassign() }
-                        )
-                    }
-                    // Inline 3D model preview with interactive placement
+                    // Inline 3D model preview — top of page, larger
                     val modelPath = viewModel.currentModelPath
                     if (modelPath != null && (
                         modelPath.endsWith(".stl", ignoreCase = true) ||
                         modelPath.endsWith(".3mf", ignoreCase = true)
                     )) {
+                        var showInfoDialog by remember { mutableStateOf(false) }
                         val positions = viewModel.getPlacementPositions()
                         InlineModelPreview(
                             modelFilePath = modelPath,
@@ -364,8 +351,21 @@ fun SlicerScreen(
                             wipeTowerWidth = config.wipeTowerWidth,
                             onPositionsChanged = { pos, towerPos ->
                                 viewModel.applyPlacementPositions(pos, towerPos)
-                            }
+                            },
+                            onInfoClick = { showInfoDialog = true }
                         )
+                        if (showInfoDialog) {
+                            ModelInfoDialog(
+                                info = s.info,
+                                threeMfInfo = threeMfInfo,
+                                config = config,
+                                onToggleWipeTower = {
+                                    viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
+                                },
+                                onReassign = { viewModel.showMultiColorReassign() },
+                                onDismiss = { showInfoDialog = false }
+                            )
+                        }
                     }
                     ConfigCard(config, viewModel::updateConfig, copyCount, viewModel::setCopyCount)
                     SliceButton(onClick = { viewModel.startSlicing() })
@@ -380,6 +380,14 @@ fun SlicerScreen(
                         onSave = onSaveGcode,
                         onSendToPrinter = { onSendToPrinter(s.result.gcodePath) }
                     )
+                    // Inline 3D G-code preview
+                    if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
+                        InlineGcodePreview(
+                            parsedGcode = parsedGcode!!,
+                            extruderColors = extruderColors,
+                            onExpand = onNavigateGcodeViewer3D
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -393,20 +401,6 @@ fun SlicerScreen(
                             Spacer(Modifier.width(4.dp))
                             Text("Re-slice")
                         }
-                        if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
-                            OutlinedButton(
-                                onClick = onNavigateGcodeViewer3D,
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.ViewInAr, null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("3D View")
-                            }
-                        }
-                    }
-                    if (gcodePreview.isNotEmpty()) {
-                        GcodePreviewCard(gcodePreview)
                     }
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -1110,7 +1104,8 @@ fun InlineModelPreview(
     wipeTowerY: Float = 0f,
     wipeTowerWidth: Float = 60f,
     wipeTowerDepth: Float = 60f,
-    onPositionsChanged: ((FloatArray, Pair<Float, Float>) -> Unit)? = null
+    onPositionsChanged: ((FloatArray, Pair<Float, Float>) -> Unit)? = null,
+    onInfoClick: (() -> Unit)? = null
 ) {
     var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
@@ -1189,7 +1184,7 @@ fun InlineModelPreview(
     ) {
         Box(modifier = Modifier
             .fillMaxWidth()
-            .height(if (placementEnabled) 300.dp else 220.dp)
+            .height(if (placementEnabled) 340.dp else 300.dp)
         ) {
             androidx.compose.ui.viewinterop.AndroidView(
                 factory = { ctx ->
@@ -1200,18 +1195,22 @@ fun InlineModelPreview(
                 },
                 modifier = Modifier.fillMaxSize()
             )
-            // Fullscreen button overlay
-            IconButton(
-                onClick = onFullScreen,
+            // Top-right overlay buttons
+            Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(4.dp)
             ) {
-                Icon(
-                    Icons.Default.Fullscreen,
-                    "Full screen",
-                    tint = Color.White.copy(alpha = 0.8f)
-                )
+                if (onInfoClick != null) {
+                    IconButton(onClick = onInfoClick) {
+                        Icon(Icons.Default.Info, "Model info",
+                            tint = Color.White.copy(alpha = 0.8f))
+                    }
+                }
+                IconButton(onClick = onFullScreen) {
+                    Icon(Icons.Default.Fullscreen, "Full screen",
+                        tint = Color.White.copy(alpha = 0.8f))
+                }
             }
             // Placement mode indicator
             if (placementEnabled) {
@@ -1223,6 +1222,124 @@ fun InlineModelPreview(
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.7f)
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun ModelInfoDialog(
+    info: ModelInfo,
+    threeMfInfo: com.u1.slicer.bambu.ThreeMfInfo?,
+    config: com.u1.slicer.data.SliceConfig,
+    onToggleWipeTower: () -> Unit,
+    onReassign: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.ViewInAr, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(info.filename, fontWeight = FontWeight.Bold, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                InfoRow("Format", info.format.uppercase())
+                InfoRow("Dimensions", info.dimensionString)
+                InfoRow("Triangles", "%,d".format(info.triangleCount))
+                InfoRow("Volumes", info.volumeCount.toString())
+                InfoRow("Manifold", if (info.isManifold) "Yes" else "No")
+
+                if (threeMfInfo != null && threeMfInfo.isBambu) {
+                    Divider(modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    Text("Bambu Studio File", fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium)
+                    if (threeMfInfo.detectedExtruderCount > 1)
+                        InfoRow("Extruders Detected", threeMfInfo.detectedExtruderCount.toString())
+                    if (threeMfInfo.detectedColors.isNotEmpty())
+                        InfoRow("Colors", threeMfInfo.detectedColors.joinToString(", "))
+                    if (threeMfInfo.hasPaintData)
+                        InfoRow("Paint Data", "Yes (per-triangle)")
+                    if (threeMfInfo.isMultiPlate)
+                        InfoRow("Plates", threeMfInfo.plates.size.toString())
+                }
+
+                if (config.extruderCount > 1) {
+                    Divider(modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Wipe Tower", style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = config.wipeTowerEnabled,
+                            onCheckedChange = { onToggleWipeTower() })
+                    }
+                    OutlinedButton(
+                        onClick = onReassign,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.Edit, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Reassign Filaments")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        }
+    )
+}
+
+@Composable
+fun InlineGcodePreview(
+    parsedGcode: com.u1.slicer.gcode.ParsedGcode,
+    extruderColors: List<String>,
+    onExpand: () -> Unit
+) {
+    var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
+
+    LaunchedEffect(parsedGcode, extruderColors, viewerView) {
+        val v = viewerView ?: return@LaunchedEffect
+        v.queueEvent {
+            if (extruderColors.isNotEmpty()) {
+                v.renderer.setExtruderColors(extruderColors)
+            }
+            v.renderer.uploadGcode(parsedGcode)
+        }
+        v.requestRender()
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().height(280.dp)) {
+            androidx.compose.ui.viewinterop.AndroidView(
+                factory = { ctx ->
+                    com.u1.slicer.viewer.GcodeViewerView(ctx).also { view ->
+                        viewerView = view
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+            // Expand button overlay
+            IconButton(
+                onClick = onExpand,
+                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+            ) {
+                Icon(Icons.Default.Fullscreen, "Full screen",
+                    tint = Color.White.copy(alpha = 0.8f))
             }
         }
     }
