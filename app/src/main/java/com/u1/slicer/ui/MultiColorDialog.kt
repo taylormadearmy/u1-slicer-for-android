@@ -170,7 +170,8 @@ private fun ColorToExtruderRow(
         Column(modifier = Modifier.weight(1f)) {
             Text("Color ${colorIndex + 1}", style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(modelColor.uppercase(), style = MaterialTheme.typography.bodySmall)
+            Text(modelColor.uppercase(), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface)
         }
 
         // Extruder slot picker
@@ -202,7 +203,8 @@ private fun ColorToExtruderRow(
                                     .background(parseHexColor(preset.color))
                                     .border(0.5.dp, MaterialTheme.colorScheme.outline, CircleShape))
                                 Text("${preset.label} · ${preset.materialType}",
-                                    style = MaterialTheme.typography.bodySmall)
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface)
                             }
                         },
                         onClick = { onSelect(preset.index); expanded = false }

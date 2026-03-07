@@ -83,7 +83,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Default camera: center on 270mm bed
         camera.setTarget(135f, 135f, 0f)
         camera.distance = 400f
-        camera.elevation = 35f
+        camera.elevation = 45f
         camera.azimuth = -45f
     }
 
@@ -102,10 +102,10 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             uploadGcode(gcode)
             pendingGcode = null
 
-            // Auto-frame: center on bed, distance based on bed size
+            // Auto-frame: center on toolpath bounding box
             camera.setTarget(135f, 135f, gcode.layers.lastOrNull()?.z?.div(2) ?: 0f)
             camera.distance = 400f
-            camera.elevation = 35f
+            camera.elevation = 45f
             camera.azimuth = -45f
             camera.panX = 0f
             camera.panY = 0f

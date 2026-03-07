@@ -73,13 +73,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
             val bedSize = 270f
             if (mesh.maxX <= bedSize * 1.5f && mesh.maxY <= bedSize * 1.5f) {
-                camera.setTarget(bedSize / 2, bedSize / 2, mesh.sizeZ / 2)
+                camera.setTarget(mesh.centerX, mesh.centerY, mesh.sizeZ / 2)
                 camera.distance = bedSize * 1.2f
             } else {
                 camera.setTarget(mesh.centerX, mesh.centerY, mesh.centerZ)
                 camera.distance = mesh.maxDimension * 2f
             }
-            camera.elevation = 30f
+            camera.elevation = 45f
             camera.azimuth = -45f
             camera.panX = 0f
             camera.panY = 0f
