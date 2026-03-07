@@ -16,20 +16,20 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 152 JVM unit tests
-ANDROID_SERIAL=43211JEKB00954 ./gradlew connectedDebugAndroidTest             # 59 instrumented tests
+./gradlew testDebugUnitTest                                                    # 173 JVM unit tests
+ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 67 instrumented tests
 ```
 
 ### MANDATORY: End-to-end testing before a feature is "done"
 
-**Every new feature MUST be tested on the physical test device (43211JEKB00954) before being marked complete.**
+**Every new feature MUST be tested on the physical test device (43211JEKB16931) before being marked complete.**
 
 End-to-end test checklist:
-1. `ANDROID_SERIAL=43211JEKB00954 ./gradlew installDebug --no-daemon`
+1. `ANDROID_SERIAL=43211JEKB16931 ./gradlew installDebug --no-daemon`
 2. Launch the app and navigate to the relevant screen
 3. Exercise the happy path
 4. Exercise at least one error/edge case
-5. `adb -s 43211JEKB00954 logcat -s "SlicerVM" -d` — check for exceptions
+5. `adb -s 43211JEKB16931 logcat -s "SlicerVM" -d` — check for exceptions
 6. Only then mark the feature complete
 
 **Never test on NE12442001324 — that is the user's personal device.**
@@ -39,9 +39,11 @@ End-to-end test checklist:
 - `gcode/GcodeValidatorTest.kt` — Tool changes, nozzle temps, layer count, prime tower footprint
 - `viewer/StlParserTest.kt` — Binary/ASCII STL parsing, bounding box, vertex data
 - `network/MakerWorldClientTest.kt` — MakerWorld URL parsing and validation
-- `network/MoonrakerClientTest.kt` — PrinterStatus computed properties, URL normalization
+- `network/MoonrakerClientTest.kt` — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
+- `data/SlicingOverridesTest.kt` — Override modes, JSON serialization round-trip, defaults
+- `data/SettingsBackupTest.kt` — Export/import round-trip, version validation, partial restore
 - `bambu/ThreeMfParserTest.kt` — 3MF data model construction
 - `bambu/BambuSanitizerTest.kt` — INI config parsing, nil replacement, array normalization
 - `ui/ExtruderAssignmentTest.kt` — ExtruderAssignment defaults, copy, list building
@@ -55,6 +57,7 @@ End-to-end test checklist:
 - `slicing/SlicingIntegrationTest.kt` — STL/3MF load→slice, temps, layer count, metadata
 - `slicing/BambuPipelineIntegrationTest.kt` — Multi-plate, dual/4-colour, Shashibo sanitization
 - `slicing/ProfileEmbedderIntegrationTest.kt` — ZIP validity, config keys, full embed→slice pipeline
+- `gcode/GcodeThumbnailInjectorTest.kt` — 3MF image extraction, thumbnail blocks, G-code injection
 
 ## Architecture
 
