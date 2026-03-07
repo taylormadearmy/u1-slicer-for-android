@@ -43,6 +43,7 @@ fun U1NavGraph(
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 viewModel = viewModel,
+                printerViewModel = printerViewModel,
                 onBack = { navController.popBackStack() }
             )
         }

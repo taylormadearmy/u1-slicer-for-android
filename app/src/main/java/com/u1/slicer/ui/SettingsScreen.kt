@@ -15,12 +15,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import com.u1.slicer.SlicerViewModel
+import com.u1.slicer.printer.PrinterViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SlicerViewModel,
+    printerViewModel: PrinterViewModel? = null,
     onBack: () -> Unit
 ) {
     val config by viewModel.config.collectAsState()
@@ -99,6 +105,67 @@ fun SettingsScreen(
             SettingsSection("Retraction") {
                 SettingsTextField("Retract Length (mm)", retractLength) { retractLength = it }
                 SettingsTextField("Retract Speed (mm/s)", retractSpeed) { retractSpeed = it }
+            }
+
+            // Printer Connection
+            if (printerViewModel != null) {
+                val printerUrl by printerViewModel.printerUrl.collectAsState()
+                val connectionState by printerViewModel.connectionState.collectAsState()
+                var urlInput by remember(printerUrl) { mutableStateOf(printerUrl) }
+
+                SettingsSection("Printer Connection") {
+                    OutlinedTextField(
+                        value = urlInput,
+                        onValueChange = { urlInput = it },
+                        label = { Text("Printer URL") },
+                        placeholder = { Text("192.168.1.100") },
+                        supportingText = { Text("http:// and port 7125 added automatically") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Button(
+                        onClick = {
+                            printerViewModel.updateUrl(urlInput)
+                            printerViewModel.testConnection()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Connect") }
+
+                    when (connectionState) {
+                        is PrinterViewModel.ConnectionState.Testing -> {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp)
+                                Text("Testing connection…",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        is PrinterViewModel.ConnectionState.Connected -> {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.CheckCircle, null,
+                                    tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
+                                Text("Connected",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF4CAF50))
+                            }
+                        }
+                        is PrinterViewModel.ConnectionState.Failed -> {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.Error, null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp))
+                                Text((connectionState as PrinterViewModel.ConnectionState.Failed).reason,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        else -> {}
+                    }
+                }
             }
         }
     }

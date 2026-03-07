@@ -480,7 +480,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             "bed_temperature_initial_layer" to mutableListOf(cfg.bedTemp.toString()),
             "enable_support" to if (cfg.supportEnabled) "1" else "0",
             "support_threshold_angle" to cfg.supportAngle.toInt().toString(),
-            "brim_width" to cfg.brimWidth.toString()
+            "brim_width" to cfg.brimWidth.toString(),
+            // Prime tower (wipe_tower_x/y are ConfigOptionFloats arrays in OrcaSlicer)
+            "enable_prime_tower" to if (cfg.wipeTowerEnabled) "1" else "0",
+            "prime_tower_width" to cfg.wipeTowerWidth.toString(),
+            "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
+            "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() }
         )
     }
 
