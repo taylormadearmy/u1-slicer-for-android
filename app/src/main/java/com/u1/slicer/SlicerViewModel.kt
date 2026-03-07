@@ -363,6 +363,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                     _showMultiColorDialog.value = true
                     Log.i("SlicerVM", "Multi-color detected: $extCount extruders, colors=${mfInfo.detectedColors}")
+                } else {
+                    // Single-color model: set E1's color from current printer slot config so
+                    // the 3D model preview shows the correct filament color instead of default orange.
+                    val presets = extruderPresets.value
+                    val colors = MutableList(4) { "" }
+                    presets.forEach { preset -> if (preset.index in 0..3) colors[preset.index] = preset.color }
+                    _activeExtruderColors.value = colors
+                    Log.i("SlicerVM", "Single-color model: set preview colors from slots ${colors}")
                 }
             } else {
                 _state.value = SlicerState.Error("Failed to read model info")
@@ -447,7 +455,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     /** Returns initial positions for inline 3D placement (custom or auto-calculated). */
     fun getPlacementPositions(): FloatArray {
         customObjectPositions?.let { return it }
-        val mi = lastModelInfo ?: return floatArrayOf(5f, 5f)
+        val mi = lastModelInfo ?: return floatArrayOf(135f, 135f)
         return CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, _copyCount.value)
     }
 
@@ -595,28 +603,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
-            // Apply object positions (custom from placement viewer, or auto grid if copies > 1)
+            // Always reload from file for a clean instance state, then apply placement.
+            // This prevents stale instance offsets from the inline 3D viewer corrupting
+            // PrusaSlicer's internal state (SIGSEGV in export_gcode on multi-object models).
+            val path = currentModelPath
+            if (path != null) {
+                native.clearModel()
+                native.loadModel(path)
+                Log.i("SlicerVM", "Reloaded model for clean state before placement")
+            }
+
             val copies = _copyCount.value
-            // Apply object positions (custom from placement viewer, or auto grid if copies > 1)
             val custom = customObjectPositions
             if (custom != null) {
-                // Reload model from file to ensure clean state — modifying the global
-                // model's instance offsets can corrupt PrusaSlicer's internal state,
-                // causing SIGSEGV in export_gcode for multi-object models.
-                val path = currentModelPath
-                if (path != null) {
-                    native.clearModel()
-                    native.loadModel(path)
-                    Log.i("SlicerVM", "Reloaded model for clean state before placement")
-                }
                 native.setModelInstances(custom)
                 Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances")
-            } else if (copies > 1) {
+            } else {
+                // Auto-arrange: single copy → centered, multiple copies → grid
                 val mi = lastModelInfo
                 if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
                     val positions = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, copies)
                     native.setModelInstances(positions)
-                    Log.i("SlicerVM", "Auto-arranged $copies copies in grid (${positions.size / 2} actual)")
+                    Log.i("SlicerVM", "Auto-placed $copies instance(s) at [${positions.toList().take(4)}]")
                 }
             }
 

@@ -94,6 +94,11 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("machine_max_jerk_y",           new Slic3r::ConfigOptionFloats({10.0, 10.0}));
     dpc.set_key_value("machine_max_jerk_z",           new Slic3r::ConfigOptionFloats({0.4, 0.4}));
     dpc.set_key_value("machine_max_jerk_e",           new Slic3r::ConfigOptionFloats({2.5, 2.5}));
+    // machine_max_acceleration_extruding/retracting are used by GCodeProcessor for time
+    // estimation (M204 P/R).  They default to 1500/1250 mm/s² in OrcaSlicer, which is
+    // lower than the Snapmaker U1's actual 5000 mm/s², causing over-estimated print times.
+    dpc.set_key_value("machine_max_acceleration_extruding",  new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
+    dpc.set_key_value("machine_max_acceleration_retracting", new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
 
     // Multi-extruder setup
     int n_ext = std::max(1, config.extruder_count);
@@ -250,9 +255,45 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Apply model + config to the print
         Slic3r::Model& model = getGlobalModel();
 
-        // Ensure all objects are positioned on the bed
+        // Ensure all objects are positioned on the bed (z = 0)
         for (auto* obj : model.objects) {
             obj->ensure_on_bed();
+        }
+
+        // Auto-center model on bed if outside 0–270mm bounds.
+        // This is a safety net for cases where setModelInstances was not called
+        // (e.g. direct native API use, integration tests).  The ViewModel always
+        // calls setModelInstances before slicing, so for normal app use this is
+        // a no-op.
+        {
+            const double BED_X = 270.0, BED_Y = 270.0;
+            Slic3r::BoundingBoxf3 worldBB;
+            for (auto* obj : model.objects) {
+                worldBB.merge(obj->bounding_box_exact());
+            }
+            if (worldBB.defined) {
+                double xMin = worldBB.min.x(), xMax = worldBB.max.x();
+                double yMin = worldBB.min.y(), yMax = worldBB.max.y();
+                bool outOfBounds = xMin < -0.5 || xMax > BED_X + 0.5 ||
+                                   yMin < -0.5 || yMax > BED_Y + 0.5;
+                if (outOfBounds) {
+                    double sizeX = xMax - xMin, sizeY = yMax - yMin;
+                    double deltaX = (BED_X - sizeX) / 2.0 - xMin;
+                    double deltaY = (BED_Y - sizeY) / 2.0 - yMin;
+                    for (auto* obj : model.objects) {
+                        for (auto* inst : obj->instances) {
+                            auto offset = inst->get_offset();
+                            inst->set_offset(Slic3r::Vec3d(
+                                offset.x() + deltaX,
+                                offset.y() + deltaY,
+                                offset.z()
+                            ));
+                        }
+                    }
+                    SAPIL_LOGW("Auto-centered model on bed (was x=%.1f..%.1f y=%.1f..%.1f)",
+                        xMin, xMax, yMin, yMax);
+                }
+            }
         }
 
         // Clear MMU painting facets to prevent apply_mm_segmentation from running.

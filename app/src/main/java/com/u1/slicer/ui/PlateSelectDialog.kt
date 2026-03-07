@@ -1,6 +1,8 @@
 package com.u1.slicer.ui
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,8 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -138,6 +142,22 @@ private fun PlateThumbnail(
     highlightColor: Color,
     modifier: Modifier = Modifier
 ) {
+    // Show extracted PNG thumbnail if available (Bambu 3MF plates)
+    val bitmap = remember(plate.thumbnailBytes) {
+        plate.thumbnailBytes?.let { bytes ->
+            runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }.getOrNull()
+        }
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = plate.name,
+            modifier = modifier,
+            contentScale = ContentScale.Fit
+        )
+        return
+    }
+
     Canvas(modifier = modifier) {
         val bedW = 270f
         val bedH = 270f

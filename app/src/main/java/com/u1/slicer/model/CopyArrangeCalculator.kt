@@ -27,6 +27,15 @@ object CopyArrangeCalculator {
         require(objectSizeX > 0f && objectSizeY > 0f) { "Object dimensions must be positive" }
         require(copyCount >= 1) { "Copy count must be at least 1" }
 
+        // Single copy: center on the bed
+        if (copyCount == 1) {
+            return floatArrayOf(
+                (bedSizeX - objectSizeX) / 2f,
+                (bedSizeY - objectSizeY) / 2f
+            )
+        }
+
+        // Multiple copies: arrange in a grid starting at (margin, margin)
         val colCount = maxOf(1, ((bedSizeX + margin) / (objectSizeX + margin)).toInt())
         val rowCount = maxOf(1, ((bedSizeY + margin) / (objectSizeY + margin)).toInt())
         val actualCount = minOf(copyCount, colCount * rowCount)

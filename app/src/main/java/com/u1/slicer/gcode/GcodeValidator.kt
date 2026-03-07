@@ -169,4 +169,68 @@ object GcodeValidator {
         val actual = extractToolChanges(gcode)
         return tools.none { it in actual }
     }
+
+    data class BedBoundsResult(
+        val withinBounds: Boolean,
+        val minX: Double, val maxX: Double,
+        val minY: Double, val maxY: Double,
+        val violatingLines: List<String>
+    )
+
+    /**
+     * Check that all G1 X/Y motion coordinates fall within the given bed bounds.
+     * Returns a BedBoundsResult with min/max extents and any violating lines.
+     * Only checks lines with both X and Y — travel/single-axis moves are skipped
+     * if the missing axis is unknown.
+     *
+     * @param bedMinX  bed lower X limit (default 0.0)
+     * @param bedMaxX  bed upper X limit (default 270.0 for Snapmaker U1)
+     * @param bedMinY  bed lower Y limit (default 0.0)
+     * @param bedMaxY  bed upper Y limit (default 270.0 for Snapmaker U1)
+     */
+    fun checkBedBounds(
+        gcode: String,
+        bedMinX: Double = 0.0, bedMaxX: Double = 270.0,
+        bedMinY: Double = 0.0, bedMaxY: Double = 270.0
+    ): BedBoundsResult {
+        var curX = Double.NaN
+        var curY = Double.NaN
+        var minX = Double.POSITIVE_INFINITY
+        var maxX = Double.NEGATIVE_INFINITY
+        var minY = Double.POSITIVE_INFINITY
+        var maxY = Double.NEGATIVE_INFINITY
+        val violations = mutableListOf<String>()
+
+        val xRegex = Regex("""X(-?\d+(?:\.\d+)?)""")
+        val yRegex = Regex("""Y(-?\d+(?:\.\d+)?)""")
+
+        for (rawLine in gcode.lines()) {
+            val line = rawLine.trim()
+            if (line.startsWith(";")) continue
+            if (!line.startsWith("G0") && !line.startsWith("G1")) continue
+
+            xRegex.find(line)?.let { curX = it.groupValues[1].toDouble() }
+            yRegex.find(line)?.let { curY = it.groupValues[1].toDouble() }
+
+            if (!curX.isNaN()) { minX = minOf(minX, curX); maxX = maxOf(maxX, curX) }
+            if (!curY.isNaN()) { minY = minOf(minY, curY); maxY = maxOf(maxY, curY) }
+
+            val xOob = !curX.isNaN() && (curX < bedMinX - 0.5 || curX > bedMaxX + 0.5)
+            val yOob = !curY.isNaN() && (curY < bedMinY - 0.5 || curY > bedMaxY + 0.5)
+            if ((xOob || yOob) && violations.size < 5) violations.add(line)
+        }
+
+        val withinBounds = violations.isEmpty() &&
+            (minX.isInfinite() || (minX >= bedMinX - 0.5 && maxX <= bedMaxX + 0.5)) &&
+            (minY.isInfinite() || (minY >= bedMinY - 0.5 && maxY <= bedMaxY + 0.5))
+
+        return BedBoundsResult(
+            withinBounds = withinBounds,
+            minX = if (minX.isInfinite()) 0.0 else minX,
+            maxX = if (maxX.isInfinite()) 0.0 else maxX,
+            minY = if (minY.isInfinite()) 0.0 else minY,
+            maxY = if (maxY.isInfinite()) 0.0 else maxY,
+            violatingLines = violations
+        )
+    }
 }

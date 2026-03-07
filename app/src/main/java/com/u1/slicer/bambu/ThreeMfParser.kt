@@ -128,19 +128,23 @@ object ThreeMfParser {
                     }
                 }
 
-                // Build plates with name resolution
+                // Build plates with name resolution and extract PNG thumbnails
                 val plates = buildItems.mapIndexed { idx, item ->
                     val plateId = idx + 1
                     val name = resolvePlateName(
                         plateId, item.objectId,
                         plateNames, objectNames, objects
                     )
+                    // Try Bambu-style plate thumbnails: Metadata/plate_N.png
+                    val thumbnailBytes = zip.getEntry("Metadata/plate_$plateId.png")
+                        ?.let { entry -> runCatching { zip.getInputStream(entry).readBytes() }.getOrNull() }
                     ThreeMfPlate(
                         plateId = plateId,
                         name = name,
                         objectIds = listOf(item.objectId),
                         printable = item.printable,
-                        transform = item.transform
+                        transform = item.transform,
+                        thumbnailBytes = thumbnailBytes
                     )
                 }
 

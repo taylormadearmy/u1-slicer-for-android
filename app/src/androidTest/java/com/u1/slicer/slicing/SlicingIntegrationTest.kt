@@ -264,4 +264,72 @@ class SlicingIntegrationTest {
         assertTrue("G-code file should exist", File(result.gcodePath).exists())
         assertTrue("G-code file should be > 0 bytes", File(result.gcodePath).length() > 0)
     }
+
+    // ─── Bed bounds validation (regression for off-bed placement bug) ──────────
+
+    /**
+     * Critical regression test: sliced G-code must NOT have X/Y coordinates outside
+     * the 0–270mm bed.  This guards against the sapil_arrange.cpp placement bug where
+     * setModelInstances used pos as a direct offset (ignoring mesh origin), causing
+     * models to be placed outside the bed — potentially damaging the printer.
+     */
+    @Test
+    fun benchy_stl_gcodeWithinBedBounds() {
+        val file = asset("3DBenchy.stl")
+        assertTrue(lib.loadModel(file.absolutePath))
+        // Explicitly place at center (as ViewModel would do via CopyArrangeCalculator)
+        val info = lib.getModelInfo()!!
+        val cx = (270f - info.sizeX) / 2f
+        val cy = (270f - info.sizeY) / 2f
+        lib.setModelInstances(floatArrayOf(cx, cy))
+        val result = lib.slice(DEFAULT_CONFIG)!!
+        assertTrue("Benchy should slice successfully", result.success)
+        val gcode = File(result.gcodePath).readText()
+        val bounds = GcodeValidator.checkBedBounds(gcode)
+        assertTrue(
+            "All X/Y coordinates must be within 0-270mm bed. " +
+            "X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}. " +
+            "Violations: ${bounds.violatingLines.take(3)}",
+            bounds.withinBounds
+        )
+    }
+
+    @Test
+    fun tetrahedron_stl_gcodeWithinBedBounds() {
+        val file = asset("tetrahedron.stl")
+        assertTrue(lib.loadModel(file.absolutePath))
+        // Center on bed (as ViewModel does via CopyArrangeCalculator)
+        val info = lib.getModelInfo()!!
+        val cx = (270f - info.sizeX) / 2f
+        val cy = (270f - info.sizeY) / 2f
+        lib.setModelInstances(floatArrayOf(cx, cy))
+        val result = lib.slice(DEFAULT_CONFIG)!!
+        assertTrue("Tetrahedron should slice successfully", result.success)
+        val gcode = File(result.gcodePath).readText()
+        val bounds = GcodeValidator.checkBedBounds(gcode)
+        assertTrue(
+            "All X/Y must be within 0-270mm. X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}",
+            bounds.withinBounds
+        )
+    }
+
+    @Test
+    fun threeMf_gcodeWithinBedBounds() {
+        val file = asset("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(file.absolutePath))
+        // Center on bed (as ViewModel does via CopyArrangeCalculator)
+        val info = lib.getModelInfo()!!
+        val cx = (270f - info.sizeX) / 2f
+        val cy = (270f - info.sizeY) / 2f
+        lib.setModelInstances(floatArrayOf(cx, cy))
+        val config = DEFAULT_CONFIG.copy(extruderCount = 2)
+        val result = lib.slice(config)!!
+        assertTrue("3MF should slice successfully", result.success)
+        val gcode = File(result.gcodePath).readText()
+        val bounds = GcodeValidator.checkBedBounds(gcode)
+        assertTrue(
+            "3MF G-code X/Y must be within 0-270mm. X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}",
+            bounds.withinBounds
+        )
+    }
 }

@@ -6,11 +6,12 @@ import org.junit.Test
 class CopyArrangeCalculatorTest {
 
     @Test
-    fun `single copy returns one position at margin`() {
+    fun `single copy returns centered position on bed`() {
         val positions = CopyArrangeCalculator.calculate(20f, 20f, 1)
         assertEquals(2, positions.size)
-        assertEquals(5f, positions[0], 0.01f)
-        assertEquals(5f, positions[1], 0.01f)
+        // (270 - 20) / 2 = 125
+        assertEquals(125f, positions[0], 0.01f)
+        assertEquals(125f, positions[1], 0.01f)
     }
 
     @Test

@@ -5,7 +5,8 @@ data class ThreeMfPlate(
     val name: String,
     val objectIds: List<String>,
     val printable: Boolean = true,
-    val transform: FloatArray = floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f)
+    val transform: FloatArray = floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f),
+    val thumbnailBytes: ByteArray? = null
 ) {
     val translationX: Float get() = transform[9]
     val translationY: Float get() = transform[10]

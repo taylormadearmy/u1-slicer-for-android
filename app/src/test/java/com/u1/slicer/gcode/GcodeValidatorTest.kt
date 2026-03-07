@@ -221,4 +221,47 @@ class GcodeValidatorTest {
         assertEquals(10.0, fp!!.minX, 0.01)
         assertEquals(10.0, fp.minY, 0.01)
     }
+
+    // ─── checkBedBounds ───────────────────────────────────────────────────────
+
+    @Test
+    fun checkBedBounds_allWithinBounds_returnsTrue() {
+        val gcode = "G1 X135 Y135 F3000\nG1 X10 Y10\nG1 X260 Y260\n"
+        val result = GcodeValidator.checkBedBounds(gcode)
+        assertTrue("Should be within bounds", result.withinBounds)
+        assertEquals(0, result.violatingLines.size)
+    }
+
+    @Test
+    fun checkBedBounds_negativeX_returnsViolation() {
+        val gcode = "G1 X135 Y135\nG1 X-5 Y135\n"
+        val result = GcodeValidator.checkBedBounds(gcode)
+        assertFalse("Negative X should fail bounds check", result.withinBounds)
+        assertTrue("Should have violating line", result.violatingLines.isNotEmpty())
+    }
+
+    @Test
+    fun checkBedBounds_xBeyond270_returnsViolation() {
+        val gcode = "G1 X135 Y135\nG1 X280 Y135\n"
+        val result = GcodeValidator.checkBedBounds(gcode)
+        assertFalse("X=280 should fail bounds check", result.withinBounds)
+    }
+
+    @Test
+    fun checkBedBounds_skipsCommentLines() {
+        val gcode = "; G1 X-999 Y-999 this is a comment\nG1 X135 Y135\n"
+        val result = GcodeValidator.checkBedBounds(gcode)
+        assertTrue("Comment lines should not trigger violation", result.withinBounds)
+    }
+
+    @Test
+    fun checkBedBounds_tracksBoundsExtents() {
+        val gcode = "G1 X10 Y20\nG1 X200 Y180\n"
+        val result = GcodeValidator.checkBedBounds(gcode)
+        assertTrue(result.withinBounds)
+        assertEquals(10.0, result.minX, 0.01)
+        assertEquals(200.0, result.maxX, 0.01)
+        assertEquals(20.0, result.minY, 0.01)
+        assertEquals(180.0, result.maxY, 0.01)
+    }
 }
