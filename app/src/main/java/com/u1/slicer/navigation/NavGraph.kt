@@ -47,8 +47,10 @@ fun U1NavGraph(
             )
         }
         composable(Routes.PRINTER) {
+            val filaments by viewModel.filaments.collectAsState(initial = emptyList())
             PrinterScreen(
                 viewModel = printerViewModel,
+                filaments = filaments,
                 onBack = { navController.popBackStack() }
             )
         }
@@ -63,6 +65,7 @@ fun U1NavGraph(
                     viewModel.applyFilament(it)
                     navController.popBackStack()
                 },
+                onSetDefault = { viewModel.setDefaultFilament(it) },
                 onImport = { viewModel.importFilaments(it) },
                 onBack = { navController.popBackStack() }
             )

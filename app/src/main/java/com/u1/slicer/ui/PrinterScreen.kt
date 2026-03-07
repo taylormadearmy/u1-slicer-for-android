@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.printer.PrinterViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -42,6 +43,7 @@ import java.util.concurrent.TimeUnit
 @Composable
 fun PrinterScreen(
     viewModel: PrinterViewModel,
+    filaments: List<FilamentProfile> = emptyList(),
     onBack: () -> Unit
 ) {
     val status by viewModel.status.collectAsState()
@@ -410,6 +412,7 @@ fun PrinterScreen(
                     extruderPresets.forEach { preset ->
                         ExtruderSlotRow(
                             preset = preset,
+                            filaments = filaments,
                             onUpdate = { viewModel.updateExtruderPreset(it) }
                         )
                     }
@@ -448,10 +451,15 @@ fun PrinterScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ExtruderSlotRow(preset: ExtruderPreset, onUpdate: (ExtruderPreset) -> Unit) {
+private fun ExtruderSlotRow(
+    preset: ExtruderPreset,
+    filaments: List<FilamentProfile> = emptyList(),
+    onUpdate: (ExtruderPreset) -> Unit
+) {
     var showEdit by remember { mutableStateOf(false) }
     if (showEdit) {
-        ExtruderSlotEditDialog(preset = preset, onSave = { onUpdate(it); showEdit = false },
+        ExtruderSlotEditDialog(preset = preset, filaments = filaments,
+            onSave = { onUpdate(it); showEdit = false },
             onDismiss = { showEdit = false })
     }
     val slotColor = try { Color(android.graphics.Color.parseColor(preset.color)) }
@@ -482,13 +490,19 @@ private fun ExtruderSlotRow(preset: ExtruderPreset, onUpdate: (ExtruderPreset) -
 @Composable
 private fun ExtruderSlotEditDialog(
     preset: ExtruderPreset,
+    filaments: List<FilamentProfile> = emptyList(),
     onSave: (ExtruderPreset) -> Unit,
     onDismiss: () -> Unit
 ) {
     var color by remember { mutableStateOf(preset.color) }
     var materialType by remember { mutableStateOf(preset.materialType) }
     var materialExpanded by remember { mutableStateOf(false) }
+    var filamentExpanded by remember { mutableStateOf(false) }
     val materials = listOf("PLA", "PETG", "ABS", "TPU", "ASA", "PA", "PVA", "HIPS")
+
+    // Track which filament profile is linked (if any)
+    var linkedProfileId by remember { mutableStateOf(preset.filamentProfileId) }
+    val linkedProfile = filaments.firstOrNull { it.id == linkedProfileId }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -520,13 +534,57 @@ private fun ExtruderSlotEditDialog(
                         }
                     }
                 }
+                // Filament profile picker — links a FilamentProfile for temperature/speed settings
+                if (filaments.isNotEmpty()) {
+                    ExposedDropdownMenuBox(expanded = filamentExpanded, onExpandedChange = { filamentExpanded = it }) {
+                        OutlinedTextField(
+                            value = linkedProfile?.name ?: "None",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Filament Profile") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = filamentExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor()
+                        )
+                        ExposedDropdownMenu(expanded = filamentExpanded, onDismissRequest = { filamentExpanded = false }) {
+                            DropdownMenuItem(
+                                text = { Text("None") },
+                                onClick = { linkedProfileId = null; filamentExpanded = false }
+                            )
+                            filaments.forEach { profile ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(profile.name, style = MaterialTheme.typography.bodyMedium)
+                                            Text("${profile.material} · ${profile.nozzleTemp}°C · ${profile.printSpeed.toInt()} mm/s",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = {
+                                        linkedProfileId = profile.id
+                                        materialType = profile.material
+                                        filamentExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    if (linkedProfile != null) {
+                        Text(
+                            "Nozzle ${linkedProfile.nozzleTemp}°C · Bed ${linkedProfile.bedTemp}°C · ${linkedProfile.printSpeed.toInt()} mm/s",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(onClick = {
                 onSave(preset.copy(
                     color = color.let { if (it.startsWith("#")) it else "#$it" },
-                    materialType = materialType
+                    materialType = materialType,
+                    filamentProfileId = linkedProfileId
                 ))
             }) { Text("Save") }
         },

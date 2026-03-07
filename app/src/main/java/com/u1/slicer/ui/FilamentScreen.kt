@@ -37,6 +37,7 @@ fun FilamentScreen(
     onUpdate: (FilamentProfile) -> Unit,
     onDelete: (FilamentProfile) -> Unit,
     onApply: (FilamentProfile) -> Unit,
+    onSetDefault: (FilamentProfile) -> Unit,
     onImport: (List<FilamentProfile>) -> Unit,
     onBack: () -> Unit
 ) {
@@ -148,7 +149,8 @@ fun FilamentScreen(
                             showDialog = true
                         },
                         onDelete = { onDelete(filament) },
-                        onApply = { onApply(filament) }
+                        onApply = { onApply(filament) },
+                        onSetDefault = { onSetDefault(filament) }
                     )
                 }
             }
@@ -161,7 +163,8 @@ private fun FilamentCard(
     filament: FilamentProfile,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onApply: () -> Unit
+    onApply: () -> Unit,
+    onSetDefault: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -210,6 +213,9 @@ private fun FilamentCard(
                 horizontalArrangement = Arrangement.End
             ) {
                 TextButton(onClick = onApply) { Text("Apply") }
+                if (!filament.isDefault) {
+                    TextButton(onClick = onSetDefault) { Text("Set Default") }
+                }
                 TextButton(onClick = onEdit) { Text("Edit") }
                 if (!filament.isDefault) {
                     TextButton(onClick = onDelete) {

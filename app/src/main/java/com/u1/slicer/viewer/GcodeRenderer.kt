@@ -19,10 +19,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     val camera = Camera()
     private var toolpathShader: ShaderProgram? = null
-    private var gridShader: ShaderProgram? = null
-    private var gridVAO = 0
-    private var gridVertexCount = 0
-    private var bedBorderVAO = 0
+    private val bed = BedDrawable(context)
 
     // Single VAO/VBO for all toolpath layers
     private var masterVAO = 0
@@ -77,15 +74,13 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glLineWidth(1.5f)
 
         toolpathShader = ShaderProgram(context, "shaders/toolpath.vert", "shaders/toolpath.frag")
-        gridShader = ShaderProgram(context, "shaders/grid.vert", "shaders/grid.frag")
+        bed.setup(context)
 
-        setupGrid()
-
-        // Default camera: center on 270mm bed
+        // Default camera: plate-centred top-down view matching model viewer
         camera.setTarget(135f, 135f, 0f)
-        camera.distance = 400f
-        camera.elevation = 45f
-        camera.azimuth = -45f
+        camera.distance = 500f
+        camera.elevation = 62f
+        camera.azimuth = -90f
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -103,11 +98,11 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             uploadGcode(gcode)
             pendingGcode = null
 
-            // Auto-frame: center on toolpath bounding box
-            camera.setTarget(135f, 135f, gcode.layers.lastOrNull()?.z?.div(2) ?: 0f)
-            camera.distance = 400f
-            camera.elevation = 45f
-            camera.azimuth = -45f
+            // Auto-frame: plate-centred view matching model viewer
+            camera.setTarget(135f, 135f, 0f)
+            camera.distance = 500f
+            camera.elevation = 62f
+            camera.azimuth = -90f
             camera.panX = 0f
             camera.panY = 0f
         }
@@ -115,7 +110,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         camera.updateViewMatrix()
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 
-        drawGrid()
+        bed.draw(camera)
         drawToolpaths()
     }
 
@@ -205,87 +200,4 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindVertexArray(0)
     }
 
-    private fun setupGrid() {
-        val bedW = 270f
-        val bedH = 270f
-        val step = 10f
-        val lines = mutableListOf<Float>()
-
-        var x = 0f
-        while (x <= bedW) {
-            lines.addAll(listOf(x, 0f, 0f, x, bedH, 0f))
-            x += step
-        }
-        var y = 0f
-        while (y <= bedH) {
-            lines.addAll(listOf(0f, y, 0f, bedW, y, 0f))
-            y += step
-        }
-        gridVertexCount = lines.size / 3
-
-        val buf = ByteBuffer.allocateDirect(lines.size * 4)
-            .order(ByteOrder.nativeOrder())
-            .asFloatBuffer()
-        buf.put(lines.toFloatArray())
-        buf.flip()
-
-        val vaos = IntArray(1)
-        GLES30.glGenVertexArrays(1, vaos, 0)
-        gridVAO = vaos[0]
-
-        val vbos = IntArray(1)
-        GLES30.glGenBuffers(1, vbos, 0)
-
-        GLES30.glBindVertexArray(gridVAO)
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbos[0])
-        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, lines.size * 4, buf, GLES30.GL_STATIC_DRAW)
-        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, 12, 0)
-        GLES30.glEnableVertexAttribArray(0)
-        GLES30.glBindVertexArray(0)
-
-        // Bed border
-        val border = floatArrayOf(
-            0f, 0f, 0f, bedW, 0f, 0f,
-            bedW, 0f, 0f, bedW, bedH, 0f,
-            bedW, bedH, 0f, 0f, bedH, 0f,
-            0f, bedH, 0f, 0f, 0f, 0f
-        )
-        val borderBuf = ByteBuffer.allocateDirect(border.size * 4)
-            .order(ByteOrder.nativeOrder())
-            .asFloatBuffer()
-        borderBuf.put(border)
-        borderBuf.flip()
-
-        val bVaos = IntArray(1)
-        GLES30.glGenVertexArrays(1, bVaos, 0)
-        bedBorderVAO = bVaos[0]
-
-        val bVbos = IntArray(1)
-        GLES30.glGenBuffers(1, bVbos, 0)
-
-        GLES30.glBindVertexArray(bedBorderVAO)
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, bVbos[0])
-        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, border.size * 4, borderBuf, GLES30.GL_STATIC_DRAW)
-        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, 12, 0)
-        GLES30.glEnableVertexAttribArray(0)
-        GLES30.glBindVertexArray(0)
-    }
-
-    private fun drawGrid() {
-        val shader = gridShader ?: return
-        shader.use()
-
-        camera.computeMVP()
-        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
-
-        GLES30.glUniform4f(shader.getUniformLocation("u_Color"), 0.15f, 0.15f, 0.25f, 1f)
-        GLES30.glBindVertexArray(gridVAO)
-        GLES30.glDrawArrays(GLES30.GL_LINES, 0, gridVertexCount)
-        GLES30.glBindVertexArray(0)
-
-        GLES30.glUniform4f(shader.getUniformLocation("u_Color"), 0.3f, 0.3f, 0.5f, 1f)
-        GLES30.glBindVertexArray(bedBorderVAO)
-        GLES30.glDrawArrays(GLES30.GL_LINES, 0, 8)
-        GLES30.glBindVertexArray(0)
-    }
 }

@@ -62,11 +62,38 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("sparse_infill_pattern", new Slic3r::ConfigOptionEnum<Slic3r::InfillPattern>(pattern));
     dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(config.fill_density * 100.0));
 
-    // Speed (OrcaSlicer keys)
-    dpc.set_key_value("outer_wall_speed", new Slic3r::ConfigOptionFloat(config.print_speed));
-    dpc.set_key_value("inner_wall_speed", new Slic3r::ConfigOptionFloat(config.print_speed));
-    dpc.set_key_value("travel_speed", new Slic3r::ConfigOptionFloat(config.travel_speed));
-    dpc.set_key_value("initial_layer_speed", new Slic3r::ConfigOptionFloat(config.first_layer_speed));
+    // Speed (OrcaSlicer keys).
+    // Set all speed parameters explicitly so OrcaSlicer uses the user's chosen speed
+    // for every move type.  Without this, sparse_infill_speed etc. fall back to
+    // FullPrintConfig::defaults() which are very low, causing hugely over-estimated print times.
+    dpc.set_key_value("outer_wall_speed",          new Slic3r::ConfigOptionFloat(config.print_speed));
+    dpc.set_key_value("inner_wall_speed",          new Slic3r::ConfigOptionFloat(config.print_speed));
+    dpc.set_key_value("sparse_infill_speed",       new Slic3r::ConfigOptionFloat(config.print_speed * 1.5));
+    dpc.set_key_value("internal_solid_infill_speed", new Slic3r::ConfigOptionFloat(config.print_speed * 1.3));
+    dpc.set_key_value("top_surface_speed",         new Slic3r::ConfigOptionFloat(config.print_speed));
+    dpc.set_key_value("bridge_speed",              new Slic3r::ConfigOptionFloat(config.print_speed * 0.5));
+    dpc.set_key_value("gap_infill_speed",          new Slic3r::ConfigOptionFloat(config.print_speed));
+    dpc.set_key_value("travel_speed",              new Slic3r::ConfigOptionFloat(config.travel_speed));
+    dpc.set_key_value("initial_layer_speed",       new Slic3r::ConfigOptionFloat(config.first_layer_speed));
+    dpc.set_key_value("initial_layer_infill_speed",new Slic3r::ConfigOptionFloat(config.first_layer_speed));
+
+    // Snapmaker U1 machine kinematic limits — required for accurate print time estimation.
+    // OrcaSlicer's GCodeProcessor uses these to simulate acceleration phases.
+    // Without them it falls back to near-zero defaults, making every move look like pure
+    // acceleration and inflating the time estimate by 4-8×.
+    // Values are {normal, silent} mode pairs.
+    dpc.set_key_value("machine_max_speed_x",          new Slic3r::ConfigOptionFloats({config.travel_speed, config.travel_speed}));
+    dpc.set_key_value("machine_max_speed_y",          new Slic3r::ConfigOptionFloats({config.travel_speed, config.travel_speed}));
+    dpc.set_key_value("machine_max_speed_z",          new Slic3r::ConfigOptionFloats({20.0, 20.0}));
+    dpc.set_key_value("machine_max_speed_e",          new Slic3r::ConfigOptionFloats({120.0, 120.0}));
+    dpc.set_key_value("machine_max_acceleration_x",   new Slic3r::ConfigOptionFloats({5000.0, 1000.0}));
+    dpc.set_key_value("machine_max_acceleration_y",   new Slic3r::ConfigOptionFloats({5000.0, 1000.0}));
+    dpc.set_key_value("machine_max_acceleration_z",   new Slic3r::ConfigOptionFloats({200.0, 200.0}));
+    dpc.set_key_value("machine_max_acceleration_e",   new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
+    dpc.set_key_value("machine_max_jerk_x",           new Slic3r::ConfigOptionFloats({10.0, 10.0}));
+    dpc.set_key_value("machine_max_jerk_y",           new Slic3r::ConfigOptionFloats({10.0, 10.0}));
+    dpc.set_key_value("machine_max_jerk_z",           new Slic3r::ConfigOptionFloats({0.4, 0.4}));
+    dpc.set_key_value("machine_max_jerk_e",           new Slic3r::ConfigOptionFloats({2.5, 2.5}));
 
     // Multi-extruder setup
     int n_ext = std::max(1, config.extruder_count);

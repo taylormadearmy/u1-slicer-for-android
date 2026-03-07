@@ -38,8 +38,12 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var boxVertexCount = 0
 
     // Model color (orange) — used when no per-instance colors are set
-    private val modelColor = floatArrayOf(0.91f, 0.48f, 0f, 1f)
+    private val modelColorDefault = floatArrayOf(0.91f, 0.48f, 0f, 1f)
     private val wipeTowerColor = floatArrayOf(1f, 0.76f, 0.03f, 0.7f)
+
+    // Per-instance colors from extruder slot assignments (RGBA 0..1). When set, each instance
+    // is tinted with its assigned extruder color; single-color models use the first entry.
+    @Volatile var instanceColors: List<FloatArray>? = null
 
     // Instance positions for placement mode (XY pairs in mm, bed coordinates)
     // null = single instance at model's original position (no offset applied)
@@ -79,6 +83,17 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         setupLogoTexture()
         setupBox()
 
+        // Initialize camera to plate-centred view immediately so the first frame is correct.
+        // Without this, the camera starts at default (azimuth=0, elevation=30) and only snaps
+        // to the bed view once the mesh loads, causing a visible flash on first open.
+        resetCameraToDefaultView()
+    }
+
+    private fun resetCameraToDefaultView() {
+        camera.setTarget(135f, 135f, 0f)
+        camera.distance = 500f
+        camera.elevation = 62f
+        camera.azimuth = -90f
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -100,19 +115,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val mesh = meshData
             if (mesh != null) {
                 pendingCameraReset = false
-                val positions = instancePositions
-                if (positions != null && positions.size >= 2) {
-                    // Placement mode: show full bed so the user can see where to place things.
-                    // Only set on first placement assignment (not every drag update).
-                    camera.setTarget(135f, 135f, 0f)
-                    camera.distance = 500f
-                } else {
-                    // Normal view: show full bed with model visible.
-                    camera.setTarget(135f, 135f, 0f)
-                    camera.distance = 500f
-                }
-                camera.elevation = 62f
-                camera.azimuth = -90f
+                resetCameraToDefaultView()
                 camera.panX = 0f
                 camera.panY = 0f
                 camera.updateProjectionMatrix(viewportWidth, viewportHeight)
@@ -128,16 +131,19 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Draw model instances
         meshData?.let { mesh ->
             val positions = instancePositions
+            val colors = instanceColors
             if (positions != null && positions.size >= 2) {
                 val count = positions.size / 2
                 for (i in 0 until count) {
                     val px = positions[i * 2]
                     val py = positions[i * 2 + 1]
                     val highlighted = (highlightIndex == i)
-                    drawModelAt(mesh, px, py, highlighted)
+                    val color = colors?.getOrNull(i) ?: colors?.getOrNull(0) ?: modelColorDefault
+                    drawModelAt(mesh, px, py, highlighted, color)
                 }
             } else {
-                drawModel(mesh)
+                val color = colors?.getOrNull(0) ?: modelColorDefault
+                drawModel(mesh, color)
             }
         }
 
@@ -181,19 +187,20 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindVertexArray(0)
     }
 
-    private fun drawModel(mesh: MeshData) {
+    private fun drawModel(mesh: MeshData, color: FloatArray = modelColorDefault) {
         val shader = modelShader ?: return
         shader.use()
         camera.computeMVP()
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
-        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, modelColor, 0)
+        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
         GLES30.glBindVertexArray(0)
     }
 
-    private fun drawModelAt(mesh: MeshData, x: Float, y: Float, highlighted: Boolean) {
+    private fun drawModelAt(mesh: MeshData, x: Float, y: Float, highlighted: Boolean,
+                            baseColor: FloatArray = modelColorDefault) {
         val shader = modelShader ?: return
         shader.use()
 
@@ -206,7 +213,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
 
-        val color = if (highlighted) floatArrayOf(1f, 0.6f, 0.2f, 1f) else modelColor
+        val color = if (highlighted) floatArrayOf(1f, 0.6f, 0.2f, 1f) else baseColor
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
 
         GLES30.glBindVertexArray(modelVAO)

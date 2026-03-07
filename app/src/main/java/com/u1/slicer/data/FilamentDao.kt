@@ -20,6 +20,9 @@ interface FilamentDao {
     @Delete
     suspend fun delete(profile: FilamentProfile)
 
+    @Query("UPDATE filament_profiles SET isDefault = 0")
+    suspend fun clearAllDefaults()
+
     @Query("SELECT COUNT(*) FROM filament_profiles")
     suspend fun count(): Int
 }

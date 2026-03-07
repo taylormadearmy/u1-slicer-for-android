@@ -336,6 +336,7 @@ fun SlicerScreen(
                             modelFilePath = modelPath,
                             onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
                                 onNavigateModelViewer else ({}),
+                            extruderColors = extruderColors,
                             objectPositions = positions,
                             modelSizeX = s.info.sizeX,
                             modelSizeY = s.info.sizeY,
@@ -1162,6 +1163,7 @@ fun ErrorCard(message: String, onRetry: () -> Unit) {
 fun InlineModelPreview(
     modelFilePath: String,
     onFullScreen: () -> Unit,
+    extruderColors: List<String> = emptyList(),
     // Placement mode
     objectPositions: FloatArray? = null,
     modelSizeX: Float = 0f,
@@ -1203,6 +1205,11 @@ fun InlineModelPreview(
     LaunchedEffect(mesh, viewerView) {
         val m = mesh; val v = viewerView
         if (m != null && v != null) v.setMesh(m)
+    }
+
+    LaunchedEffect(viewerView, extruderColors) {
+        val v = viewerView ?: return@LaunchedEffect
+        if (extruderColors.isNotEmpty()) v.setExtruderColors(extruderColors)
     }
 
     // Update renderer with placement data

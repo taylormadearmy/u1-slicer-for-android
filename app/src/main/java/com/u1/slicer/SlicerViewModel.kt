@@ -296,6 +296,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sanitized
                 } else {
                     _threeMfInfo.value = null
+                    // Clear source file so previewModelPath uses the STL directly.
+                    // Without this, loading an STL after a 3MF leaves sourceModelFile
+                    // pointing at the old 3MF, causing the wrong model to appear in the viewer.
+                    sourceModelFile = null
+                    sourceModelInfo = null
                     file
                 }
 
@@ -689,6 +694,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteFilament(profile: FilamentProfile) {
         viewModelScope.launch(Dispatchers.IO) {
             filamentDao.delete(profile)
+        }
+    }
+
+    fun setDefaultFilament(profile: FilamentProfile) {
+        viewModelScope.launch(Dispatchers.IO) {
+            filamentDao.clearAllDefaults()
+            filamentDao.update(profile.copy(isDefault = true))
         }
     }
 
