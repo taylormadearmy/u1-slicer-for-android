@@ -81,16 +81,28 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     std::vector<double> retract_len(n_ext, config.retract_length);
     std::vector<double> retract_spd(n_ext, config.retract_speed);
 
-    // Override with per-extruder values if provided
+    // Override with per-extruder values if provided.
+    // When the array covers all extruders, use ALL values (including 0 for unused slots)
+    // so OrcaSlicer correctly marks only the active extruders as "used".
+    // When the array is shorter, only override slots that have non-zero values.
+    bool temps_full = (int)config.extruder_temps.size() >= n_ext;
+    bool retract_len_full = (int)config.extruder_retract_length.size() >= n_ext;
+    bool retract_spd_full = (int)config.extruder_retract_speed.size() >= n_ext;
     for (int i = 0; i < n_ext; i++) {
-        if (i < (int)config.extruder_temps.size() && config.extruder_temps[i] > 0) {
-            temps[i] = config.extruder_temps[i];
-            first_temps[i] = config.extruder_temps[i];
+        if (i < (int)config.extruder_temps.size()) {
+            if (temps_full || config.extruder_temps[i] > 0) {
+                temps[i] = config.extruder_temps[i];
+                first_temps[i] = config.extruder_temps[i];
+            }
         }
-        if (i < (int)config.extruder_retract_length.size() && config.extruder_retract_length[i] > 0)
-            retract_len[i] = config.extruder_retract_length[i];
-        if (i < (int)config.extruder_retract_speed.size() && config.extruder_retract_speed[i] > 0)
-            retract_spd[i] = config.extruder_retract_speed[i];
+        if (i < (int)config.extruder_retract_length.size()) {
+            if (retract_len_full || config.extruder_retract_length[i] > 0)
+                retract_len[i] = config.extruder_retract_length[i];
+        }
+        if (i < (int)config.extruder_retract_speed.size()) {
+            if (retract_spd_full || config.extruder_retract_speed[i] > 0)
+                retract_spd[i] = config.extruder_retract_speed[i];
+        }
     }
 
     // Temperature (OrcaSlicer per-extruder keys)
@@ -156,23 +168,37 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // or template macros that conflict with our minimal Print pipeline.
         auto& model_config = getModelConfig();
         if (!model_config.empty()) {
-            static const char* gcode_keys[] = {
-                "machine_start_gcode",
-                "machine_end_gcode",
-                "change_filament_gcode",
-                "before_layer_change_gcode",
-                "layer_change_gcode",
-                nullptr
-            };
-            int applied = 0;
-            for (const char** k = gcode_keys; *k; ++k) {
-                auto* opt = model_config.option(*k);
-                if (opt) {
-                    dpc.set_key_value(*k, opt->clone());
-                    applied++;
-                }
+            // Only apply G-code templates that were embedded by our ProfileEmbedder
+            // (Snapmaker profile).  Raw Bambu 3MFs contain Bambu-specific template
+            // variables (flush_volumetric_speeds, M620, etc.) that cause parse errors.
+            // Snapmaker's machine_start_gcode always begins with "PRINT_START".
+            bool is_snapmaker_profile = false;
+            auto* start_opt = model_config.option<Slic3r::ConfigOptionString>("machine_start_gcode");
+            if (start_opt && start_opt->value.find("PRINT_START") != std::string::npos) {
+                is_snapmaker_profile = true;
             }
-            SAPIL_LOGI("Applied %d G-code template keys from embedded config (%zu total available)", applied, model_config.keys().size());
+
+            if (is_snapmaker_profile) {
+                static const char* gcode_keys[] = {
+                    "machine_start_gcode",
+                    "machine_end_gcode",
+                    "change_filament_gcode",
+                    "before_layer_change_gcode",
+                    "layer_change_gcode",
+                    nullptr
+                };
+                int applied = 0;
+                for (const char** k = gcode_keys; *k; ++k) {
+                    auto* opt = model_config.option(*k);
+                    if (opt) {
+                        dpc.set_key_value(*k, opt->clone());
+                        applied++;
+                    }
+                }
+                SAPIL_LOGI("Applied %d G-code template keys from Snapmaker embedded config", applied);
+            } else {
+                SAPIL_LOGI("Skipping embedded G-code templates (not a Snapmaker profile, %zu keys)", model_config.keys().size());
+            }
         }
         applyConfigToPrusa(dpc, config);
 

@@ -7,6 +7,7 @@ import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.GcodeValidator
 import org.junit.After
 import org.junit.Assert.*
@@ -318,99 +319,105 @@ class BambuPipelineIntegrationTest {
         assertTrue(GcodeValidator.hasNonZeroNozzleTemps(File(result.gcodePath).readText()))
     }
 
+    // ─── Toolchange retraction regression (multi-filament clog prevention) ─────
+
+    /**
+     * Regression: OrcaSlicer defaults retract_length_toolchange to 10mm (bowden).
+     * On Snapmaker U1's direct-drive extruders, 10mm pulls filament past the heat
+     * break, causing heat-creep clogs during multi-colour standby periods.
+     * Tests the full Bambu pipeline: sanitize → slice → verify retraction.
+     */
+    @Test
+    fun calibCube_dualColour_toolchangeRetraction_notBowdenDefault() {
+        val gcode = sanitizeAndSlice("calib-cube-10-dual-colour-merged.3mf", dualConfig())
+        val vals = GcodeValidator.extractToolchangeRetractLength(gcode)
+        assertNotNull("retract_length_toolchange must be in G-code config", vals)
+        for (v in vals!!) {
+            assertTrue("retract_length_toolchange=$v must be ≤ 2mm (direct drive), not bowden 10mm", v <= 2.0)
+        }
+    }
+
+    @Test
+    fun calibCube_dualColour_maxRetraction_notExcessive() {
+        val gcode = sanitizeAndSlice("calib-cube-10-dual-colour-merged.3mf", dualConfig())
+        val maxRetract = GcodeValidator.maxRetractionMm(gcode)
+        assertTrue("Max retraction ${maxRetract}mm must be ≤ 5mm for direct drive", maxRetract <= 5.0)
+    }
+
     // ─── Extruder remap regression (bridge: multicolour-slice.spec.ts line 98) ──
 
     /**
-     * Regression: extruder_assignments [2,3] must produce G-code with T2/T3,
-     * not T0/T1. Tests that model_settings.config extruder values are remapped
-     * before OrcaSlicer slices so is_extruder_used[2/3] is set correctly.
+     * Full pipeline: E3+E4 assignment must produce G-code with T2/T3 after
+     * compact slice (2 extruders) + GcodeToolRemapper post-process.
      *
-     * Before the fix, OrcaSlicer emitted T0/T1 (compact ordering) and
-     * start G-code referenced SM_PRINT_AUTO_FEED EXTRUDER=0/1, causing
-     * "Toolhead N nozzle temperature insufficient" on the physical printer.
+     * OrcaSlicer always compacts tool indices (T0/T1) internally.  The app's
+     * pipeline post-processes via GcodeToolRemapper to remap T0→T2, T1→T3
+     * and SM_ EXTRUDER=0→2, EXTRUDER=1→3.
+     *
+     * Matches SlicerViewModel pipeline: embed with Snapmaker profile (compact,
+     * no extruder remap in 3MF), slice, then post-process G-code.
      */
     @Test
     fun calibCube_dualColour_withExtruderRemap_usesT2andT3() {
         val input = asset("calib-cube-10-dual-colour-merged.3mf")
         val sanitized = BambuSanitizer.process(input, outDir)
-
         val info = ThreeMfParser.parse(input)
-        // Remap: compact extruder 1 → physical slot 3 (E3), compact 2 → slot 4 (E4)
-        val extruderRemap = mapOf(1 to 3, 2 to 4)
-        val config = embedder.buildConfig(
-            info = info,
-            overrides = mapOf(
-                "nozzle_temperature" to mutableListOf("0", "0", "220", "220"),
-                "nozzle_temperature_initial_layer" to mutableListOf("0", "0", "220", "220")
-            ),
-            targetExtruderCount = 4
-        )
-        val embedded = embedder.embed(sanitized, config, outDir, info, extruderRemap)
+
+        // Embed Snapmaker profile with compact extruder count (no remap in 3MF)
+        val config = embedder.buildConfig(info = info, targetExtruderCount = 2)
+        val embedded = embedder.embed(sanitized, config, outDir, info)
         assertTrue("Embedded 3MF must exist", embedded.exists())
 
-        // Verify model_settings.config was written with remapped values
-        java.util.zip.ZipFile(embedded).use { zip ->
-            val entry = zip.getEntry("Metadata/model_settings.config")
-            assertNotNull("model_settings.config must be present after remap", entry)
-            val text = zip.getInputStream(entry).bufferedReader().readText()
-            assertTrue("model_settings.config must contain value=\"3\"", text.contains("value=\"3\""))
-            assertTrue("model_settings.config must contain value=\"4\"", text.contains("value=\"4\""))
-            assertFalse("model_settings.config must not contain value=\"1\"",
-                Regex("""value="1"""").containsMatchIn(text))
-            assertFalse("model_settings.config must not contain value=\"2\"",
-                Regex("""value="2"""").containsMatchIn(text))
-        }
-
-        // Slice and verify G-code uses T2/T3 natively (no post-processing)
+        // Slice in compact mode (2 extruders)
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
-        val result = lib.slice(dualConfig().copy(extruderCount = 4,
-            extruderTemps = intArrayOf(0, 0, 220, 220)))
-        assertNotNull(result)
-        result!!
-        assertTrue("Slice with extruder remap must succeed: ${result.errorMessage}", result.success)
+        val result = lib.slice(dualConfig())
+        assertNotNull(result); result!!
+        assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
 
-        val gcode = File(result.gcodePath).readText()
+        // Verify compact G-code has T0/T1 before remap
+        val rawGcode = File(result.gcodePath).readText()
+        assertTrue("Compact G-code must have T0/T1",
+            GcodeValidator.hasToolChanges(rawGcode, "T0", "T1"))
+
+        // Post-process: remap compact T0/T1 → physical T2/T3
+        GcodeToolRemapper.remap(result.gcodePath, listOf(2, 3))
+        val remapped = File(result.gcodePath).readText()
+
         // T2 and T3 must appear as standalone tool changes
-        assertTrue("G-code must contain T2 tool changes",
-            GcodeValidator.hasToolChanges(gcode, "T2", "T3"))
-        // T0 and T1 must NOT appear as standalone tool changes
-        assertTrue("G-code must not contain T0/T1 tool changes",
-            GcodeValidator.lacksToolChanges(gcode, "T0", "T1"))
+        assertTrue("Remapped G-code must contain T2/T3",
+            GcodeValidator.hasToolChanges(remapped, "T2", "T3"))
+        // T0 and T1 must NOT appear
+        assertTrue("Remapped G-code must not contain T0/T1",
+            GcodeValidator.lacksToolChanges(remapped, "T0", "T1"))
 
-        // Start G-code macros must reference EXTRUDER=2/3, not EXTRUDER=0/1 (bridge regression)
+        // SM_ commands must reference physical slots after remap.
+        // Only check executable lines (not G-code config comments starting with ';')
+        // because OrcaSlicer dumps the raw machine_start_gcode template in comments.
+        val executableLines = remapped.lines().filter { !it.trimStart().startsWith(";") }
+        val execBlock = executableLines.joinToString("\n")
         assertTrue("SM_PRINT_AUTO_FEED must use EXTRUDER=2",
-            gcode.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=2""")))
+            execBlock.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=2""")))
         assertTrue("SM_PRINT_AUTO_FEED must use EXTRUDER=3",
-            gcode.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=3""")))
+            execBlock.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=3""")))
         assertFalse("SM_PRINT_AUTO_FEED must not use EXTRUDER=0",
-            gcode.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=0""")))
+            execBlock.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=0""")))
         assertFalse("SM_PRINT_AUTO_FEED must not use EXTRUDER=1",
-            gcode.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=1""")))
+            execBlock.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=1""")))
     }
 
     /**
-     * Regression: nozzle_temperature array for non-default slots must have 0s for unused
-     * extruders and real temps at the physical slot positions.
-     * E.g. E3+E4 → [0, 0, 220, 220], not [220, 220].
+     * Regression: compact dual-colour slice with embedded Snapmaker profile
+     * must produce G-code with non-zero nozzle temperatures.
      */
     @Test
     fun calibCube_dualColour_withExtruderRemap_hasNonZeroTempsForActiveSlots() {
         val input = asset("calib-cube-10-dual-colour-merged.3mf")
         val sanitized = BambuSanitizer.process(input, outDir)
         val info = ThreeMfParser.parse(input)
-        val extruderRemap = mapOf(1 to 3, 2 to 4)
-        val config = embedder.buildConfig(
-            info = info,
-            overrides = mapOf(
-                "nozzle_temperature" to mutableListOf("0", "0", "220", "220"),
-                "nozzle_temperature_initial_layer" to mutableListOf("0", "0", "220", "220")
-            ),
-            targetExtruderCount = 4
-        )
-        val embedded = embedder.embed(sanitized, config, outDir, info, extruderRemap)
+        val config = embedder.buildConfig(info = info, targetExtruderCount = 2)
+        val embedded = embedder.embed(sanitized, config, outDir, info)
         assertTrue(lib.loadModel(embedded.absolutePath))
-        val result = lib.slice(dualConfig().copy(extruderCount = 4,
-            extruderTemps = intArrayOf(0, 0, 220, 220)))
+        val result = lib.slice(dualConfig())
         assertNotNull(result); result!!
         assertTrue(result.success)
         val gcode = File(result.gcodePath).readText()
