@@ -37,6 +37,7 @@ class MakerWorldClient {
     suspend fun download(
         urlOrId: String,
         outputDir: File,
+        cookies: String = "",
         onProgress: (Int) -> Unit = {}
     ): DownloadResult = withContext(Dispatchers.IO) {
         val designId = parseDesignId(urlOrId)
@@ -48,11 +49,13 @@ class MakerWorldClient {
         // MakerWorld's implicit API endpoint for 3MF download
         val downloadUrl = "https://makerworld.com/api/v1/design-service/instance/$designId/f3mf?type=download"
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(downloadUrl)
             .header("User-Agent", "U1Slicer/1.0 Android")
-            .get()
-            .build()
+        if (cookies.isNotBlank()) {
+            requestBuilder.header("Cookie", cookies)
+        }
+        val request = requestBuilder.get().build()
 
         onProgress(20)
 

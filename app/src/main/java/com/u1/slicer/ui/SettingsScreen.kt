@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.filled.CheckCircle
@@ -96,7 +97,112 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Filament Profiles
+            // ---- Printer Connection (top) ----
+            if (printerViewModel != null) {
+                val printerUrl by printerViewModel.printerUrl.collectAsState()
+                val connectionState by printerViewModel.connectionState.collectAsState()
+                var urlInput by remember(printerUrl) { mutableStateOf(printerUrl) }
+
+                SettingsSection("Printer Connection") {
+                    OutlinedTextField(
+                        value = urlInput,
+                        onValueChange = { urlInput = it },
+                        label = { Text("Printer URL") },
+                        placeholder = { Text("192.168.1.100") },
+                        supportingText = { Text("http:// and port 7125 added automatically") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Button(
+                        onClick = {
+                            printerViewModel.updateUrl(urlInput)
+                            printerViewModel.testConnection()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Connect") }
+
+                    when (connectionState) {
+                        is PrinterViewModel.ConnectionState.Testing -> {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp)
+                                Text("Testing connection\u2026",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        is PrinterViewModel.ConnectionState.Connected -> {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.CheckCircle, null,
+                                    tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
+                                Text("Connected",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF4CAF50))
+                            }
+                        }
+                        is PrinterViewModel.ConnectionState.Failed -> {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.Error, null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp))
+                                Text((connectionState as PrinterViewModel.ConnectionState.Failed).reason,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        else -> {}
+                    }
+                }
+            }
+
+            // ---- MakerWorld Cookies ----
+            val makerWorldCookies by viewModel.makerWorldCookies.collectAsState()
+            var cookieInput by remember { mutableStateOf("") }
+            val hasCookies = makerWorldCookies.isNotBlank()
+
+            SettingsSection("MakerWorld") {
+                Text(
+                    if (hasCookies) "Session cookies configured"
+                    else "Add cookies for downloads requiring login",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (hasCookies) Color(0xFF4CAF50)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                OutlinedTextField(
+                    value = cookieInput,
+                    onValueChange = { cookieInput = it },
+                    label = { Text("MakerWorld Cookies") },
+                    placeholder = { Text("Paste cookies from browser") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            if (cookieInput.isNotBlank()) {
+                                viewModel.saveMakerWorldCookies(cookieInput)
+                                cookieInput = ""
+                            }
+                        },
+                        enabled = cookieInput.isNotBlank(),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Save Cookies") }
+                    if (hasCookies) {
+                        OutlinedButton(
+                            onClick = { viewModel.saveMakerWorldCookies("") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Clear") }
+                    }
+                }
+            }
+
+            // ---- Filament Profiles ----
             if (onNavigateFilaments != null) {
                 Card(
                     modifier = Modifier
@@ -129,33 +235,33 @@ fun SettingsScreen(
                 }
             }
 
-            // Printer info
+            // ---- Printer info ----
             SettingsSection("Printer") {
                 InfoRow("Model", "Snapmaker U1")
                 InfoRow("Build Volume", "270 x 270 x 270 mm")
                 InfoRow("Extruders", "4")
             }
 
-            // Temperature
+            // ---- Temperature ----
             SettingsSection("Temperature") {
                 SettingsTextField("Nozzle Temp (\u00B0C)", nozzleTemp) { nozzleTemp = it }
                 SettingsTextField("Bed Temp (\u00B0C)", bedTemp) { bedTemp = it }
             }
 
-            // Speed
+            // ---- Speed ----
             SettingsSection("Speed (mm/s)") {
                 SettingsTextField("Print Speed", printSpeed) { printSpeed = it }
                 SettingsTextField("Travel Speed", travelSpeed) { travelSpeed = it }
                 SettingsTextField("First Layer Speed", firstLayerSpeed) { firstLayerSpeed = it }
             }
 
-            // Retraction
+            // ---- Retraction ----
             SettingsSection("Retraction") {
                 SettingsTextField("Retract Length (mm)", retractLength) { retractLength = it }
                 SettingsTextField("Retract Speed (mm/s)", retractSpeed) { retractSpeed = it }
             }
 
-            // Slicing Overrides
+            // ---- Slicing Overrides ----
             SettingsSection("Slicing Overrides") {
                 Text(
                     "Override settings from loaded 3MF files",
@@ -288,6 +394,67 @@ fun SettingsScreen(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
+                // Prime Tower Detail Overrides
+                Text("Prime Tower Settings",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary)
+
+                OverrideRow(
+                    label = "Prime Volume",
+                    override = overrides.primeVolume,
+                    defaultHint = "45",
+                    onModeChange = { mode -> overrides = overrides.copy(primeVolume = overrides.primeVolume.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideIntField(
+                            value = overrides.primeVolume.value ?: 45,
+                            onValueChange = { overrides = overrides.copy(primeVolume = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Tower Brim Width",
+                    override = overrides.primeTowerBrimWidth,
+                    defaultHint = "3 mm",
+                    onModeChange = { mode -> overrides = overrides.copy(primeTowerBrimWidth = overrides.primeTowerBrimWidth.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideFloatField(
+                            value = overrides.primeTowerBrimWidth.value ?: 3f,
+                            suffix = "mm",
+                            onValueChange = { overrides = overrides.copy(primeTowerBrimWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Brim Chamfer",
+                    override = overrides.primeTowerBrimChamfer,
+                    defaultHint = "On",
+                    onModeChange = { mode -> overrides = overrides.copy(primeTowerBrimChamfer = overrides.primeTowerBrimChamfer.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideToggle(
+                            value = overrides.primeTowerBrimChamfer.value ?: true,
+                            onValueChange = { overrides = overrides.copy(primeTowerBrimChamfer = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                OverrideRow(
+                    label = "Chamfer Max Width",
+                    override = overrides.primeTowerChamferMaxWidth,
+                    defaultHint = "5 mm",
+                    onModeChange = { mode -> overrides = overrides.copy(primeTowerChamferMaxWidth = overrides.primeTowerChamferMaxWidth.copy(mode = mode)) },
+                    valueContent = {
+                        OverrideFloatField(
+                            value = overrides.primeTowerChamferMaxWidth.value ?: 5f,
+                            suffix = "mm",
+                            onValueChange = { overrides = overrides.copy(primeTowerChamferMaxWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                        )
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -301,68 +468,7 @@ fun SettingsScreen(
                 }
             }
 
-            // Printer Connection
-            if (printerViewModel != null) {
-                val printerUrl by printerViewModel.printerUrl.collectAsState()
-                val connectionState by printerViewModel.connectionState.collectAsState()
-                var urlInput by remember(printerUrl) { mutableStateOf(printerUrl) }
-
-                SettingsSection("Printer Connection") {
-                    OutlinedTextField(
-                        value = urlInput,
-                        onValueChange = { urlInput = it },
-                        label = { Text("Printer URL") },
-                        placeholder = { Text("192.168.1.100") },
-                        supportingText = { Text("http:// and port 7125 added automatically") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    Button(
-                        onClick = {
-                            printerViewModel.updateUrl(urlInput)
-                            printerViewModel.testConnection()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) { Text("Connect") }
-
-                    when (connectionState) {
-                        is PrinterViewModel.ConnectionState.Testing -> {
-                            Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp)
-                                Text("Testing connection\u2026",
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                        is PrinterViewModel.ConnectionState.Connected -> {
-                            Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Icon(Icons.Default.CheckCircle, null,
-                                    tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
-                                Text("Connected",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF4CAF50))
-                            }
-                        }
-                        is PrinterViewModel.ConnectionState.Failed -> {
-                            Row(verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Icon(Icons.Default.Error, null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(16.dp))
-                                Text((connectionState as PrinterViewModel.ConnectionState.Failed).reason,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                        else -> {}
-                    }
-                }
-            }
-
-            // Backup & Restore
+            // ---- Backup & Restore ----
             val context = LocalContext.current
             var backupStatus by remember { mutableStateOf<String?>(null) }
 

@@ -72,17 +72,25 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             pendingMesh = null
 
             val bedSize = 270f
-            if (mesh.maxX <= bedSize * 1.5f && mesh.maxY <= bedSize * 1.5f) {
-                camera.setTarget(mesh.centerX, mesh.centerY, mesh.sizeZ / 2)
-                camera.distance = bedSize * 1.2f
+            // Check if model sits on/near the bed (typical 3MF build item placement)
+            val onBed = mesh.minX >= -10f && mesh.maxX <= bedSize + 10f &&
+                        mesh.minY >= -10f && mesh.maxY <= bedSize + 10f &&
+                        mesh.minZ >= -1f
+            if (onBed) {
+                // Center camera on the model, looking at mid-height
+                camera.setTarget(mesh.centerX, mesh.centerY, mesh.sizeZ / 2f)
+                // Distance based on larger of model extent vs bed coverage
+                val extent = maxOf(mesh.sizeX, mesh.sizeY, mesh.sizeZ, bedSize * 0.5f)
+                camera.distance = extent * 1.8f
             } else {
                 camera.setTarget(mesh.centerX, mesh.centerY, mesh.centerZ)
                 camera.distance = mesh.maxDimension * 2f
             }
-            camera.elevation = 45f
+            camera.elevation = 35f
             camera.azimuth = -45f
             camera.panX = 0f
             camera.panY = 0f
+            camera.updateProjectionMatrix(viewportWidth, viewportHeight)
         }
 
         camera.updateViewMatrix()

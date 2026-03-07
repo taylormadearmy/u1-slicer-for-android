@@ -132,6 +132,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides
         .stateIn(viewModelScope, SharingStarted.Eagerly, SlicingOverrides())
 
+    // MakerWorld cookies (for authenticated downloads)
+    val makerWorldCookies: StateFlow<String> = settingsRepo.makerWorldCookies
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    fun saveMakerWorldCookies(cookies: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            settingsRepo.saveMakerWorldCookies(cookies)
+        }
+    }
+
     // Track the current working file (may be sanitized copy)
     private var currentModelFile: File? = null
     private var currentModelName: String = ""
@@ -169,9 +179,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _importProgress.value = 0
             try {
                 val context = getApplication<Application>()
+                val cookies = settingsRepo.makerWorldCookies.first()
                 val result = makerWorldClient.download(
                     urlOrId = urlOrId,
                     outputDir = context.filesDir,
+                    cookies = cookies,
                     onProgress = { _importProgress.value = it }
                 )
 
@@ -506,6 +518,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val bedTemp = resolve(ov.bedTemp, cfg.bedTemp, "bedTemp")
         val primeTower = resolve(ov.primeTower, cfg.wipeTowerEnabled, "primeTower")
 
+        // Prime tower detail overrides (ProfileEmbedder JSON path, not JNI)
+        val primeVolume = resolve(ov.primeVolume, 45, "primeVolume")
+        val primeTowerBrimWidth = resolve(ov.primeTowerBrimWidth, 3f, "primeTowerBrimWidth")
+        val primeTowerBrimChamfer = resolve(ov.primeTowerBrimChamfer, true, "primeTowerBrimChamfer")
+        val primeTowerChamferMaxWidth = resolve(ov.primeTowerChamferMaxWidth, 5f, "primeTowerChamferMaxWidth")
+
         return mapOf(
             "layer_height" to layerHeight.toString(),
             "initial_layer_print_height" to cfg.firstLayerHeight.toString(),
@@ -527,7 +545,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             "enable_prime_tower" to if (primeTower) "1" else "0",
             "prime_tower_width" to cfg.wipeTowerWidth.toString(),
             "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
-            "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() }
+            "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() },
+            // Prime tower detail settings (ProfileEmbedder JSON path)
+            "prime_volume" to primeVolume.toString(),
+            "prime_tower_brim_width" to primeTowerBrimWidth.toString(),
+            "prime_tower_brim_chamfer" to if (primeTowerBrimChamfer) "1" else "0",
+            "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString()
         )
     }
 

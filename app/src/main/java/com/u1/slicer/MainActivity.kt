@@ -171,6 +171,7 @@ fun SlicerScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val config by viewModel.config.collectAsState()
+    val slicingOverrides by viewModel.slicingOverrides.collectAsState()
     val coreVersion by viewModel.coreVersion.collectAsState()
     val gcodePreview by viewModel.gcodePreview.collectAsState()
     val parsedGcode by viewModel.parsedGcode.collectAsState()
@@ -359,7 +360,11 @@ fun SlicerScreen(
                             )
                         }
                     }
-                    ConfigCard(config, viewModel::updateConfig, copyCount, viewModel::setCopyCount)
+                    ConfigCard(
+                        config, viewModel::updateConfig, copyCount, viewModel::setCopyCount,
+                        slicingOverrides = slicingOverrides,
+                        onOverridesChange = { viewModel.saveSlicingOverrides(it) }
+                    )
                     SliceButton(onClick = { viewModel.startSlicing() })
                 }
                 is SlicerViewModel.SlicerState.Slicing -> {
@@ -509,7 +514,9 @@ fun ConfigCard(
     config: com.u1.slicer.data.SliceConfig,
     onUpdate: ((com.u1.slicer.data.SliceConfig) -> com.u1.slicer.data.SliceConfig) -> Unit,
     copyCount: Int = 1,
-    onSetCopyCount: (Int) -> Unit = {}
+    onSetCopyCount: (Int) -> Unit = {},
+    slicingOverrides: com.u1.slicer.data.SlicingOverrides = com.u1.slicer.data.SlicingOverrides(),
+    onOverridesChange: ((com.u1.slicer.data.SlicingOverrides) -> Unit)? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -648,6 +655,73 @@ fun ConfigCard(
                         Switch(
                             checked = config.supportEnabled,
                             onCheckedChange = { v -> onUpdate { it.copy(supportEnabled = v) } }
+                        )
+                    }
+
+                    // Prime tower settings (only when wipe tower enabled)
+                    if (config.wipeTowerEnabled && onOverridesChange != null) {
+                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                        Text("Prime Tower Settings", fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelLarge)
+
+                        Text("Prime Volume: ${slicingOverrides.primeVolume.value ?: 45}", style = MaterialTheme.typography.labelMedium)
+                        Slider(
+                            value = (slicingOverrides.primeVolume.value ?: 45).toFloat(),
+                            onValueChange = { v ->
+                                onOverridesChange(slicingOverrides.copy(
+                                    primeVolume = com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, v.toInt())
+                                ))
+                            },
+                            valueRange = 10f..200f,
+                            steps = 18
+                        )
+
+                        Text("Tower Width: ${"%.1f".format(config.wipeTowerWidth)} mm", style = MaterialTheme.typography.labelMedium)
+                        Slider(
+                            value = config.wipeTowerWidth,
+                            onValueChange = { v -> onUpdate { it.copy(wipeTowerWidth = v) } },
+                            valueRange = 20f..100f,
+                            steps = 15
+                        )
+
+                        Text("Brim Width: ${"%.1f".format(slicingOverrides.primeTowerBrimWidth.value ?: 3f)} mm", style = MaterialTheme.typography.labelMedium)
+                        Slider(
+                            value = slicingOverrides.primeTowerBrimWidth.value ?: 3f,
+                            onValueChange = { v ->
+                                onOverridesChange(slicingOverrides.copy(
+                                    primeTowerBrimWidth = com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, v)
+                                ))
+                            },
+                            valueRange = 0f..10f,
+                            steps = 19
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Brim Chamfer")
+                            Switch(
+                                checked = slicingOverrides.primeTowerBrimChamfer.value ?: true,
+                                onCheckedChange = { v ->
+                                    onOverridesChange(slicingOverrides.copy(
+                                        primeTowerBrimChamfer = com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, v)
+                                    ))
+                                }
+                            )
+                        }
+
+                        Text("Chamfer Max Width: ${"%.1f".format(slicingOverrides.primeTowerChamferMaxWidth.value ?: 5f)} mm", style = MaterialTheme.typography.labelMedium)
+                        Slider(
+                            value = slicingOverrides.primeTowerChamferMaxWidth.value ?: 5f,
+                            onValueChange = { v ->
+                                onOverridesChange(slicingOverrides.copy(
+                                    primeTowerChamferMaxWidth = com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, v)
+                                ))
+                            },
+                            valueRange = 0f..20f,
+                            steps = 19
                         )
                     }
 

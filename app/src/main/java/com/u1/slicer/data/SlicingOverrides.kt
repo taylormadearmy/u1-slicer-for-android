@@ -31,6 +31,11 @@ data class SlicingOverrides(
     val skirtLoops: OverrideValue<Int> = OverrideValue(),
     val bedTemp: OverrideValue<Int> = OverrideValue(),
     val primeTower: OverrideValue<Boolean> = OverrideValue(),
+    // Prime tower detail overrides (go through ProfileEmbedder JSON, not JNI)
+    val primeVolume: OverrideValue<Int> = OverrideValue(),
+    val primeTowerBrimWidth: OverrideValue<Float> = OverrideValue(),
+    val primeTowerBrimChamfer: OverrideValue<Boolean> = OverrideValue(),
+    val primeTowerChamferMaxWidth: OverrideValue<Float> = OverrideValue(),
     val flowCalibration: Boolean = true
 ) {
     fun toJson(): String {
@@ -50,6 +55,10 @@ data class SlicingOverrides(
         putOverride("skirtLoops", skirtLoops)
         putOverride("bedTemp", bedTemp)
         putOverride("primeTower", primeTower)
+        putOverride("primeVolume", primeVolume)
+        putOverride("primeTowerBrimWidth", primeTowerBrimWidth)
+        putOverride("primeTowerBrimChamfer", primeTowerBrimChamfer)
+        putOverride("primeTowerChamferMaxWidth", primeTowerChamferMaxWidth)
         obj.put("flowCalibration", flowCalibration)
         return obj.toString()
     }
@@ -65,7 +74,11 @@ data class SlicingOverrides(
             "brimWidth" to 0f,
             "skirtLoops" to 0,
             "bedTemp" to 60,
-            "primeTower" to false
+            "primeTower" to false,
+            "primeVolume" to 45,
+            "primeTowerBrimWidth" to 3f,
+            "primeTowerBrimChamfer" to true,
+            "primeTowerChamferMaxWidth" to 5f
         )
 
         fun fromJson(json: String): SlicingOverrides {
@@ -89,6 +102,10 @@ data class SlicingOverrides(
                     skirtLoops = parseOverride("skirtLoops") { (it as Number).toInt() },
                     bedTemp = parseOverride("bedTemp") { (it as Number).toInt() },
                     primeTower = parseOverride("primeTower") { it as Boolean },
+                    primeVolume = parseOverride("primeVolume") { (it as Number).toInt() },
+                    primeTowerBrimWidth = parseOverride("primeTowerBrimWidth") { (it as Number).toFloat() },
+                    primeTowerBrimChamfer = parseOverride("primeTowerBrimChamfer") { it as Boolean },
+                    primeTowerChamferMaxWidth = parseOverride("primeTowerChamferMaxWidth") { (it as Number).toFloat() },
                     flowCalibration = obj.optBoolean("flowCalibration", true)
                 )
             } catch (_: Exception) {

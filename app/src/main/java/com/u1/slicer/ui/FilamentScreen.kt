@@ -44,7 +44,9 @@ fun FilamentScreen(
     var importError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
 
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         try {
             val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
@@ -93,8 +95,10 @@ fun FilamentScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { importLauncher.launch("application/json") }) {
-                        Icon(Icons.Default.FileDownload, "Import JSON")
+                    IconButton(onClick = {
+                        importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    }) {
+                        Icon(Icons.Default.FolderOpen, "Import JSON")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
