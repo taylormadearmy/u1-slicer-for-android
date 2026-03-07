@@ -3,7 +3,6 @@ package com.u1.slicer.viewer
 import android.content.Context
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
-import com.u1.slicer.gcode.GcodeLayer
 import com.u1.slicer.gcode.MoveType
 import com.u1.slicer.gcode.ParsedGcode
 import java.nio.ByteBuffer
@@ -14,7 +13,7 @@ import javax.microedition.khronos.opengles.GL10
 /**
  * Renders G-code toolpaths as 3D colored lines.
  * Extrusion moves are colored by extruder; travel moves are dim gray.
- * Each layer is a separate VBO for efficient layer-range rendering.
+ * All layers share a single VBO; each layer is a (firstVertex, count) range within it.
  */
 class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
@@ -25,9 +24,11 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var gridVertexCount = 0
     private var bedBorderVAO = 0
 
-    // Per-layer VBO data
-    private data class LayerVBO(val vao: Int, val vertexCount: Int)
-    private val layerVBOs = mutableListOf<LayerVBO>()
+    // Single VAO/VBO for all toolpath layers
+    private var masterVAO = 0
+    private var masterVBO = 0
+    private data class LayerRange(val firstVertex: Int, val vertexCount: Int)
+    private val layerRanges = mutableListOf<LayerRange>()
 
     private var totalLayers = 0
     var minLayer = 0
@@ -119,102 +120,87 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     fun uploadGcode(gcode: ParsedGcode) {
-        // Clean up old VBOs
-        for (lv in layerVBOs) {
-            val vaos = intArrayOf(lv.vao)
-            GLES30.glDeleteVertexArrays(1, vaos, 0)
+        // Delete previous master VBO/VAO
+        if (masterVAO != 0) {
+            GLES30.glDeleteVertexArrays(1, intArrayOf(masterVAO), 0)
+            GLES30.glDeleteBuffers(1, intArrayOf(masterVBO), 0)
+            masterVAO = 0; masterVBO = 0
         }
-        layerVBOs.clear()
+        layerRanges.clear()
 
         totalLayers = gcode.layers.size
         maxLayer = totalLayers - 1
+        if (totalLayers == 0) return
 
-        for (layer in gcode.layers) {
-            val vbo = uploadLayer(layer)
-            layerVBOs.add(vbo)
-        }
-    }
+        // Count total moves across all layers for a single allocation
+        val totalMoves = gcode.layers.sumOf { it.moves.size }
+        if (totalMoves == 0) return
 
-    private fun uploadLayer(layer: GcodeLayer): LayerVBO {
-        // Each move = 2 vertices, each vertex = 3 position + 4 color = 7 floats
+        // Each move = 2 vertices, each vertex = 3 pos + 4 color = 7 floats
         val floatsPerVertex = 7
-        val maxFloats = layer.moves.size * 2 * floatsPerVertex
-        val data = FloatArray(maxFloats)
+        val totalFloats = totalMoves * 2 * floatsPerVertex
+        val data = FloatArray(totalFloats)
         var offset = 0
 
-        for (move in layer.moves) {
-            val color = if (move.type == MoveType.EXTRUDE) {
-                extruderColors[move.extruder.coerceIn(0, 3)]
-            } else {
-                travelColor
+        for (layer in gcode.layers) {
+            val layerStart = offset / floatsPerVertex
+            for (move in layer.moves) {
+                val color = if (move.type == MoveType.EXTRUDE) {
+                    extruderColors[move.extruder.coerceIn(0, 3)]
+                } else {
+                    travelColor
+                }
+                // Start vertex
+                data[offset++] = move.x0; data[offset++] = move.y0; data[offset++] = layer.z
+                data[offset++] = color[0]; data[offset++] = color[1]; data[offset++] = color[2]; data[offset++] = color[3]
+                // End vertex
+                data[offset++] = move.x1; data[offset++] = move.y1; data[offset++] = layer.z
+                data[offset++] = color[0]; data[offset++] = color[1]; data[offset++] = color[2]; data[offset++] = color[3]
             }
-
-            // Start vertex
-            data[offset++] = move.x0
-            data[offset++] = move.y0
-            data[offset++] = layer.z
-            data[offset++] = color[0]
-            data[offset++] = color[1]
-            data[offset++] = color[2]
-            data[offset++] = color[3]
-
-            // End vertex
-            data[offset++] = move.x1
-            data[offset++] = move.y1
-            data[offset++] = layer.z
-            data[offset++] = color[0]
-            data[offset++] = color[1]
-            data[offset++] = color[2]
-            data[offset++] = color[3]
+            val layerVertexCount = offset / floatsPerVertex - layerStart
+            layerRanges.add(LayerRange(layerStart, layerVertexCount))
         }
 
-        val vertexCount = offset / floatsPerVertex
+        // Single GPU upload for all layers
         val buf = ByteBuffer.allocateDirect(offset * 4)
             .order(ByteOrder.nativeOrder())
             .asFloatBuffer()
         buf.put(data, 0, offset)
         buf.flip()
 
-        val vaos = IntArray(1)
-        GLES30.glGenVertexArrays(1, vaos, 0)
-        val vao = vaos[0]
+        val vaos = IntArray(1); GLES30.glGenVertexArrays(1, vaos, 0); masterVAO = vaos[0]
+        val vbos = IntArray(1); GLES30.glGenBuffers(1, vbos, 0); masterVBO = vbos[0]
 
-        val vbos = IntArray(1)
-        GLES30.glGenBuffers(1, vbos, 0)
-
-        GLES30.glBindVertexArray(vao)
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbos[0])
+        GLES30.glBindVertexArray(masterVAO)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, masterVBO)
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, offset * 4, buf, GLES30.GL_STATIC_DRAW)
 
         val stride = floatsPerVertex * 4 // 28 bytes
-        // Position (location 0): 3 floats at offset 0
         GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, stride, 0)
         GLES30.glEnableVertexAttribArray(0)
-        // Color (location 1): 4 floats at offset 12
         GLES30.glVertexAttribPointer(1, 4, GLES30.GL_FLOAT, false, stride, 12)
         GLES30.glEnableVertexAttribArray(1)
-
         GLES30.glBindVertexArray(0)
-
-        return LayerVBO(vao, vertexCount)
     }
 
     private fun drawToolpaths() {
         val shader = toolpathShader ?: return
-        if (layerVBOs.isEmpty()) return
+        if (layerRanges.isEmpty()) return
 
         shader.use()
         camera.computeMVP()
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
 
-        val min = minLayer.coerceIn(0, layerVBOs.size - 1)
-        val max = maxLayer.coerceIn(0, layerVBOs.size - 1)
+        val min = minLayer.coerceIn(0, layerRanges.size - 1)
+        val max = maxLayer.coerceIn(0, layerRanges.size - 1)
 
-        for (i in min..max) {
-            val lv = layerVBOs[i]
-            if (lv.vertexCount == 0) continue
-            GLES30.glBindVertexArray(lv.vao)
-            GLES30.glDrawArrays(GLES30.GL_LINES, 0, lv.vertexCount)
+        GLES30.glBindVertexArray(masterVAO)
+        // Layers are packed consecutively — draw the full min..max range in one call
+        val firstVertex = layerRanges[min].firstVertex
+        val lastRange = layerRanges[max]
+        val totalVertices = lastRange.firstVertex + lastRange.vertexCount - firstVertex
+        if (totalVertices > 0) {
+            GLES30.glDrawArrays(GLES30.GL_LINES, firstVertex, totalVertices)
         }
         GLES30.glBindVertexArray(0)
     }

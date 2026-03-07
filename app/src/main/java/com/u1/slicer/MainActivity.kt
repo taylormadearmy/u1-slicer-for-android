@@ -324,7 +324,8 @@ fun SlicerScreen(
                 }
                 is SlicerViewModel.SlicerState.ModelLoaded -> {
                     // Inline 3D model preview — top of page, larger
-                    val modelPath = viewModel.currentModelPath
+                    // Use previewModelPath (original source) so component files are available
+                    val modelPath = viewModel.previewModelPath
                     if (modelPath != null && (
                         modelPath.endsWith(".stl", ignoreCase = true) ||
                         modelPath.endsWith(".3mf", ignoreCase = true)
@@ -1209,7 +1210,12 @@ fun InlineModelPreview(
         val v = viewerView ?: return@LaunchedEffect
         if (placementEnabled) {
             v.placementMode = true
+            // Only reset the camera when placement positions are first assigned (not on every
+            // drag update — setting pendingCameraReset on every recomposition would reset
+            // azimuth/elevation/pan mid-drag, corrupting subsequent screenToBed calculations).
+            val firstPlacement = v.renderer.instancePositions == null
             v.renderer.instancePositions = objPositions
+            if (firstPlacement) v.renderer.pendingCameraReset = true
             if (wipeTowerEnabled) {
                 v.renderer.wipeTower = com.u1.slicer.viewer.ModelRenderer.WipeTowerInfo(
                     towerX, towerY, wipeTowerWidth, wipeTowerDepth
@@ -1220,8 +1226,8 @@ fun InlineModelPreview(
                 if (index < count) {
                     // Move object
                     val i = index
-                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, 270f - modelSizeX)
-                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, 270f - modelSizeY)
+                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - modelSizeX))
+                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - modelSizeY))
                     v.renderer.instancePositions = objPositions.copyOf()
                     onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY))
                 } else {

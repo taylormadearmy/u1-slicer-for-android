@@ -1,7 +1,9 @@
 package com.u1.slicer.viewer
 
 import android.content.Context
+import android.graphics.Rect
 import android.opengl.GLSurfaceView
+import android.os.Build
 import android.view.GestureDetector
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -57,6 +59,15 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
         })
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Prevent Android system gesture navigation (edge-swipe / swipe-up) from
+        // stealing touch events mid-drag, which caused drags to stop after a short distance.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            systemGestureExclusionRects = listOf(Rect(0, 0, w, h))
+        }
+    }
+
     fun setMesh(mesh: MeshData) {
         renderer.pendingMesh = mesh
         requestRender()
@@ -68,19 +79,28 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // Tell the Compose verticalScroll parent not to intercept this touch.
+                // Without this, the scroll container steals the gesture after ~8dp and
+                // sends ACTION_CANCEL, which stops the drag mid-gesture.
+                parent?.requestDisallowInterceptTouchEvent(true)
                 previousX = event.x
                 previousY = event.y
                 pointerCount = 1
                 isPanMode = false
+                draggingIndex = -1  // always reset on new touch
 
                 if (placementMode) {
-                    // Try to pick an object or wipe tower
-                    val bed = renderer.screenToBed(event.x, event.y)
-                    if (bed != null) {
-                        draggingIndex = hitTest(bed[0], bed[1])
+                    // Use Z=sizeZ/2 (model visual midpoint) for hit detection so the user
+                    // can tap where the model appears on screen (not just its Z=0 shadow).
+                    // Use Z=0 for lastBedX/Y so drag deltas are in the bed plane.
+                    val halfZ = renderer.meshData?.sizeZ?.div(2f) ?: 0f
+                    val bedHit = renderer.screenToBed(event.x, event.y, halfZ)
+                    val bed0  = renderer.screenToBed(event.x, event.y)
+                    if (bedHit != null && bed0 != null) {
+                        draggingIndex = hitTest(bedHit[0], bedHit[1])
                         if (draggingIndex >= 0) {
-                            lastBedX = bed[0]
-                            lastBedY = bed[1]
+                            lastBedX = bed0[0]
+                            lastBedY = bed0[1]
                             renderer.highlightIndex = draggingIndex
                             requestRender()
                         }
@@ -152,6 +172,13 @@ class ModelViewerView(context: Context) : GLSurfaceView(context) {
                     previousX = event.x
                     previousY = event.y
                 }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                isPanMode = false
+                draggingIndex = -1
+                renderer.highlightIndex = -1
+                pointerCount = 0
+                requestRender()
             }
         }
         return true

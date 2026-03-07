@@ -8,7 +8,7 @@ object GcodeParser {
 
     fun parse(file: File): ParsedGcode {
         val layers = mutableListOf<GcodeLayer>()
-        var currentMoves = mutableListOf<GcodeMove>()
+        val currentMoves = ArrayList<GcodeMove>(512) // reused across layers, avoids re-allocation
         var currentZ = 0f
         var layerIndex = 0
 
@@ -21,108 +21,144 @@ object GcodeParser {
         BufferedReader(FileReader(file)).use { reader ->
             var line: String?
             while (reader.readLine().also { line = it } != null) {
-                val l = line!!.trim()
-                if (l.isEmpty() || l.startsWith(';')) {
-                    // Check for layer change comment
-                    if (l.startsWith(";LAYER_CHANGE") || l.startsWith("; layer_change")) {
+                val l = line!!
+                val len = l.length
+
+                // Find first non-space character (avoids trim() String allocation)
+                var start = 0
+                while (start < len && l[start] == ' ') start++
+                if (start >= len) continue
+
+                // Comment-only line
+                if (l[start] == ';') {
+                    if (startsWithAt(l, start, ";LAYER_CHANGE") || startsWithAt(l, start, "; layer_change")) {
                         if (currentMoves.isNotEmpty()) {
-                            layers.add(GcodeLayer(layerIndex, currentZ, currentMoves.toList()))
-                            layerIndex++
-                            currentMoves = mutableListOf()
+                            layers.add(GcodeLayer(layerIndex++, currentZ, currentMoves.toList()))
+                            currentMoves.clear()
                         }
                     }
                     continue
                 }
 
-                val cmd = l.substringBefore(';').trim()
-                if (cmd.isEmpty()) continue
+                // Find end of command token (avoids split() List allocation)
+                var cmdEnd = start
+                while (cmdEnd < len && l[cmdEnd] != ' ' && l[cmdEnd] != ';') cmdEnd++
+                val cmdLen = cmdEnd - start
+                if (cmdLen == 0) continue
 
-                val parts = cmd.split(' ')
-                val code = parts[0]
+                val c0 = l[start]
 
-                when (code) {
-                    "G0", "G1" -> {
-                        var newX = x
-                        var newY = y
-                        var newZ = currentZ
-                        var newE: Float? = null
-
-                        for (i in 1 until parts.size) {
-                            val p = parts[i]
-                            if (p.isEmpty()) continue
-                            val value = p.substring(1).toFloatOrNull() ?: continue
-                            when (p[0]) {
-                                'X' -> newX = value
-                                'Y' -> newY = value
-                                'Z' -> newZ = value
-                                'E' -> newE = value
+                // G0 / G1 — hot path (vast majority of G-code lines)
+                if (c0 == 'G' && cmdLen <= 3) {
+                    val gn = when (cmdLen) {
+                        2 -> l[start + 1] - '0'
+                        3 -> (l[start + 1] - '0') * 10 + (l[start + 2] - '0')
+                        else -> -1
+                    }
+                    if (gn == 0 || gn == 1) {
+                        var newX = x; var newY = y; var newZ = currentZ; var newE = Float.NaN
+                        var pos = cmdEnd
+                        while (pos < len) {
+                            while (pos < len && l[pos] == ' ') pos++
+                            if (pos >= len || l[pos] == ';') break
+                            val letter = l[pos++]
+                            val valStart = pos
+                            while (pos < len && l[pos] != ' ' && l[pos] != ';') pos++
+                            if (pos == valStart) continue
+                            val v = parseGFloat(l, valStart, pos)
+                            when (letter) {
+                                'X' -> newX = v
+                                'Y' -> newY = v
+                                'Z' -> newZ = v
+                                'E' -> newE = v
                             }
                         }
 
-                        // Detect Z layer change
-                        if (newZ != currentZ && currentMoves.isNotEmpty()) {
-                            layers.add(GcodeLayer(layerIndex, currentZ, currentMoves.toList()))
-                            layerIndex++
-                            currentMoves = mutableListOf()
-                            currentZ = newZ
-                        } else if (newZ != currentZ) {
-                            currentZ = newZ
-                        }
-
-                        // Determine if this is an extrusion move
-                        val isExtrude = if (newE != null) {
-                            if (absoluteE) {
-                                newE > lastE
-                            } else {
-                                newE > 0
+                        if (newZ != currentZ) {
+                            if (currentMoves.isNotEmpty()) {
+                                layers.add(GcodeLayer(layerIndex++, currentZ, currentMoves.toList()))
+                                currentMoves.clear()
                             }
-                        } else {
-                            false
+                            currentZ = newZ
                         }
 
-                        if (newE != null) {
-                            lastE = newE
-                        }
+                        val hasE = !newE.isNaN()
+                        val isExtrude = hasE && if (absoluteE) newE > lastE else newE > 0f
+                        if (hasE) lastE = newE
 
-                        // Only add moves with actual XY displacement
                         if (newX != x || newY != y) {
-                            currentMoves.add(
-                                GcodeMove(
-                                    type = if (isExtrude) MoveType.EXTRUDE else MoveType.TRAVEL,
-                                    x0 = x, y0 = y,
-                                    x1 = newX, y1 = newY,
-                                    extruder = currentExtruder
-                                )
-                            )
+                            currentMoves.add(GcodeMove(
+                                type = if (isExtrude) MoveType.EXTRUDE else MoveType.TRAVEL,
+                                x0 = x, y0 = y, x1 = newX, y1 = newY, extruder = currentExtruder
+                            ))
                         }
+                        x = newX; y = newY
+                        continue
+                    }
+                }
 
-                        x = newX
-                        y = newY
+                // G92 — reset E position
+                if (c0 == 'G' && cmdLen == 3 && l[start + 1] == '9' && l[start + 2] == '2') {
+                    var pos = cmdEnd
+                    while (pos < len) {
+                        while (pos < len && l[pos] == ' ') pos++
+                        if (pos >= len || l[pos] == ';') break
+                        val letter = l[pos++]
+                        val valStart = pos
+                        while (pos < len && l[pos] != ' ' && l[pos] != ';') pos++
+                        if (letter == 'E') lastE = parseGFloat(l, valStart, pos)
                     }
-                    "G92" -> {
-                        // Reset E position
-                        for (i in 1 until parts.size) {
-                            val p = parts[i]
-                            if (p.startsWith("E")) {
-                                lastE = p.substring(1).toFloatOrNull() ?: 0f
-                            }
-                        }
+                    continue
+                }
+
+                // M82 / M83 — absolute / relative E
+                if (c0 == 'M' && cmdLen == 3 && l[start + 1] == '8') {
+                    when (l[start + 2]) {
+                        '2' -> absoluteE = true
+                        '3' -> absoluteE = false
                     }
-                    "M82" -> absoluteE = true
-                    "M83" -> absoluteE = false
-                    "T0" -> currentExtruder = 0
-                    "T1" -> currentExtruder = 1
-                    "T2" -> currentExtruder = 2
-                    "T3" -> currentExtruder = 3
+                    continue
+                }
+
+                // T0–T9 — tool change
+                if (c0 == 'T' && cmdLen == 2 && l[start + 1] in '0'..'9') {
+                    currentExtruder = (l[start + 1] - '0').coerceIn(0, 3)
                 }
             }
         }
 
-        // Don't forget the last layer
         if (currentMoves.isNotEmpty()) {
             layers.add(GcodeLayer(layerIndex, currentZ, currentMoves.toList()))
         }
 
         return ParsedGcode(layers = layers)
+    }
+
+    private fun startsWithAt(s: String, offset: Int, prefix: String): Boolean {
+        if (offset + prefix.length > s.length) return false
+        for (i in prefix.indices) if (s[offset + i] != prefix[i]) return false
+        return true
+    }
+
+    /** Parse a G-code float in s[start..<end] with no String allocation. */
+    private fun parseGFloat(s: String, start: Int, end: Int): Float {
+        var i = start
+        var neg = false
+        if (i < end && s[i] == '-') { neg = true; i++ }
+        var intPart = 0L; var fracPart = 0L; var fracDiv = 1L; var inFrac = false
+        while (i < end) {
+            when (val c = s[i]) {
+                in '0'..'9' -> {
+                    val d = c - '0'
+                    if (inFrac) { fracPart = fracPart * 10 + d; fracDiv *= 10 }
+                    else intPart = intPart * 10 + d
+                }
+                '.' -> inFrac = true
+                else -> break
+            }
+            i++
+        }
+        val result = intPart.toFloat() + fracPart.toFloat() / fracDiv.toFloat()
+        return if (neg) -result else result
     }
 }

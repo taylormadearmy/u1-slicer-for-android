@@ -17,7 +17,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.viewer.GcodeViewerView
+import kotlin.coroutines.resume
 import kotlin.math.roundToInt
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,17 +31,26 @@ fun GcodeViewer3DScreen(
     val totalLayers = parsedGcode.layers.size
     var viewerView by remember { mutableStateOf<GcodeViewerView?>(null) }
     var maxLayer by remember { mutableIntStateOf(totalLayers - 1) }
+    var isLoading by remember { mutableStateOf(true) }
 
     // Set colors + upload gcode atomically on the GL thread.
+    // suspendCancellableCoroutine waits for the GL work to finish before
+    // clearing the loading indicator.
     LaunchedEffect(parsedGcode, extruderColors, viewerView) {
         val v = viewerView ?: return@LaunchedEffect
+        isLoading = true
         val colors = extruderColors
         val gcode = parsedGcode
-        v.queueEvent {
-            if (colors.isNotEmpty()) v.renderer.setExtruderColors(colors)
-            v.renderer.uploadGcode(gcode)
+        suspendCancellableCoroutine { cont ->
+            v.queueEvent {
+                if (colors.isNotEmpty()) v.renderer.setExtruderColors(colors)
+                v.renderer.uploadGcode(gcode)
+                // Post back to main thread to resume the coroutine
+                v.post { if (cont.isActive) cont.resume(Unit) }
+            }
+            v.requestRender()
         }
-        v.requestRender()
+        isLoading = false
     }
 
     Scaffold(
@@ -141,18 +152,40 @@ fun GcodeViewer3DScreen(
                 }
             }
 
-            // GL view
-            AndroidView(
-                factory = { ctx ->
-                    GcodeViewerView(ctx).also { view ->
-                        viewerView = view
-                        // Don't upload gcode here — the LaunchedEffect handles both
-                        // colors and gcode atomically to avoid a race where VBOs are
-                        // built with default colors before the real colors are set.
+            // GL view + loading overlay
+            Box(modifier = Modifier.fillMaxHeight().weight(1f)) {
+                AndroidView(
+                    factory = { ctx ->
+                        GcodeViewerView(ctx).also { view ->
+                            viewerView = view
+                            // Don't upload gcode here — the LaunchedEffect handles both
+                            // colors and gcode atomically to avoid a race where VBOs are
+                            // built with default colors before the real colors are set.
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator()
+                            Text(
+                                "Building preview…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                     }
-                },
-                modifier = Modifier.fillMaxHeight().weight(1f)
-            )
+                }
+            }
         }
     }
 }

@@ -1,13 +1,20 @@
 package com.u1.slicer.viewer
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
+import android.opengl.GLUtils
 import android.opengl.Matrix
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.cos
+import kotlin.math.sin
 
 class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
@@ -16,10 +23,17 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         private set
     private var modelShader: ShaderProgram? = null
     private var gridShader: ShaderProgram? = null
+    private var textureShader: ShaderProgram? = null
     private var modelVAO = 0
     private var gridVAO = 0
     private var gridVertexCount = 0
+    private var majorGridVAO = 0
+    private var majorGridVertexCount = 0
+    private var bedFillVAO = 0
+    private var bedFillVertexCount = 0
     private var bedBorderVAO = 0
+    private var logoVAO = 0
+    private var logoTexture = 0
     private var boxVAO = 0
     private var boxVertexCount = 0
 
@@ -43,6 +57,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingMesh: MeshData? = null
 
+    // Set to true to trigger a camera re-centre on the next frame (e.g. after placement
+    // positions arrive on the main thread after the mesh was already uploaded).
+    @Volatile
+    var pendingCameraReset = false
+
     data class WipeTowerInfo(val x: Float, val y: Float, val width: Float, val depth: Float)
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -53,9 +72,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         modelShader = ShaderProgram(context, "shaders/model.vert", "shaders/model.frag")
         gridShader = ShaderProgram(context, "shaders/grid.vert", "shaders/grid.frag")
+        textureShader = ShaderProgram(context, "shaders/texture.vert", "shaders/texture.frag")
 
+        setupBedMesh()
         setupGrid()
+        setupLogoTexture()
         setupBox()
+
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -70,15 +93,30 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             uploadMesh(mesh)
             meshData = mesh
             pendingMesh = null
+            pendingCameraReset = true  // camera will be set up below (after instancePositions may be set)
+        }
 
-            // Frame the model: orbit around its true centre, distance scales with size
-            camera.setTarget(mesh.centerX, mesh.centerY, mesh.centerZ)
-            camera.distance = (mesh.maxDimension * 2.5f).coerceIn(60f, 600f)
-            camera.elevation = 35f
-            camera.azimuth = -45f
-            camera.panX = 0f
-            camera.panY = 0f
-            camera.updateProjectionMatrix(viewportWidth, viewportHeight)
+        if (pendingCameraReset) {
+            val mesh = meshData
+            if (mesh != null) {
+                pendingCameraReset = false
+                val positions = instancePositions
+                if (positions != null && positions.size >= 2) {
+                    // Placement mode: show full bed so the user can see where to place things.
+                    // Only set on first placement assignment (not every drag update).
+                    camera.setTarget(135f, 135f, 0f)
+                    camera.distance = 500f
+                } else {
+                    // Normal view: show full bed with model visible.
+                    camera.setTarget(135f, 135f, 0f)
+                    camera.distance = 500f
+                }
+                camera.elevation = 62f
+                camera.azimuth = -90f
+                camera.panX = 0f
+                camera.panY = 0f
+                camera.updateProjectionMatrix(viewportWidth, viewportHeight)
+            }
         }
 
         camera.updateViewMatrix()
@@ -161,7 +199,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         val modelMatrix = FloatArray(16)
         Matrix.setIdentityM(modelMatrix, 0)
-        Matrix.translateM(modelMatrix, 0, x, y, 0f)
+        // Offset by -minX/-minY so the model's bottom-left corner lands at (x, y) on the bed
+        Matrix.translateM(modelMatrix, 0, x - mesh.minX, y - mesh.minY, -mesh.minZ)
 
         camera.computeMVP(modelMatrix)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
@@ -202,16 +241,34 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     /**
-     * Unproject a screen touch (px, py) onto the Z=0 bed plane.
-     * Returns (bedX, bedY) in mm, or null if the ray is parallel to the plane.
+     * Unproject a screen touch (px, py) onto a horizontal plane at the given Z height.
+     * Defaults to Z=0 (bed plane). Pass planeZ=mesh.sizeZ/2 for hit detection at the
+     * model's visual midpoint (so touches on the model's visible face register correctly
+     * with a camera elevated at ~35°).
+     *
+     * IMPORTANT: Called from the UI thread. Must NOT write shared camera FloatArrays.
      */
-    fun screenToBed(screenX: Float, screenY: Float): FloatArray? {
-        camera.updateViewMatrix()
-        camera.computeMVP()
+    fun screenToBed(screenX: Float, screenY: Float, planeZ: Float = 0f): FloatArray? {
+        // Build view matrix locally without touching camera's shared arrays
+        val radAz = Math.toRadians(camera.azimuth.toDouble())
+        val radEl = Math.toRadians(camera.elevation.toDouble())
+        val eyeX = camera.targetX + camera.panX + (camera.distance * cos(radEl) * cos(radAz)).toFloat()
+        val eyeY = camera.targetY + camera.panY + (camera.distance * cos(radEl) * sin(radAz)).toFloat()
+        val eyeZ = camera.targetZ + (camera.distance * sin(radEl)).toFloat()
+        val localView = FloatArray(16)
+        Matrix.setLookAtM(localView, 0, eyeX, eyeY, eyeZ,
+            camera.targetX + camera.panX, camera.targetY + camera.panY, camera.targetZ,
+            0f, 0f, 1f)
+
+        // Build projection matrix locally
+        val localProj = FloatArray(16)
+        val aspect = viewportWidth.toFloat() / viewportHeight.toFloat()
+        Matrix.perspectiveM(localProj, 0, 45f, aspect,
+            (camera.distance * 0.01f).coerceAtLeast(0.1f), camera.distance * 10f)
 
         val invertedVP = FloatArray(16)
         val vpMatrix = FloatArray(16)
-        Matrix.multiplyMM(vpMatrix, 0, camera.projectionMatrix, 0, camera.viewMatrix, 0)
+        Matrix.multiplyMM(vpMatrix, 0, localProj, 0, localView, 0)
         if (!Matrix.invertM(invertedVP, 0, vpMatrix, 0)) return null
 
         // NDC coords
@@ -238,10 +295,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         // Ray direction
         val dx = fx - nx; val dy = fy - ny; val dz = fz - nz
-        if (kotlin.math.abs(dz) < 1e-6f) return null // parallel to bed
+        if (kotlin.math.abs(dz) < 1e-6f) return null // parallel to plane
 
-        // Intersect with Z=0 plane
-        val t = -nz / dz
+        // Intersect with Z=planeZ plane
+        val t = (planeZ - nz) / dz
         return floatArrayOf(nx + dx * t, ny + dy * t)
     }
 
@@ -290,64 +347,164 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindVertexArray(0)
     }
 
+    private fun setupBedMesh() {
+        // Parse the U1 bed STL (binary format) from assets.
+        // The STL is centred at (0,0); our print area is (0..270, 0..270) centred at (135,135).
+        // Translate by (+135, +135). Flatten to Z=0 so grid lines at Z=0.1+ sit flush above.
+        val verts = mutableListOf<Float>()
+        try {
+            context.assets.open("bed/u1_bed.stl").use { stream ->
+                val bytes = stream.readBytes()
+                val buf = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                buf.position(80) // skip header
+                val triCount = buf.int
+                repeat(triCount) {
+                    buf.position(buf.position() + 12) // skip normal
+                    repeat(3) {
+                        val x = buf.float + 135f
+                        val y = buf.float + 135f
+                        buf.float // discard original Z — flatten to Z=0
+                        verts.add(x); verts.add(y); verts.add(0f)
+                    }
+                    buf.position(buf.position() + 2) // skip attribute
+                }
+            }
+        } catch (e: Exception) {
+            // Fallback: simple quad if STL fails to load
+            verts.addAll(listOf(0f,0f,0f, 270f,0f,0f, 270f,270f,0f,
+                                0f,0f,0f, 270f,270f,0f, 0f,270f,0f))
+        }
+
+        bedFillVertexCount = verts.size / 3
+        val buf = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        buf.put(verts.toFloatArray()); buf.flip()
+
+        val vaos = IntArray(1); GLES30.glGenVertexArrays(1, vaos, 0); bedFillVAO = vaos[0]
+        val vbos = IntArray(1); GLES30.glGenBuffers(1, vbos, 0)
+        GLES30.glBindVertexArray(bedFillVAO)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbos[0])
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, verts.size * 4, buf, GLES30.GL_STATIC_DRAW)
+        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, 12, 0)
+        GLES30.glEnableVertexAttribArray(0)
+        GLES30.glBindVertexArray(0)
+    }
+
+    private fun setupLogoTexture() {
+        // Render "snapmaker" text to a bitmap, upload as GL texture
+        val bmpW = 512; val bmpH = 128
+        val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = bmpH * 0.55f
+            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+            letterSpacing = 0.08f
+        }
+        canvas.drawText("snapmaker", bmpW / 2f, bmpH * 0.72f, paint)
+
+        val textures = IntArray(1)
+        GLES30.glGenTextures(1, textures, 0)
+        logoTexture = textures[0]
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, logoTexture)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
+        GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
+        GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, bitmap, 0)
+        bitmap.recycle()
+
+        // Logo quad: 150mm wide × 37mm tall, centered on bed at (135, 135), Z=0
+        val lx = 135f - 75f; val rx = 135f + 75f
+        val ly = 135f - 18.5f; val ry = 135f + 18.5f
+        val z = 0f
+        // position (xyz) + texcoord (uv) — stride 20 bytes
+        val verts = floatArrayOf(
+            lx, ly, z,  0f, 1f,
+            rx, ly, z,  1f, 1f,
+            rx, ry, z,  1f, 0f,
+            lx, ry, z,  0f, 0f
+        )
+        val buf = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        buf.put(verts); buf.flip()
+
+        val vaos = IntArray(1); GLES30.glGenVertexArrays(1, vaos, 0); logoVAO = vaos[0]
+        val vbos = IntArray(1); GLES30.glGenBuffers(1, vbos, 0)
+        GLES30.glBindVertexArray(logoVAO)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbos[0])
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, verts.size * 4, buf, GLES30.GL_STATIC_DRAW)
+        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, 20, 0)
+        GLES30.glEnableVertexAttribArray(0)
+        GLES30.glVertexAttribPointer(1, 2, GLES30.GL_FLOAT, false, 20, 12)
+        GLES30.glEnableVertexAttribArray(1)
+        GLES30.glBindVertexArray(0)
+    }
+
     private fun setupGrid() {
         val bedW = 270f
         val bedH = 270f
-        val step = 10f
-        val lines = mutableListOf<Float>()
 
+        // Minor grid lines every 10mm — all at Z=0 (polygon offset pushes bed behind)
+        val minorLines = mutableListOf<Float>()
         var x = 0f
         while (x <= bedW) {
-            lines.addAll(listOf(x, 0f, 0f, x, bedH, 0f))
-            x += step
+            minorLines.addAll(listOf(x, 0f, 0f, x, bedH, 0f))
+            x += 10f
         }
         var y = 0f
         while (y <= bedH) {
-            lines.addAll(listOf(0f, y, 0f, bedW, y, 0f))
-            y += step
+            minorLines.addAll(listOf(0f, y, 0f, bedW, y, 0f))
+            y += 10f
         }
-        gridVertexCount = lines.size / 3
+        gridVertexCount = minorLines.size / 3
 
-        val buf = ByteBuffer.allocateDirect(lines.size * 4)
-            .order(ByteOrder.nativeOrder())
-            .asFloatBuffer()
-        buf.put(lines.toFloatArray())
-        buf.flip()
+        val buf = ByteBuffer.allocateDirect(minorLines.size * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+        buf.put(minorLines.toFloatArray()); buf.flip()
 
-        val vaos = IntArray(1)
-        GLES30.glGenVertexArrays(1, vaos, 0)
-        gridVAO = vaos[0]
-
-        val vbos = IntArray(1)
-        GLES30.glGenBuffers(1, vbos, 0)
-
+        val vaos = IntArray(1); GLES30.glGenVertexArrays(1, vaos, 0); gridVAO = vaos[0]
+        val vbos = IntArray(1); GLES30.glGenBuffers(1, vbos, 0)
         GLES30.glBindVertexArray(gridVAO)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbos[0])
-        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, lines.size * 4, buf, GLES30.GL_STATIC_DRAW)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, minorLines.size * 4, buf, GLES30.GL_STATIC_DRAW)
         GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, 12, 0)
         GLES30.glEnableVertexAttribArray(0)
         GLES30.glBindVertexArray(0)
 
-        // Bed border
+        // Major grid lines every 50mm — also Z=0
+        val majorLines = mutableListOf<Float>()
+        for (v in listOf(0f, 50f, 100f, 150f, 200f, 250f, 270f)) {
+            majorLines.addAll(listOf(v, 0f, 0f, v, bedH, 0f))
+            majorLines.addAll(listOf(0f, v, 0f, bedW, v, 0f))
+        }
+        majorGridVertexCount = majorLines.size / 3
+
+        val majBuf = ByteBuffer.allocateDirect(majorLines.size * 4)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+        majBuf.put(majorLines.toFloatArray()); majBuf.flip()
+
+        val majVaos = IntArray(1); GLES30.glGenVertexArrays(1, majVaos, 0); majorGridVAO = majVaos[0]
+        val majVbos = IntArray(1); GLES30.glGenBuffers(1, majVbos, 0)
+        GLES30.glBindVertexArray(majorGridVAO)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, majVbos[0])
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, majorLines.size * 4, majBuf, GLES30.GL_STATIC_DRAW)
+        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, 12, 0)
+        GLES30.glEnableVertexAttribArray(0)
+        GLES30.glBindVertexArray(0)
+
+        // Bed border at Z=0
         val border = floatArrayOf(
-            0f, 0f, 0f,  bedW, 0f, 0f,
+            0f, 0f, 0f,    bedW, 0f, 0f,
             bedW, 0f, 0f,  bedW, bedH, 0f,
-            bedW, bedH, 0f,  0f, bedH, 0f,
+            bedW, bedH, 0f, 0f, bedH, 0f,
             0f, bedH, 0f,  0f, 0f, 0f
         )
         val borderBuf = ByteBuffer.allocateDirect(border.size * 4)
-            .order(ByteOrder.nativeOrder())
-            .asFloatBuffer()
-        borderBuf.put(border)
-        borderBuf.flip()
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+        borderBuf.put(border); borderBuf.flip()
 
-        val bVaos = IntArray(1)
-        GLES30.glGenVertexArrays(1, bVaos, 0)
-        bedBorderVAO = bVaos[0]
-
-        val bVbos = IntArray(1)
-        GLES30.glGenBuffers(1, bVbos, 0)
-
+        val bVaos = IntArray(1); GLES30.glGenVertexArrays(1, bVaos, 0); bedBorderVAO = bVaos[0]
+        val bVbos = IntArray(1); GLES30.glGenBuffers(1, bVbos, 0)
         GLES30.glBindVertexArray(bedBorderVAO)
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, bVbos[0])
         GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, border.size * 4, borderBuf, GLES30.GL_STATIC_DRAW)
@@ -359,18 +516,53 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private fun drawGrid() {
         val shader = gridShader ?: return
         shader.use()
-
         camera.computeMVP()
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
 
-        GLES30.glUniform4f(shader.getUniformLocation("u_Color"), 0.15f, 0.15f, 0.25f, 1f)
+        // 1. U1 bed mesh — polygon offset pushes it behind lines/points at same Z,
+        //    eliminating z-fighting artifacts with the grid lines.
+        GLES30.glEnable(GLES30.GL_POLYGON_OFFSET_FILL)
+        GLES30.glPolygonOffset(2f, 2f)
+        GLES30.glUniform4f(shader.getUniformLocation("u_Color"), 0.22f, 0.25f, 0.28f, 1f)
+        GLES30.glBindVertexArray(bedFillVAO)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, bedFillVertexCount)
+        GLES30.glBindVertexArray(0)
+        GLES30.glDisable(GLES30.GL_POLYGON_OFFSET_FILL)
+
+        // 2. Minor grid lines (10mm) — visible gray
+        GLES30.glUniform4f(shader.getUniformLocation("u_Color"), 0.26f, 0.30f, 0.34f, 1f)
         GLES30.glBindVertexArray(gridVAO)
         GLES30.glDrawArrays(GLES30.GL_LINES, 0, gridVertexCount)
         GLES30.glBindVertexArray(0)
 
-        GLES30.glUniform4f(shader.getUniformLocation("u_Color"), 0.3f, 0.3f, 0.5f, 1f)
+        // 3. Major grid lines (50mm) — brighter
+        GLES30.glUniform4f(shader.getUniformLocation("u_Color"), 0.38f, 0.44f, 0.50f, 1f)
+        GLES30.glBindVertexArray(majorGridVAO)
+        GLES30.glDrawArrays(GLES30.GL_LINES, 0, majorGridVertexCount)
+        GLES30.glBindVertexArray(0)
+
+        // 4. Bed border — bright highlight
+        GLES30.glUniform4f(shader.getUniformLocation("u_Color"), 0.55f, 0.62f, 0.70f, 1f)
         GLES30.glBindVertexArray(bedBorderVAO)
         GLES30.glDrawArrays(GLES30.GL_LINES, 0, 8)
         GLES30.glBindVertexArray(0)
+
+        // 5. Snapmaker logo — blended text texture
+        val texShader = textureShader ?: return
+        texShader.use()
+        GLES30.glUniformMatrix4fv(texShader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
+        GLES30.glUniform1i(texShader.getUniformLocation("u_Texture"), 0)
+        GLES30.glUniform1f(texShader.getUniformLocation("u_Alpha"), 0.18f)
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        GLES30.glEnable(GLES30.GL_POLYGON_OFFSET_FILL)
+        GLES30.glPolygonOffset(1f, 1f) // slightly behind grid lines, in front of bed
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, logoTexture)
+        GLES30.glBindVertexArray(logoVAO)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_FAN, 0, 4)
+        GLES30.glBindVertexArray(0)
+        GLES30.glDisable(GLES30.GL_POLYGON_OFFSET_FILL)
+        GLES30.glDisable(GLES30.GL_BLEND)
     }
 }

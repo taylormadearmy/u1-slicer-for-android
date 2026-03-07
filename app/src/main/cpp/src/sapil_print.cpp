@@ -123,6 +123,19 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(nozzle_diameters));
     dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(filament_diameters));
 
+    // Line widths — must be set explicitly.
+    // When left at 0 (absolute), MultiMaterialSegmentation calls
+    // config.get_abs_value("outer_wall_line_width", nozzle_diameter) which returns
+    // the literal 0, not the auto-resolved value, causing Flow::rounded_rectangle_extrusion_spacing()
+    // to throw FlowErrorNegativeSpacing on multi-color models.
+    double nd = config.nozzle_diameter;
+    dpc.set_key_value("line_width",              new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
+    dpc.set_key_value("outer_wall_line_width",   new Slic3r::ConfigOptionFloatOrPercent(nd * 1.05,  false));
+    dpc.set_key_value("inner_wall_line_width",   new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
+    dpc.set_key_value("top_surface_line_width",  new Slic3r::ConfigOptionFloatOrPercent(nd * 1.05,  false));
+    dpc.set_key_value("sparse_infill_line_width",new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
+    dpc.set_key_value("initial_layer_line_width",new Slic3r::ConfigOptionFloatOrPercent(nd * 1.25,  false));
+
     // Support (OrcaSlicer keys)
     dpc.set_key_value("enable_support", new Slic3r::ConfigOptionBool(config.support_enabled));
     if (config.support_enabled) {
@@ -213,6 +226,25 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Ensure all objects are positioned on the bed
         for (auto* obj : model.objects) {
             obj->ensure_on_bed();
+        }
+
+        // Clear MMU painting facets to prevent apply_mm_segmentation from running.
+        // PrusaSlicer MMU models (e.g. Korok mask) embed 500K+ slic3rpe:mmu_segmentation
+        // attributes which BambuSanitizer converts to paint_color= entries.  When loaded,
+        // this populates mmu_segmentation_facets in each volume.  OrcaSlicer's
+        // multi_material_segmentation_by_painting() then produces corrupt ExPolygons vectors
+        // (null _begin_) causing SIGSEGV.  Multi-colour is handled via per-volume extruder
+        // assignment instead, so these facets are not needed.
+        {
+            int cleared = 0;
+            for (auto* obj : model.objects)
+                for (auto* vol : obj->volumes)
+                    if (!vol->mmu_segmentation_facets.empty()) {
+                        vol->mmu_segmentation_facets.reset();
+                        ++cleared;
+                    }
+            if (cleared > 0)
+                SAPIL_LOGI("Cleared MMU segmentation facets from %d volumes (prevents SIGSEGV on complex painted models)", cleared);
         }
 
         if (progress) progress(10, "Applying configuration to model");

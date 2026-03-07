@@ -39,14 +39,14 @@ class Camera {
     }
 
     fun pan(dx: Float, dy: Float) {
-        // Pan in the camera's local XY plane (projected onto bed)
+        // Pan in the camera's local XY plane (projected onto bed).
+        // Camera right = forward × worldUp = (-sin(az), cos(az), 0)
+        // Camera "up" projected onto XY (perpendicular to right) = (-cos(az), -sin(az), 0)
         val radAz = Math.toRadians(azimuth.toDouble())
-        // Camera right direction on XY plane
-        val rightX = cos(radAz).toFloat()
-        val rightY = sin(radAz).toFloat()
-        // Camera up direction projected onto XY plane (perpendicular to right, in XY)
-        val upX = -sin(radAz).toFloat()
-        val upY = cos(radAz).toFloat()
+        val rightX = -sin(radAz).toFloat()
+        val rightY =  cos(radAz).toFloat()
+        val upX = -cos(radAz).toFloat()
+        val upY = -sin(radAz).toFloat()
         panX += rightX * dx + upX * dy
         panY += rightY * dx + upY * dy
     }

@@ -65,6 +65,16 @@ class BambuPipelineIntegrationTest {
             wipeTowerY = 140f,
             wipeTowerWidth = 60f
         )
+
+        // 4-colour models use compact extruder mode (2 extruders) to avoid OOM
+        fun compactFourColourConfig() = BASE_CONFIG.copy(
+            extruderCount = 2,
+            extruderTemps = intArrayOf(220, 220),
+            wipeTowerEnabled = true,
+            wipeTowerX = 170f,
+            wipeTowerY = 140f,
+            wipeTowerWidth = 60f
+        )
     }
 
     @Before
@@ -280,13 +290,35 @@ class BambuPipelineIntegrationTest {
     /**
      * Bridge: multicolour-slice.spec.ts — ">4 filament_ids rejected"
      * In the Android app, 4 extruders is the maximum (Snapmaker U1 spec).
-     * Korok mask with 4 colours should slice cleanly with 4-extruder config.
+     * Korok mask with 4 colours should sanitize and slice cleanly.
+     *
+     * Regression for: "Flow::spacing() produced negative spacing. Did you set some extrusion
+     * width too small?" — caused by outer_wall_line_width defaulting to 0 (absolute), which
+     * MultiMaterialSegmentation used literally, causing FlowErrorNegativeSpacing.
      */
     @Test
     fun korokMask_fourColour_sanitizesSuccessfully() {
         val sanitized = BambuSanitizer.process(asset("PrusaSlicer-printables-Korok_mask_4colour.3mf"), outDir)
         assertTrue(sanitized.exists())
         assertTrue(sanitized.length() > 0)
+    }
+
+    @Test
+    fun korokMask_fourColour_slicesWithoutFlowError() {
+        val input = asset("PrusaSlicer-printables-Korok_mask_4colour.3mf")
+        val info = ThreeMfParser.parse(input)
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val config = embedder.buildConfig(info)
+        val embedded = embedder.embed(sanitized, config, outDir, info)
+        assertTrue("loadModel should succeed", lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(compactFourColourConfig())
+        assertNotNull(result)
+        result!!
+        assertTrue(
+            "Korok mask 4-colour slice should succeed (was: ${result.errorMessage})",
+            result.success
+        )
+        assertTrue("G-code should be non-empty", File(result.gcodePath).length() > 0)
     }
 
     // ─── Multi-plate slicing ──────────────────────────────────────────────────

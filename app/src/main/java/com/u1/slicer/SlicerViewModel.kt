@@ -155,6 +155,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     /** Exposed for 3D viewer navigation */
     val currentModelPath: String? get() = currentModelFile?.absolutePath
 
+    /**
+     * Path to use for the inline 3D preview. Uses the original source file when available
+     * (before sanitization/embedding) because the sanitized file may have component files
+     * stripped out, leaving no geometry for the preview parser.
+     */
+    val previewModelPath: String? get() = (sourceModelFile ?: currentModelFile)?.absolutePath
+
     init {
         _coreVersion.value = if (NativeLibrary.isLoaded) {
             "Snapmaker Orca 2.2.4 (Android ARM64)"
