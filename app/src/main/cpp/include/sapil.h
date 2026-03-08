@@ -129,6 +129,9 @@ public:
     // positions: flat array [x0, y0, x1, y1, ...], clears existing instances first
     bool setModelInstances(const std::vector<std::pair<float, float>>& positions);
 
+    // Scale the loaded model (applied per instance, before setModelInstances)
+    bool setModelScale(float x, float y, float z);
+
 private:
     struct Impl;
     Impl* pImpl;

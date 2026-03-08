@@ -44,6 +44,10 @@ class NativeLibrary {
     // positions: flat array [x0, y0, x1, y1, ...] in mm (bed-space)
     external fun setModelInstances(positions: FloatArray): Boolean
 
+    // ---- Scale ----
+    // Apply uniform or per-axis scale to the loaded model. Call before setModelInstances.
+    external fun setModelScale(x: Float, y: Float, z: Float): Boolean
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)

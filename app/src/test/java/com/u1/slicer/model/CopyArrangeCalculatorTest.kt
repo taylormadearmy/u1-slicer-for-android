@@ -67,4 +67,11 @@ class CopyArrangeCalculatorTest {
         val positions = CopyArrangeCalculator.calculate(300f, 300f, 1)
         assertEquals(2, positions.size)
     }
+
+    @Test
+    fun `single copy of oversized object positions at origin not negative`() {
+        val positions = CopyArrangeCalculator.calculate(300f, 300f, 1)
+        assertEquals(0f, positions[0], 0.01f)
+        assertEquals(0f, positions[1], 0.01f)
+    }
 }

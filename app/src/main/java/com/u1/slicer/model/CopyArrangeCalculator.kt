@@ -27,11 +27,11 @@ object CopyArrangeCalculator {
         require(objectSizeX > 0f && objectSizeY > 0f) { "Object dimensions must be positive" }
         require(copyCount >= 1) { "Copy count must be at least 1" }
 
-        // Single copy: center on the bed
+        // Single copy: center on the bed (clamped to 0 for oversized models)
         if (copyCount == 1) {
             return floatArrayOf(
-                (bedSizeX - objectSizeX) / 2f,
-                (bedSizeY - objectSizeY) / 2f
+                maxOf(0f, (bedSizeX - objectSizeX) / 2f),
+                maxOf(0f, (bedSizeY - objectSizeY) / 2f)
             )
         }
 

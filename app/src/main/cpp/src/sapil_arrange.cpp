@@ -93,4 +93,23 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
     return true;
 }
 
+bool SlicerEngine::setModelScale(float x, float y, float z) {
+    if (!isModelLoaded()) {
+        SAPIL_LOGE("setModelScale: no model loaded");
+        return false;
+    }
+    Slic3r::Model& model = getGlobalModel();
+    for (auto* obj : model.objects) {
+        for (auto* inst : obj->instances) {
+            inst->set_scaling_factor(Slic3r::Vec3d(
+                static_cast<double>(x),
+                static_cast<double>(y),
+                static_cast<double>(z)
+            ));
+        }
+    }
+    SAPIL_LOGI("Set model scale: %.3f, %.3f, %.3f", x, y, z);
+    return true;
+}
+
 } // namespace sapil

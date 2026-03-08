@@ -116,7 +116,13 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
                 isPanMode = false
                 handleActionUp(event)
                 pointerCount = event.pointerCount - 1
-                if (event.pointerCount <= 1) {
+                if (event.pointerCount == 2) {
+                    // Transitioning 2→1 finger: capture the REMAINING pointer's position,
+                    // not the lifted one (event.x/y), to prevent a jump on the next MOVE.
+                    val remainingIdx = if (event.actionIndex == 0) 1 else 0
+                    previousX = event.getX(remainingIdx)
+                    previousY = event.getY(remainingIdx)
+                } else if (event.pointerCount <= 1) {
                     previousX = event.x
                     previousY = event.y
                 }

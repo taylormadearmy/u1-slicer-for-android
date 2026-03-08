@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -177,6 +178,7 @@ fun SlicerScreen(
     val parsedGcode by viewModel.parsedGcode.collectAsState()
     val showPlateSelector by viewModel.showPlateSelector.collectAsState()
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
+    val colorMapping by viewModel.colorMapping.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val filaments by viewModel.filaments.collectAsState(initial = emptyList())
     val extruderPresets by viewModel.extruderPresets.collectAsState()
@@ -184,6 +186,7 @@ fun SlicerScreen(
     val importProgress by viewModel.importProgress.collectAsState()
     val importError by viewModel.importError.collectAsState()
     val copyCount by viewModel.copyCount.collectAsState()
+    val modelScale by viewModel.modelScale.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     var showImportDialog by remember { mutableStateOf(false) }
 
@@ -344,6 +347,7 @@ fun SlicerScreen(
                             wipeTowerX = config.wipeTowerX,
                             wipeTowerY = config.wipeTowerY,
                             wipeTowerWidth = config.wipeTowerWidth,
+                            wipeTowerDepth = config.wipeTowerWidth,
                             onPositionsChanged = { pos, towerPos ->
                                 viewModel.applyPlacementPositions(pos, towerPos)
                             },
@@ -362,6 +366,26 @@ fun SlicerScreen(
                             )
                         }
                     }
+                    // Inline extruder/color assignment + prime tower toggle
+                    PrintSetupSection(
+                        detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
+                        colorMapping = colorMapping,
+                        extruderPresets = extruderPresets,
+                        filaments = filaments,
+                        wipeTowerEnabled = config.wipeTowerEnabled,
+                        extruderCount = config.extruderCount,
+                        onMappingChange = { newMapping ->
+                            viewModel.applyMultiColorAssignments(newMapping, extruderPresets, filaments)
+                        },
+                        onToggleWipeTower = {
+                            viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
+                        }
+                    )
+                    // Scale controls
+                    ScaleSection(
+                        scale = modelScale,
+                        onScaleChange = { viewModel.setModelScale(it) }
+                    )
                     ConfigCard(
                         config, viewModel::updateConfig, copyCount, viewModel::setCopyCount,
                         slicingOverrides = slicingOverrides,
@@ -1377,6 +1401,227 @@ fun ModelInfoDialog(
             TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
+}
+
+/**
+ * Inline section shown on the model-loaded screen for extruder/color assignment
+ * and prime tower toggle. Replaces the popup MultiColorDialog for normal workflow.
+ * Shows nothing for single-color models with only one extruder.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PrintSetupSection(
+    detectedColors: List<String>,
+    colorMapping: List<Int>?,
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    filaments: List<com.u1.slicer.data.FilamentProfile>,
+    wipeTowerEnabled: Boolean,
+    extruderCount: Int,
+    onMappingChange: (List<Int>) -> Unit,
+    onToggleWipeTower: () -> Unit
+) {
+    val isMultiColor = detectedColors.isNotEmpty() && colorMapping != null
+    val showSection = isMultiColor || extruderCount > 1
+    if (!showSection) return
+
+    val mapping = remember(colorMapping) { colorMapping?.toMutableStateList() ?: mutableStateListOf() }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Print Setup", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+
+            if (isMultiColor) {
+                detectedColors.forEachIndexed { colorIdx, modelColor ->
+                    var expanded by remember { mutableStateOf(false) }
+                    val selectedSlot = mapping.getOrElse(colorIdx) { 0 }
+                    val selectedPreset = extruderPresets.firstOrNull { it.index == selectedSlot }
+                        ?: extruderPresets.firstOrNull()
+                    val profileId = selectedPreset?.filamentProfileId
+                    val profile = filaments.firstOrNull { it.id == profileId }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Model color swatch
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(com.u1.slicer.ui.parseHexColor(modelColor))
+                                .border(1.dp, MaterialTheme.colorScheme.outline,
+                                    androidx.compose.foundation.shape.CircleShape)
+                        )
+                        Text("Color ${colorIdx + 1}", style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.width(54.dp))
+
+                        // Extruder slot picker
+                        ExposedDropdownMenuBox(
+                            expanded = expanded,
+                            onExpandedChange = { expanded = it },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            OutlinedTextField(
+                                value = selectedPreset?.label ?: "E1",
+                                onValueChange = {},
+                                readOnly = true,
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                                leadingIcon = {
+                                    Box(modifier = Modifier.size(14.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(selectedPreset?.let { com.u1.slicer.ui.parseHexColor(it.color) } ?: Color.White))
+                                },
+                                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                singleLine = true
+                            )
+                            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                extruderPresets.forEach { preset ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Box(modifier = Modifier.size(12.dp)
+                                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                                    .background(com.u1.slicer.ui.parseHexColor(preset.color)))
+                                                Text("${preset.label} · ${preset.materialType}",
+                                                    style = MaterialTheme.typography.bodySmall)
+                                            }
+                                        },
+                                        onClick = {
+                                            if (colorIdx < mapping.size) mapping[colorIdx] = preset.index
+                                            else while (mapping.size <= colorIdx) mapping.add(0)
+                                                .also { mapping[colorIdx] = preset.index }
+                                            onMappingChange(mapping.toList())
+                                            expanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        // Temp from profile
+                        Text(
+                            "${profile?.nozzleTemp ?: 210}°C",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.width(44.dp)
+                        )
+                    }
+                }
+            }
+
+            // Prime tower toggle (always show when multi-extruder)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.FilterNone, null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Prime Tower", style = MaterialTheme.typography.bodyMedium)
+                }
+                Switch(checked = wipeTowerEnabled, onCheckedChange = { onToggleWipeTower() })
+            }
+        }
+    }
+}
+
+@Composable
+fun ScaleSection(
+    scale: SlicerViewModel.ModelScale,
+    onScaleChange: (SlicerViewModel.ModelScale) -> Unit
+) {
+    var uniformMode by remember { mutableStateOf(true) }
+    var uniformValue by remember(scale) { mutableFloatStateOf(scale.uniform) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.OpenWith, null, tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scale", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Uniform", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    Spacer(Modifier.width(4.dp))
+                    Switch(checked = uniformMode, onCheckedChange = { uniformMode = it })
+                }
+            }
+
+            if (uniformMode) {
+                val pct = "%.0f%%".format(uniformValue * 100)
+                Text("Scale: $pct", style = MaterialTheme.typography.labelMedium)
+                Slider(
+                    value = uniformValue,
+                    onValueChange = { v ->
+                        uniformValue = v
+                        onScaleChange(SlicerViewModel.ModelScale(v, v, v))
+                    },
+                    valueRange = 0.1f..3f,
+                    steps = 28
+                )
+            } else {
+                listOf("X" to scale.x, "Y" to scale.y, "Z" to scale.z).forEach { (axis, v) ->
+                    Text("$axis: ${"%.0f%%".format(v * 100)}", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = v,
+                        onValueChange = { nv ->
+                            val ns = when (axis) {
+                                "X" -> scale.copy(x = nv)
+                                "Y" -> scale.copy(y = nv)
+                                else -> scale.copy(z = nv)
+                            }
+                            onScaleChange(ns)
+                        },
+                        valueRange = 0.1f..3f,
+                        steps = 28
+                    )
+                }
+            }
+
+            if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
+                TextButton(
+                    onClick = {
+                        uniformValue = 1f
+                        onScaleChange(SlicerViewModel.ModelScale())
+                    },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Reset to 100%", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+    }
 }
 
 @Composable

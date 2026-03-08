@@ -116,7 +116,8 @@ fun PlacementViewerScreen(
                 contentAlignment = Alignment.Center
             ) {
                 val canvasSize = minOf(maxWidth, maxHeight)
-                val towerDepthMm = 60f
+                // Prime tower is square: width × width (matches OrcaSlicer default shape)
+                val towerDepthMm = wipeTowerWidthMm
 
                 Canvas(
                     modifier = Modifier
@@ -131,6 +132,7 @@ fun PlacementViewerScreen(
                             detectDragGestures(
                                 onDragStart = { offset ->
                                     draggingIdx = -1
+                                    // Check tower first so it can be selected even when overlapping objects
                                     if (wipeTowerEnabled) {
                                         val tx = towerX * ppm; val ty = towerY * ppm
                                         if (offset.x in tx..(tx + tW) && offset.y in ty..(ty + tH)) {
@@ -155,8 +157,8 @@ fun PlacementViewerScreen(
                                         }
                                         draggingIdx in 0 until copyCount -> {
                                             val i = draggingIdx
-                                            objXState[i] = snapMm((objXState[i] + dx).coerceIn(0f, BED_MM - modelInfo.sizeX))
-                                            objYState[i] = snapMm((objYState[i] + dy).coerceIn(0f, BED_MM - modelInfo.sizeY))
+                                            objXState[i] = snapMm((objXState[i] + dx).coerceIn(0f, maxOf(0f, BED_MM - modelInfo.sizeX)))
+                                            objYState[i] = snapMm((objYState[i] + dy).coerceIn(0f, maxOf(0f, BED_MM - modelInfo.sizeY)))
                                         }
                                     }
                                 },
@@ -169,17 +171,7 @@ fun PlacementViewerScreen(
                     drawBedGrid(ppm)
                     drawRect(Color(0xFF555555), size = size, style = Stroke(2f))
 
-                    if (wipeTowerEnabled) {
-                        val tW = wipeTowerWidthMm * ppm; val tH = towerDepthMm * ppm
-                        val tx = towerX * ppm; val ty = towerY * ppm
-                        val active = draggingIdx == copyCount
-                        drawRect(WIPE_TOWER_COLOR.copy(alpha = if (active) 0.9f else 0.7f),
-                            topLeft = Offset(tx, ty), size = Size(tW, tH))
-                        drawRect(if (active) Color.White else WIPE_TOWER_COLOR,
-                            topLeft = Offset(tx, ty), size = Size(tW, tH),
-                            style = Stroke(if (active) 3f else 1.5f))
-                    }
-
+                    // Draw objects first, then tower on top so it's always visible and selectable
                     val objWpx = modelInfo.sizeX * ppm; val objHpx = modelInfo.sizeY * ppm
                     for (i in 0 until copyCount) {
                         val ox = objXState[i] * ppm; val oy = objYState[i] * ppm
@@ -189,6 +181,17 @@ fun PlacementViewerScreen(
                             topLeft = Offset(ox, oy), size = Size(objWpx, objHpx))
                         drawRect(if (active) Color.White else color,
                             topLeft = Offset(ox, oy), size = Size(objWpx, objHpx),
+                            style = Stroke(if (active) 3f else 1.5f))
+                    }
+
+                    if (wipeTowerEnabled) {
+                        val tW = wipeTowerWidthMm * ppm; val tH = towerDepthMm * ppm
+                        val tx = towerX * ppm; val ty = towerY * ppm
+                        val active = draggingIdx == copyCount
+                        drawRect(WIPE_TOWER_COLOR.copy(alpha = if (active) 0.9f else 0.7f),
+                            topLeft = Offset(tx, ty), size = Size(tW, tH))
+                        drawRect(if (active) Color.White else WIPE_TOWER_COLOR,
+                            topLeft = Offset(tx, ty), size = Size(tW, tH),
                             style = Stroke(if (active) 3f else 1.5f))
                     }
                 }

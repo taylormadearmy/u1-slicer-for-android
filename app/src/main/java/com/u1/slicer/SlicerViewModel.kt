@@ -94,9 +94,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _importError = MutableStateFlow<String?>(null)
     val importError: StateFlow<String?> = _importError.asStateFlow()
 
-    // Multi-color state
+    // Multi-color state — dialog only shown when user explicitly requests reassignment
     private val _showMultiColorDialog = MutableStateFlow(false)
     val showMultiColorDialog: StateFlow<Boolean> = _showMultiColorDialog.asStateFlow()
+
+    // Current color→extruder mapping for inline UI. Index = detected color index, value = extruder slot index.
+    // Null when model is single-color.
+    private val _colorMapping = MutableStateFlow<List<Int>?>(null)
+    val colorMapping: StateFlow<List<Int>?> = _colorMapping.asStateFlow()
 
     // Active extruder colors for G-code viewers (hex strings, one per extruder slot)
     private val _activeExtruderColors = MutableStateFlow<List<String>>(emptyList())
@@ -105,6 +110,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Multiple copies
     private val _copyCount = MutableStateFlow(1)
     val copyCount: StateFlow<Int> = _copyCount.asStateFlow()
+
+    // Model scale: uniform or per-axis. Applied before slicing.
+    data class ModelScale(val x: Float = 1f, val y: Float = 1f, val z: Float = 1f) {
+        val isUniform get() = x == y && y == z
+        val uniform get() = x
+    }
+    private val _modelScale = MutableStateFlow(ModelScale())
+    val modelScale: StateFlow<ModelScale> = _modelScale.asStateFlow()
 
     // Custom object positions set from PlacementViewer (null = use auto grid)
     // Flat array [x0,y0,x1,y1,...] in mm
@@ -350,20 +363,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val info = native.getModelInfo()
             if (info != null) {
                 lastModelInfo = info
+                _modelScale.value = ModelScale()  // reset to 1× on each new load
                 _state.value = SlicerState.ModelLoaded(info)
 
                 // Check for multi-color from 3MF parsing
                 val mfInfo = _threeMfInfo.value
                 if (mfInfo != null && mfInfo.detectedExtruderCount > 1) {
-                    // Auto-configure extruder count and show dialog
                     val extCount = mfInfo.detectedExtruderCount.coerceAtMost(4)
                     _config.value = _config.value.copy(
                         extruderCount = extCount,
                         wipeTowerEnabled = true
                     )
-                    _showMultiColorDialog.value = true
-                    Log.i("SlicerVM", "Multi-color detected: $extCount extruders, colors=${mfInfo.detectedColors}")
+                    // Auto-apply closest-extruder mapping immediately — no dialog popup.
+                    // The inline UI on the model page lets the user change assignments.
+                    val presets = extruderPresets.value
+                    val initialMapping = mfInfo.detectedColors.map { modelColor ->
+                        com.u1.slicer.ui.findClosestExtruder(modelColor, presets)?.index ?: 0
+                    }
+                    _colorMapping.value = initialMapping
+                    applyMultiColorAssignments(initialMapping, presets, emptyList())
+                    Log.i("SlicerVM", "Auto-applied color mapping: $extCount extruders, mapping=$initialMapping")
                 } else {
+                    _colorMapping.value = null
                     // Single-color model: set E1's color from current printer slot config so
                     // the 3D model preview shows the correct filament color instead of default orange.
                     val presets = extruderPresets.value
@@ -392,6 +413,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         filaments: List<FilamentProfile>
     ) {
         _showMultiColorDialog.value = false
+        _colorMapping.value = modelColorToExtruder
         val usedSlots = modelColorToExtruder.distinct().sorted()
         val extCount = usedSlots.size.coerceIn(1, 4)
         // Store remap only if it's non-identity (e.g. [2,3] for E3+E4 — T0→T2, T1→T3)
@@ -429,6 +451,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun showMultiColorReassign() {
         _showMultiColorDialog.value = true
+    }
+
+    fun setModelScale(scale: ModelScale) {
+        _modelScale.value = scale
     }
 
     fun setCopyCount(count: Int) {
@@ -611,6 +637,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 native.clearModel()
                 native.loadModel(path)
                 Log.i("SlicerVM", "Reloaded model for clean state before placement")
+            }
+
+            // Apply model scale if non-default (before setModelInstances so it's included in trafo)
+            val scale = _modelScale.value
+            if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
+                native.setModelScale(scale.x, scale.y, scale.z)
+                Log.i("SlicerVM", "Applied model scale: ${scale.x}×${scale.y}×${scale.z}")
             }
 
             val copies = _copyCount.value

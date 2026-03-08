@@ -136,4 +136,11 @@ Java_com_u1_slicer_NativeLibrary_setModelInstances(JNIEnv* env, jobject, jfloatA
     return result ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_setModelScale(JNIEnv* env, jobject, jfloat x, jfloat y, jfloat z) {
+    if (!g_engine) return JNI_FALSE;
+    bool result = g_engine->setModelScale(x, y, z);
+    return result ? JNI_TRUE : JNI_FALSE;
+}
+
 } // extern "C"
