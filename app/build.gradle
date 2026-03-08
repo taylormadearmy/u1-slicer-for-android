@@ -34,13 +34,25 @@ android {
         }
     }
 
+    signingConfigs {
+        debug {
+            storeFile file("${System.getProperty('user.home')}/.android/debug.keystore")
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Sign with debug keystore — personal/sideload use only, not Play Store
+            signingConfig signingConfigs.debug
         }
         debug {
             minifyEnabled false
+            signingConfig signingConfigs.debug
         }
     }
 
