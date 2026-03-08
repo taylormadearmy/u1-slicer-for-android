@@ -143,4 +143,118 @@ class SlicingOverridesTest {
         assertEquals(OverrideMode.OVERRIDE, restored.wallCount.mode)
         assertEquals(3, restored.wallCount.value)
     }
+
+    // --- resolveInto ---
+
+    @Test
+    fun `resolveInto USE_FILE keeps base values`() {
+        val base = SliceConfig(layerHeight = 0.3f, fillDensity = 0.20f, perimeters = 3,
+            supportEnabled = true, brimWidth = 5f, skirtLoops = 2, bedTemp = 70,
+            wipeTowerEnabled = true)
+        val overrides = SlicingOverrides() // all USE_FILE
+        val resolved = overrides.resolveInto(base)
+        assertEquals(0.3f, resolved.layerHeight, 0.001f)
+        assertEquals(0.20f, resolved.fillDensity, 0.001f)
+        assertEquals(3, resolved.perimeters)
+        assertTrue(resolved.supportEnabled)
+        assertEquals(5f, resolved.brimWidth, 0.001f)
+        assertEquals(2, resolved.skirtLoops)
+        assertEquals(70, resolved.bedTemp)
+        assertTrue(resolved.wipeTowerEnabled)
+    }
+
+    @Test
+    fun `resolveInto ORCA_DEFAULT replaces with factory defaults`() {
+        val base = SliceConfig(layerHeight = 0.3f, fillDensity = 0.40f, perimeters = 5,
+            fillPattern = "grid", supportEnabled = true, brimWidth = 8f, skirtLoops = 3,
+            bedTemp = 90, wipeTowerEnabled = true)
+        val overrides = SlicingOverrides(
+            layerHeight   = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            infillDensity = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            wallCount     = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            infillPattern = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            supports      = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            brimWidth     = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            skirtLoops    = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            bedTemp       = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            primeTower    = OverrideValue(OverrideMode.ORCA_DEFAULT)
+        )
+        val resolved = overrides.resolveInto(base)
+        assertEquals(0.2f, resolved.layerHeight, 0.001f)
+        assertEquals(0.15f, resolved.fillDensity, 0.001f)
+        assertEquals(2, resolved.perimeters)
+        assertEquals("gyroid", resolved.fillPattern)
+        assertFalse(resolved.supportEnabled)
+        assertEquals(0f, resolved.brimWidth, 0.001f)
+        assertEquals(0, resolved.skirtLoops)
+        assertEquals(60, resolved.bedTemp)
+        assertFalse(resolved.wipeTowerEnabled)
+    }
+
+    @Test
+    fun `resolveInto OVERRIDE uses user value`() {
+        val base = SliceConfig(layerHeight = 0.2f, fillDensity = 0.15f, perimeters = 2,
+            supportEnabled = false, brimWidth = 0f, skirtLoops = 0, bedTemp = 60,
+            wipeTowerEnabled = false)
+        val overrides = SlicingOverrides(
+            layerHeight   = OverrideValue(OverrideMode.OVERRIDE, 0.15f),
+            infillDensity = OverrideValue(OverrideMode.OVERRIDE, 0.30f),
+            wallCount     = OverrideValue(OverrideMode.OVERRIDE, 4),
+            supports      = OverrideValue(OverrideMode.OVERRIDE, true),
+            brimWidth     = OverrideValue(OverrideMode.OVERRIDE, 6f),
+            skirtLoops    = OverrideValue(OverrideMode.OVERRIDE, 2),
+            bedTemp       = OverrideValue(OverrideMode.OVERRIDE, 75),
+            primeTower    = OverrideValue(OverrideMode.OVERRIDE, true)
+        )
+        val resolved = overrides.resolveInto(base)
+        assertEquals(0.15f, resolved.layerHeight, 0.001f)
+        assertEquals(0.30f, resolved.fillDensity, 0.001f)
+        assertEquals(4, resolved.perimeters)
+        assertTrue(resolved.supportEnabled)
+        assertEquals(6f, resolved.brimWidth, 0.001f)
+        assertEquals(2, resolved.skirtLoops)
+        assertEquals(75, resolved.bedTemp)
+        assertTrue(resolved.wipeTowerEnabled)
+    }
+
+    @Test
+    fun `resolveInto OVERRIDE with null value falls back to base`() {
+        val base = SliceConfig(layerHeight = 0.25f, perimeters = 3)
+        val overrides = SlicingOverrides(
+            layerHeight = OverrideValue(OverrideMode.OVERRIDE, null),
+            wallCount   = OverrideValue(OverrideMode.OVERRIDE, null)
+        )
+        val resolved = overrides.resolveInto(base)
+        assertEquals(0.25f, resolved.layerHeight, 0.001f)
+        assertEquals(3, resolved.perimeters)
+    }
+
+    @Test
+    fun `resolveInto mixed modes`() {
+        val base = SliceConfig(layerHeight = 0.3f, fillDensity = 0.20f, perimeters = 3,
+            supportEnabled = true)
+        val overrides = SlicingOverrides(
+            layerHeight   = OverrideValue(OverrideMode.USE_FILE),
+            infillDensity = OverrideValue(OverrideMode.ORCA_DEFAULT),
+            wallCount     = OverrideValue(OverrideMode.OVERRIDE, 5),
+            supports      = OverrideValue(OverrideMode.ORCA_DEFAULT)
+        )
+        val resolved = overrides.resolveInto(base)
+        assertEquals(0.3f, resolved.layerHeight, 0.001f)
+        assertEquals(0.15f, resolved.fillDensity, 0.001f)
+        assertEquals(5, resolved.perimeters)
+        assertFalse(resolved.supportEnabled)
+    }
+
+    @Test
+    fun `resolveInto does not modify base config`() {
+        val base = SliceConfig(layerHeight = 0.2f, perimeters = 2)
+        val overrides = SlicingOverrides(
+            layerHeight = OverrideValue(OverrideMode.OVERRIDE, 0.1f),
+            wallCount   = OverrideValue(OverrideMode.ORCA_DEFAULT)
+        )
+        overrides.resolveInto(base)
+        assertEquals(0.2f, base.layerHeight, 0.001f)
+        assertEquals(2, base.perimeters)
+    }
 }

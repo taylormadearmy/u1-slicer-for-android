@@ -38,6 +38,38 @@ data class SlicingOverrides(
     val primeTowerChamferMaxWidth: OverrideValue<Float> = OverrideValue(),
     val flowCalibration: Boolean = true
 ) {
+    /**
+     * Resolve all override modes into [base], producing the effective SliceConfig for slicing.
+     *
+     * - USE_FILE   → keeps the value already in [base] (loaded profile / user UI setting)
+     * - ORCA_DEFAULT → replaces with OrcaSlicer factory default from [ORCA_DEFAULTS]
+     * - OVERRIDE   → replaces with the user-specified value (falls back to [base] if null)
+     *
+     * Prime-tower detail overrides (primeVolume etc.) go through ProfileEmbedder's embedded
+     * JSON path and are NOT handled here — they don't have corresponding SliceConfig fields.
+     */
+    fun resolveInto(base: SliceConfig): SliceConfig {
+        fun <T> res(ov: OverrideValue<T>, baseVal: T, defaultKey: String): T =
+            when (ov.mode) {
+                OverrideMode.USE_FILE    -> baseVal
+                OverrideMode.ORCA_DEFAULT -> @Suppress("UNCHECKED_CAST")
+                    (ORCA_DEFAULTS[defaultKey] as? T) ?: baseVal
+                OverrideMode.OVERRIDE   -> ov.value ?: baseVal
+            }
+
+        return base.copy(
+            layerHeight      = res(layerHeight,   base.layerHeight,      "layerHeight"),
+            fillDensity      = res(infillDensity, base.fillDensity,      "infillDensity"),
+            perimeters       = res(wallCount,     base.perimeters,       "wallCount"),
+            fillPattern      = res(infillPattern, base.fillPattern,      "infillPattern"),
+            supportEnabled   = res(supports,      base.supportEnabled,   "supports"),
+            brimWidth        = res(brimWidth,      base.brimWidth,        "brimWidth"),
+            skirtLoops       = res(skirtLoops,    base.skirtLoops,       "skirtLoops"),
+            bedTemp          = res(bedTemp,       base.bedTemp,          "bedTemp"),
+            wipeTowerEnabled = res(primeTower,    base.wipeTowerEnabled, "primeTower"),
+        )
+    }
+
     fun toJson(): String {
         val obj = JSONObject()
         fun <T> putOverride(key: String, ov: OverrideValue<T>) {

@@ -676,52 +676,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
-            // Apply settings from embedded 3MF config when USE_FILE override is active.
-            // ProfileEmbedder writes resolved settings to Metadata/project_settings.config.
-            // We read speed/support back here so they take effect via SliceConfig rather
-            // than being ignored (native code only applies 5 G-code template keys).
-            val configFile = currentModelFile
+            // Build the effective config for this slice.
+            // resolveInto() applies OVERRIDE / ORCA_DEFAULT modes to the current UI config.
+            // USE_FILE passthrough: base values from _config.value are used as-is.
+            // We use a local copy — _config.value (the UI state) is never mutated here.
             val ov = slicingOverrides.value
-            if (configFile != null && configFile.name.endsWith(".3mf")) {
-                try {
-                    java.util.zip.ZipFile(configFile).use { z ->
-                        val cfgEntry = z.getEntry("Metadata/project_settings.config")
-                        if (cfgEntry != null) {
-                            val json = org.json.JSONObject(
-                                z.getInputStream(cfgEntry).bufferedReader().readText())
-                            val useFile = ov.layerHeight.mode == com.u1.slicer.data.OverrideMode.USE_FILE
-                            val useSupport = ov.supports.mode == com.u1.slicer.data.OverrideMode.USE_FILE
-                            var updated = _config.value
-                            if (useFile) {
-                                json.optString("outer_wall_speed").toFloatOrNull()
-                                    ?.takeIf { it > 0f }
-                                    ?.let { spd ->
-                                        val travel = json.optString("travel_speed").toFloatOrNull()
-                                        updated = updated.copy(
-                                            printSpeed = spd,
-                                            travelSpeed = travel?.takeIf { it > 0f } ?: updated.travelSpeed
-                                        )
-                                        Log.i("SlicerVM", "USE_FILE speeds from embedded config: wall=${spd} travel=${travel}")
-                                    }
-                            }
-                            if (useSupport) {
-                                val sup = json.optString("enable_support")
-                                if (sup.isNotEmpty()) {
-                                    updated = updated.copy(
-                                        supportEnabled = sup == "1" || sup.equals("true", ignoreCase = true)
-                                    )
-                                    Log.i("SlicerVM", "USE_FILE support from embedded config: ${updated.supportEnabled}")
-                                }
-                            }
-                            if (updated !== _config.value) _config.value = updated
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.w("SlicerVM", "Could not read embedded config for USE_FILE: ${e.message}")
-                }
-            }
+            val sliceConfig = ov.resolveInto(_config.value)
+            Log.i("SlicerVM", "Resolved slice config: layer=${sliceConfig.layerHeight} " +
+                "infill=${sliceConfig.fillDensity} walls=${sliceConfig.perimeters} " +
+                "support=${sliceConfig.supportEnabled} speed=${sliceConfig.printSpeed}")
 
-            val result = native.slice(_config.value)
+            val result = native.slice(sliceConfig)
 
             native.progressListener = null
 

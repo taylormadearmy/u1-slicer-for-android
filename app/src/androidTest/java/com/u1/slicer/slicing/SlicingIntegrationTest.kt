@@ -3,7 +3,10 @@ package com.u1.slicer.slicing
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.NativeLibrary
+import com.u1.slicer.data.OverrideMode
+import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.gcode.GcodeValidator
 import org.junit.After
 import org.junit.Assert.*
@@ -331,5 +334,147 @@ class SlicingIntegrationTest {
             "3MF G-code X/Y must be within 0-270mm. X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}",
             bounds.withinBounds
         )
+    }
+
+    // ─── resolveInto / SlicingOverrides integration ───────────────────────────
+
+    /**
+     * OVERRIDE layer height produces fewer layers than a thicker default.
+     * Default=0.2mm → N layers; OVERRIDE=0.3mm → fewer layers (same model height).
+     */
+    @Test
+    fun override_layerHeight_producesCorrectLayerCount() {
+        val file = asset("tetrahedron.stl")
+
+        // Slice at 0.2mm (default)
+        lib.loadModel(file.absolutePath)
+        val r02 = lib.slice(DEFAULT_CONFIG)!!
+        assertTrue("0.2mm slice should succeed", r02.success)
+        val layers02 = r02.totalLayers
+
+        // Slice at 0.3mm via OVERRIDE
+        lib.clearModel()
+        lib.loadModel(file.absolutePath)
+        val overrides = SlicingOverrides(layerHeight = OverrideValue(OverrideMode.OVERRIDE, 0.3f))
+        val cfg03 = overrides.resolveInto(DEFAULT_CONFIG)
+        assertEquals(0.3f, cfg03.layerHeight, 0.001f)
+        val r03 = lib.slice(cfg03)!!
+        assertTrue("0.3mm slice should succeed", r03.success)
+        val layers03 = r03.totalLayers
+
+        assertTrue(
+            "0.3mm should produce fewer layers than 0.2mm (got $layers03 vs $layers02)",
+            layers03 < layers02
+        )
+    }
+
+    /**
+     * ORCA_DEFAULT layer height (0.2mm) should match slicing with 0.2mm directly.
+     */
+    @Test
+    fun orcaDefault_layerHeight_matchesFactoryDefault() {
+        val file = asset("tetrahedron.stl")
+
+        // Slice with explicit 0.2mm config
+        lib.loadModel(file.absolutePath)
+        val rDirect = lib.slice(DEFAULT_CONFIG.copy(layerHeight = 0.2f))!!
+        assertTrue(rDirect.success)
+
+        // Slice with ORCA_DEFAULT override applied to a base that has 0.4mm
+        lib.clearModel()
+        lib.loadModel(file.absolutePath)
+        val overrides = SlicingOverrides(layerHeight = OverrideValue(OverrideMode.ORCA_DEFAULT))
+        val cfgResolved = overrides.resolveInto(DEFAULT_CONFIG.copy(layerHeight = 0.4f))
+        assertEquals("ORCA_DEFAULT should resolve to 0.2", 0.2f, cfgResolved.layerHeight, 0.001f)
+        val rDefault = lib.slice(cfgResolved)!!
+        assertTrue(rDefault.success)
+
+        assertEquals(
+            "ORCA_DEFAULT layer height should produce same layer count as explicit 0.2mm",
+            rDirect.totalLayers, rDefault.totalLayers
+        )
+    }
+
+    /**
+     * USE_FILE passthrough: resolveInto with USE_FILE keeps base config unchanged.
+     */
+    @Test
+    fun useFile_passthrough_keepsCfgLayerHeight() {
+        val file = asset("tetrahedron.stl")
+        lib.loadModel(file.absolutePath)
+
+        val baseConfig = DEFAULT_CONFIG.copy(layerHeight = 0.3f)
+        val overrides = SlicingOverrides() // all USE_FILE
+        val resolved = overrides.resolveInto(baseConfig)
+        assertEquals(0.3f, resolved.layerHeight, 0.001f)
+
+        val result = lib.slice(resolved)!!
+        assertTrue("USE_FILE passthrough should slice successfully", result.success)
+        assertTrue("Should produce layers", result.totalLayers > 0)
+    }
+
+    /**
+     * OVERRIDE infill density: higher density increases estimated filament use.
+     */
+    @Test
+    fun override_infillDensity_affectsFilamentEstimate() {
+        val file = asset("tetrahedron.stl")
+
+        lib.loadModel(file.absolutePath)
+        val rLow = lib.slice(DEFAULT_CONFIG.copy(fillDensity = 0.10f))!!
+        assertTrue(rLow.success)
+
+        lib.clearModel()
+        lib.loadModel(file.absolutePath)
+        val overrides = SlicingOverrides(infillDensity = OverrideValue(OverrideMode.OVERRIDE, 0.50f))
+        val cfgHigh = overrides.resolveInto(DEFAULT_CONFIG)
+        assertEquals(0.50f, cfgHigh.fillDensity, 0.001f)
+        val rHigh = lib.slice(cfgHigh)!!
+        assertTrue(rHigh.success)
+
+        assertTrue(
+            "50% infill should use more filament than 10% (${rHigh.estimatedFilamentMm} vs ${rLow.estimatedFilamentMm})",
+            rHigh.estimatedFilamentMm > rLow.estimatedFilamentMm
+        )
+    }
+
+    /**
+     * OVERRIDE support=true: G-code should contain support material moves.
+     */
+    @Test
+    fun override_supports_enabledAppearsInGcode() {
+        val file = asset("tetrahedron.stl")
+        lib.loadModel(file.absolutePath)
+
+        val overrides = SlicingOverrides(supports = OverrideValue(OverrideMode.OVERRIDE, true))
+        val cfg = overrides.resolveInto(DEFAULT_CONFIG)
+        assertTrue("Supports should be enabled", cfg.supportEnabled)
+
+        val result = lib.slice(cfg)!!
+        assertTrue("Slice with support should succeed", result.success)
+        val gcode = File(result.gcodePath).readText()
+        // OrcaSlicer emits "; support" type comments or SUPPORT_START in SM_ G-code
+        assertTrue(
+            "G-code should contain support-related content",
+            gcode.contains("; support", ignoreCase = true) ||
+            gcode.contains("SUPPORT", ignoreCase = true) ||
+            gcode.contains(";TYPE:Support", ignoreCase = true)
+        )
+    }
+
+    /**
+     * ORCA_DEFAULT support=false: support should not appear in G-code even if base had it on.
+     */
+    @Test
+    fun orcaDefault_supports_disabledInGcode() {
+        val file = asset("tetrahedron.stl")
+        lib.loadModel(file.absolutePath)
+
+        val overrides = SlicingOverrides(supports = OverrideValue(OverrideMode.ORCA_DEFAULT))
+        val cfg = overrides.resolveInto(DEFAULT_CONFIG.copy(supportEnabled = true))
+        assertFalse("ORCA_DEFAULT support should be false", cfg.supportEnabled)
+
+        val result = lib.slice(cfg)!!
+        assertTrue("Slice should succeed without support", result.success)
     }
 }
