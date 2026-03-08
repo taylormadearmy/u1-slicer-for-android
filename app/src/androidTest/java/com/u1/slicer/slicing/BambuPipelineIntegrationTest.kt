@@ -583,6 +583,77 @@ class BambuPipelineIntegrationTest {
         assertTrue("G-code must be non-empty", File(result.gcodePath).length() > 0)
     }
 
+    // ─── setModelInstances regression ─────────────────────────────────────────
+    //
+    // These tests reproduce the exact failure mode from the v1.2.1 regression:
+    //   "Coordinate outside allowed range" (Clipper error) when setModelInstances()
+    //   was called after a clearModel()+loadModel() reload in startSlicing().
+    //
+    // The ViewModel ALWAYS calls setModelInstances before slice().  Tests below
+    // that omit it (the old tests above) had a coverage gap.  These new tests
+    // add that call and must slice without Clipper/coordinate errors.
+
+    private fun centerAndSlice(config: SliceConfig = BASE_CONFIG): Boolean {
+        val mi = lib.getModelInfo()
+        assertNotNull("getModelInfo must return non-null after loadModel", mi); mi!!
+        val cx = (270f - mi.sizeX) / 2f
+        val cy = (270f - mi.sizeY) / 2f
+        val ok = lib.setModelInstances(floatArrayOf(cx, cy))
+        assertTrue("setModelInstances must succeed (model=${mi.sizeX}×${mi.sizeY}mm)", ok)
+        val result = lib.slice(config)
+        assertNotNull("slice() must return a result", result); result!!
+        assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
+        assertTrue("G-code must be non-empty", File(result.gcodePath).length() > 0)
+        return result.success
+    }
+
+    /**
+     * Regression: Shashibo plate 1 → setModelInstances → slice must NOT produce
+     * "Coordinate outside allowed range". Mirrors what SlicerViewModel does.
+     */
+    @Test
+    fun shashibo_plate1_withSetModelInstances_slicesWithoutCoordinateError() {
+        val input = asset("Shashibo-h2s-textured.3mf")
+        val info = ThreeMfParser.parse(input)
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val plateFile = BambuSanitizer.extractPlate(sanitized, 1, outDir,
+            hasPlateJsons = info.hasPlateJsons)
+        val plateInfo = ThreeMfParser.parse(plateFile)
+        val embedded = embedder.embed(plateFile, embedder.buildConfig(info = plateInfo), outDir, plateInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+        centerAndSlice()
+    }
+
+    /**
+     * Regression: Foldy+coaster plate 2 → setModelInstances → slice must NOT produce
+     * "build plate is empty" or Clipper errors. Mirrors what SlicerViewModel does.
+     */
+    @Test
+    fun fidgetCoaster_plate2_withSetModelInstances_slicesWithoutError() {
+        val input = asset("foldy+coaster (1).3mf")
+        val info = ThreeMfParser.parse(input)
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val plateFile = BambuSanitizer.extractPlate(sanitized, 2, outDir,
+            hasPlateJsons = info.hasPlateJsons)
+        val embedded = embedder.embed(plateFile, embedder.buildConfig(info = info), outDir, info)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+        centerAndSlice()
+    }
+
+    /**
+     * Regression: Colored Benchy → setModelInstances → slice must NOT produce
+     * "Coordinate outside allowed range". Covers single-plate Bambu STL path.
+     */
+    @Test
+    fun coloredBenchy_withSetModelInstances_slicesWithoutCoordinateError() {
+        val input = asset("colored_3DBenchy (1).3mf")
+        val info = ThreeMfParser.parse(input)
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val embedded = embedder.embed(sanitized, embedder.buildConfig(info = info), outDir, info)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+        centerAndSlice()
+    }
+
     /**
      * Regression: compact dual-colour slice with embedded Snapmaker profile
      * must produce G-code with non-zero nozzle temperatures.

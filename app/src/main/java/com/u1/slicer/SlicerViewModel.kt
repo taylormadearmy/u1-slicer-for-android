@@ -643,15 +643,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
 
-                // Always reload from file for a clean instance state, then apply placement.
-                // This prevents stale instance offsets from the inline 3D viewer corrupting
-                // PrusaSlicer's internal state (SIGSEGV in export_gcode on multi-object models).
-                val path = currentModelPath
-                if (path != null) {
-                    native.clearModel()
-                    native.loadModel(path)
-                    Log.i("SlicerVM", "Reloaded model for clean state before placement")
-                }
+                // Do NOT clear+reload the model here.
+                // Previously a clearModel()+loadModel() was done to "reset stale instance offsets
+                // set by the 3D viewer", but setModelInstances() already calls obj->clear_instances()
+                // internally, making the reload redundant. Worse, the reload leaves OrcaSlicer global
+                // state inconsistent, causing "Coordinate outside allowed range" Clipper errors.
+                // The remap path above handles its own reload when needed.
 
                 // Apply model scale if non-default (before setModelInstances so it's included in trafo)
                 val scale = _modelScale.value
@@ -679,14 +676,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (custom != null) {
-                    native.setModelInstances(custom)
-                    Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances")
+                    val ok = native.setModelInstances(custom)
+                    Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances (ok=$ok)")
                 } else {
                     // Auto-arrange: single copy → centered, multiple copies → grid
                     if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
                         val positions = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, copies)
-                        native.setModelInstances(positions)
-                        Log.i("SlicerVM", "Auto-placed $copies instance(s) at [${positions.toList().take(4)}]")
+                        Log.i("SlicerVM", "setModelInstances: model=${mi.sizeX}×${mi.sizeY}mm " +
+                            "pos=[${positions.toList().take(4)}]")
+                        val ok = native.setModelInstances(positions)
+                        if (!ok) Log.e("SlicerVM", "setModelInstances returned false — model may not be loaded")
+                        Log.i("SlicerVM", "Auto-placed $copies instance(s) (ok=$ok)")
+                    } else {
+                        Log.w("SlicerVM", "Skipping setModelInstances: mi=${mi?.sizeX}×${mi?.sizeY}")
                     }
                 }
 
