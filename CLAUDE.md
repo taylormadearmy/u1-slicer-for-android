@@ -17,7 +17,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ```bash
 ./gradlew testDebugUnitTest                                                    # 235 JVM unit tests
-ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 91 instrumented tests
+ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 93 instrumented tests
 ```
 
 ### MANDATORY: End-to-end testing before a feature is "done"
