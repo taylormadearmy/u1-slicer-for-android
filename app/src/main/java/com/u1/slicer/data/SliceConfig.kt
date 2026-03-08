@@ -14,10 +14,11 @@ data class SliceConfig(
     @JvmField var fillDensity: Float = 0.15f,
     @JvmField var fillPattern: String = "gyroid",
 
-    // Speed (mm/s) — Snapmaker U1 defaults (200mm/s walls, 300mm/s travel)
+    // Speed (mm/s) — Snapmaker U1 defaults matching standard_0.20mm.json process profile.
+    // printSpeed sets outer_wall_speed (inner wall, infill, travel use profile values).
     @JvmField var printSpeed: Float = 200f,
-    @JvmField var travelSpeed: Float = 300f,
-    @JvmField var firstLayerSpeed: Float = 20f,
+    @JvmField var travelSpeed: Float = 500f,
+    @JvmField var firstLayerSpeed: Float = 50f,
 
     // Temperature
     @JvmField var nozzleTemp: Int = 210,

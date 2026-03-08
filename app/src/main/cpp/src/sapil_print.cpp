@@ -63,42 +63,53 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(config.fill_density * 100.0));
 
     // Speed (OrcaSlicer keys).
-    // Set all speed parameters explicitly so OrcaSlicer uses the user's chosen speed
-    // for every move type.  Without this, sparse_infill_speed etc. fall back to
-    // FullPrintConfig::defaults() which are very low, causing hugely over-estimated print times.
+    // outer_wall_speed is the primary speed control — set from the user's "print speed" setting.
+    // All other speeds use profile values (applied from embedded config above) rather than
+    // deriving them all from print_speed.  This gives the profile's per-feature tuning
+    // (inner walls faster, infill faster, bridge slower) while still honouring the user's
+    // overall speed preference via outer_wall_speed.
+    // Fallback values here match standard_0.20mm.json and are used when no profile is embedded.
     dpc.set_key_value("outer_wall_speed",          new Slic3r::ConfigOptionFloat(config.print_speed));
-    dpc.set_key_value("inner_wall_speed",          new Slic3r::ConfigOptionFloat(config.print_speed));
-    dpc.set_key_value("sparse_infill_speed",       new Slic3r::ConfigOptionFloat(config.print_speed * 1.5));
-    dpc.set_key_value("internal_solid_infill_speed", new Slic3r::ConfigOptionFloat(config.print_speed * 1.3));
+    dpc.set_key_value("inner_wall_speed",          new Slic3r::ConfigOptionFloat(config.print_speed * 1.5));
+    dpc.set_key_value("sparse_infill_speed",       new Slic3r::ConfigOptionFloat(config.print_speed * 1.35));
+    dpc.set_key_value("internal_solid_infill_speed", new Slic3r::ConfigOptionFloat(config.print_speed * 1.25));
     dpc.set_key_value("top_surface_speed",         new Slic3r::ConfigOptionFloat(config.print_speed));
-    dpc.set_key_value("bridge_speed",              new Slic3r::ConfigOptionFloat(config.print_speed * 0.5));
-    dpc.set_key_value("gap_infill_speed",          new Slic3r::ConfigOptionFloat(config.print_speed));
+    dpc.set_key_value("bridge_speed",              new Slic3r::ConfigOptionFloat(50.0));
+    dpc.set_key_value("gap_infill_speed",          new Slic3r::ConfigOptionFloat(config.print_speed * 1.25));
     dpc.set_key_value("travel_speed",              new Slic3r::ConfigOptionFloat(config.travel_speed));
     dpc.set_key_value("initial_layer_speed",       new Slic3r::ConfigOptionFloat(config.first_layer_speed));
-    dpc.set_key_value("initial_layer_infill_speed",new Slic3r::ConfigOptionFloat(config.first_layer_speed));
+    dpc.set_key_value("initial_layer_infill_speed",new Slic3r::ConfigOptionFloat(config.first_layer_speed * 2.1));
 
-    // Snapmaker U1 machine kinematic limits — required for accurate print time estimation.
-    // OrcaSlicer's GCodeProcessor uses these to simulate acceleration phases.
-    // Without them it falls back to near-zero defaults, making every move look like pure
-    // acceleration and inflating the time estimate by 4-8×.
-    // Values are {normal, silent} mode pairs.
-    dpc.set_key_value("machine_max_speed_x",          new Slic3r::ConfigOptionFloats({config.travel_speed, config.travel_speed}));
-    dpc.set_key_value("machine_max_speed_y",          new Slic3r::ConfigOptionFloats({config.travel_speed, config.travel_speed}));
-    dpc.set_key_value("machine_max_speed_z",          new Slic3r::ConfigOptionFloats({20.0, 20.0}));
-    dpc.set_key_value("machine_max_speed_e",          new Slic3r::ConfigOptionFloats({120.0, 120.0}));
-    dpc.set_key_value("machine_max_acceleration_x",   new Slic3r::ConfigOptionFloats({5000.0, 1000.0}));
-    dpc.set_key_value("machine_max_acceleration_y",   new Slic3r::ConfigOptionFloats({5000.0, 1000.0}));
-    dpc.set_key_value("machine_max_acceleration_z",   new Slic3r::ConfigOptionFloats({200.0, 200.0}));
+    // Snapmaker U1 machine kinematic limits — fallback values used when no Snapmaker
+    // profile is embedded (e.g. plain STL files).  For 3MF files these are overridden
+    // by the values from the embedded profile in the is_snapmaker_profile block above.
+    // Values match snapmaker_u1.json: {normal, silent} mode pairs.
+    dpc.set_key_value("machine_max_speed_x",          new Slic3r::ConfigOptionFloats({500.0, 200.0}));
+    dpc.set_key_value("machine_max_speed_y",          new Slic3r::ConfigOptionFloats({500.0, 200.0}));
+    dpc.set_key_value("machine_max_speed_z",          new Slic3r::ConfigOptionFloats({20.0, 12.0}));
+    dpc.set_key_value("machine_max_speed_e",          new Slic3r::ConfigOptionFloats({30.0, 25.0}));
+    dpc.set_key_value("machine_max_acceleration_x",   new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
+    dpc.set_key_value("machine_max_acceleration_y",   new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
+    dpc.set_key_value("machine_max_acceleration_z",   new Slic3r::ConfigOptionFloats({500.0, 200.0}));
     dpc.set_key_value("machine_max_acceleration_e",   new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
-    dpc.set_key_value("machine_max_jerk_x",           new Slic3r::ConfigOptionFloats({10.0, 10.0}));
-    dpc.set_key_value("machine_max_jerk_y",           new Slic3r::ConfigOptionFloats({10.0, 10.0}));
-    dpc.set_key_value("machine_max_jerk_z",           new Slic3r::ConfigOptionFloats({0.4, 0.4}));
+    dpc.set_key_value("machine_max_jerk_x",           new Slic3r::ConfigOptionFloats({9.0, 9.0}));
+    dpc.set_key_value("machine_max_jerk_y",           new Slic3r::ConfigOptionFloats({9.0, 9.0}));
+    dpc.set_key_value("machine_max_jerk_z",           new Slic3r::ConfigOptionFloats({3.0, 0.4}));
     dpc.set_key_value("machine_max_jerk_e",           new Slic3r::ConfigOptionFloats({2.5, 2.5}));
-    // machine_max_acceleration_extruding/retracting are used by GCodeProcessor for time
-    // estimation (M204 P/R).  They default to 1500/1250 mm/s² in OrcaSlicer, which is
-    // lower than the Snapmaker U1's actual 5000 mm/s², causing over-estimated print times.
-    dpc.set_key_value("machine_max_acceleration_extruding",  new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
+    // M204 acceleration values — must match U1 profile for correct G-code and time estimation.
+    // OrcaSlicer defaults (1500/1250 mm/s²) are 13× too low and inflate print time estimates.
+    dpc.set_key_value("machine_max_acceleration_extruding",  new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
     dpc.set_key_value("machine_max_acceleration_retracting", new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
+    dpc.set_key_value("machine_max_acceleration_travel",     new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
+    // Per-feature accelerations from the standard process profile.
+    // Without these OrcaSlicer uses FullPrintConfig::defaults() which are very low,
+    // making every short move appear to be in the acceleration ramp → 5× time inflation.
+    dpc.set_key_value("default_acceleration",          new Slic3r::ConfigOptionFloat(10000.0));
+    dpc.set_key_value("outer_wall_acceleration",       new Slic3r::ConfigOptionFloat(5000.0));
+    dpc.set_key_value("inner_wall_acceleration",       new Slic3r::ConfigOptionFloat(0.0));
+    dpc.set_key_value("top_surface_acceleration",      new Slic3r::ConfigOptionFloat(2000.0));
+    dpc.set_key_value("travel_acceleration",           new Slic3r::ConfigOptionFloat(10000.0));
+    dpc.set_key_value("initial_layer_acceleration",    new Slic3r::ConfigOptionFloat(500.0));
 
     // Multi-extruder setup
     int n_ext = std::max(1, config.extruder_count);
@@ -224,23 +235,56 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             }
 
             if (is_snapmaker_profile) {
-                static const char* gcode_keys[] = {
+                // Keys safe to apply from the embedded Snapmaker profile.
+                // G-code templates: must come from our profile (not Bambu defaults).
+                // Machine limits + per-feature accelerations: these encode the U1's actual
+                // kinematics and are needed for correct G-code M201/M204 commands and accurate
+                // print-time estimation.  They are sourced from the merged printer+process
+                // profile JSON so we don't need to hardcode U1-specific values here.
+                static const char* profile_keys[] = {
+                    // G-code templates
                     "machine_start_gcode",
                     "machine_end_gcode",
                     "change_filament_gcode",
                     "before_layer_change_gcode",
                     "layer_change_gcode",
+                    // Machine axis limits (M201 / M203)
+                    "machine_max_speed_x",
+                    "machine_max_speed_y",
+                    "machine_max_speed_z",
+                    "machine_max_speed_e",
+                    "machine_max_acceleration_x",
+                    "machine_max_acceleration_y",
+                    "machine_max_acceleration_z",
+                    "machine_max_acceleration_e",
+                    "machine_max_jerk_x",
+                    "machine_max_jerk_y",
+                    "machine_max_jerk_z",
+                    "machine_max_jerk_e",
+                    // M204 acceleration values (used by GCodeProcessor for time estimation
+                    // and written as M204 P/T/R commands into the G-code)
+                    "machine_max_acceleration_extruding",
+                    "machine_max_acceleration_retracting",
+                    "machine_max_acceleration_travel",
+                    // Per-feature accelerations (from process profile)
+                    "default_acceleration",
+                    "outer_wall_acceleration",
+                    "inner_wall_acceleration",
+                    "top_surface_acceleration",
+                    "travel_acceleration",
+                    "initial_layer_acceleration",
+                    "initial_layer_travel_acceleration",
                     nullptr
                 };
                 int applied = 0;
-                for (const char** k = gcode_keys; *k; ++k) {
+                for (const char** k = profile_keys; *k; ++k) {
                     auto* opt = model_config.option(*k);
                     if (opt) {
                         dpc.set_key_value(*k, opt->clone());
                         applied++;
                     }
                 }
-                SAPIL_LOGI("Applied %d G-code template keys from Snapmaker embedded config", applied);
+                SAPIL_LOGI("Applied %d profile keys from Snapmaker embedded config", applied);
             } else {
                 SAPIL_LOGI("Skipping embedded G-code templates (not a Snapmaker profile, %zu keys)", model_config.keys().size());
             }
