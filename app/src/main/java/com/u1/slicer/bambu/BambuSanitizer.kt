@@ -193,12 +193,29 @@ object BambuSanitizer {
 
                     // Write (possibly restructured) main model file
                     if (mainModelContent != null) {
-                        // Restructure compound multi-color objects into separate build items
+                        // Restructure compound multi-color objects into separate build items.
+                        // Only consider extruders 1..4 — BambuStudio uses indices 5+ for paint
+                        // colour markers that have no corresponding physical extruder slot on the
+                        // U1.  Including out-of-range indices (e.g. extruder=5 on single-colour
+                        // files) falsely triggers restructuring and causes OOM on large meshes.
                         val hasMultiColorComponents = bambuObjectParts.values.any { parts ->
-                            parts.map { it.extruder }.distinct().size > 1
+                            parts.filter { it.extruder in 1..4 }.map { it.extruder }.distinct().size > 1
                         }
-                        // Load component files on-demand only when restructuring needs them
-                        val componentFiles = if (hasMultiColorComponents) {
+                        // Guard against OOM: check total component file size before loading.
+                        // Large multi-plate files (e.g. 7-plate coasters) have many large component
+                        // files.  Loading them all to inline meshes exhausts the Android heap.
+                        // When they're too large, skip restructuring and preserve component refs
+                        // instead — OrcaSlicer (BBS fork) handles p:path component refs natively.
+                        val totalComponentSize = if (hasMultiColorComponents) {
+                            componentFileNames.sumOf { name -> srcZip.getEntry(name)?.size ?: 0L }
+                        } else 0L
+                        val safeToInline = totalComponentSize <= 15_000_000L  // 15 MB
+                        if (hasMultiColorComponents && !safeToInline) {
+                            Log.w(TAG, "Component files too large to inline " +
+                                "(${totalComponentSize / 1_000_000}MB > 15MB), preserving component refs")
+                        }
+                        // Load component files only when safe to do so
+                        val componentFiles = if (hasMultiColorComponents && safeToInline) {
                             componentFileNames.associateWith { name ->
                                 srcZip.getEntry(name)?.let { srcZip.getInputStream(it).readBytes() } ?: ByteArray(0)
                             }
@@ -206,7 +223,7 @@ object BambuSanitizer {
                             emptyMap()
                         }
 
-                        val (finalModelBytes, newObjectExtruders) = if (hasMultiColorComponents) {
+                        val (finalModelBytes, newObjectExtruders) = if (hasMultiColorComponents && safeToInline) {
                             restructureForMultiColor(mainModelContent!!, bambuObjectParts, componentFiles)
                         } else {
                             Pair(convertMmuSegmentation(mainModelContent!!), emptyMap())
@@ -220,7 +237,13 @@ object BambuSanitizer {
                         } else {
                             cleanModelXmlPreserveComponentRefs(finalModelBytes)
                         }
-                        writeStored(destZip, "3D/3dmodel.model", cleanedModel)
+                        // Strip printable="0" items from <build>.  Bambu 3MF files can include
+                        // build items with printable="0" for objects that are in the scene but not
+                        // assigned to the current plate.  Loading them causes multiple disjoint
+                        // objects to be sliced together, which produces "Coordinate outside allowed
+                        // range" errors in Clipper when the meshes are positioned far apart.
+                        val cleanedModelFinal = stripNonPrintableBuildItems(cleanedModel)
+                        writeStored(destZip, "3D/3dmodel.model", cleanedModelFinal)
 
                         val wasRestructured = newObjectExtruders.isNotEmpty()
 
@@ -380,8 +403,12 @@ object BambuSanitizer {
 
     /**
      * Build PrusaSlicer Slic3r_PE_model.config XML.
-     * After restructuring, each entry in objectParts is a single-extruder object,
-     * so we only need simple object-level extruder assignments.
+     *
+     * For single-color objects (one part or all same extruder), emit one volume entry.
+     * For multi-color objects that were NOT restructured (component-ref preserved path),
+     * emit per-part volume entries using face-count ranges from model_settings.config.
+     * If face counts are missing (zero), fall back to the max extruder for the whole object
+     * so OrcaSlicer still gets a valid (if simplified) assignment.
      */
     private fun buildSlic3rModelConfig(objectParts: Map<String, List<PartInfo>>): String {
         val sb = StringBuilder()
@@ -390,15 +417,32 @@ object BambuSanitizer {
 
         for ((objectId, parts) in objectParts.entries.sortedBy { it.key.toIntOrNull() ?: 0 }) {
             if (parts.isEmpty()) continue
-            val extruder = parts.maxOf { it.extruder }
-            val faceCount = parts.sumOf { it.faceCount }
-            val lastId = maxOf(0, faceCount - 1)
+            val overallExtruder = parts.maxOf { it.extruder }
             sb.appendLine("""  <object id="$objectId">""")
-            sb.appendLine("""    <metadata type="object" key="extruder" value="$extruder"/>""")
-            // PrusaSlicer uses volume firstid/lastid to map triangle ranges
-            sb.appendLine("""    <volume firstid="0" lastid="$lastId">""")
-            sb.appendLine("""      <metadata type="volume" key="extruder" value="$extruder"/>""")
-            sb.appendLine("""    </volume>""")
+            sb.appendLine("""    <metadata type="object" key="extruder" value="$overallExtruder"/>""")
+
+            val isMultiColor = parts.map { it.extruder }.distinct().size > 1
+            val hasFaceCounts = parts.all { it.faceCount > 0 }
+
+            if (isMultiColor && hasFaceCounts) {
+                // Per-part volume entries — preserves extruder assignment for non-restructured objects
+                var firstId = 0
+                for (part in parts) {
+                    val lastId = firstId + part.faceCount - 1
+                    sb.appendLine("""    <volume firstid="$firstId" lastid="$lastId">""")
+                    sb.appendLine("""      <metadata type="volume" key="extruder" value="${part.extruder}"/>""")
+                    sb.appendLine("""    </volume>""")
+                    firstId += part.faceCount
+                }
+            } else {
+                // Single-color or missing face counts: one volume entry for the whole object
+                val faceCount = parts.sumOf { it.faceCount }
+                val lastId = maxOf(0, faceCount - 1)
+                sb.appendLine("""    <volume firstid="0" lastid="$lastId">""")
+                sb.appendLine("""      <metadata type="volume" key="extruder" value="$overallExtruder"/>""")
+                sb.appendLine("""    </volume>""")
+            }
+
             sb.appendLine("""  </object>""")
         }
 
@@ -1043,24 +1087,86 @@ object BambuSanitizer {
         zip.closeEntry()
     }
 
-    fun extractPlate(inputFile: File, targetPlateId: Int, outputDir: File): File {
+    /**
+     * @param hasPlateJsons  If provided, overrides auto-detection.  Pass the value from
+     *   [ThreeMfInfo.hasPlateJsons] (parsed from the *original* file) when calling on a
+     *   processed/sanitised file that has had its Metadata/plate_N.json entries stripped.
+     *   When null (default), the flag is auto-detected by inspecting the inputFile ZIP.
+     */
+    fun extractPlate(inputFile: File, targetPlateId: Int, outputDir: File,
+                     hasPlateJsons: Boolean? = null): File {
         val outputFile = File(outputDir, "plate${targetPlateId}_${inputFile.name}")
 
         ZipFile(inputFile).use { srcZip ->
+            // Auto-detect from the file when the caller hasn't provided an explicit value.
+            val actualHasPlateJsons = hasPlateJsons ?: srcZip.entries().asSequence()
+                .any { it.name.matches(Regex("Metadata/plate_\\d+\\.json")) }
+
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
                 for (entry in srcZip.entries()) {
                     val content = srcZip.getInputStream(entry).readBytes()
 
-                    if (entry.name.endsWith("3dmodel.model")) {
-                        val filtered = filterModelToPlate(String(content), targetPlateId)
-                        writeStored(destZip, entry.name, filtered.toByteArray())
-                    } else {
-                        writeStored(destZip, entry.name, content)
+                    when {
+                        entry.name.endsWith("3dmodel.model") -> {
+                            val filtered = filterModelToPlate(String(content), targetPlateId,
+                                actualHasPlateJsons)
+                            writeStored(destZip, entry.name, filtered.toByteArray())
+                        }
+                        entry.name == "Metadata/model_settings.config" -> {
+                            // Strip <assemble> section: OrcaSlicer's _handle_start_assemble_item
+                            // looks up each assemble_item's object_id in m_objects (which only
+                            // contains objects that appear in <build>).  A plate-extracted file
+                            // has only one build item, so assemble_items for the other 6 objects
+                            // cause "can not find object for assemble item" → load failure.
+                            val stripped = stripAssembleSection(String(content))
+                            writeStored(destZip, entry.name, stripped.toByteArray())
+                        }
+                        else -> writeStored(destZip, entry.name, content)
                     }
                 }
             }
         }
         return outputFile
+    }
+
+    /**
+     * Remove the `<assemble>...</assemble>` block from a model_settings.config string.
+     *
+     * OrcaSlicer's _handle_start_assemble_item fails with "can not find object" when an
+     * assemble_item references an object_id that is not present in m_objects (i.e. not
+     * instantiated via a <build> item).  Plate-extracted files have only ONE <build> item,
+     * but model_settings.config retains assemble_items for all original plates → load fails.
+     *
+     * The <assemble> section is used only by BBS plate manager for object placement and is
+     * not required for slicing.  Stripping it lets OrcaSlicer use the <build> transforms.
+     */
+    private fun stripAssembleSection(xml: String): String {
+        return xml.replace(Regex("""[ \t]*<assemble>.*?</assemble>[ \t]*\r?\n?""",
+            setOf(RegexOption.DOT_MATCHES_ALL)), "")
+    }
+
+    /**
+     * Remove `printable="0"` build items from a 3dmodel.model ByteArray.
+     * These items are in the scene for reference/display only and must not be sliced.
+     * Only rewrites `<build>`; `<resources>` is left intact.
+     */
+    private fun stripNonPrintableBuildItems(modelBytes: ByteArray): ByteArray {
+        val xml = String(modelBytes)
+        val buildRegex = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val itemRegex  = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""",  setOf(RegexOption.DOT_MATCHES_ALL))
+        val result = buildRegex.replace(xml) { m ->
+            val open  = m.groupValues[1]
+            val body  = m.groupValues[2]
+            val close = m.groupValues[3]
+            val allItems = itemRegex.findAll(body).map { it.value }.toList()
+            val printable = allItems.filter { !it.contains("""printable="0"""") }
+            if (printable.size == allItems.size) return@replace m.value  // nothing to strip
+            val stripped = allItems.size - printable.size
+            Log.i(TAG, "stripNonPrintableBuildItems: removed $stripped non-printable item(s)")
+            val newBody = "\n" + printable.joinToString("\n") { "  $it" } + "\n  "
+            "$open$newBody$close"
+        }
+        return result.toByteArray()
     }
 
     /**
@@ -1076,10 +1182,37 @@ object BambuSanitizer {
      * instantiates objects that appear in <build>, so the bounding box is correct with
      * only the target plate's items in <build>.
      *
-     * Fallback: if no items have p:object_id (single-plate file or unknown format),
-     * the XML is returned unchanged.
+     * Fallback (newer Bambu format without p:object_id): select the N-th build item
+     * by XML order (targetPlateId is 1-based) and re-centre its XY to the bed centre.
+     * Newer BambuStudio exports lay out all plates in a large virtual space so each
+     * item's absolute XY is outside the 270 mm bed.  Re-centring to (135, 135) lets
+     * setModelInstances compute the correct centered placement afterwards.
      */
-    private fun filterModelToPlate(xml: String, targetPlateId: Int): String {
+    /**
+     * Rewrite the <build> section of a 3dmodel.model XML to contain ONLY the items
+     * for [targetPlateId].
+     *
+     * Bambu multi-plate files tag each <item> with `p:object_id="N"` (0-based plate index).
+     * We keep only the items where p:object_id == targetPlateId-1.
+     *
+     * Crucially, we leave <resources>/<objects> COMPLETELY INTACT.  Removing objects
+     * breaks OrcaSlicer because model_settings.config and component refs still reference
+     * them — the parser rejects a model with dangling object IDs.  OrcaSlicer only
+     * instantiates objects that appear in <build>, so the bounding box is correct with
+     * only the target plate's items in <build>.
+     *
+     * Fallback (newer Bambu format without p:object_id): select the N-th build item
+     * by XML order (targetPlateId is 1-based) and re-centre its XY to the bed centre.
+     * Newer BambuStudio exports lay out all plates in a large virtual space so each
+     * item's absolute XY is outside the 270 mm bed.  Re-centring to (135, 135) lets
+     * setModelInstances compute the correct centered placement afterwards.
+     *
+     * @param hasPlateJsons  true = newer format (each plate is independently loadable,
+     *   safe to filter to 1 item).  false = older format (Dragon Scale / Shashibo style)
+     *   where build items share component file refs and OrcaSlicer needs all of them.
+     */
+    private fun filterModelToPlate(xml: String, targetPlateId: Int,
+                                   hasPlateJsons: Boolean = true): String {
         val targetPlateIndex = targetPlateId - 1  // p:object_id is 0-based
 
         val buildRegex  = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
@@ -1093,23 +1226,74 @@ object BambuSanitizer {
 
             val allItems = itemRegex.findAll(body).map { it.value }.toList()
 
-            // Only filter when items carry p:object_id plate markers
+            // p:object_id-based filtering (older Bambu format with explicit plate tags)
             val hasPlateIds = allItems.any { plateIdRegex.containsMatchIn(it) }
-            if (!hasPlateIds) return@replace m.value  // single-plate or no markers — keep all
-
-            val targetItems = allItems.filter { item ->
-                val plateIdx = plateIdRegex.find(item)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                plateIdx == targetPlateIndex
+            if (hasPlateIds) {
+                val targetItems = allItems.filter { item ->
+                    val plateIdx = plateIdRegex.find(item)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    plateIdx == targetPlateIndex
+                }
+                if (targetItems.isEmpty()) {
+                    Log.w(TAG, "filterModelToPlate: no items for plate $targetPlateId — keeping all")
+                    return@replace m.value
+                }
+                Log.i(TAG, "filterModelToPlate: plate $targetPlateId — kept ${targetItems.size}/${allItems.size} items")
+                val newBody = "\n" + targetItems.joinToString("\n") { "    $it" } + "\n  "
+                return@replace "$open$newBody$close"
             }
 
-            if (targetItems.isEmpty()) {
-                Log.w(TAG, "filterModelToPlate: no items for plate $targetPlateId — keeping all")
-                return@replace m.value
+            // No p:object_id markers — use position-based selection.
+            //
+            // Trigger filtering when EITHER:
+            //  (a) hasPlateJsons  — newer Bambu format (plate_N.json present); each plate is
+            //                       independently loadable.
+            //  (b) hasVirtualPositions — older Bambu format (Dragon Scale, Shashibo): build
+            //                       items placed at virtual TX/TY offsets outside the 270mm bed.
+            //                       Each item represents one physical plate.  We select the
+            //                       N-th item and re-centre it.  The <assemble> section in
+            //                       model_settings.config is stripped separately (stripAssembleSection),
+            //                       so OrcaSlicer won't fail on assemble_item refs for omitted items.
+            //
+            // Do NOT filter when there are no virtual positions and no plate JSONs — those are
+            // genuine single-plate multi-object files where all items belong together.
+            val transformRegex = Regex("""transform="([^"]+)"""")
+            val hasVirtualPositions = allItems.any { item ->
+                val parts = transformRegex.find(item)?.groupValues?.get(1)
+                    ?.trim()?.split(Regex("\\s+")) ?: emptyList()
+                val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
+                val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
+                tx > 270f || ty < 0f || ty > 270f
             }
 
-            Log.i(TAG, "filterModelToPlate: plate $targetPlateId — kept ${targetItems.size}/${allItems.size} items")
-            val newBody = "\n" + targetItems.joinToString("\n") { "    $it" } + "\n  "
+            if (allItems.size <= 1 || (!hasPlateJsons && !hasVirtualPositions)) return@replace m.value
+
+            val idx = targetPlateIndex.coerceIn(0, allItems.size - 1)
+            val selected = recenterItemXY(allItems[idx])
+            val mode = if (hasPlateJsons) "json" else "virtual"
+            Log.i(TAG, "filterModelToPlate: plate $targetPlateId — position-based ($mode), selected item ${idx + 1}/${allItems.size}")
+            val newBody = "\n    $selected\n  "
             "$open$newBody$close"
+        }
+    }
+
+    /**
+     * Resets the XY translation in a build item's `transform` attribute to bed centre (135, 135),
+     * preserving the rotation matrix and Z translation.
+     * 3MF row-major 3×4 format: `m00 … m22 tx ty tz` — indices 9, 10, 11.
+     */
+    private fun recenterItemXY(item: String): String {
+        val transformRegex = Regex("""transform="([^"]+)"""")
+        return transformRegex.replace(item) { match ->
+            val parts = match.groupValues[1].trim().split(Regex("\\s+"))
+            if (parts.size >= 12) {
+                val newParts = parts.toMutableList()
+                newParts[9]  = "135"
+                newParts[10] = "135"
+                // parts[11] = tz preserved (holds the Z offset placing the mesh on the bed)
+                """transform="${newParts.joinToString(" ")}""""
+            } else {
+                match.value  // unknown format, leave unchanged
+            }
         }
     }
 }

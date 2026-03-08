@@ -437,6 +437,95 @@ class BambuPipelineIntegrationTest {
             execBlock.contains(Regex("""SM_PRINT_AUTO_FEED\s+EXTRUDER=1""")))
     }
 
+    // ── Bug-fix regression: printable="0" + isMultiPlate detection ──────────────
+
+    /**
+     * Regression: colored 3DBenchy has two build items (one printable="0", one printable="1").
+     * Previously `isMultiPlate = buildItems.size > 1` (wrong) showed a plate selector,
+     * and both items were loaded at different absolute positions → Clipper
+     * "Coordinate outside allowed range" during slicing.
+     *
+     * Fixed by:
+     *   1. isMultiPlate now uses plate JSON count (Benchy has 1 JSON → not multi-plate).
+     *   2. sanitize() strips printable="0" build items before loading.
+     *
+     * Expected: single printable object loads, slices without error.
+     */
+    @Test
+    fun coloredBenchy_printableZeroStripped_slicesWithoutCoordinateError() {
+        val input = asset("colored_3DBenchy (1).3mf")
+        val info = ThreeMfParser.parse(input)
+
+        // Must NOT be detected as multi-plate (only 1 plate JSON)
+        assertFalse("Colored Benchy should NOT be multi-plate", info.isMultiPlate)
+
+        val sanitized = BambuSanitizer.process(input, outDir)
+
+        // Sanitized build must contain exactly 1 printable item (printable="0" stripped)
+        val buildXml = sanitized.readText().substringAfter("<build").substringBefore("</build>")
+        assertFalse("printable=0 item must be stripped", buildXml.contains("""printable="0""""))
+        assertTrue("printable=1 item must be kept", buildXml.contains("""printable="1""""))
+
+        val embedded = embedder.embed(sanitized, embedder.buildConfig(info = info), outDir, info)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(BASE_CONFIG)
+        assertNotNull("slice() must return a result", result); result!!
+        assertTrue("Slice must succeed (no Clipper error): ${result.errorMessage}", result.success)
+        assertTrue("G-code must be non-empty", File(result.gcodePath).length() > 0)
+    }
+
+    /**
+     * Regression: fidget coaster is a multi-plate file (6 plate JSONs) without p:object_id
+     * markers. Previously filterModelToPlate fell through to "keep all items" when no
+     * p:object_id was found, loading all 7 objects at positions spread across 1200×800 mm
+     * virtual space → model stuck at (0,0), nothing on bed when sliced.
+     *
+     * Fixed by: position-based selection picks the N-th item by XML order and re-centres
+     * its XY to (135, 135) so it lands on the U1 bed.
+     *
+     * Expected: extractPlate() produces a build with exactly 1 item at bed-centre XY.
+     */
+    @Test
+    fun fidgetCoaster_multiPlateWithoutPlateIds_extractsOneItemAtBedCentre() {
+        val input = asset("foldy+coaster (1).3mf")
+        val info = ThreeMfParser.parse(input)
+
+        // Must be detected as multi-plate (5 plate JSONs)
+        assertTrue("Coaster should be multi-plate", info.isMultiPlate)
+        assertTrue("Coaster should have multiple plates", info.plates.size > 1)
+
+        // Extract plate 2 (index 1)
+        val plateFile = BambuSanitizer.extractPlate(input, 2, outDir)
+        assertTrue("Plate file must exist", plateFile.exists())
+
+        val buildSection = plateFile.readText()
+            .substringAfter("<build").substringBefore("</build>")
+        val itemCount = "<item ".toRegex().findAll(buildSection).count()
+        assertEquals("Extracted plate must have exactly 1 build item", 1, itemCount)
+
+        // XY must be re-centred to (135, 135)
+        assertTrue("Item must be at bed-centre XY (135 135)",
+            buildSection.contains(Regex("""transform="[^"]*135\s+135\s+\S+"""")))
+
+        // Load and slice — mirrors ViewModel: process original → extractPlate sanitized → embed plate
+        // (Do NOT process plateFile again: model_settings.config inside still references all
+        // objects, which would falsely trigger restructureForMultiColor on the plate file.)
+        val sanitized = BambuSanitizer.process(input, outDir)
+        // Pass hasPlateJsons=true explicitly: process() strips plate_N.json files, so
+        // auto-detection on the sanitised ZIP would return false (no JSONs present).
+        // We know the original had plate JSONs (detected above via info.hasPlateJsons).
+        val sanitizedPlate = BambuSanitizer.extractPlate(sanitized, 2, outDir,
+            hasPlateJsons = info.hasPlateJsons)
+        val embedded = embedder.embed(sanitizedPlate, embedder.buildConfig(info = info), outDir, info)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(BASE_CONFIG)
+        assertNotNull("slice() must return a result", result); result!!
+        assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
+        assertTrue("G-code must be non-empty", File(result.gcodePath).length() > 0)
+    }
+
     /**
      * Regression: compact dual-colour slice with embedded Snapmaker profile
      * must produce G-code with non-zero nozzle temperatures.

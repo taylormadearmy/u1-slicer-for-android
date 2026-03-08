@@ -29,7 +29,16 @@ data class ThreeMfInfo(
     val hasLayerToolChanges: Boolean = false,
     val hasMultiExtruderAssignments: Boolean = false,
     val detectedColors: List<String> = emptyList(),
-    val detectedExtruderCount: Int = 1
+    val detectedExtruderCount: Int = 1,
+    /**
+     * True when the original Bambu 3MF ZIP contains Metadata/plate_N.json files.
+     * Newer BambuStudio multi-plate format: each plate is independently loadable,
+     * so extractPlate() can safely filter the build to a single item.
+     * Older format files (Dragon Scale, Shashibo) have no plate JSONs; their build
+     * items share component file refs and must ALL remain in <build> for OrcaSlicer
+     * to resolve them correctly.
+     */
+    val hasPlateJsons: Boolean = false
 ) {
     /** Whether the original Bambu structure must be preserved (not rebuilt with trimesh) */
     val needsPreserve: Boolean get() = isBambu && (

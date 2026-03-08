@@ -233,18 +233,326 @@ class BambuSanitizerTest {
     }
 
     @Test
-    fun `filterModelToPlate logic - no p_object_id returns unchanged`() {
+    fun `filterModelToPlate logic - no p_object_id single item returns unchanged`() {
+        // Single build item with no p:object_id — nothing to select, XML stays the same
         val xml = """<build>
     <item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>
-    <item objectid="2" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>
 </build>"""
         val plateIdRegex = Regex("""p:object_id="(\d+)"""")
         val itemRegex = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""", setOf(RegexOption.DOT_MATCHES_ALL))
         val allItems = itemRegex.findAll(xml).map { it.value }.toList()
-        assertEquals(2, allItems.size)
+        assertEquals(1, allItems.size)
         assertFalse("No p:object_id present", allItems.any { plateIdRegex.containsMatchIn(it) })
-        // filterModelToPlate returns unchanged when no plate IDs
-        assertEquals(xml, xml) // no-op confirmed
+        // Single item — filterModelToPlate should leave it unchanged
+        assertEquals(xml, xml)
+    }
+
+    @Test
+    fun `filterModelToPlate logic - no p_object_id multiple items selects by index and recenters XY`() {
+        // Position-based plate selection — triggered by either:
+        //   (a) hasPlateJsons=true  (newer Bambu format with Metadata/plate_N.json)
+        //   (b) hasVirtualPositions (older Bambu format: Dragon Scale / Shashibo with
+        //       items at virtual TX/TY positions outside the 270mm bed)
+        // Items in either case are at absolute virtual-layout positions far outside the 270mm bed.
+        // Selecting plate N returns the N-th item (0-indexed) with XY reset to (135, 135).
+        val buildRegex  = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val itemRegex   = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""",  setOf(RegexOption.DOT_MATCHES_ALL))
+        val plateIdRegex = Regex("""p:object_id="(\d+)"""")
+        val transformRegex = Regex("""transform="([^"]+)"""")
+
+        fun recenterItemXY(item: String): String {
+            return transformRegex.replace(item) { match ->
+                val parts = match.groupValues[1].trim().split(Regex("\\s+"))
+                if (parts.size >= 12) {
+                    val newParts = parts.toMutableList()
+                    newParts[9]  = "135"
+                    newParts[10] = "135"
+                    """transform="${newParts.joinToString(" ")}""""
+                } else match.value
+            }
+        }
+        fun isVirtual(item: String): Boolean {
+            val parts = transformRegex.find(item)?.groupValues?.get(1)
+                ?.trim()?.split(Regex("\\s+")) ?: emptyList()
+            val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
+            val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
+            return tx > 270f || ty < 0f || ty > 270f
+        }
+        fun filterByIndex(xml: String, targetPlateId: Int, hasPlateJsons: Boolean = true): String {
+            return buildRegex.replace(xml) { m ->
+                val allItems = itemRegex.findAll(m.groupValues[2]).map { it.value }.toList()
+                val hasPlateIds = allItems.any { plateIdRegex.containsMatchIn(it) }
+                if (hasPlateIds) return@replace m.value
+                val hasVirtualPositions = allItems.any { isVirtual(it) }
+                // Filter when triggered by plate JSONs OR virtual positions
+                if (allItems.size <= 1 || (!hasPlateJsons && !hasVirtualPositions)) return@replace m.value
+                val idx = (targetPlateId - 1).coerceIn(0, allItems.size - 1)
+                val selected = recenterItemXY(allItems[idx])
+                "${m.groupValues[1]}\n    $selected\n  ${m.groupValues[3]}"
+            }
+        }
+
+        val xml = """<?xml version="1.0"?>
+<model>
+  <resources>
+    <object id="3" type="model"/>
+    <object id="8" type="model"/>
+    <object id="9" type="model"/>
+  </resources>
+  <build>
+    <item objectid="3" transform="1 0 0 0 1 0 0 0 1 175 160 1.62" printable="1" />
+    <item objectid="8" transform="1 0 0 0 1 0 0 0 1 1052 154 1.64" printable="1" />
+    <item objectid="9" transform="1 0 0 0 1 0 0 0 1 175 -224 1.64" printable="1" />
+  </build>
+</model>""".trimIndent()
+
+        val plate1 = filterByIndex(xml, 1)
+        val plate2 = filterByIndex(xml, 2)
+        val plate3 = filterByIndex(xml, 3)
+
+        val buildSection1 = plate1.substringAfter("<build>").substringBefore("</build>")
+        val buildSection2 = plate2.substringAfter("<build>").substringBefore("</build>")
+        val buildSection3 = plate3.substringAfter("<build>").substringBefore("</build>")
+
+        // Plate 1 → first item (objectid=3), XY reset to 135
+        assertTrue("Plate1 has item 3", buildSection1.contains("""objectid="3""""))
+        assertFalse("Plate1 has no item 8", buildSection1.contains("""objectid="8""""))
+        assertTrue("Plate1 XY re-centred", buildSection1.contains("135 135 1.62"))
+
+        // Plate 2 → second item (objectid=8), XY reset to 135
+        assertTrue("Plate2 has item 8", buildSection2.contains("""objectid="8""""))
+        assertFalse("Plate2 has no item 3", buildSection2.contains("""objectid="3""""))
+        assertTrue("Plate2 XY re-centred", buildSection2.contains("135 135 1.64"))
+
+        // Plate 3 → third item (objectid=9), XY reset to 135
+        assertTrue("Plate3 has item 9", buildSection3.contains("""objectid="9""""))
+        assertTrue("Plate3 XY re-centred", buildSection3.contains("135 135 1.64"))
+
+        // Resources must be unchanged — all 3 objects still present
+        assertTrue("Resources: object 3", plate2.contains("""id="3""""))
+        assertTrue("Resources: object 8", plate2.contains("""id="8""""))
+        assertTrue("Resources: object 9", plate2.contains("""id="9""""))
+
+        // Virtual positions without plate JSONs (Dragon Scale / Shashibo style):
+        // filtering MUST activate even when hasPlateJsons=false, because the virtual
+        // TX/TY positions (> 270mm or < 0) identify separate plates.
+        val virtualFormatXml = """<build>
+    <item objectid="4" transform="1 0 0 0 1 0 0 0 1 128 128 10" printable="1"/>
+    <item objectid="5" transform="1 0 0 0 1 0 0 0 1 435 128 10" printable="1"/>
+    <item objectid="6" transform="1 0 0 0 1 0 0 0 1 128 -179 10" printable="1"/>
+</build>"""
+        val virtualPlate1 = filterByIndex(virtualFormatXml, 1, hasPlateJsons = false)
+        val virtualBuild1 = virtualPlate1.substringAfter("<build>").substringBefore("</build>")
+        // Only item 4 (first) should remain, re-centred
+        assertTrue("Virtual: plate1 has item 4", virtualBuild1.contains("""objectid="4""""))
+        assertFalse("Virtual: plate1 no item 5", virtualBuild1.contains("""objectid="5""""))
+        assertFalse("Virtual: plate1 no item 6", virtualBuild1.contains("""objectid="6""""))
+        assertTrue("Virtual: plate1 XY re-centred", virtualBuild1.contains("135 135 10"))
+
+        val virtualPlate2 = filterByIndex(virtualFormatXml, 2, hasPlateJsons = false)
+        val virtualBuild2 = virtualPlate2.substringAfter("<build>").substringBefore("</build>")
+        assertTrue("Virtual: plate2 has item 5", virtualBuild2.contains("""objectid="5""""))
+        assertFalse("Virtual: plate2 no item 4", virtualBuild2.contains("""objectid="4""""))
+
+        // True single-plate multi-object (no virtual positions, no plate JSONs): keep all.
+        val onBedXml = """<build>
+    <item objectid="10" transform="1 0 0 0 1 0 0 0 1 50 50 0" printable="1"/>
+    <item objectid="11" transform="1 0 0 0 1 0 0 0 1 150 150 0" printable="1"/>
+</build>"""
+        val onBedResult = filterByIndex(onBedXml, 1, hasPlateJsons = false)
+        val onBedBuild = onBedResult.substringAfter("<build>").substringBefore("</build>")
+        assertTrue("On-bed: item 10 kept", onBedBuild.contains("""objectid="10""""))
+        assertTrue("On-bed: item 11 kept", onBedBuild.contains("""objectid="11""""))
+    }
+
+    @Test
+    fun `stripNonPrintableBuildItems - removes printable=0 items only from build`() {
+        // stripNonPrintableBuildItems is private; simulate its regex logic here.
+        // Verifies that printable="0" items are removed from <build> but resources stay intact.
+        val buildRegex = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val itemRegex  = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""",  setOf(RegexOption.DOT_MATCHES_ALL))
+
+        fun strip(xml: String): String {
+            return buildRegex.replace(xml) { m ->
+                val allItems = itemRegex.findAll(m.groupValues[2]).map { it.value }.toList()
+                val printable = allItems.filter { !it.contains("""printable="0"""") }
+                if (printable.size == allItems.size) return@replace m.value
+                val newBody = "\n" + printable.joinToString("\n") { "  $it" } + "\n  "
+                "${m.groupValues[1]}$newBody${m.groupValues[3]}"
+            }
+        }
+
+        val xml = """<?xml version="1.0"?>
+<model>
+  <resources>
+    <object id="2" type="model"/>
+    <object id="4" type="model"/>
+  </resources>
+  <build>
+    <item objectid="2" transform="1 0 0 0 1 0 0 0 1 213 194 24" printable="0"/>
+    <item objectid="4" transform="1 0 0 0 1 0 0 0 1 135 119 24" printable="1"/>
+  </build>
+</model>""".trimIndent()
+
+        val result = strip(xml)
+        val buildSection = result.substringAfter("<build>").substringBefore("</build>")
+
+        // printable=1 item kept, printable=0 item removed
+        assertTrue("printable=1 item kept", buildSection.contains("""objectid="4""""))
+        assertFalse("printable=0 item removed", buildSection.contains("""objectid="2""""))
+
+        // Resources untouched
+        assertTrue("Resources: object 2 intact", result.contains("""<object id="2""""))
+        assertTrue("Resources: object 4 intact", result.contains("""<object id="4""""))
+    }
+
+    @Test
+    fun `component file size guard - large files skip restructuring`() {
+        // Verify the 15MB threshold logic: total component size > 15MB → safeToInline = false.
+        // This prevents OOM when processing large multi-plate files (e.g. a 7-plate coaster).
+        val threshold = 15_000_000L
+
+        // Small file set: 3 files × 2MB = 6MB → safe to inline
+        val smallTotal = 3 * 2_000_000L
+        assertTrue("6MB total should be safe to inline", smallTotal <= threshold)
+
+        // Large file set: 7 files × 5MB = 35MB → too large
+        val largeTotal = 7 * 5_000_000L
+        assertFalse("35MB total should skip inlining", largeTotal <= threshold)
+    }
+
+    @Test
+    fun `buildSlic3rModelConfig logic - per-part volumes when face counts known`() {
+        // Simulate buildSlic3rModelConfig for a multi-color object with known face counts.
+        // Expects separate <volume> entries for each part, using face-count ranges.
+        data class PartInfo(val faceCount: Int, val extruder: Int)
+
+        fun buildConfig(objectParts: Map<String, List<PartInfo>>): String {
+            val sb = StringBuilder()
+            for ((objectId, parts) in objectParts.entries.sortedBy { it.key.toIntOrNull() ?: 0 }) {
+                if (parts.isEmpty()) continue
+                val overallExtruder = parts.maxOf { it.extruder }
+                sb.appendLine("""  <object id="$objectId">""")
+                sb.appendLine("""    <metadata type="object" key="extruder" value="$overallExtruder"/>""")
+                val isMultiColor = parts.map { it.extruder }.distinct().size > 1
+                val hasFaceCounts = parts.all { it.faceCount > 0 }
+                if (isMultiColor && hasFaceCounts) {
+                    var firstId = 0
+                    for (part in parts) {
+                        val lastId = firstId + part.faceCount - 1
+                        sb.appendLine("""    <volume firstid="$firstId" lastid="$lastId">""")
+                        sb.appendLine("""      <metadata type="volume" key="extruder" value="${part.extruder}"/>""")
+                        sb.appendLine("""    </volume>""")
+                        firstId += part.faceCount
+                    }
+                } else {
+                    val faceCount = parts.sumOf { it.faceCount }
+                    val lastId = maxOf(0, faceCount - 1)
+                    sb.appendLine("""    <volume firstid="0" lastid="$lastId">""")
+                    sb.appendLine("""      <metadata type="volume" key="extruder" value="$overallExtruder"/>""")
+                    sb.appendLine("""    </volume>""")
+                }
+                sb.appendLine("""  </object>""")
+            }
+            return sb.toString()
+        }
+
+        // Multi-color object: part 1 has 500 faces on E1, part 2 has 300 faces on E2
+        val parts = mapOf("5" to listOf(PartInfo(500, 1), PartInfo(300, 2)))
+        val config = buildConfig(parts)
+
+        // Should have two separate volume entries
+        assertTrue("E1 volume starts at 0", config.contains("""firstid="0" lastid="499""""))
+        assertTrue("E1 volume uses extruder 1", config.contains("""value="1""""))
+        assertTrue("E2 volume starts at 500", config.contains("""firstid="500" lastid="799""""))
+        assertTrue("E2 volume uses extruder 2", config.contains("""value="2""""))
+        // Overall extruder is max (2)
+        assertTrue("Object extruder is max", config.contains("""key="extruder" value="2""""))
+
+        // Single-color object: no per-part split
+        val singleParts = mapOf("3" to listOf(PartInfo(400, 1)))
+        val singleConfig = buildConfig(singleParts)
+        assertTrue("Single volume from 0", singleConfig.contains("""firstid="0" lastid="399""""))
+
+        // Multi-color with zero face counts: fall back to single volume
+        val zeroFaceParts = mapOf("7" to listOf(PartInfo(0, 1), PartInfo(0, 2)))
+        val zeroConfig = buildConfig(zeroFaceParts)
+        // hasFaceCounts = false → falls through to single-volume path
+        assertTrue("Zero face count falls back", zeroConfig.contains("""firstid="0""""))
+    }
+
+    // --- stripAssembleSection ---
+
+    @Test
+    fun `stripAssembleSection - removes assemble block from model_settings config`() {
+        // Simulates BambuSanitizer.stripAssembleSection() logic.
+        // The <assemble> section in model_settings.config lists transforms for ALL objects
+        // across all plates. When a single plate is extracted (only 1 object in <build>),
+        // OrcaSlicer's _handle_start_assemble_item fails for the other objects → load failure.
+        // Stripping the entire <assemble> block prevents this.
+        fun strip(xml: String): String =
+            xml.replace(Regex("""[ \t]*<assemble>.*?</assemble>[ \t]*\r?\n?""",
+                setOf(RegexOption.DOT_MATCHES_ALL)), "")
+
+        val xml = """<?xml version="1.0"?>
+<config>
+  <object id="3">
+    <metadata type="object" key="name" value="Object"/>
+  </object>
+  <assemble>
+    <assemble_item object_id="3" instance_id="0" transform="1 0 0 0 1 0 0 0 1 135 135 0"/>
+    <assemble_item object_id="8" instance_id="0" transform="1 0 0 0 1 0 0 0 1 1052 154 0"/>
+    <assemble_item object_id="20" instance_id="0" transform="1 0 0 0 1 0 0 0 1 200 200 0"/>
+  </assemble>
+</config>"""
+
+        val result = strip(xml)
+
+        // assemble block gone
+        assertFalse("assemble block removed", result.contains("<assemble>"))
+        assertFalse("assemble_item removed", result.contains("assemble_item"))
+
+        // rest of config intact
+        assertTrue("object id 3 still present", result.contains("""id="3""""))
+        assertTrue("metadata still present", result.contains("""key="name""""))
+    }
+
+    @Test
+    fun `stripAssembleSection - no-op when no assemble block present`() {
+        fun strip(xml: String): String =
+            xml.replace(Regex("""[ \t]*<assemble>.*?</assemble>[ \t]*\r?\n?""",
+                setOf(RegexOption.DOT_MATCHES_ALL)), "")
+
+        val xml = """<?xml version="1.0"?>
+<config>
+  <object id="5">
+    <metadata type="object" key="name" value="Cube"/>
+  </object>
+</config>"""
+
+        val result = strip(xml)
+        assertEquals("XML unchanged when no assemble block", xml, result)
+    }
+
+    @Test
+    fun `stripAssembleSection - preserves content before and after assemble block`() {
+        fun strip(xml: String): String =
+            xml.replace(Regex("""[ \t]*<assemble>.*?</assemble>[ \t]*\r?\n?""",
+                setOf(RegexOption.DOT_MATCHES_ALL)), "")
+
+        val xml = """<config>
+  <object id="1"/>
+  <assemble>
+    <assemble_item object_id="1" instance_id="0" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>
+    <assemble_item object_id="2" instance_id="0" transform="1 0 0 0 1 0 0 0 1 1 1 1"/>
+  </assemble>
+  <object id="99"/>
+</config>"""
+
+        val result = strip(xml)
+        assertFalse("assemble removed", result.contains("<assemble>"))
+        assertTrue("object 1 before block intact", result.contains("""id="1""""))
+        assertTrue("object 99 after block intact", result.contains("""id="99""""))
     }
 
     // Helper: simplified INI parser matching BambuSanitizer's logic

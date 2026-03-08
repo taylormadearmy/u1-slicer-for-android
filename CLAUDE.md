@@ -16,8 +16,8 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 226 JVM unit tests
-ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 89 instrumented tests
+./gradlew testDebugUnitTest                                                    # 235 JVM unit tests
+ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 91 instrumented tests
 ```
 
 ### MANDATORY: End-to-end testing before a feature is "done"
@@ -45,7 +45,7 @@ End-to-end test checklist:
 - `data/SlicingOverridesTest.kt` — Override modes, JSON serialization round-trip, defaults, resolveInto()
 - `data/SettingsBackupTest.kt` — Export/import round-trip, version validation, partial restore
 - `bambu/ThreeMfParserTest.kt` — 3MF data model construction
-- `bambu/BambuSanitizerTest.kt` — INI config parsing, nil replacement, array normalization, filterModelToPlate
+- `bambu/BambuSanitizerTest.kt` — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripAssembleSection
 - `ui/ExtruderAssignmentTest.kt` — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` — JSON import parsing: snake_case/camelCase, defaults, errors
 - `model/CopyArrangeCalculatorTest.kt` — Grid layout, bed bounds, copy capping
@@ -78,4 +78,7 @@ End-to-end test checklist:
 - Add unit tests for every new parsing/logic function
 - `org.json` is Android API — add `testImplementation 'org.json:json:20231013'` for JVM tests that use it
 - `SlicingOverrides.resolveInto(SliceConfig)` is the canonical way to apply override modes before slicing — always call it in `startSlicing()`, never pass `_config.value` directly to `native.slice()`
-- `BambuSanitizer.filterModelToPlate` only rewrites `<build>` (using `p:object_id` plate markers) — never remove objects from `<resources>` (breaks OrcaSlicer via dangling refs in model_settings.config)
+- `BambuSanitizer.filterModelToPlate` only rewrites `<build>` — never remove objects from `<resources>` (breaks OrcaSlicer via dangling refs in model_settings.config)
+- `BambuSanitizer.filterModelToPlate` position-based fallback (no `p:object_id`) only runs when the ZIP has `Metadata/plate_N.json` files — old format files (Dragon Scale, Shashibo) keep all build items unchanged
+- `BambuSanitizer.process()` skips `restructureForMultiColor` when total component file size > 15MB (OOM guard) — OrcaSlicer handles `p:path` component refs natively for large files
+- `ThreeMfParser.isMultiPlate`: uses plate JSON count (new format) OR virtual-plate item positions (TX>270 or TY<0 on printable items) for old format detection

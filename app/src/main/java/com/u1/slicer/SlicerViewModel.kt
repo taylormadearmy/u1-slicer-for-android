@@ -300,11 +300,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                     // Show plate selector for multi-plate files
                     if (info.isMultiPlate && info.plates.size > 1) {
+                        Log.i("SlicerVM", "Multi-plate: ${info.plates.size} plates, showing selector")
                         currentModelFile = sanitized
                         _showPlateSelector.value = true
                         // Don't load yet — wait for plate selection
                         return@launch
                     }
+                    Log.i("SlicerVM", "Single-plate, loading directly")
 
                     sanitized
                 } else {
@@ -335,10 +337,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
-                val plateFile = BambuSanitizer.extractPlate(file, plateId, context.filesDir)
+                // Pass hasPlateJsons from the *original* parsed info: process() strips
+                // plate_N.json files from the ZIP, so auto-detection on the sanitised file
+                // would always return false.  sourceModelInfo is parsed before process() runs.
+                val hasPlateJsons = sourceModelInfo?.hasPlateJsons
+                val plateFile = BambuSanitizer.extractPlate(file, plateId, context.filesDir,
+                    hasPlateJsons = hasPlateJsons)
                 // plateFile is now the source for any subsequent re-embed with remap
+                val plateInfo = ThreeMfParser.parse(plateFile)
                 sourceModelFile = plateFile
-                sourceModelInfo = ThreeMfParser.parse(plateFile)
+                sourceModelInfo = plateInfo
+                // Update _threeMfInfo so loadNativeModel uses the single-plate info
+                // (not the full multi-plate info from the original loadModel() parse).
+                // Without this, detectedExtruderCount from the full file (e.g. 7 for a
+                // 7-plate coaster) is used even after selecting a single plate.
+                _threeMfInfo.value = plateInfo
                 toolRemapSlots = null
                 currentModelFile = plateFile
                 loadNativeModel(plateFile)
@@ -602,6 +615,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startSlicing() {
         viewModelScope.launch(Dispatchers.IO) {
+            try {
             var maxPct = 0
             native.progressListener = { pct, stage ->
                 if (pct > maxPct) maxPct = pct
@@ -688,8 +702,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
             val result = native.slice(sliceConfig)
 
-            native.progressListener = null
-
             if (result != null && result.success) {
                 // Post-process G-code to remap compact tool indices to physical slots.
                 // OrcaSlicer sliced in compact mode (T0,T1,…) — remap to actual printer
@@ -702,8 +714,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Inject preview thumbnails into G-code for Klipper/Moonraker
                 val sourcePath = sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
                 if (sourcePath != null) {
-                    val injected = GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
-                    if (injected) Log.i("SlicerVM", "Thumbnails injected into G-code")
+                    try {
+                        val injected = GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
+                        if (injected) Log.i("SlicerVM", "Thumbnails injected into G-code")
+                    } catch (e: Throwable) {
+                        Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
+                    }
                 }
 
                 _state.value = SlicerState.SliceComplete(result)
@@ -734,6 +750,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 )
             } else {
                 _state.value = SlicerState.Error(result?.errorMessage ?: "Slicing failed")
+            }
+            } catch (e: Throwable) {
+                Log.e("SlicerVM", "Unexpected error during slicing", e)
+                _state.value = SlicerState.Error("Slicing error: ${e.message ?: e.javaClass.simpleName}")
+            } finally {
+                native.progressListener = null
             }
         }
     }

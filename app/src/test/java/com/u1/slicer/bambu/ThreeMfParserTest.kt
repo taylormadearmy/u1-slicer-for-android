@@ -107,4 +107,57 @@ class ThreeMfParserTest {
         assertTrue(info.isMultiPlate)
         assertEquals(2, info.plates.size)
     }
+
+    @Test
+    fun `isMultiPlate uses plate JSON count not build item count`() {
+        // New-format multi-plate: detected by plateJsonCount > 1
+        val plateJsonRegex = Regex("Metadata/plate_\\d+\\.json")
+        fun countPlateJsons(entries: Set<String>) = entries.count { plateJsonRegex.matches(it) }
+
+        // Benchy-style: 1 plate JSON, 2 build items (one printable=0) → single-plate
+        val benchyEntries = setOf("Metadata/plate_1.json", "3D/3dmodel.model")
+        assertEquals(1, countPlateJsons(benchyEntries))
+        assertFalse("1 plate JSON → not multi-plate by JSON count", countPlateJsons(benchyEntries) > 1)
+
+        // Coaster-style: 5 plate JSONs, 7 build items → multi-plate
+        val coasterEntries = (2..6).map { "Metadata/plate_$it.json" }.toSet() + "3D/3dmodel.model"
+        assertEquals(5, countPlateJsons(coasterEntries))
+        assertTrue("5 plate JSONs → multi-plate", countPlateJsons(coasterEntries) > 1)
+    }
+
+    @Test
+    fun `isMultiPlate detects old Bambu format via virtual plate positions`() {
+        // Old Bambu format (Dragon Scale, Shashibo): no plate JSONs, but printable items
+        // are laid out in a large virtual space with TX/TY outside the 270mm bed.
+        // Multi-plate is detected by any printable item having TX > 270 or TY outside [0, 270].
+        val bedSize = 270f
+
+        data class Item(val tx: Float, val ty: Float, val printable: Boolean)
+
+        fun hasVirtualPlateItems(items: List<Item>): Boolean =
+            items.any { item ->
+                if (!item.printable) return@any false
+                item.tx > bedSize || item.ty < 0f || item.ty > bedSize
+            }
+
+        // Dragon Scale: 3 items — plate 1 on bed, plates 2+3 at virtual positions
+        val dragonItems = listOf(
+            Item(128f, 128f, true),   // plate 1 — on bed
+            Item(435f, 128f, true),   // plate 2 — TX > 270
+            Item(128f, -179f, true)   // plate 3 — TY < 0
+        )
+        assertTrue("Dragon Scale should be multi-plate", hasVirtualPlateItems(dragonItems))
+
+        // Benchy: 2 items — one printable=0 (reference), one printable=1 on bed
+        val benchyItems = listOf(
+            Item(213f, 194f, false),  // printable=0 reference — ignored
+            Item(135f, 119f, true)    // printable=1 — on bed
+        )
+        assertFalse("Benchy should NOT be multi-plate", hasVirtualPlateItems(benchyItems))
+
+        // Single-plate dual-color: 1 item on bed
+        val dualColorItems = listOf(Item(135f, 135f, true))
+        assertFalse("Single-plate dual-colour should NOT be multi-plate",
+            hasVirtualPlateItems(dualColorItems))
+    }
 }

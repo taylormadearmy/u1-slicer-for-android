@@ -223,10 +223,13 @@ class ProfileEmbedder(private val context: Context) {
         // 2. Replace nil values in arrays
         sanitizeNilValues(config)
 
-        // 3. Normalize per-filament arrays
-        if (targetExtruderCount > 1) {
-            normalizePerFilamentArrays(config, targetExtruderCount)
-        }
+        // 3. Normalize per-filament arrays to targetExtruderCount.
+        // Always normalise even for single-extruder (targetExtruderCount=1) so that
+        // multi-plate Bambu configs with many filament_colour entries are truncated to
+        // the number of extruders actually used.  Without this, a 7-plate single-colour
+        // Bambu file embeds 7 filament_colour entries, which ThreeMfParser then counts
+        // as 7 detected extruders even after plate selection.
+        normalizePerFilamentArrays(config, targetExtruderCount.coerceAtLeast(1))
 
         // 4. Clamp wipe tower position
         sanitizeWipeTowerPosition(config)
@@ -397,13 +400,16 @@ class ProfileEmbedder(private val context: Context) {
                     val content = srcZip.getInputStream(entry).readBytes()
 
                     when {
-                        // Convert mmu_segmentation in .model files (only when paint data present)
-                        name.endsWith(".model") && info.hasPaintData -> {
-                            var text = String(content)
-                            text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
-                            text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
+                        // Clean and convert .model files:
+                        // - Strip Bambu-specific XML extensions (requiredextensions, p:UUID,
+                        //   xmlns:BambuStudio, metadata elements) that cause OrcaSlicer's BBS
+                        //   3MF reader to reject the file when requiredextensions="p" is present.
+                        // - Preserve p:path and xmlns:p (needed for component file refs).
+                        // - Convert mmu_segmentation → paint_color for paint-data files.
+                        name.endsWith(".model") -> {
+                            val cleaned = cleanModelXmlForOrcaSlicer(content, info.hasPaintData)
                             destZip.putNextEntry(ZipEntry(name))
-                            destZip.write(text.toByteArray())
+                            destZip.write(cleaned)
                             destZip.closeEntry()
                         }
 
@@ -490,6 +496,32 @@ class ProfileEmbedder(private val context: Context) {
 
         sb.appendLine("</config>")
         return sb.toString()
+    }
+
+    /**
+     * Strip Bambu-specific XML extensions from a .model file so OrcaSlicer's BBS 3MF reader
+     * can load it without failing on `requiredextensions="p"`.
+     *
+     * Preserves `p:path` and `xmlns:p` (needed for external component file references).
+     * Strips: requiredextensions, p:UUID, xmlns:BambuStudio, all <metadata> elements,
+     * type="other" → type="model".
+     *
+     * Mirrors BambuSanitizer.cleanModelXmlPreserveComponentRefs(), which is used by the
+     * BambuSanitizer.process() path (instrumented tests). This function is used by the
+     * embedProfile path (app ViewModel).
+     */
+    private fun cleanModelXmlForOrcaSlicer(content: ByteArray, hasPaintData: Boolean): ByteArray {
+        var text = String(content)
+        if (hasPaintData) {
+            text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+            text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
+        }
+        text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
+        text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
+        text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
+        text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
+        text = text.replace("""type="other"""", """type="model"""")
+        return text.toByteArray()
     }
 
     /**

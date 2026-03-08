@@ -50,8 +50,29 @@ object ThreeMfParser {
                 val objects = parseObjects(modelBytes)
                 val buildItems = parseBuildItems(modelBytes)
 
-                // Detect multi-plate
-                val isMultiPlate = buildItems.size > 1
+                // Multi-plate detection: two complementary signals are checked.
+                //
+                // 1. Plate JSON count (new Bambu format): files with plate_N.json entries for
+                //    each plate are definitively multi-plate when plateJsonCount > 1.
+                //
+                // 2. Virtual-plate item positions (old Bambu format, e.g. Dragon Scale /
+                //    Shashibo): no plate JSONs, but printable items are laid out in a large
+                //    virtual space with ~420 mm X-pitch and ~384 mm Y-pitch between plates.
+                //    Any printable item with TX > 270 or TY outside [0, 270] is off the U1
+                //    bed and therefore belongs to a different plate.
+                //
+                // Using build item count alone was wrong: multi-color single-plate models
+                // (e.g. Benchy with a printable="0" reference item) also have > 1 build items.
+                val plateJsonCount = entryNames.count { name ->
+                    name.matches(Regex("Metadata/plate_\\d+\\.json"))
+                }
+                val hasVirtualPlateItems = buildItems.any { item ->
+                    if (!item.printable) return@any false
+                    val tx = if (item.transform.size > 9) item.transform[9] else 0f
+                    val ty = if (item.transform.size > 10) item.transform[10] else 0f
+                    tx > 270f || ty < 0f || ty > 270f
+                }
+                val isMultiPlate = plateJsonCount > 1 || hasVirtualPlateItems
 
                 // Read Bambu model_settings.config for plate names and extruder assignments
                 val plateNames = mutableMapOf<Int, String>()
@@ -173,7 +194,8 @@ object ThreeMfParser {
                     hasLayerToolChanges = hasLayerToolChanges,
                     hasMultiExtruderAssignments = hasMultiExtruderAssignments,
                     detectedColors = detectedColors,
-                    detectedExtruderCount = extruderCount
+                    detectedExtruderCount = extruderCount,
+                    hasPlateJsons = plateJsonCount > 0
                 )
             }
         } catch (e: Exception) {
