@@ -54,11 +54,13 @@
 
 ## Automated Test Results
 
-### Run 1: 2026-03-08
+### Run 2: 2026-03-08
 - JVM unit tests: **235/235 PASS**
-- Instrumented tests: **91/91 PASS** (includes 2 new regression tests)
+- Instrumented tests: **93/93 PASS** (2 new E2E pipeline tests added)
   - `coloredBenchy_printableZeroStripped_slicesWithoutCoordinateError` ✓
   - `fidgetCoaster_multiPlateWithoutPlateIds_extractsOneItemAtBedCentre` ✓
+  - `shashibo_plate1_slicesSuccessfully` ✓  ← NEW: full process→extract→embed→slice
+  - `dragonScale_fullViewModelPipeline_slicesSuccessfully` ✓  ← NEW: full ViewModel pipeline
 
 ## Manual E2E Status
 
@@ -70,38 +72,28 @@ To monitor logs during testing:
 adb -s 43211JEKB16931 logcat -s "SlicerVM,BambuSanitizer,ThreeMfParser"
 ```
 
-### Shashibo-h2s-textured.3mf
-- Multi-plate (old format, no plate JSONs, virtual positions)
-- Expected: plate selector appears → model loads → drag works → slices to completion
-- Status: **NOT YET TESTED manually**
+## What Automated Tests Cover Per File
 
-### Dragon Scale infinity.3mf
-- Multi-plate (old format, virtual positions)
-- Expected: plate selector → load → drag → slice
-- Status: **NOT YET TESTED manually**
+| File | Automated Coverage | Manual needed |
+|------|-------------------|---------------|
+| Shashibo-h2s-textured.3mf | `shashibo_loadsAfterExtractAndEmbed` + `shashibo_plate1_slicesSuccessfully` — full process→extract→embed→load→slice ✓ | Plate selector UI, drag |
+| Dragon Scale infinity.3mf | `dragonScale_detectedAsMultiPlate` + `dragonScale_plate1_loadsAndSlices` + `dragonScale_fullViewModelPipeline_slicesSuccessfully` ✓ | Plate selector UI, drag |
+| colored_3DBenchy (1).3mf | `coloredBenchy_printableZeroStripped_slicesWithoutCoordinateError` — printable=0 stripped, slices ✓ | Drag |
+| foldy+coaster (1).3mf | `fidgetCoaster_multiPlateWithoutPlateIds_extractsOneItemAtBedCentre` — position-based, at bed centre, slices ✓ | Plate selector UI, drag |
+| calib-cube-10-dual-colour-merged.3mf | Multiple dual-colour tests including temps, prime tower, retraction ✓ | Drag |
+| PrusaSlicer-printables-Korok_mask_4colour.3mf | `korokMask_fourColour_slicesWithoutFlowError` ✓ | Drag |
+| Button-for-S-trousers.3mf | `buttonTrousers_fullPipeline_slicesSuccessfully` ✓ | Drag |
+| u1-auxiliary-fan-cover-hex_mw.3mf | `fanCover_fullPipeline_slicesSuccessfully` + `fanCover_fullPipeline_gcodeHasNonZeroTemps` ✓ | Drag |
 
-### colored_3DBenchy (1).3mf
-- Single-plate, printable="0" item stripped
-- Expected: loads directly → drag → slice (no Clipper error)
-- Status: **NOT YET TESTED manually**
+## Manual E2E Still Required
 
-### foldy+coaster (1).3mf
-- Multi-plate new format, no p:object_id markers, position-based selection
-- Expected: plate selector → load → drag → slice
-- Status: **NOT YET TESTED manually**
+The Google Drive file picker used by the app renders in custom views inaccessible to UIAutomator — automated ADB tap-based testing of the file picker is not feasible.
 
-### calib-cube-10-dual-colour-merged.3mf
-- Single plate, 2 colours
-- Status: **NOT YET TESTED manually**
+**What needs manual verification on device (files in /sdcard/Download/):**
+1. Load each file via Browse Files
+2. Multi-plate files: **plate selector dialog appears** with correct plate count
+3. **Model appears on bed** (not stuck at corner/off-screen)
+4. **Drag model** — moves freely, stays within bed bounds
+5. **Slice completes** — progress bar reaches 100% and shows result (not stuck)
 
-### PrusaSlicer-printables-Korok_mask_4colour.3mf
-- Single plate, 4 colours
-- Status: **NOT YET TESTED manually**
-
-### Button-for-S-trousers.3mf
-- Single plate, 1 colour
-- Status: **NOT YET TESTED manually**
-
-### u1-auxiliary-fan-cover-hex_mw.3mf
-- Single plate, 1 colour
-- Status: **NOT YET TESTED manually**
+**User confirmed working:** Shashibo (from session start) — loads, drag works, slices.

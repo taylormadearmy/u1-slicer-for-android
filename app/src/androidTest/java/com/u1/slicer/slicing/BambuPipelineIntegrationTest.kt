@@ -527,6 +527,63 @@ class BambuPipelineIntegrationTest {
     }
 
     /**
+     * E2E: Shashibo multi-plate (old format, virtual positions) — plate 1 slices successfully.
+     * Covers the full pipeline: process → extractPlate (virtual-position detection) → embed → slice.
+     * Complements shashibo_loadsAfterExtractAndEmbed (which only verifies load, not slice).
+     */
+    @Test
+    fun shashibo_plate1_slicesSuccessfully() {
+        val input = asset("Shashibo-h2s-textured.3mf")
+        val info = ThreeMfParser.parse(input)
+        assertTrue("Shashibo should be multi-plate", info.isMultiPlate)
+        assertFalse("Shashibo should NOT have plate JSONs (old format)", info.hasPlateJsons)
+
+        // Full ViewModel pipeline: process → extractPlate → embed → load → slice
+        val sanitized = BambuSanitizer.process(input, outDir)
+        // hasPlateJsons=false; virtual position detection triggers filtering instead
+        val plateFile = BambuSanitizer.extractPlate(sanitized, 1, outDir,
+            hasPlateJsons = info.hasPlateJsons)
+        val plateInfo = ThreeMfParser.parse(plateFile)
+
+        val embedded = embedder.embed(plateFile, embedder.buildConfig(info = plateInfo), outDir, plateInfo)
+        assertTrue("loadModel must succeed for Shashibo plate 1",
+            lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(BASE_CONFIG)
+        assertNotNull("slice() must return a result", result); result!!
+        assertTrue("Shashibo plate 1 must slice successfully: ${result.errorMessage}",
+            result.success)
+        assertTrue("G-code must be non-empty", File(result.gcodePath).length() > 0)
+    }
+
+    /**
+     * E2E: Dragon Scale infinity (old format, virtual positions) — full ViewModel pipeline.
+     * Verifies that process() → extractPlate() with hasPlateJsons=false uses virtual-position
+     * detection and produces a valid single-plate file that slices without error.
+     */
+    @Test
+    fun dragonScale_fullViewModelPipeline_slicesSuccessfully() {
+        val input = asset("Dragon Scale infinity.3mf")
+        val info = ThreeMfParser.parse(input)
+        assertTrue("Dragon Scale should be multi-plate", info.isMultiPlate)
+        assertFalse("Dragon Scale should NOT have plate JSONs", info.hasPlateJsons)
+
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val plateFile = BambuSanitizer.extractPlate(sanitized, 1, outDir,
+            hasPlateJsons = info.hasPlateJsons)
+        val plateInfo = ThreeMfParser.parse(plateFile)
+
+        val embedded = embedder.embed(plateFile, embedder.buildConfig(info = plateInfo), outDir, plateInfo)
+        assertTrue("loadModel must succeed for Dragon Scale plate 1",
+            lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(BASE_CONFIG)
+        assertNotNull("slice() must return a result", result); result!!
+        assertTrue("Dragon Scale plate 1 must slice: ${result.errorMessage}", result.success)
+        assertTrue("G-code must be non-empty", File(result.gcodePath).length() > 0)
+    }
+
+    /**
      * Regression: compact dual-colour slice with embedded Snapmaker profile
      * must produce G-code with non-zero nozzle temperatures.
      */
