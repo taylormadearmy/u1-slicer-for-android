@@ -1,5 +1,6 @@
 package com.u1.slicer.data
 
+import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.viewer.ModelRenderer
 import org.junit.Assert.*
 import org.junit.Test
@@ -149,6 +150,47 @@ class DataClassesTest {
         val b = ModelRenderer.WipeTowerInfo(1f, 2f, 3f, 4f)
         assertEquals(a, b)
         assertEquals(a.hashCode(), b.hashCode())
+    }
+
+    // --- SlicerViewModel.ModelScale ---
+
+    @Test
+    fun `ModelScale defaults to 1x uniform`() {
+        val scale = SlicerViewModel.ModelScale()
+        assertEquals(1f, scale.x, 0.001f)
+        assertEquals(1f, scale.y, 0.001f)
+        assertEquals(1f, scale.z, 0.001f)
+        assertTrue(scale.isUniform)
+        assertEquals(1f, scale.uniform, 0.001f)
+    }
+
+    @Test
+    fun `ModelScale isUniform true when all axes equal`() {
+        assertTrue(SlicerViewModel.ModelScale(1.5f, 1.5f, 1.5f).isUniform)
+        assertTrue(SlicerViewModel.ModelScale(0.5f, 0.5f, 0.5f).isUniform)
+    }
+
+    @Test
+    fun `ModelScale isUniform false when axes differ`() {
+        assertFalse(SlicerViewModel.ModelScale(1f, 2f, 1f).isUniform)
+        assertFalse(SlicerViewModel.ModelScale(1f, 1f, 2f).isUniform)
+        assertFalse(SlicerViewModel.ModelScale(2f, 1f, 1f).isUniform)
+    }
+
+    @Test
+    fun `ModelScale uniform returns x value`() {
+        val scale = SlicerViewModel.ModelScale(2f, 2f, 2f)
+        assertEquals(2f, scale.uniform, 0.001f)
+    }
+
+    @Test
+    fun `ModelScale equality and copy`() {
+        val a = SlicerViewModel.ModelScale(1.5f, 2f, 0.5f)
+        val b = SlicerViewModel.ModelScale(1.5f, 2f, 0.5f)
+        assertEquals(a, b)
+        val c = a.copy(z = 3f)
+        assertEquals(1.5f, c.x, 0.001f)
+        assertEquals(3f, c.z, 0.001f)
     }
 
     // --- ModelInfo ---
