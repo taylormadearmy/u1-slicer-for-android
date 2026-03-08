@@ -44,8 +44,8 @@ End-to-end test checklist:
 - `data/DataClassesTest.kt` — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
 - `data/SlicingOverridesTest.kt` — Override modes, JSON serialization round-trip, defaults, resolveInto()
 - `data/SettingsBackupTest.kt` — Export/import round-trip, version validation, partial restore
-- `bambu/ThreeMfParserTest.kt` — 3MF data model construction
-- `bambu/BambuSanitizerTest.kt` — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripAssembleSection
+- `bambu/ThreeMfParserTest.kt` — 3MF data model construction, isMultiPlate detection
+- `bambu/BambuSanitizerTest.kt` — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
 - `ui/ExtruderAssignmentTest.kt` — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` — JSON import parsing: snake_case/camelCase, defaults, errors
 - `model/CopyArrangeCalculatorTest.kt` — Grid layout, bed bounds, copy capping
@@ -55,7 +55,7 @@ End-to-end test checklist:
 - `data/SliceJobDaoTest.kt` — Room DAO insert, ordering, delete
 - `native/NativeLibrarySymbolTest.kt` — JNI symbol smoke tests
 - `slicing/SlicingIntegrationTest.kt` — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` — Multi-plate, dual/4-colour, Shashibo sanitization
+- `slicing/BambuPipelineIntegrationTest.kt` — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction
 - `slicing/ProfileEmbedderIntegrationTest.kt` — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` — 3MF image extraction, thumbnail blocks, G-code injection
 
@@ -79,6 +79,8 @@ End-to-end test checklist:
 - `org.json` is Android API — add `testImplementation 'org.json:json:20231013'` for JVM tests that use it
 - `SlicingOverrides.resolveInto(SliceConfig)` is the canonical way to apply override modes before slicing — always call it in `startSlicing()`, never pass `_config.value` directly to `native.slice()`
 - `BambuSanitizer.filterModelToPlate` only rewrites `<build>` — never remove objects from `<resources>` (breaks OrcaSlicer via dangling refs in model_settings.config)
-- `BambuSanitizer.filterModelToPlate` position-based fallback (no `p:object_id`) only runs when the ZIP has `Metadata/plate_N.json` files — old format files (Dragon Scale, Shashibo) keep all build items unchanged
+- `BambuSanitizer.filterModelToPlate` position-based fallback (no `p:object_id`) runs when `hasPlateJsons=true` OR any item has virtual TX/TY >270 or <0 — covers new format (foldy+coaster) and old format (Dragon Scale, Shashibo); picks N-th item by XML order and re-centres to (135,135)
+- `BambuSanitizer.extractPlate()` accepts `hasPlateJsons` param — pass `sourceModelInfo.hasPlateJsons` from SlicerViewModel since process() strips plate_N.json files; also strips `<assemble>` section to avoid OrcaSlicer load failure
+- `ThreeMfInfo.hasPlateJsons` — true when original Bambu ZIP has Metadata/plate_N.json files; persisted through the pipeline
 - `BambuSanitizer.process()` skips `restructureForMultiColor` when total component file size > 15MB (OOM guard) — OrcaSlicer handles `p:path` component refs natively for large files
 - `ThreeMfParser.isMultiPlate`: uses plate JSON count (new format) OR virtual-plate item positions (TX>270 or TY<0 on printable items) for old format detection
