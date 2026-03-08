@@ -1052,23 +1052,8 @@ object BambuSanitizer {
                     val content = srcZip.getInputStream(entry).readBytes()
 
                     if (entry.name.endsWith("3dmodel.model")) {
-                        // Modify build items: set printable flag
-                        var text = String(content)
-                        var itemIndex = 0
-                        text = text.replace(Regex("""<item\b([^>]*)""")) { match ->
-                            itemIndex++
-                            val attrs = match.groupValues[1]
-                            val newPrintable = if (itemIndex == targetPlateId) "1" else "0"
-                            if (attrs.contains("printable=")) {
-                                "<item" + attrs.replace(
-                                    Regex("""printable="[^"]*""""),
-                                    """printable="$newPrintable""""
-                                )
-                            } else {
-                                """<item printable="$newPrintable"${attrs}"""
-                            }
-                        }
-                        writeStored(destZip, entry.name, text.toByteArray())
+                        val filtered = filterModelToPlate(String(content), targetPlateId)
+                        writeStored(destZip, entry.name, filtered.toByteArray())
                     } else {
                         writeStored(destZip, entry.name, content)
                     }
@@ -1076,5 +1061,84 @@ object BambuSanitizer {
             }
         }
         return outputFile
+    }
+
+    /**
+     * Rewrite 3dmodel.model XML to contain ONLY the objects needed for [targetPlateId].
+     *
+     * A Bambu multi-plate 3MF has one <item> per plate in <build>.  Each item references
+     * an <object> by objectid.  That object may in turn reference sub-objects via
+     * <components>.  We find all object IDs reachable from the target item, remove every
+     * other <object> from <resources>, and remove every other <item> from <build>.
+     *
+     * This ensures the loaded model has the correct bounding box for the selected plate
+     * (not the combined bounding box of all plates which could be 400+mm for Shashibo).
+     */
+    private fun filterModelToPlate(xml: String, targetPlateId: Int): String {
+        // 1. Collect all <item> objectids in order
+        val itemObjectIds = mutableListOf<String>()
+        val itemRegex = Regex("""<item\b[^>]*\bobjectid="([^"]+)"""")
+        itemObjectIds.addAll(itemRegex.findAll(xml).map { it.groupValues[1] })
+
+        if (itemObjectIds.isEmpty()) return xml  // not a Bambu multi-build model
+
+        // Target item is 1-based index → targetPlateId
+        val targetObjectId = itemObjectIds.getOrNull(targetPlateId - 1) ?: itemObjectIds.last()
+
+        // 2. Collect all object IDs reachable from targetObjectId via <components>
+        val keepIds = mutableSetOf<String>()
+        val queue = ArrayDeque<String>()
+        queue.add(targetObjectId)
+        // Parse all component refs: <component objectid="N"/>
+        val compMap = mutableMapOf<String, MutableList<String>>()
+        val objIdRegex = Regex("""<object\b[^>]*\bid="([^"]+)"""")
+        val compRegex  = Regex("""<component\b[^>]*\bobjectid="([^"]+)"""")
+        // We need a per-object component map — extract by scanning <object> blocks
+        val objBlockRegex = Regex("""<object\b[^>]*\bid="([^"]+)"[^>]*>(.*?)</object>""",
+            setOf(RegexOption.DOT_MATCHES_ALL))
+        for (objMatch in objBlockRegex.findAll(xml)) {
+            val oid = objMatch.groupValues[1]
+            val body = objMatch.groupValues[2]
+            val children = compRegex.findAll(body).map { it.groupValues[1] }.toMutableList()
+            if (children.isNotEmpty()) compMap[oid] = children
+        }
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            if (keepIds.add(id)) {
+                compMap[id]?.forEach { queue.add(it) }
+            }
+        }
+
+        // 3. Remove <object> elements whose id is NOT in keepIds
+        var result = xml
+        // Remove full <object>...</object> blocks not in keepIds
+        result = objBlockRegex.replace(result) { m ->
+            if (m.groupValues[1] in keepIds) m.value else ""
+        }
+        // Also remove self-closing <object .../> tags not in keepIds (rare but possible)
+        val selfClosingObjRegex = Regex("""<object\b[^>]*/>\s*""")
+        result = selfClosingObjRegex.replace(result) { m ->
+            val idMatch = Regex("""\bid="([^"]+)"""").find(m.value)
+            if (idMatch != null && idMatch.groupValues[1] in keepIds) m.value else ""
+        }
+
+        // 4. Rewrite <build>: keep only the target <item>, remove all others
+        val buildRegex = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+        result = buildRegex.replace(result) { m ->
+            val open = m.groupValues[1]
+            val body = m.groupValues[2]
+            val close = m.groupValues[3]
+            // Find the target item line
+            var idx = 0
+            val targetItem = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+                .find(body)?.let { _ ->
+                    Regex("""<item\b[^>]*(?:/>|>.*?</item>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+                        .findAll(body).toList().getOrNull(targetPlateId - 1)?.value
+                }
+            val newBody = if (targetItem != null) "\n    $targetItem\n  " else body
+            "$open$newBody$close"
+        }
+
+        return result
     }
 }

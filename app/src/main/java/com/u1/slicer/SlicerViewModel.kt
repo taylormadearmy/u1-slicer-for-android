@@ -648,16 +648,76 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
             val copies = _copyCount.value
             val custom = customObjectPositions
+            val mi = lastModelInfo
+
+            // SAFETY CHECK: refuse to slice if model is larger than the bed.
+            // A combined bounding box > 270mm means objects from multiple plates were loaded,
+            // or the model genuinely doesn't fit. Slicing would produce off-bed toolpaths
+            // that could crash the printhead into the frame.
+            if (mi != null && mi.sizeX > 270f && mi.sizeY > 270f && custom == null) {
+                Log.e("SlicerVM", "Model too large for bed: ${mi.sizeX}×${mi.sizeY}mm — aborting slice")
+                _state.value = SlicerState.Error(
+                    "Model bounding box (${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm) exceeds the 270×270mm bed.\n" +
+                    "This usually means a multi-plate 3MF still contains all plates. " +
+                    "Try reloading and reselecting the plate."
+                )
+                return@launch
+            }
+
             if (custom != null) {
                 native.setModelInstances(custom)
                 Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances")
             } else {
                 // Auto-arrange: single copy → centered, multiple copies → grid
-                val mi = lastModelInfo
                 if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
                     val positions = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, copies)
                     native.setModelInstances(positions)
                     Log.i("SlicerVM", "Auto-placed $copies instance(s) at [${positions.toList().take(4)}]")
+                }
+            }
+
+            // Apply settings from embedded 3MF config when USE_FILE override is active.
+            // ProfileEmbedder writes resolved settings to Metadata/project_settings.config.
+            // We read speed/support back here so they take effect via SliceConfig rather
+            // than being ignored (native code only applies 5 G-code template keys).
+            val configFile = currentModelFile
+            val ov = slicingOverrides.value
+            if (configFile != null && configFile.name.endsWith(".3mf")) {
+                try {
+                    java.util.zip.ZipFile(configFile).use { z ->
+                        val cfgEntry = z.getEntry("Metadata/project_settings.config")
+                        if (cfgEntry != null) {
+                            val json = org.json.JSONObject(
+                                z.getInputStream(cfgEntry).bufferedReader().readText())
+                            val useFile = ov.layerHeight.mode == com.u1.slicer.data.OverrideMode.USE_FILE
+                            val useSupport = ov.supports.mode == com.u1.slicer.data.OverrideMode.USE_FILE
+                            var updated = _config.value
+                            if (useFile) {
+                                json.optString("outer_wall_speed").toFloatOrNull()
+                                    ?.takeIf { it > 0f }
+                                    ?.let { spd ->
+                                        val travel = json.optString("travel_speed").toFloatOrNull()
+                                        updated = updated.copy(
+                                            printSpeed = spd,
+                                            travelSpeed = travel?.takeIf { it > 0f } ?: updated.travelSpeed
+                                        )
+                                        Log.i("SlicerVM", "USE_FILE speeds from embedded config: wall=${spd} travel=${travel}")
+                                    }
+                            }
+                            if (useSupport) {
+                                val sup = json.optString("enable_support")
+                                if (sup.isNotEmpty()) {
+                                    updated = updated.copy(
+                                        supportEnabled = sup == "1" || sup.equals("true", ignoreCase = true)
+                                    )
+                                    Log.i("SlicerVM", "USE_FILE support from embedded config: ${updated.supportEnabled}")
+                                }
+                            }
+                            if (updated !== _config.value) _config.value = updated
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("SlicerVM", "Could not read embedded config for USE_FILE: ${e.message}")
                 }
             }
 
