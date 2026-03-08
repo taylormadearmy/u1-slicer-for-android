@@ -1,0 +1,38 @@
+GNU AFFERO GENERAL PUBLIC LICENSE
+Version 3, 19 November 2007
+
+Copyright (C) 2026 Kevin Bernitz
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+This project incorporates code from the following open-source projects:
+
+- **Snapmaker Orca** (OrcaSlicer fork, v2.2.4)
+  Copyright (C) Snapmaker — AGPL-3.0
+  https://github.com/SoftFever/OrcaSlicer
+
+- **OrcaSlicer**
+  Copyright (C) Bambu Lab — AGPL-3.0
+  https://github.com/SoftFever/OrcaSlicer
+
+- **PrusaSlicer**
+  Copyright (C) Prusa Research — AGPL-3.0
+  https://github.com/prusa3d/PrusaSlicer
+
+The full text of the GNU Affero General Public License v3 is available at:
+https://www.gnu.org/licenses/agpl-3.0.html
