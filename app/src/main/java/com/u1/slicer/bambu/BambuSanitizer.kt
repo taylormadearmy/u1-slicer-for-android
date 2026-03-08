@@ -1163,31 +1163,18 @@ object BambuSanitizer {
             if (printable.size == allItems.size) return@replace m.value  // nothing to strip
             val stripped = allItems.size - printable.size
             Log.i(TAG, "stripNonPrintableBuildItems: removed $stripped non-printable item(s)")
+            // Guard: if ALL items were non-printable, keep the build section unchanged.
+            // An empty <build> causes OrcaSlicer to silently load nothing (no model info).
+            if (printable.isEmpty()) {
+                Log.w(TAG, "stripNonPrintableBuildItems: all items are non-printable — keeping build unchanged")
+                return@replace m.value
+            }
             val newBody = "\n" + printable.joinToString("\n") { "  $it" } + "\n  "
             "$open$newBody$close"
         }
         return result.toByteArray()
     }
 
-    /**
-     * Rewrite the <build> section of a 3dmodel.model XML to contain ONLY the items
-     * for [targetPlateId].
-     *
-     * Bambu multi-plate files tag each <item> with `p:object_id="N"` (0-based plate index).
-     * We keep only the items where p:object_id == targetPlateId-1.
-     *
-     * Crucially, we leave <resources>/<objects> COMPLETELY INTACT.  Removing objects
-     * breaks OrcaSlicer because model_settings.config and component refs still reference
-     * them — the parser rejects a model with dangling object IDs.  OrcaSlicer only
-     * instantiates objects that appear in <build>, so the bounding box is correct with
-     * only the target plate's items in <build>.
-     *
-     * Fallback (newer Bambu format without p:object_id): select the N-th build item
-     * by XML order (targetPlateId is 1-based) and re-centre its XY to the bed centre.
-     * Newer BambuStudio exports lay out all plates in a large virtual space so each
-     * item's absolute XY is outside the 270 mm bed.  Re-centring to (135, 135) lets
-     * setModelInstances compute the correct centered placement afterwards.
-     */
     /**
      * Rewrite the <build> section of a 3dmodel.model XML to contain ONLY the items
      * for [targetPlateId].
@@ -1262,7 +1249,11 @@ object BambuSanitizer {
                     ?.trim()?.split(Regex("\\s+")) ?: emptyList()
                 val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
                 val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
-                tx > 270f || ty < 0f || ty > 270f
+                // Use -10f not 0f for TY to avoid false positives from legitimate
+                // models placed slightly off-origin due to floating-point precision.
+                // Bambu virtual-plate offsets are hundreds of mm (e.g. TY=-224), so
+                // -10f is a safe threshold that won't catch normal placements.
+                tx > 270f || ty < -10f || ty > 270f
             }
 
             if (allItems.size <= 1 || (!hasPlateJsons && !hasVirtualPositions)) return@replace m.value

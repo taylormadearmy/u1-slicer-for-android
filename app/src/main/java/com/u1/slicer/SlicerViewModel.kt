@@ -616,141 +616,141 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun startSlicing() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-            var maxPct = 0
-            native.progressListener = { pct, stage ->
-                if (pct > maxPct) maxPct = pct
-                _state.value = SlicerState.Slicing(maxPct, stage)
-            }
-
-            _state.value = SlicerState.Slicing(0, "Preparing...")
-
-            // If the user assigned non-identity extruder slots (e.g. E3+E4), we must
-            // re-embed the 3MF now — embedProfile() ran at load time with no remap.
-            val remap = toolRemapSlots
-            if (remap != null) {
-                val src = sourceModelFile
-                val srcInfo = sourceModelInfo
-                val context = getApplication<Application>()
-                if (src != null && srcInfo != null) {
-                    Log.i("SlicerVM", "Re-embedding 3MF with extruder remap $remap before slicing")
-                    // Free the old model from native memory before loading the new one.
-                    // loadModel does g_model = read_from_file(...) which holds both old and
-                    // new models in memory simultaneously — enough to OOM on a large 3MF.
-                    native.clearModel()
-                    val reembedded = embedProfile(src, srcInfo, context)
-                    currentModelFile = reembedded
-                    native.loadModel(reembedded.absolutePath)
+                var maxPct = 0
+                native.progressListener = { pct, stage ->
+                    if (pct > maxPct) maxPct = pct
+                    _state.value = SlicerState.Slicing(maxPct, stage)
                 }
-            }
 
-            // Always reload from file for a clean instance state, then apply placement.
-            // This prevents stale instance offsets from the inline 3D viewer corrupting
-            // PrusaSlicer's internal state (SIGSEGV in export_gcode on multi-object models).
-            val path = currentModelPath
-            if (path != null) {
-                native.clearModel()
-                native.loadModel(path)
-                Log.i("SlicerVM", "Reloaded model for clean state before placement")
-            }
+                _state.value = SlicerState.Slicing(0, "Preparing...")
 
-            // Apply model scale if non-default (before setModelInstances so it's included in trafo)
-            val scale = _modelScale.value
-            if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
-                native.setModelScale(scale.x, scale.y, scale.z)
-                Log.i("SlicerVM", "Applied model scale: ${scale.x}×${scale.y}×${scale.z}")
-            }
-
-            val copies = _copyCount.value
-            val custom = customObjectPositions
-            val mi = lastModelInfo
-
-            // SAFETY CHECK: refuse to slice if model is larger than the bed.
-            // A combined bounding box > 270mm means objects from multiple plates were loaded,
-            // or the model genuinely doesn't fit. Slicing would produce off-bed toolpaths
-            // that could crash the printhead into the frame.
-            if (mi != null && mi.sizeX > 270f && mi.sizeY > 270f && custom == null) {
-                Log.e("SlicerVM", "Model too large for bed: ${mi.sizeX}×${mi.sizeY}mm — aborting slice")
-                _state.value = SlicerState.Error(
-                    "Model bounding box (${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm) exceeds the 270×270mm bed.\n" +
-                    "This usually means a multi-plate 3MF still contains all plates. " +
-                    "Try reloading and reselecting the plate."
-                )
-                return@launch
-            }
-
-            if (custom != null) {
-                native.setModelInstances(custom)
-                Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances")
-            } else {
-                // Auto-arrange: single copy → centered, multiple copies → grid
-                if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
-                    val positions = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, copies)
-                    native.setModelInstances(positions)
-                    Log.i("SlicerVM", "Auto-placed $copies instance(s) at [${positions.toList().take(4)}]")
-                }
-            }
-
-            // Build the effective config for this slice.
-            // resolveInto() applies OVERRIDE / ORCA_DEFAULT modes to the current UI config.
-            // USE_FILE passthrough: base values from _config.value are used as-is.
-            // We use a local copy — _config.value (the UI state) is never mutated here.
-            val ov = slicingOverrides.value
-            val sliceConfig = ov.resolveInto(_config.value)
-            Log.i("SlicerVM", "Resolved slice config: layer=${sliceConfig.layerHeight} " +
-                "infill=${sliceConfig.fillDensity} walls=${sliceConfig.perimeters} " +
-                "support=${sliceConfig.supportEnabled} speed=${sliceConfig.printSpeed}")
-
-            val result = native.slice(sliceConfig)
-
-            if (result != null && result.success) {
-                // Post-process G-code to remap compact tool indices to physical slots.
-                // OrcaSlicer sliced in compact mode (T0,T1,…) — remap to actual printer
-                // slots (e.g. T2,T3 for E3+E4) and fix SM_ command EXTRUDER/INDEX params.
-                val slots = toolRemapSlots
-                if (slots != null) {
-                    GcodeToolRemapper.remap(result.gcodePath, slots)
-                    Log.i("SlicerVM", "Post-processed G-code: remapped tools to physical slots $slots")
-                }
-                // Inject preview thumbnails into G-code for Klipper/Moonraker
-                val sourcePath = sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
-                if (sourcePath != null) {
-                    try {
-                        val injected = GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
-                        if (injected) Log.i("SlicerVM", "Thumbnails injected into G-code")
-                    } catch (e: Throwable) {
-                        Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
+                // If the user assigned non-identity extruder slots (e.g. E3+E4), we must
+                // re-embed the 3MF now — embedProfile() ran at load time with no remap.
+                val remap = toolRemapSlots
+                if (remap != null) {
+                    val src = sourceModelFile
+                    val srcInfo = sourceModelInfo
+                    val context = getApplication<Application>()
+                    if (src != null && srcInfo != null) {
+                        Log.i("SlicerVM", "Re-embedding 3MF with extruder remap $remap before slicing")
+                        // Free the old model from native memory before loading the new one.
+                        // loadModel does g_model = read_from_file(...) which holds both old and
+                        // new models in memory simultaneously — enough to OOM on a large 3MF.
+                        native.clearModel()
+                        val reembedded = embedProfile(src, srcInfo, context)
+                        currentModelFile = reembedded
+                        native.loadModel(reembedded.absolutePath)
                     }
                 }
 
-                _state.value = SlicerState.SliceComplete(result)
-                _gcodePreview.value = native.getGcodePreview(50)
-                // Parse G-code for layer viewer
-                try {
-                    _parsedGcode.value = GcodeParser.parse(File(result.gcodePath))
-                } catch (e: Throwable) {
-                    Log.w("SlicerVM", "G-code parse failed: ${e.message}")
+                // Always reload from file for a clean instance state, then apply placement.
+                // This prevents stale instance offsets from the inline 3D viewer corrupting
+                // PrusaSlicer's internal state (SIGSEGV in export_gcode on multi-object models).
+                val path = currentModelPath
+                if (path != null) {
+                    native.clearModel()
+                    native.loadModel(path)
+                    Log.i("SlicerVM", "Reloaded model for clean state before placement")
                 }
-                settingsRepo.saveSliceConfig(_config.value)
-                // Save job to history
-                val cfg = _config.value
-                sliceJobDao.insert(
-                    SliceJob(
-                        modelName = currentModelName.ifEmpty { "Unknown" },
-                        gcodePath = result.gcodePath,
-                        totalLayers = result.totalLayers,
-                        estimatedTimeSeconds = result.estimatedTimeSeconds,
-                        estimatedFilamentMm = result.estimatedFilamentMm,
-                        layerHeight = cfg.layerHeight,
-                        fillDensity = cfg.fillDensity,
-                        nozzleTemp = cfg.nozzleTemp,
-                        bedTemp = cfg.bedTemp,
-                        supportEnabled = cfg.supportEnabled,
-                        filamentType = cfg.filamentType
+
+                // Apply model scale if non-default (before setModelInstances so it's included in trafo)
+                val scale = _modelScale.value
+                if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
+                    native.setModelScale(scale.x, scale.y, scale.z)
+                    Log.i("SlicerVM", "Applied model scale: ${scale.x}×${scale.y}×${scale.z}")
+                }
+
+                val copies = _copyCount.value
+                val custom = customObjectPositions
+                val mi = lastModelInfo
+
+                // SAFETY CHECK: refuse to slice if model is larger than the bed.
+                // A combined bounding box > 270mm means objects from multiple plates were loaded,
+                // or the model genuinely doesn't fit. Slicing would produce off-bed toolpaths
+                // that could crash the printhead into the frame.
+                if (mi != null && mi.sizeX > 270f && mi.sizeY > 270f && custom == null) {
+                    Log.e("SlicerVM", "Model too large for bed: ${mi.sizeX}×${mi.sizeY}mm — aborting slice")
+                    _state.value = SlicerState.Error(
+                        "Model bounding box (${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm) exceeds the 270×270mm bed.\n" +
+                        "This usually means a multi-plate 3MF still contains all plates. " +
+                        "Try reloading and reselecting the plate."
                     )
-                )
-            } else {
-                _state.value = SlicerState.Error(result?.errorMessage ?: "Slicing failed")
-            }
+                    return@launch
+                }
+
+                if (custom != null) {
+                    native.setModelInstances(custom)
+                    Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances")
+                } else {
+                    // Auto-arrange: single copy → centered, multiple copies → grid
+                    if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
+                        val positions = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, copies)
+                        native.setModelInstances(positions)
+                        Log.i("SlicerVM", "Auto-placed $copies instance(s) at [${positions.toList().take(4)}]")
+                    }
+                }
+
+                // Build the effective config for this slice.
+                // resolveInto() applies OVERRIDE / ORCA_DEFAULT modes to the current UI config.
+                // USE_FILE passthrough: base values from _config.value are used as-is.
+                // We use a local copy — _config.value (the UI state) is never mutated here.
+                val ov = slicingOverrides.value
+                val sliceConfig = ov.resolveInto(_config.value)
+                Log.i("SlicerVM", "Resolved slice config: layer=${sliceConfig.layerHeight} " +
+                    "infill=${sliceConfig.fillDensity} walls=${sliceConfig.perimeters} " +
+                    "support=${sliceConfig.supportEnabled} speed=${sliceConfig.printSpeed}")
+
+                val result = native.slice(sliceConfig)
+
+                if (result != null && result.success) {
+                    // Post-process G-code to remap compact tool indices to physical slots.
+                    // OrcaSlicer sliced in compact mode (T0,T1,…) — remap to actual printer
+                    // slots (e.g. T2,T3 for E3+E4) and fix SM_ command EXTRUDER/INDEX params.
+                    val slots = toolRemapSlots
+                    if (slots != null) {
+                        GcodeToolRemapper.remap(result.gcodePath, slots)
+                        Log.i("SlicerVM", "Post-processed G-code: remapped tools to physical slots $slots")
+                    }
+                    // Inject preview thumbnails into G-code for Klipper/Moonraker
+                    val sourcePath = sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
+                    if (sourcePath != null) {
+                        try {
+                            val injected = GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
+                            if (injected) Log.i("SlicerVM", "Thumbnails injected into G-code")
+                        } catch (e: Throwable) {
+                            Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
+                        }
+                    }
+
+                    _state.value = SlicerState.SliceComplete(result)
+                    _gcodePreview.value = native.getGcodePreview(50)
+                    // Parse G-code for layer viewer
+                    try {
+                        _parsedGcode.value = GcodeParser.parse(File(result.gcodePath))
+                    } catch (e: Throwable) {
+                        Log.w("SlicerVM", "G-code parse failed: ${e.message}")
+                    }
+                    settingsRepo.saveSliceConfig(_config.value)
+                    // Save job to history
+                    val cfg = _config.value
+                    sliceJobDao.insert(
+                        SliceJob(
+                            modelName = currentModelName.ifEmpty { "Unknown" },
+                            gcodePath = result.gcodePath,
+                            totalLayers = result.totalLayers,
+                            estimatedTimeSeconds = result.estimatedTimeSeconds,
+                            estimatedFilamentMm = result.estimatedFilamentMm,
+                            layerHeight = cfg.layerHeight,
+                            fillDensity = cfg.fillDensity,
+                            nozzleTemp = cfg.nozzleTemp,
+                            bedTemp = cfg.bedTemp,
+                            supportEnabled = cfg.supportEnabled,
+                            filamentType = cfg.filamentType
+                        )
+                    )
+                } else {
+                    _state.value = SlicerState.Error(result?.errorMessage ?: "Slicing failed")
+                }
             } catch (e: Throwable) {
                 Log.e("SlicerVM", "Unexpected error during slicing", e)
                 _state.value = SlicerState.Error("Slicing error: ${e.message ?: e.javaClass.simpleName}")
