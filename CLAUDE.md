@@ -68,7 +68,7 @@ All Gradle commands must be run from **Windows PowerShell**, not WSL:
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
-# Instrumented tests (96) — both devices must be connected
+# Instrumented tests (96) — test device must be connected
 Remove-Item -Recurse -Force app\build\outputs\androidTest-results -ErrorAction SilentlyContinue
 .\gradlew connectedDebugAndroidTest --no-daemon
 
@@ -81,30 +81,33 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open on the "Pixel 8a" (NE12442001324). Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`)
-- `gcode/GcodeParserTest.kt` — G-code parsing: layers, extrusion, extruder switching
-- `gcode/GcodeValidatorTest.kt` — Tool changes, nozzle temps, layer count, prime tower footprint
-- `viewer/StlParserTest.kt` — Binary/ASCII STL parsing, bounding box, vertex data
-- `network/MakerWorldClientTest.kt` — MakerWorld URL parsing and validation
-- `network/MoonrakerClientTest.kt` — PrinterStatus computed properties, URL normalization, LED state
-- `data/SliceConfigTest.kt` — Default values match Snapmaker U1 hardware specs
-- `data/DataClassesTest.kt` — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
-- `data/SlicingOverridesTest.kt` — Override modes, JSON serialization round-trip, defaults, resolveInto()
-- `data/SettingsBackupTest.kt` — Export/import round-trip, version validation, partial restore
-- `bambu/ThreeMfParserTest.kt` — 3MF data model construction, isMultiPlate detection
-- `bambu/BambuSanitizerTest.kt` — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
-- `ui/ExtruderAssignmentTest.kt` — ExtruderAssignment defaults, copy, list building
-- `ui/FilamentJsonImportTest.kt` — JSON import parsing: snake_case/camelCase, defaults, errors
-- `model/CopyArrangeCalculatorTest.kt` — Grid layout, bed bounds, copy capping
+### Unit tests (`app/src/test/`) — 235 tests across 15 classes
+- `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
+- `gcode/GcodeValidatorTest.kt` (31) — Tool changes, nozzle temps, layer count, prime tower footprint
+- `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
+- `viewer/StlParserTest.kt` (9) — Binary/ASCII STL parsing, bounding box, vertex data
+- `network/MakerWorldClientTest.kt` (12) — MakerWorld URL parsing and validation
+- `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
+- `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
+- `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
+- `data/SlicingOverridesTest.kt` (17) — Override modes, JSON serialization round-trip, defaults, resolveInto()
+- `data/SettingsBackupTest.kt` (10) — Export/import round-trip, version validation, partial restore
+- `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
+- `bambu/BambuSanitizerTest.kt` (21) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
+- `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
+- `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
+- `model/CopyArrangeCalculatorTest.kt` (9) — Grid layout, bed bounds, copy capping
 
-### Instrumented tests (`app/src/androidTest/`)
-- `data/FilamentDaoTest.kt` — Room DAO CRUD, ordering, count
-- `data/SliceJobDaoTest.kt` — Room DAO insert, ordering, delete
-- `native/NativeLibrarySymbolTest.kt` — JNI symbol smoke tests
-- `slicing/SlicingIntegrationTest.kt` — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction
-- `slicing/ProfileEmbedderIntegrationTest.kt` — ZIP validity, config keys, full embed→slice pipeline
-- `gcode/GcodeThumbnailInjectorTest.kt` — 3MF image extraction, thumbnail blocks, G-code injection
+### Instrumented tests (`app/src/androidTest/`) — 96 tests across 9 classes
+- `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
+- `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
+- `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
+- `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
+- `slicing/SlicingIntegrationTest.kt` (24) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
+- `slicing/BambuPipelineIntegrationTest.kt` (27) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction
+- `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
+- `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
+- `viewer/ThreeMfMeshParserTest.kt` (2) — 3MF mesh parsing and transform resolution
 
 ## Architecture
 

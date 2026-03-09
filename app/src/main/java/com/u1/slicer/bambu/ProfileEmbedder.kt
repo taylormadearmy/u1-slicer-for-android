@@ -521,6 +521,9 @@ class ProfileEmbedder(private val context: Context) {
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
         text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
         text = text.replace("""type="other"""", """type="model"""")
+        // Strip non-printable build items (printable="0") to prevent Clipper errors.
+        // These are Bambu scene references that shouldn't be instantiated by OrcaSlicer.
+        text = BambuSanitizer.stripNonPrintableBuildItems(text)
         return text.toByteArray()
     }
 

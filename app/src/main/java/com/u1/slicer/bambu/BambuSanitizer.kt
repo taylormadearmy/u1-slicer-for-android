@@ -1150,8 +1150,16 @@ object BambuSanitizer {
      * These items are in the scene for reference/display only and must not be sliced.
      * Only rewrites `<build>`; `<resources>` is left intact.
      */
-    private fun stripNonPrintableBuildItems(modelBytes: ByteArray): ByteArray {
-        val xml = String(modelBytes)
+    /** String overload for use by ProfileEmbedder. */
+    internal fun stripNonPrintableBuildItems(xml: String): String {
+        return stripNonPrintableBuildItemsImpl(xml)
+    }
+
+    internal fun stripNonPrintableBuildItems(modelBytes: ByteArray): ByteArray {
+        return stripNonPrintableBuildItemsImpl(String(modelBytes)).toByteArray()
+    }
+
+    private fun stripNonPrintableBuildItemsImpl(xml: String): String {
         val buildRegex = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
         val itemRegex  = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""",  setOf(RegexOption.DOT_MATCHES_ALL))
         val result = buildRegex.replace(xml) { m ->
@@ -1172,7 +1180,7 @@ object BambuSanitizer {
             val newBody = "\n" + printable.joinToString("\n") { "  $it" } + "\n  "
             "$open$newBody$close"
         }
-        return result.toByteArray()
+        return result
     }
 
     /**

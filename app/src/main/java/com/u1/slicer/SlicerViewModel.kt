@@ -283,24 +283,38 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
 
-                    val info = ThreeMfParser.parse(file)
-                    _threeMfInfo.value = info
+                    // Parse original file first for multi-plate detection (process()
+                    // strips plate_N.json so detection would fail on the processed file).
+                    val origInfo = ThreeMfParser.parse(file)
 
-                    Log.i("SlicerVM", "3MF: bambu=${info.isBambu}, multiPlate=${info.isMultiPlate}, " +
-                        "colors=${info.detectedColors.size}, extruders=${info.detectedExtruderCount}, " +
-                        "paint=${info.hasPaintData}, toolChanges=${info.hasLayerToolChanges}")
+                    Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
+                        "colors=${origInfo.detectedColors.size}, extruders=${origInfo.detectedExtruderCount}, " +
+                        "paint=${origInfo.hasPaintData}, toolChanges=${origInfo.hasLayerToolChanges}")
 
-                    // Embed Snapmaker profile and strip incompatible Bambu metadata.
+                    // Sanitize first (strip printable="0", restructure multi-color, clean XML),
+                    // then embed Snapmaker profile.  Without process(), non-printable build
+                    // items cause "Coordinate outside allowed range" Clipper errors.
+                    val processed = BambuSanitizer.process(file, context.filesDir)
+                    val processedInfo = ThreeMfParser.parse(processed)
+                    // Use processedInfo for extruder/color detection (after sanitization),
+                    // but keep origInfo plates for the plate selector dialog (process()
+                    // strips plate_N.json files and plate PNG thumbnails).
+                    _threeMfInfo.value = processedInfo.copy(
+                        plates = origInfo.plates,
+                        hasPlateJsons = origInfo.hasPlateJsons
+                    )
+
                     // Store source before embedding so startSlicing() can re-embed with
                     // the correct extruder remap once the user has picked their slots.
-                    sourceModelFile = file
-                    sourceModelInfo = info
+                    sourceModelFile = processed
+                    sourceModelInfo = processedInfo
                     toolRemapSlots = null  // reset on each new file load
-                    val sanitized = embedProfile(file, info, context)
+                    val sanitized = embedProfile(processed, processedInfo, context)
 
-                    // Show plate selector for multi-plate files
-                    if (info.isMultiPlate && info.plates.size > 1) {
-                        Log.i("SlicerVM", "Multi-plate: ${info.plates.size} plates, showing selector")
+                    // Show plate selector for multi-plate files (use origInfo since
+                    // process() strips plate_N.json files that isMultiPlate relies on).
+                    if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
+                        Log.i("SlicerVM", "Multi-plate: ${origInfo.plates.size} plates, showing selector")
                         currentModelFile = sanitized
                         _showPlateSelector.value = true
                         // Don't load yet — wait for plate selection
@@ -337,10 +351,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
-                // Pass hasPlateJsons from the *original* parsed info: process() strips
-                // plate_N.json files from the ZIP, so auto-detection on the sanitised file
-                // would always return false.  sourceModelInfo is parsed before process() runs.
-                val hasPlateJsons = sourceModelInfo?.hasPlateJsons
+                // Pass hasPlateJsons from _threeMfInfo which preserves the original value
+                // (process() strips plate_N.json files from the ZIP, so auto-detection
+                // on the processed file would always return false).
+                val hasPlateJsons = _threeMfInfo.value?.hasPlateJsons
                 val plateFile = BambuSanitizer.extractPlate(file, plateId, context.filesDir,
                     hasPlateJsons = hasPlateJsons)
                 // plateFile is now the source for any subsequent re-embed with remap
@@ -382,7 +396,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Check for multi-color from 3MF parsing
                 val mfInfo = _threeMfInfo.value
                 if (mfInfo != null && mfInfo.detectedExtruderCount > 1) {
-                    val extCount = mfInfo.detectedExtruderCount.coerceAtMost(4)
+                    // Always use compact extruder count (max 2) regardless of how many
+                    // colors the model has.  OrcaSlicer's toolpath optimizer OOMs with >2
+                    // extruders.  G-code post-processing remaps T-commands to physical slots.
+                    val extCount = mfInfo.detectedExtruderCount.coerceAtMost(2)
                     _config.value = _config.value.copy(
                         extruderCount = extCount,
                         wipeTowerEnabled = true
@@ -428,10 +445,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _showMultiColorDialog.value = false
         _colorMapping.value = modelColorToExtruder
         val usedSlots = modelColorToExtruder.distinct().sorted()
-        val extCount = usedSlots.size.coerceIn(1, 4)
-        // Store remap only if it's non-identity (e.g. [2,3] for E3+E4 — T0→T2, T1→T3)
-        val isIdentity = usedSlots == (0 until extCount).toList()
-        toolRemapSlots = if (isIdentity) null else usedSlots
+        // Always use compact extruder count (max 2) to avoid OrcaSlicer OOM.
+        // G-code post-processing remaps T-commands to physical slots.
+        val extCount = usedSlots.size.coerceIn(1, 2)
+        // Store remap for any non-identity mapping — includes >2 colors (since we compact
+        // to 2) or non-zero-based slots (e.g. E3+E4).
+        val compactSlots = usedSlots.take(extCount)
+        val isIdentity = compactSlots == (0 until extCount).toList()
+        toolRemapSlots = if (isIdentity) null else compactSlots
         val temps = IntArray(extCount) { i ->
             val slotIndex = usedSlots.getOrElse(i) { i }
             val preset = extruderPresets.firstOrNull { it.index == slotIndex }
