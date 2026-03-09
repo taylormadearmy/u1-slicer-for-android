@@ -340,24 +340,21 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             }
         }
 
-        // Clear MMU painting facets to prevent apply_mm_segmentation from running.
-        // PrusaSlicer MMU models (e.g. Korok mask) embed 500K+ slic3rpe:mmu_segmentation
-        // attributes which BambuSanitizer converts to paint_color= entries.  When loaded,
-        // this populates mmu_segmentation_facets in each volume.  OrcaSlicer's
-        // multi_material_segmentation_by_painting() then produces corrupt ExPolygons vectors
-        // (null _begin_) causing SIGSEGV.  Multi-colour is handled via per-volume extruder
-        // assignment instead, so these facets are not needed.
-        {
-            int cleared = 0;
-            for (auto* obj : model.objects)
-                for (auto* vol : obj->volumes)
-                    if (!vol->mmu_segmentation_facets.empty()) {
-                        vol->mmu_segmentation_facets.reset();
-                        ++cleared;
-                    }
-            if (cleared > 0)
-                SAPIL_LOGI("Cleared MMU segmentation facets from %d volumes (prevents SIGSEGV on complex painted models)", cleared);
-        }
+        // TODO(SEMM): Enable paint-based multi-color slicing for Bambu SEMM files.
+        //
+        // Currently DISABLED: OrcaSlicer's multi_material_segmentation_by_painting()
+        // crashes with SIGSEGV in MultiPoint::bounding_box() when processing Bambu
+        // paint_color= triangle data on Android ARM64.  The crash occurs in TBB
+        // parallel slice_volumes() → get_extents(vector<ExPolygon>) with corrupt
+        // polygon data (null _begin_ pointers).
+        //
+        // Workaround: ProfileEmbedder strips paint_color= attributes before loading
+        // and sets single_extruder_multi_material=0 so the algorithm never runs.
+        // Painted Bambu files (e.g. colored 3DBenchy) therefore slice as single-color.
+        //
+        // To fix: investigate TBB thread-safety on Android ARM64 in slice_volumes(),
+        // possibly reduce parallelism or add synchronisation around ExPolygon vectors.
+        // Requires native .so rebuild.  See SemmSlicingTest for regression guard.
 
         if (progress) progress(10, "Applying configuration to model");
 

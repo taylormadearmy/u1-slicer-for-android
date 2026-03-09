@@ -19,7 +19,7 @@ import java.util.zip.ZipOutputStream
  * 1. Strip incompatible Bambu metadata files
  * 2. Clamp Bambu "-1" auto values to safe minimums
  * 3. Replace 'nil' strings with first non-nil value in arrays
- * 4. Convert PrusaSlicer mmu_segmentation → paint_color
+ * 4. Strip PrusaSlicer mmu_segmentation (different encoding; Bambu paint_color= preserved)
  * 5. Recenter packed multi-plate transforms
  * 6. Clear stale plater_name values
  */
@@ -782,14 +782,26 @@ object BambuSanitizer {
     }
 
     /**
-     * Convert PrusaSlicer mmu_segmentation attribute to paint_color
-     * for OrcaSlicer/PrusaSlicer multi-color compatibility.
+     * Strip PrusaSlicer slic3rpe:mmu_segmentation attributes from triangle elements.
+     *
+     * PrusaSlicer uses a different encoding than Bambu's paint_color format.
+     * Renaming slic3rpe:mmu_segmentation → paint_color produces malformed data
+     * that causes OrcaSlicer's multi_material_segmentation_by_painting() to crash
+     * with SIGSEGV (corrupt ExPolygons).  Strip the attribute entirely so it is
+     * never loaded into mmu_segmentation_facets.
+     * Multi-color for PrusaSlicer files is handled by per-volume extruder assignment
+     * (Slic3r_PE_model.config) which is injected by process().
+     *
+     * Native Bambu paint_color= attributes (e.g. colored 3DBenchy) are NOT affected
+     * by this function — they remain in place so OrcaSlicer's SEMM algorithm can
+     * process them correctly.
      */
     private fun convertMmuSegmentation(content: ByteArray): ByteArray {
         var text = String(content)
-        if (!text.contains("mmu_segmentation")) return content
+        if (!text.contains("slic3rpe:mmu_segmentation")) return content
 
-        text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+        // Strip the attribute value and name (handles both quoted forms)
+        text = text.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
         text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
 
         return text.toByteArray()
@@ -806,6 +818,14 @@ object BambuSanitizer {
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
         text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
         text = text.replace("""type="other"""", """type="model"""")
+        // Strip PrusaSlicer mmu_segmentation paint data: for restructured files multi-color
+        // is handled via per-volume extruder assignment (Slic3r_PE_model.config), not SEMM.
+        // Keeping slic3rpe:mmu_segmentation would populate mmu_segmentation_facets and trigger
+        // multi_material_segmentation_by_painting(), causing SIGSEGV on this data.
+        if (text.contains("slic3rpe:mmu_segmentation")) {
+            text = text.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
+            text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
+        }
         return text.toByteArray()
     }
 
@@ -1029,8 +1049,12 @@ object BambuSanitizer {
                         cleaned = cleaned.replace(bambuNsRegex, "")
                         cleaned = cleaned.replace(slic3rpeNsRegex, "")
                         cleaned = cleaned.replace(metadataRegex, "")
-                        // Convert MMU segmentation attributes for PrusaSlicer
-                        cleaned = cleaned.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+                        // Strip PrusaSlicer mmu_segmentation paint data — different encoding from
+                        // Bambu paint_color; renaming causes malformed data → SIGSEGV in OrcaSlicer.
+                        // Native Bambu paint_color= is preserved as-is.
+                        if (cleaned.contains("slic3rpe:mmu_segmentation=")) {
+                            cleaned = cleaned.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
+                        }
                         // PrusaSlicer only accepts type="model"; Bambu uses "other" for support geometry
                         cleaned = cleaned.replace("""type="other"""", """type="model"""")
                         if (cleaned.isNotBlank()) {

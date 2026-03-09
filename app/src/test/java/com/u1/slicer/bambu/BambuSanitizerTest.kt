@@ -134,11 +134,14 @@ class BambuSanitizerTest {
     }
 
     @Test
-    fun `mmu_segmentation to paint_color conversion`() {
+    fun `mmu_segmentation is stripped not converted to paint_color`() {
+        // PrusaSlicer mmu_segmentation uses a different encoding than Bambu paint_color.
+        // Renaming produced malformed data → SIGSEGV in multi_material_segmentation_by_painting().
+        // The correct fix is to STRIP the attribute so it never populates mmu_segmentation_facets.
         val input = """<triangle v1="0" v2="1" v3="2" slic3rpe:mmu_segmentation="AABB"/>"""
-        val output = input.replace("slic3rpe:mmu_segmentation=", "paint_color=")
-        assertTrue(output.contains("paint_color="))
-        assertFalse(output.contains("mmu_segmentation"))
+        val output = input.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
+        assertFalse("slic3rpe:mmu_segmentation must be stripped", output.contains("mmu_segmentation"))
+        assertFalse("must NOT be renamed to paint_color (different encoding)", output.contains("paint_color="))
     }
 
     @Test

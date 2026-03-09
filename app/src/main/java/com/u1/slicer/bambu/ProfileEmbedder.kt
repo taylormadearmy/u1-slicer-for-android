@@ -201,10 +201,14 @@ class ProfileEmbedder(private val context: Context) {
         config["print_settings_id"] = "0.20mm Standard @Snapmaker U1"
         config["print_compatible_printers"] = mutableListOf("Snapmaker U1 (0.4 nozzle) - multiplate")
 
-        // Handle SEMM mode for paint data
-        if (info.hasPaintData && targetExtruderCount > 1) {
-            config["single_extruder_multi_material"] = "1"
-            Log.i(TAG, "Enabled SEMM mode for painted multi-color file")
+        // SEMM is DISABLED: multi_material_segmentation_by_painting() crashes on Android
+        // (SIGSEGV in MultiPoint::bounding_box() via TBB parallel slice_volumes).
+        // Explicitly set to 0 to prevent OrcaSlicer from attempting SEMM even if the
+        // source Bambu config or any preserve-path config carries single_extruder_multi_material=1.
+        // TODO: Re-enable when the algorithm is stable on Android (native rebuild required).
+        if (info.hasPaintData) {
+            config["single_extruder_multi_material"] = "0"
+            Log.i(TAG, "SEMM disabled (paint data present but algorithm not stable on Android)")
         }
 
         Log.i(TAG, "Built config with ${config.size} keys, $targetExtruderCount extruders")
@@ -405,7 +409,7 @@ class ProfileEmbedder(private val context: Context) {
                         //   xmlns:BambuStudio, metadata elements) that cause OrcaSlicer's BBS
                         //   3MF reader to reject the file when requiredextensions="p" is present.
                         // - Preserve p:path and xmlns:p (needed for component file refs).
-                        // - Convert mmu_segmentation → paint_color for paint-data files.
+                        // - Strip PrusaSlicer slic3rpe:mmu_segmentation for paint-data files.
                         name.endsWith(".model") -> {
                             val cleaned = cleanModelXmlForOrcaSlicer(content, info.hasPaintData)
                             destZip.putNextEntry(ZipEntry(name))
@@ -513,8 +517,17 @@ class ProfileEmbedder(private val context: Context) {
     private fun cleanModelXmlForOrcaSlicer(content: ByteArray, hasPaintData: Boolean): ByteArray {
         var text = String(content)
         if (hasPaintData) {
-            text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
-            text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
+            // Strip ALL per-triangle paint segmentation data to prevent
+            // multi_material_segmentation_by_painting() from running — that algorithm produces
+            // corrupt ExPolygons on Android → SIGSEGV in MultiPoint::bounding_box().
+            // TODO: Fix when SEMM algorithm is stable on Android (native rebuild required).
+            if (text.contains("paint_color=")) {
+                text = text.replace(Regex("""\s+paint_color="[^"]*""""), "")
+            }
+            if (text.contains("slic3rpe:mmu_segmentation")) {
+                text = text.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
+                text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
+            }
         }
         text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
         text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
