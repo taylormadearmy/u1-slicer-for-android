@@ -599,7 +599,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val brimWidth = resolve(ov.brimWidth, cfg.brimWidth, "brimWidth")
         val skirtLoops = resolve(ov.skirtLoops, cfg.skirtLoops, "skirtLoops")
         val bedTemp = resolve(ov.bedTemp, cfg.bedTemp, "bedTemp")
-        val primeTower = resolve(ov.primeTower, cfg.wipeTowerEnabled, "primeTower")
+        val primeTower = ov.resolvePrimeTower(extCount, cfg.wipeTowerEnabled)
 
         // Prime tower detail overrides (ProfileEmbedder JSON path, not JNI)
         val primeVolume = resolve(ov.primeVolume, 45, "primeVolume")
@@ -648,15 +648,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 _state.value = SlicerState.Slicing(0, "Preparing...")
 
-                // If the user assigned non-identity extruder slots (e.g. E3+E4), we must
-                // re-embed the 3MF now — embedProfile() ran at load time with no remap.
+                // Re-embed the 3MF before slicing when:
+                // 1. Non-identity extruder remap (physical slots ≠ compact T0/T1) so G-code
+                //    post-processing can remap T-commands to the correct physical slots.
+                // 2. Multi-extruder identity mapping — the initial embedProfile() ran with
+                //    processedInfo (0 colours → extruder_count=1 in the embedded config).
+                //    OrcaSlicer reads extruder_count from the embedded profile, so without
+                //    re-embedding it treats the model as single-extruder and only produces
+                //    wipe-tower T1 purges, not real model tool changes.
                 val remap = toolRemapSlots
-                if (remap != null) {
+                if (remap != null || _config.value.extruderCount > 1) {
                     val src = sourceModelFile
-                    val srcInfo = sourceModelInfo
+                    // Use merged ThreeMfInfo (colours + extruder count from original file) so the
+                    // re-embedded profile carries the correct extruder_count.  sourceModelInfo for
+                    // plate files is plateInfo (0 colours); _threeMfInfo.value is correctly merged.
+                    val srcInfo = _threeMfInfo.value ?: sourceModelInfo
                     val context = getApplication<Application>()
                     if (src != null && srcInfo != null) {
-                        Log.i("SlicerVM", "Re-embedding 3MF with extruder remap $remap before slicing")
+                        val reason = if (remap != null) "extruder remap $remap" else "${_config.value.extruderCount}-extruder embed"
+                        Log.i("SlicerVM", "Re-embedding 3MF ($reason) before slicing")
                         // Free the old model from native memory before loading the new one.
                         // loadModel does g_model = read_from_file(...) which holds both old and
                         // new models in memory simultaneously — enough to OOM on a large 3MF.
@@ -724,7 +734,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val sliceConfig = ov.resolveInto(_config.value)
                 Log.i("SlicerVM", "Resolved slice config: layer=${sliceConfig.layerHeight} " +
                     "infill=${sliceConfig.fillDensity} walls=${sliceConfig.perimeters} " +
-                    "support=${sliceConfig.supportEnabled} speed=${sliceConfig.printSpeed}")
+                    "support=${sliceConfig.supportEnabled} speed=${sliceConfig.printSpeed} " +
+                    "extruders=${sliceConfig.extruderCount} wipeTower=${sliceConfig.wipeTowerEnabled} " +
+                    "wipeTowerXY=(${sliceConfig.wipeTowerX},${sliceConfig.wipeTowerY})")
 
                 val result = native.slice(sliceConfig)
 

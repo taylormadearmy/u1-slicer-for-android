@@ -89,8 +89,15 @@ object ThreeMfParser {
                     }
                 }
 
-                // Detect paint data
-                val hasPaintData = detectPaintData(modelBytes)
+                // Detect paint data — check main model AND all component .model files.
+                // Bambu files that use p:path component refs (e.g. colored_3DBenchy) store
+                // paint_color attributes on triangles in the component files
+                // (3D/Objects/*.model), not in the main 3D/3dmodel.model.
+                val hasPaintData = detectPaintData(modelBytes) ||
+                    zip.entries().toList().any { e ->
+                        e.name.endsWith(".model") && e.name != "3D/3dmodel.model" &&
+                            detectPaintData(zip.getInputStream(e).readBytes())
+                    }
 
                 // Detect layer tool changes
                 val hasLayerToolChanges = if (isBambu) {

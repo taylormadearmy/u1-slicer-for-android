@@ -48,6 +48,24 @@ data class SlicingOverrides(
      * Prime-tower detail overrides (primeVolume etc.) go through ProfileEmbedder's embedded
      * JSON path and are NOT handled here — they don't have corresponding SliceConfig fields.
      */
+    /**
+     * Resolve the prime tower setting for the embedded profile JSON.
+     * This mirrors the [resolveInto] guard: for multi-extruder jobs, ORCA_DEFAULT and USE_FILE
+     * must NOT disable the wipe tower — only an explicit OVERRIDE false is honoured.
+     *
+     * @param extCount number of extruders being used
+     * @param cfgWipeTower current [SliceConfig.wipeTowerEnabled] value
+     */
+    fun resolvePrimeTower(extCount: Int, cfgWipeTower: Boolean): Boolean {
+        if (extCount > 1 && primeTower.mode != OverrideMode.OVERRIDE) return true
+        return when (primeTower.mode) {
+            OverrideMode.USE_FILE     -> cfgWipeTower
+            OverrideMode.ORCA_DEFAULT -> @Suppress("UNCHECKED_CAST")
+                (ORCA_DEFAULTS["primeTower"] as? Boolean) ?: cfgWipeTower
+            OverrideMode.OVERRIDE     -> primeTower.value ?: cfgWipeTower
+        }
+    }
+
     fun resolveInto(base: SliceConfig): SliceConfig {
         fun <T> res(ov: OverrideValue<T>, baseVal: T, defaultKey: String): T =
             when (ov.mode) {

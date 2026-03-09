@@ -27,8 +27,8 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 235 JVM unit tests
-ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 96 instrumented tests
+./gradlew testDebugUnitTest                                                    # 240 JVM unit tests
+ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 97 instrumented tests
 ```
 
 ### MANDATORY: End-to-end testing before a feature is "done"
@@ -43,7 +43,7 @@ End-to-end test checklist:
 5. `adb -s 43211JEKB16931 logcat -s "SlicerVM" -d` — check for exceptions
 6. Only then mark the feature complete
 
-**Never test on NE12442001324 — that is the user's personal device.**
+**Never test on NE12442001324 (model: NF22E1, Android 13) — that is the user's personal device.**
 
 ## ADB helpers
 
@@ -54,7 +54,7 @@ adb -s 43211JEKB16931 shell "run-as com.u1.slicer.orca sh -c 'rm files/plate1_em
 adb -s 43211JEKB16931 logcat -b main -d | grep "11079" | tail -30     # filter logcat by app PID
 ```
 
-Both test device and personal device are always connected. `connectedDebugAndroidTest` runs on ALL connected devices — file-lock errors occur when both are present and a previous run left output files open. Clean with:
+Both test device and personal device are always connected. `connectedDebugAndroidTest` runs on ALL connected devices. **Disconnect NF22E1 (NE12442001324) before running instrumented tests** — it lacks the native .so and all tests fail on it. File-lock errors can also occur when both are present; clean with:
 ```bash
 rm -rf app/build/outputs/androidTest-results/
 ```
@@ -79,9 +79,9 @@ adb -s 43211JEKB16931 shell am start -n com.u1.slicer.orca/com.u1.slicer.MainAct
 
 Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and `app\build\reports\androidTests\connected\debug\index.html` (instrumented).
 
-**If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open on the "Pixel 8a" (NE12442001324). Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
+**If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 246 tests across 16 classes
+### Unit tests (`app/src/test/`) — 251 tests across 16 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (31) — Tool changes, nozzle temps, layer count, prime tower footprint
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -90,7 +90,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
-- `data/SlicingOverridesTest.kt` (20) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower
+- `data/SlicingOverridesTest.kt` (25) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path
 - `data/SettingsBackupTest.kt` (10) — Export/import round-trip, version validation, partial restore
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
 - `bambu/BambuSanitizerTest.kt` (21) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
@@ -99,13 +99,13 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ui/MultiColorMappingTest.kt` (8) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (9) — Grid layout, bed bounds, copy capping
 
-### Instrumented tests (`app/src/androidTest/`) — 96 tests across 9 classes
+### Instrumented tests (`app/src/androidTest/`) — 97 tests across 9 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (24) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` (23) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions
+- `slicing/BambuPipelineIntegrationTest.kt` (24) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression
 - `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/ThreeMfMeshParserTest.kt` (2) — 3MF mesh parsing and transform resolution
@@ -140,4 +140,5 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `startSlicing()` wraps its entire body in `try/catch(Throwable)` with `finally { native.progressListener = null }` — any uncaught exception sets `SlicerState.Error` instead of leaving UI stuck at "100% Slicing"
 - Stale plate cache: after changing sanitizer/extraction logic, delete `files/plate*_embedded_*.3mf` on device (or reinstall app) — cached pre-fix files will produce wrong results silently
 - `ensureMultiSlotMapping(rawMapping, colorCount)` in `MultiColorDialog.kt` — detects all-same-slot collapse for multi-color models and distributes 0,1,0,1,… to guarantee multi-extruder initial mapping
-- `resolveInto()` forces `wipeTowerEnabled=true` when `base.extruderCount > 1` unless the user explicitly set `OVERRIDE` mode to false — OrcaSlicer requires a wipe tower to generate T1 tool changes in multi-extruder jobs
+- `resolveInto()` and `resolvePrimeTower()` in `SlicingOverrides` both force wipe tower true when `extruderCount > 1` unless the user explicitly set `OVERRIDE` mode to false — OrcaSlicer requires a wipe tower for T1 tool changes; `buildProfileOverrides()` uses `resolvePrimeTower()` to set `enable_prime_tower` in the embedded profile
+- `ThreeMfParser.detectPaintData()` checks ALL `.model` entries in the ZIP, not just the main `3D/3dmodel.model` — Bambu files using p:path component refs store `paint_color` on triangles in component files (e.g. `3D/Objects/*.model`)

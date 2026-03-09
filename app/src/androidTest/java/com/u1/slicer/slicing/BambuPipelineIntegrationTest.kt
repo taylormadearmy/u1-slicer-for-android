@@ -441,7 +441,9 @@ class BambuPipelineIntegrationTest {
         val plateFile = BambuSanitizer.extractPlate(sanitized, 5, outDir,
             hasPlateJsons = mergedInfo.hasPlateJsons)
 
-        // startSlicing() identity path: load plateFile directly, slice with 2-extruder config
+        // startSlicing() identity path: load plateFile directly, slice with 2-extruder config.
+        // Shashibo plates are single-color geometrically — each plate is one solid filament color.
+        // With wipeTowerEnabled=true, the wipe tower produces a few T1 purge moves at the start.
         assertTrue("loadModel should succeed", lib.loadModel(plateFile.absolutePath))
         val result = lib.slice(dualConfig())
         assertNotNull("slice returned null", result)
@@ -451,7 +453,7 @@ class BambuPipelineIntegrationTest {
         val gcode = File(result.gcodePath).readText()
         val hasT1 = gcode.lines().any { it.trimStart().startsWith("T1") }
         assertTrue(
-            "G-code should contain T1 tool change — Shashibo plate 5 is multi-colour",
+            "G-code should contain T1 (wipe-tower purge) — wipeTowerEnabled must be true for multi-extruder",
             hasT1
         )
     }
@@ -584,6 +586,28 @@ class BambuPipelineIntegrationTest {
         extractPlateAndLoad("Dragon Scale infinity-1-plate-2-colours.3mf", plateId = 1)
         val mi = lib.getModelInfo()
         assertNotNull("getModelInfo must return non-null for Dragon Scale 2-colour", mi)
+    }
+
+    // ─── Paint data detection regression ──────────────────────────────────────
+
+    /**
+     * Regression: detectPaintData() only scanned the main 3D/3dmodel.model.
+     * For Bambu files that use p:path component refs (e.g. colored_3DBenchy), the
+     * paint_color attributes are on triangles in the COMPONENT files
+     * (3D/Objects/3DBenchy_1.model etc.), not in the main model.
+     * detectPaintData() must also scan component model files in the ZIP.
+     *
+     * MUST FAIL on current code (hasPaintData=false for component-ref files).
+     * MUST PASS once detectPaintData() checks all .model entries in the ZIP.
+     */
+    @Test
+    fun coloredBenchy_hasPaintData_detectedFromComponentModelFiles() {
+        val file = asset("colored_3DBenchy (1).3mf")
+        val info = ThreeMfParser.parse(file)
+        assertTrue(
+            "colored_3DBenchy paint_color is in component .model files — hasPaintData must be true",
+            info.hasPaintData
+        )
     }
 
     // ─── Toolchange retraction regression (multi-filament clog prevention) ─────

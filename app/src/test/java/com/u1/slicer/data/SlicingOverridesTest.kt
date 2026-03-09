@@ -296,6 +296,59 @@ class SlicingOverridesTest {
         )
     }
 
+    // --- resolvePrimeTower (profile-embed path) ---
+
+    /**
+     * Regression: buildProfileOverrides() used plain resolve() which returns false for
+     * ORCA_DEFAULT — so the embedded profile got enable_prime_tower=0, overriding the JNI
+     * wipeTowerEnabled=true → 0 T1 commands even for multi-extruder slices.
+     * MUST FAIL on the original code path; passes once resolvePrimeTower() guards extCount.
+     */
+    @Test
+    fun `resolvePrimeTower ORCA_DEFAULT preserves prime tower for multi-extruder`() {
+        val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.ORCA_DEFAULT))
+        assertTrue(
+            "Multi-extruder embed must have prime tower enabled regardless of ORCA_DEFAULT mode",
+            overrides.resolvePrimeTower(extCount = 2, cfgWipeTower = true)
+        )
+    }
+
+    @Test
+    fun `resolvePrimeTower USE_FILE with multi-extruder preserves prime tower`() {
+        val overrides = SlicingOverrides() // all USE_FILE
+        assertTrue(
+            "Multi-extruder embed with USE_FILE must keep prime tower enabled",
+            overrides.resolvePrimeTower(extCount = 2, cfgWipeTower = true)
+        )
+    }
+
+    @Test
+    fun `resolvePrimeTower ORCA_DEFAULT with single-extruder disables prime tower`() {
+        val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.ORCA_DEFAULT))
+        assertFalse(
+            "Single-extruder embed with ORCA_DEFAULT should disable prime tower",
+            overrides.resolvePrimeTower(extCount = 1, cfgWipeTower = false)
+        )
+    }
+
+    @Test
+    fun `resolvePrimeTower OVERRIDE false is respected for multi-extruder`() {
+        val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.OVERRIDE, false))
+        assertFalse(
+            "Explicit OVERRIDE false must be respected even for multi-extruder",
+            overrides.resolvePrimeTower(extCount = 2, cfgWipeTower = true)
+        )
+    }
+
+    @Test
+    fun `resolvePrimeTower OVERRIDE true is returned for single-extruder`() {
+        val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.OVERRIDE, true))
+        assertTrue(
+            "OVERRIDE true should return true for single-extruder too",
+            overrides.resolvePrimeTower(extCount = 1, cfgWipeTower = false)
+        )
+    }
+
     @Test
     fun `resolveInto does not modify base config`() {
         val base = SliceConfig(layerHeight = 0.2f, perimeters = 2)
