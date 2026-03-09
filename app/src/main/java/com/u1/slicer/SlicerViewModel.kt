@@ -355,11 +355,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val plateInfo = ThreeMfParser.parse(plateFile)
                 sourceModelFile = plateFile
                 sourceModelInfo = plateInfo
-                // Update _threeMfInfo so loadNativeModel uses the single-plate info
-                // (not the full multi-plate info from the original loadModel() parse).
-                // Without this, detectedExtruderCount from the full file (e.g. 7 for a
-                // 7-plate coaster) is used even after selecting a single plate.
-                _threeMfInfo.value = plateInfo
+                // Merge plate structural info with the pre-select merged info so that
+                // color/extruder metadata from the original file is preserved.
+                // plateInfo has 0 detected colors because extractPlate() works on the
+                // processed file which has had filament_sequence.json stripped by process().
+                // _threeMfInfo.value holds the correctly-merged info from openModel().
+                val preSelectInfo = _threeMfInfo.value
+                _threeMfInfo.value = if (preSelectInfo != null)
+                    mergeThreeMfInfoForPlate(plateInfo, preSelectInfo)
+                else
+                    plateInfo
                 toolRemapSlots = null
                 currentModelFile = plateFile
                 loadNativeModel(plateFile)
@@ -996,6 +1001,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             hasPaintData = origInfo.hasPaintData,
             hasLayerToolChanges = origInfo.hasLayerToolChanges,
             hasMultiExtruderAssignments = origInfo.hasMultiExtruderAssignments
+        )
+
+        /**
+         * Merges a single-plate extract (plateInfo, which has no color metadata because it was
+         * extracted from the processed/embedded file) with the pre-select merged info (sourceInfo,
+         * which has the full color/extruder metadata from the original parse).
+         *
+         * selectPlate() calls BambuSanitizer.extractPlate() on the processed file, so plateInfo
+         * has 0 detected colors.  sourceInfo is the correctly-merged info from openModel().
+         * We take the plate's structural fields but restore color/extruder metadata from sourceInfo.
+         *
+         * Extracted as a pure function for testability.
+         */
+        fun mergeThreeMfInfoForPlate(
+            plateInfo: com.u1.slicer.bambu.ThreeMfInfo,
+            sourceInfo: com.u1.slicer.bambu.ThreeMfInfo
+        ): com.u1.slicer.bambu.ThreeMfInfo = plateInfo.copy(
+            detectedColors = sourceInfo.detectedColors,
+            detectedExtruderCount = sourceInfo.detectedExtruderCount,
+            hasPaintData = sourceInfo.hasPaintData,
+            hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
+            hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments
         )
     }
 }

@@ -302,6 +302,104 @@ class BambuPipelineIntegrationTest {
             merged.detectedExtruderCount >= 2)
     }
 
+    /**
+     * Regression: selectPlate() extracts from the processed/embedded file which has no color
+     * metadata.  ThreeMfParser.parse() on the extracted plate file must return 0 colors so we
+     * know the bug condition is real and cannot be silently fixed by the parser alone.
+     *
+     * If this fails (plateInfo has colors), extractPlate() now preserves metadata and the
+     * mergeThreeMfInfoForPlate() call in selectPlate() can be simplified / removed.
+     */
+    @Test
+    fun selectPlate_extractedPlateFromProcessedFile_hasNoColors_dragonScale() {
+        val input = asset("Dragon Scale infinity.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(ThreeMfParser.parse(processed), origInfo)
+
+        val plateFile = BambuSanitizer.extractPlate(processed, 1, outDir,
+            hasPlateJsons = mergedInfo.hasPlateJsons)
+        val plateInfo = ThreeMfParser.parse(plateFile)
+
+        assertEquals(
+            "plateInfo from processed file should have 0 colors — confirming bug precondition",
+            0, plateInfo.detectedColors.size
+        )
+    }
+
+    /**
+     * Regression: SlicerViewModel.selectPlate() sets _threeMfInfo to the raw plateInfo (0 colors)
+     * instead of merging with the pre-select source info.  This test calls
+     * mergeThreeMfInfoForPlate() directly and asserts the colors are restored.
+     *
+     * MUST FAIL on the current STUB implementation of mergeThreeMfInfoForPlate().
+     * MUST PASS once the real implementation is in place.
+     */
+    @Test
+    fun selectPlateMerge_mergeThreeMfInfoForPlate_restoresColors_dragonScale() {
+        val input = asset("Dragon Scale infinity.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(ThreeMfParser.parse(processed), origInfo)
+
+        assertTrue("Dragon Scale should have >= 2 colors in origInfo",
+            origInfo.detectedColors.size >= 2)
+
+        val plateFile = BambuSanitizer.extractPlate(processed, 1, outDir,
+            hasPlateJsons = mergedInfo.hasPlateJsons)
+        val plateInfo = ThreeMfParser.parse(plateFile)
+
+        assertEquals("plateInfo precondition: 0 colors from processed file",
+            0, plateInfo.detectedColors.size)
+
+        // This is the call that selectPlate() must make (and currently does NOT make).
+        val result = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, mergedInfo)
+
+        assertTrue(
+            "After mergeThreeMfInfoForPlate, detectedColors must be >= 2 (was ${result.detectedColors.size})",
+            result.detectedColors.size >= 2
+        )
+        assertTrue(
+            "After mergeThreeMfInfoForPlate, detectedExtruderCount must be >= 2 (was ${result.detectedExtruderCount})",
+            result.detectedExtruderCount >= 2
+        )
+    }
+
+    /**
+     * Same as selectPlateMerge_mergeThreeMfInfoForPlate_restoresColors_dragonScale but for
+     * Shashibo plate 5 — a different multi-plate file to ensure the fix generalises.
+     *
+     * MUST FAIL on the STUB, MUST PASS after real implementation.
+     */
+    @Test
+    fun selectPlateMerge_mergeThreeMfInfoForPlate_restoresColors_shashiboPlate5() {
+        val input = asset("Shashibo-h2s-textured.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(ThreeMfParser.parse(processed), origInfo)
+
+        assertTrue("Shashibo should have >= 2 colors in origInfo",
+            origInfo.detectedColors.size >= 2)
+
+        val plateFile = BambuSanitizer.extractPlate(processed, 5, outDir,
+            hasPlateJsons = mergedInfo.hasPlateJsons)
+        val plateInfo = ThreeMfParser.parse(plateFile)
+
+        assertEquals("plateInfo precondition: 0 colors from processed file",
+            0, plateInfo.detectedColors.size)
+
+        val result = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, mergedInfo)
+
+        assertTrue(
+            "After mergeThreeMfInfoForPlate, detectedColors must be >= 2 (was ${result.detectedColors.size})",
+            result.detectedColors.size >= 2
+        )
+        assertTrue(
+            "After mergeThreeMfInfoForPlate, detectedExtruderCount must be >= 2 (was ${result.detectedExtruderCount})",
+            result.detectedExtruderCount >= 2
+        )
+    }
+
     @Test
     fun shashibo_loadsAfterExtractAndEmbed() {
         // Multi-plate files must go through extractPlate() + embed() — not process()
