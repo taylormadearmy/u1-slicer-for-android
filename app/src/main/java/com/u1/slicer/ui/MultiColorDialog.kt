@@ -49,6 +49,28 @@ fun findClosestExtruder(color: String, presets: List<ExtruderPreset>): ExtruderP
     presets.minByOrNull { colorDistance(color, it.color) }
 
 /**
+ * Ensure the initial color-to-slot mapping uses at least 2 distinct slots when the model
+ * has >= 2 detected colors.
+ *
+ * When no extruder presets are configured (or all model colors are equidistant from a
+ * single preset), findClosestExtruder returns the same slot for every color.  Passing
+ * that collapsed mapping into applyMultiColorAssignments produces extruderCount=1, which
+ * means slicing runs as single-extruder even though the model is multi-colour.
+ *
+ * This function detects that collapse and replaces the mapping with a sequential
+ * 0,1,0,1,… distribution so the initial auto-apply always starts as multi-extruder.
+ * The user can change the mapping at any time via the inline colour-assignment UI.
+ *
+ * @param rawMapping  One slot index per detected model colour.
+ * @param colorCount  Number of detected model colours (= rawMapping.size).
+ */
+fun ensureMultiSlotMapping(rawMapping: List<Int>, colorCount: Int): List<Int> =
+    if (rawMapping.distinct().size < 2 && colorCount >= 2)
+        (0 until colorCount).map { it % 2 }  // 0,1,0,1,… across compact slots
+    else
+        rawMapping
+
+/**
  * Dialog shown when a multi-color 3MF is loaded.
  *
  * Shows each detected model color and lets the user choose which extruder slot it maps to.

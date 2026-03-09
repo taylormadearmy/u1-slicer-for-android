@@ -407,6 +407,142 @@ class BambuPipelineIntegrationTest {
         // loadModel asserted inside extractPlateAndLoad
     }
 
+    // ─── selectPlate G-code multi-extruder regression ─────────────────────────
+
+    /**
+     * Regression: after selectPlate(), slicing a multi-colour plate must produce
+     * G-code with T1 tool changes — not single-extruder output.
+     *
+     * This test mirrors the CURRENT ViewModel pipeline:
+     *   openModel():    process → embed(processedInfo, 1-extruder) → sanitized
+     *   selectPlate(5): extractPlate(sanitized) → plateFile
+     *   startSlicing(): loadModel(plateFile) + slice(dualConfig)  [identity toolRemap path]
+     *
+     * MUST FAIL if the pipeline produces single-extruder G-code.
+     * MUST PASS once the multi-extruder path is correctly set up.
+     */
+    @Test
+    fun shashiboPlate5_selectPlateIdentityPath_gcodeHasToolChanges() {
+        val input = asset("Shashibo-h2s-textured.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        assertTrue("Shashibo should have >= 2 colors", origInfo.detectedColors.size >= 2)
+
+        // openModel() step: process → embed with processedInfo (0 colors → 1-extruder config)
+        val processed = BambuSanitizer.process(input, outDir)
+        val processedInfo = ThreeMfParser.parse(processed)
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+        val sanitized = embedder.embed(
+            processed,
+            embedder.buildConfig(processedInfo),  // 0 colors → 1-extruder
+            outDir, processedInfo
+        )
+
+        // selectPlate(5) step: extract from sanitized (as ViewModel does)
+        val plateFile = BambuSanitizer.extractPlate(sanitized, 5, outDir,
+            hasPlateJsons = mergedInfo.hasPlateJsons)
+
+        // startSlicing() identity path: load plateFile directly, slice with 2-extruder config
+        assertTrue("loadModel should succeed", lib.loadModel(plateFile.absolutePath))
+        val result = lib.slice(dualConfig())
+        assertNotNull("slice returned null", result)
+        result!!
+        assertTrue("Shashibo plate 5 slice should succeed: ${result.errorMessage}", result.success)
+
+        val gcode = File(result.gcodePath).readText()
+        val hasT1 = gcode.lines().any { it.trimStart().startsWith("T1") }
+        assertTrue(
+            "G-code should contain T1 tool change — Shashibo plate 5 is multi-colour",
+            hasT1
+        )
+    }
+
+    /**
+     * Regression: same as above but for the non-identity re-embed path in startSlicing().
+     * When toolRemapSlots != null, startSlicing() calls embedProfile(sourceModelFile, sourceModelInfo)
+     * where sourceModelInfo = plateInfo (0 colors, as currently set in selectPlate()).
+     *
+     * MUST FAIL if re-embedding with 0-color plateInfo produces single-extruder G-code.
+     * MUST PASS once sourceModelInfo is set to the merged info.
+     */
+    @Test
+    fun shashiboPlate5_selectPlateReembedWithPlateInfo_gcodeHasToolChanges() {
+        val input = asset("Shashibo-h2s-textured.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val processedInfo = ThreeMfParser.parse(processed)
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+        val sanitized = embedder.embed(
+            processed,
+            embedder.buildConfig(processedInfo),
+            outDir, processedInfo
+        )
+
+        val plateFile = BambuSanitizer.extractPlate(sanitized, 5, outDir,
+            hasPlateJsons = mergedInfo.hasPlateJsons)
+        val plateInfo = ThreeMfParser.parse(plateFile)
+
+        // startSlicing() non-identity path: re-embed with sourceModelInfo=plateInfo (0 colors)
+        // targetExtruderCount=2 simulates toolRemapSlots.size=2
+        val reembedded = embedder.embed(
+            plateFile,
+            embedder.buildConfig(plateInfo, targetExtruderCount = 2),
+            outDir, plateInfo
+        )
+
+        assertTrue("loadModel should succeed", lib.loadModel(reembedded.absolutePath))
+        val result = lib.slice(dualConfig())
+        assertNotNull("slice returned null", result)
+        result!!
+        assertTrue("Re-embedded Shashibo plate 5 should slice: ${result.errorMessage}", result.success)
+
+        val gcode = File(result.gcodePath).readText()
+        val hasT1 = gcode.lines().any { it.trimStart().startsWith("T1") }
+        assertTrue(
+            "Re-embedded G-code should contain T1 — Shashibo plate 5 is multi-colour",
+            hasT1
+        )
+    }
+
+    /**
+     * Positive control: the CORRECT pipeline (extract from processed, embed with mergedInfo)
+     * must always produce T1 in the G-code.  If this fails, the issue is in the
+     * BambuSanitizer/ProfileEmbedder layer, not in ViewModel state management.
+     */
+    @Test
+    fun shashiboPlate5_correctPipeline_gcodeHasToolChanges() {
+        val input = asset("Shashibo-h2s-textured.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val processedInfo = ThreeMfParser.parse(processed)
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+
+        // Extract from processed (not sanitized), embed with merged info
+        val plateFile = BambuSanitizer.extractPlate(processed, 5, outDir,
+            hasPlateJsons = mergedInfo.hasPlateJsons)
+        val plateMergedInfo = SlicerViewModel.mergeThreeMfInfoForPlate(
+            ThreeMfParser.parse(plateFile), mergedInfo)
+
+        val embedded = embedder.embed(
+            plateFile,
+            embedder.buildConfig(plateMergedInfo, targetExtruderCount = 2),
+            outDir, plateMergedInfo
+        )
+
+        assertTrue("loadModel should succeed", lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(dualConfig())
+        assertNotNull("slice returned null", result)
+        result!!
+        assertTrue("Correct-pipeline Shashibo plate 5 should slice: ${result.errorMessage}",
+            result.success)
+
+        val gcode = File(result.gcodePath).readText()
+        val hasT1 = gcode.lines().any { it.trimStart().startsWith("T1") }
+        assertTrue(
+            "Correct-pipeline G-code must contain T1 — if this fails the bug is in BambuSanitizer/Embedder",
+            hasT1
+        )
+    }
+
     // ─── 4-colour slicing ─────────────────────────────────────────────────────
 
     /**

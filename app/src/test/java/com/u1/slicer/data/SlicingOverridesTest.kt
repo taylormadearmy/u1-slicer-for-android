@@ -246,6 +246,56 @@ class SlicingOverridesTest {
         assertFalse(resolved.supportEnabled)
     }
 
+    // --- Multi-extruder wipe tower regression ---
+
+    /**
+     * Regression: when primeTower override = ORCA_DEFAULT and extruderCount >= 2,
+     * resolveInto() must NOT clobber wipeTowerEnabled=true.
+     * Without a wipe tower, OrcaSlicer never emits T1 even with extruderCount=2.
+     * MUST FAIL on current code (ORCA_DEFAULTS["primeTower"]=false wins over base.wipeTowerEnabled).
+     */
+    @Test
+    fun `resolveInto ORCA_DEFAULT primeTower preserves wipe tower for multi-extruder`() {
+        val base = SliceConfig(wipeTowerEnabled = true, extruderCount = 2)
+        val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.ORCA_DEFAULT))
+        val resolved = overrides.resolveInto(base)
+        assertTrue(
+            "Multi-extruder slice must keep wipeTowerEnabled=true regardless of primeTower override",
+            resolved.wipeTowerEnabled
+        )
+    }
+
+    /**
+     * Corollary: ORCA_DEFAULT primeTower with single-extruder should still disable the tower.
+     * Must pass on both old and new code.
+     */
+    @Test
+    fun `resolveInto ORCA_DEFAULT primeTower disables wipe tower for single-extruder`() {
+        val base = SliceConfig(wipeTowerEnabled = true, extruderCount = 1)
+        val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.ORCA_DEFAULT))
+        val resolved = overrides.resolveInto(base)
+        assertFalse(
+            "Single-extruder slice with ORCA_DEFAULT primeTower should disable wipe tower",
+            resolved.wipeTowerEnabled
+        )
+    }
+
+    /**
+     * OVERRIDE primeTower=false is an explicit user choice — should be respected even for
+     * multi-extruder (user knows what they're doing).
+     * Must pass on both old and new code.
+     */
+    @Test
+    fun `resolveInto OVERRIDE primeTower false is respected for multi-extruder`() {
+        val base = SliceConfig(wipeTowerEnabled = true, extruderCount = 2)
+        val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.OVERRIDE, false))
+        val resolved = overrides.resolveInto(base)
+        assertFalse(
+            "Explicit OVERRIDE primeTower=false must be respected regardless of extruder count",
+            resolved.wipeTowerEnabled
+        )
+    }
+
     @Test
     fun `resolveInto does not modify base config`() {
         val base = SliceConfig(layerHeight = 0.2f, perimeters = 2)

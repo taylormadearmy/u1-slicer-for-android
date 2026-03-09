@@ -66,7 +66,12 @@ data class SlicingOverrides(
             brimWidth        = res(brimWidth,      base.brimWidth,        "brimWidth"),
             skirtLoops       = res(skirtLoops,    base.skirtLoops,       "skirtLoops"),
             bedTemp          = res(bedTemp,       base.bedTemp,          "bedTemp"),
-            wipeTowerEnabled = res(primeTower,    base.wipeTowerEnabled, "primeTower"),
+            // Multi-extruder slicing requires a wipe tower to produce T1 tool changes.
+            // Only bypass if the user has explicitly set OVERRIDE mode to false.
+            wipeTowerEnabled = if (base.extruderCount > 1 && primeTower.mode != OverrideMode.OVERRIDE)
+                true
+            else
+                res(primeTower, base.wipeTowerEnabled, "primeTower"),
         )
     }
 

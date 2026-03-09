@@ -406,9 +406,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Auto-apply closest-extruder mapping immediately — no dialog popup.
                     // The inline UI on the model page lets the user change assignments.
                     val presets = extruderPresets.value
-                    val initialMapping = mfInfo.detectedColors.map { modelColor ->
+                    val rawMapping = mfInfo.detectedColors.map { modelColor ->
                         com.u1.slicer.ui.findClosestExtruder(modelColor, presets)?.index ?: 0
                     }
+                    // If all colours collapsed to one slot (e.g. no presets configured),
+                    // distribute sequentially so the initial slice is always multi-extruder.
+                    val initialMapping = com.u1.slicer.ui.ensureMultiSlotMapping(
+                        rawMapping, mfInfo.detectedColors.size)
                     _colorMapping.value = initialMapping
                     applyMultiColorAssignments(initialMapping, presets, emptyList())
                     Log.i("SlicerVM", "Auto-applied color mapping: $extCount extruders, mapping=$initialMapping")
