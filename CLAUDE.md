@@ -81,7 +81,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open on the "Pixel 8a" (NE12442001324). Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 235 tests across 15 classes
+### Unit tests (`app/src/test/`) — 246 tests across 16 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (31) — Tool changes, nozzle temps, layer count, prime tower footprint
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -90,12 +90,13 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
-- `data/SlicingOverridesTest.kt` (17) — Override modes, JSON serialization round-trip, defaults, resolveInto()
+- `data/SlicingOverridesTest.kt` (20) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower
 - `data/SettingsBackupTest.kt` (10) — Export/import round-trip, version validation, partial restore
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
 - `bambu/BambuSanitizerTest.kt` (21) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
+- `ui/MultiColorMappingTest.kt` (8) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (9) — Grid layout, bed bounds, copy capping
 
 ### Instrumented tests (`app/src/androidTest/`) — 96 tests across 9 classes
@@ -104,7 +105,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (24) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` (27) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction
+- `slicing/BambuPipelineIntegrationTest.kt` (23) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions
 - `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/ThreeMfMeshParserTest.kt` (2) — 3MF mesh parsing and transform resolution
@@ -138,3 +139,5 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `BambuSanitizer.extractPlate()` copies ALL ZIP entries including PNG previews (unlike `process()` which strips them) — plate files therefore work with `GcodeThumbnailInjector`
 - `startSlicing()` wraps its entire body in `try/catch(Throwable)` with `finally { native.progressListener = null }` — any uncaught exception sets `SlicerState.Error` instead of leaving UI stuck at "100% Slicing"
 - Stale plate cache: after changing sanitizer/extraction logic, delete `files/plate*_embedded_*.3mf` on device (or reinstall app) — cached pre-fix files will produce wrong results silently
+- `ensureMultiSlotMapping(rawMapping, colorCount)` in `MultiColorDialog.kt` — detects all-same-slot collapse for multi-color models and distributes 0,1,0,1,… to guarantee multi-extruder initial mapping
+- `resolveInto()` forces `wipeTowerEnabled=true` when `base.extruderCount > 1` unless the user explicitly set `OVERRIDE` mode to false — OrcaSlicer requires a wipe tower to generate T1 tool changes in multi-extruder jobs
