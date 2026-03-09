@@ -3,6 +3,7 @@ package com.u1.slicer.slicing
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.NativeLibrary
+import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
@@ -207,6 +208,98 @@ class BambuPipelineIntegrationTest {
         val info = ThreeMfParser.parse(file)
         assertTrue("Korok mask should have >= 4 detected colors, was ${info.detectedColors.size}",
             info.detectedColors.size >= 4)
+    }
+
+    /**
+     * Regression: BambuSanitizer.process() strips filament_sequence.json and
+     * project_settings.config, so ThreeMfParser.parse() on the processed file returns
+     * 0 detected colors.  SlicerViewModel.openModel() MUST take detectedColors (and all
+     * other color/extruder metadata) from origInfo, not processedInfo.
+     *
+     * If this test fails the color-stripping assumption has changed — verify that
+     * SlicerViewModel.openModel() still passes origInfo color fields to _threeMfInfo.
+     */
+    @Test
+    fun process_stripsColorMetadata_origInfoPreservesColors_calibCube() {
+        val input = asset("calib-cube-10-dual-colour-merged.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val processedInfo = ThreeMfParser.parse(processed)
+
+        assertTrue("Original calib-cube should detect >= 2 colors",
+            origInfo.detectedColors.size >= 2)
+        assertTrue("process() should strip color metadata (processedInfo colors < origInfo colors)",
+            processedInfo.detectedColors.size < origInfo.detectedColors.size)
+    }
+
+    /**
+     * Regression: same as above for a Bambu painted-color file (colored_3DBenchy).
+     */
+    @Test
+    fun process_stripsColorMetadata_origInfoPreservesColors_coloredBenchy() {
+        val input = asset("colored_3DBenchy (1).3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val processedInfo = ThreeMfParser.parse(processed)
+
+        assertTrue("colored_3DBenchy original should detect >= 2 colors",
+            origInfo.detectedColors.size >= 2)
+        assertTrue("process() should strip color metadata (processedInfo colors < origInfo colors)",
+            processedInfo.detectedColors.size < origInfo.detectedColors.size)
+    }
+
+    /**
+     * Regression: SlicerViewModel.mergeThreeMfInfo() must carry colour/extruder metadata
+     * from origInfo because BambuSanitizer.process() strips all filament metadata.
+     *
+     * This test calls the actual SlicerViewModel companion function, so any regression
+     * in that function will be caught directly.
+     */
+    @Test
+    fun viewModelMergeThreeMfInfo_preservesOrigInfoColors_calibCube() {
+        val input = asset("calib-cube-10-dual-colour-merged.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val processedInfo = ThreeMfParser.parse(processed)
+
+        // Confirm the precondition: process() strips color metadata.
+        // If this fails, the bug condition no longer exists and the merge logic can be simplified.
+        assertEquals(
+            "processedInfo should have 0 colors after process() strips filament metadata",
+            0, processedInfo.detectedColors.size
+        )
+
+        // Call the actual ViewModel function — this is what openModel() uses.
+        val merged = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+
+        assertTrue("mergeThreeMfInfo should restore >= 2 colors from origInfo",
+            merged.detectedColors.size >= 2)
+        assertTrue("mergeThreeMfInfo extruderCount should be >= 2",
+            merged.detectedExtruderCount >= 2)
+    }
+
+    /**
+     * Regression: same as viewModelMergeThreeMfInfo_preservesOrigInfoColors_calibCube but
+     * for a Bambu painted-color file (colored_3DBenchy), covering the hasPaintData path.
+     */
+    @Test
+    fun viewModelMergeThreeMfInfo_preservesOrigInfoColors_coloredBenchy() {
+        val input = asset("colored_3DBenchy (1).3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val processedInfo = ThreeMfParser.parse(processed)
+
+        assertEquals(
+            "processedInfo should have 0 colors after process() strips filament metadata",
+            0, processedInfo.detectedColors.size
+        )
+
+        val merged = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+
+        assertTrue("mergeThreeMfInfo should restore >= 2 colors from origInfo",
+            merged.detectedColors.size >= 2)
+        assertTrue("mergeThreeMfInfo extruderCount should be >= 2",
+            merged.detectedExtruderCount >= 2)
     }
 
     @Test

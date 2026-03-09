@@ -296,13 +296,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // items cause "Coordinate outside allowed range" Clipper errors.
                     val processed = BambuSanitizer.process(file, context.filesDir)
                     val processedInfo = ThreeMfParser.parse(processed)
-                    // Use processedInfo for extruder/color detection (after sanitization),
-                    // but keep origInfo plates for the plate selector dialog (process()
-                    // strips plate_N.json files and plate PNG thumbnails).
-                    _threeMfInfo.value = processedInfo.copy(
-                        plates = origInfo.plates,
-                        hasPlateJsons = origInfo.hasPlateJsons
-                    )
+                    _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
 
                     // Store source before embedding so startSlicing() can re-embed with
                     // the correct extruder remap once the user has picked their slots.
@@ -978,5 +972,30 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         return uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+    }
+
+    companion object {
+        /**
+         * Merges a sanitized ThreeMfInfo (processedInfo) with the original parse (origInfo).
+         *
+         * BambuSanitizer.process() strips filament_sequence.json, project_settings.config and
+         * similar metadata, so processedInfo carries no color/extruder data.  origInfo retains
+         * the full color detection results.  We take structural fields from processedInfo
+         * (objects, isBambu, isMultiPlate) and color/extruder metadata from origInfo.
+         *
+         * Extracted as a pure function so it can be unit-tested independently of the ViewModel.
+         */
+        fun mergeThreeMfInfo(
+            processedInfo: com.u1.slicer.bambu.ThreeMfInfo,
+            origInfo: com.u1.slicer.bambu.ThreeMfInfo
+        ): com.u1.slicer.bambu.ThreeMfInfo = processedInfo.copy(
+            plates = origInfo.plates,
+            hasPlateJsons = origInfo.hasPlateJsons,
+            detectedColors = origInfo.detectedColors,
+            detectedExtruderCount = origInfo.detectedExtruderCount,
+            hasPaintData = origInfo.hasPaintData,
+            hasLayerToolChanges = origInfo.hasLayerToolChanges,
+            hasMultiExtruderAssignments = origInfo.hasMultiExtruderAssignments
+        )
     }
 }
