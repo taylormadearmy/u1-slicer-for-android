@@ -80,6 +80,17 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("initial_layer_speed",       new Slic3r::ConfigOptionFloat(config.first_layer_speed));
     dpc.set_key_value("initial_layer_infill_speed",new Slic3r::ConfigOptionFloat(config.first_layer_speed * 2.1));
 
+    // Snapmaker U1 bed geometry — OrcaSlicer defaults to 200×200mm (Bambu A1).
+    // Must always be set so the slicer knows the actual printable area.
+    dpc.set_key_value("printable_area", new Slic3r::ConfigOptionPoints({
+        {0, 0}, {270, 0}, {270, 270}, {0, 270}
+    }));
+
+    // Bed plate type — OrcaSlicer defaults to btPC (Engineering Plate) whose temp keys
+    // are cool_plate_temp (35°C for PLA).  The Snapmaker U1 uses a textured PEI plate,
+    // so set btPEI so OrcaSlicer resolves bed temp from hot_plate_temp (60°C for PLA).
+    dpc.set_key_value("curr_bed_type", new Slic3r::ConfigOptionEnum<Slic3r::BedType>(Slic3r::btPEI));
+
     // Snapmaker U1 machine kinematic limits — fallback values used when no Snapmaker
     // profile is embedded (e.g. plain STL files).  For 3MF files these are overridden
     // by the values from the embedded profile in the is_snapmaker_profile block above.
@@ -151,8 +162,12 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // Temperature (OrcaSlicer per-extruder keys)
     dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(temps));
     dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(first_temps));
-    // hot_plate_temp is one of several bed-temp options in OrcaSlicer
+    // Bed temperature — OrcaSlicer resolves bed temp from the active plate type (curr_bed_type).
+    // We set btPEI (textured PEI plate), so hot_plate_temp is the one that matters.
+    // Also set the initial layer variant (+5°C for better first layer adhesion, matching pla.json).
     dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(bed_temps));
+    std::vector<int> bed_temps_initial(n_ext, config.bed_temp + 5);
+    dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(bed_temps_initial));
 
     // Retraction (OrcaSlicer keys)
     dpc.set_key_value("retraction_length", new Slic3r::ConfigOptionFloats(retract_len));
@@ -312,6 +327,12 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 // print-time estimation.  They are sourced from the merged printer+process
                 // profile JSON so we don't need to hardcode U1-specific values here.
                 static const char* profile_keys[] = {
+                    // Machine geometry + plate type
+                    "printable_area",
+                    "curr_bed_type",
+                    // Bed temperature (per plate type)
+                    "hot_plate_temp",
+                    "hot_plate_temp_initial_layer",
                     // G-code templates
                     "machine_start_gcode",
                     "machine_end_gcode",
