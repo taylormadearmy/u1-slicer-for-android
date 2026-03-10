@@ -73,6 +73,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun clearStaleCacheOnUpgrade() {
+        val prefs = getSharedPreferences("app_cache", MODE_PRIVATE)
+        val lastVersion = prefs.getInt("cache_version_code", 0)
+        val currentVersion = try {
+            packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
+        } catch (_: Exception) { 0 }
+
+        if (currentVersion > lastVersion) {
+            var count = 0
+            filesDir.listFiles()?.forEach { f ->
+                if (f.name.startsWith("embedded_") || f.name.startsWith("sanitized_") ||
+                    f.name.startsWith("plate") && f.name.endsWith(".3mf")) {
+                    f.delete()
+                    count++
+                }
+            }
+            prefs.edit().putInt("cache_version_code", currentVersion).apply()
+            if (count > 0) {
+                Log.i("SlicerVM", "Cleared $count stale cache files after upgrade to v$currentVersion")
+            }
+        }
+    }
+
     override fun onDestroy() {
         testReceiver?.let {
             try { unregisterReceiver(it) } catch (_: Exception) {}
@@ -83,6 +106,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Clear stale cached 3MF files on version upgrade.
+        // The sanitizer/embedder output format changes between versions — stale files
+        // cause "Coordinate outside allowed range" Clipper errors in OrcaSlicer.
+        clearStaleCacheOnUpgrade()
+
         // Only handle VIEW intents on fresh launch, not on recreation
         if (savedInstanceState == null) {
             handleIncomingIntent(intent)
