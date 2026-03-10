@@ -74,25 +74,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun clearStaleCacheOnUpgrade() {
-        val prefs = getSharedPreferences("app_cache", MODE_PRIVATE)
-        val lastVersion = prefs.getInt("cache_version_code", 0)
-        val currentVersion = try {
-            packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
-        } catch (_: Exception) { 0 }
-
-        if (currentVersion > lastVersion) {
-            var count = 0
-            filesDir.listFiles()?.forEach { f ->
-                if (f.name.startsWith("embedded_") || f.name.startsWith("sanitized_") ||
-                    f.name.startsWith("plate") && f.name.endsWith(".3mf")) {
-                    f.delete()
-                    count++
-                }
+        // Always clear cached sanitized/embedded 3MF files on cold start.
+        // These are regenerated on demand from the original source file, so there's
+        // no cost to deleting them. Stale files from previous versions (or debug builds
+        // with the same versionCode) cause "Coordinate outside allowed range" Clipper
+        // errors in OrcaSlicer because the sanitizer output format changes between versions.
+        var count = 0
+        filesDir.listFiles()?.forEach { f ->
+            if (f.name.startsWith("embedded_") || f.name.startsWith("sanitized_") ||
+                (f.name.startsWith("plate") && f.name.endsWith(".3mf"))) {
+                f.delete()
+                count++
             }
-            prefs.edit().putInt("cache_version_code", currentVersion).apply()
-            if (count > 0) {
-                Log.i("SlicerVM", "Cleared $count stale cache files after upgrade to v$currentVersion")
-            }
+        }
+        if (count > 0) {
+            Log.i("SlicerVM", "Cleared $count cached 3MF files on startup")
         }
     }
 
