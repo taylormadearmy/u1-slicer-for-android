@@ -44,7 +44,8 @@ import java.util.concurrent.TimeUnit
 fun PrinterScreen(
     viewModel: PrinterViewModel,
     filaments: List<FilamentProfile> = emptyList(),
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigateSettings: () -> Unit = {}
 ) {
     val status by viewModel.status.collectAsState()
     val sendingState by viewModel.sendingState.collectAsState()
@@ -120,6 +121,9 @@ fun PrinterScreen(
                                 tint = if (isLightOn == true) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                             )
                         }
+                    }
+                    IconButton(onClick = onNavigateSettings) {
+                        Icon(Icons.Default.Settings, "Printer settings")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)

@@ -16,7 +16,8 @@ import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
 
 object Routes {
-    const val SLICER = "slicer"
+    const val PREPARE = "prepare"
+    const val PREVIEW = "preview"
     const val SETTINGS = "settings"
     const val PRINTER = "printer"
     const val FILAMENTS = "filaments"
@@ -32,11 +33,15 @@ fun U1NavGraph(
     printerViewModel: PrinterViewModel,
     @Suppress("UNUSED_PARAMETER") onPickFile: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onSaveGcode: () -> Unit,
-    slicerContent: @Composable () -> Unit
+    prepareContent: @Composable () -> Unit,
+    previewContent: @Composable () -> Unit
 ) {
-    NavHost(navController = navController, startDestination = Routes.SLICER) {
-        composable(Routes.SLICER) {
-            slicerContent()
+    NavHost(navController = navController, startDestination = Routes.PREPARE) {
+        composable(Routes.PREPARE) {
+            prepareContent()
+        }
+        composable(Routes.PREVIEW) {
+            previewContent()
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
@@ -51,7 +56,8 @@ fun U1NavGraph(
             PrinterScreen(
                 viewModel = printerViewModel,
                 filaments = filaments,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onNavigateSettings = { navController.navigate(Routes.SETTINGS) }
             )
         }
         composable(Routes.FILAMENTS) {

@@ -148,7 +148,8 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(navController) {
                         viewModel.setNavigateCallback?.invoke { screen ->
                             val route = when (screen.lowercase()) {
-                                "slicer" -> Routes.SLICER
+                                "slicer", "prepare" -> Routes.PREPARE
+                                "preview" -> Routes.PREVIEW
                                 "printer" -> Routes.PRINTER
                                 "jobs" -> Routes.JOBS
                                 "settings" -> Routes.SETTINGS
@@ -159,40 +160,48 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // Shared tab navigation helpers — single-top + pop to start to avoid stacking
+                val navigateTab = { route: String ->
+                    navController.navigate(route) {
+                        popUpTo(Routes.PREPARE) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+                val pickFileMimeTypes = arrayOf(
+                    "application/sla",
+                    "model/stl",
+                    "application/vnd.ms-pki.stl",
+                    "application/octet-stream",
+                    "model/3mf",
+                    "application/vnd.ms-3mfdocument",
+                    "model/obj",
+                    "*/*"
+                )
+
                 U1NavGraph(
                     navController = navController,
                     viewModel = viewModel,
                     printerViewModel = printerViewModel,
-                    onPickFile = {
-                        filePickerLauncher.launch(arrayOf(
-                            "application/sla",
-                            "model/stl",
-                            "application/vnd.ms-pki.stl",
-                            "application/octet-stream",
-                            "model/3mf",
-                            "application/vnd.ms-3mfdocument",
-                            "model/obj",
-                            "*/*"
-                        ))
-                    },
-                    onSaveGcode = {
-                        gcodeSaveLauncher.launch("output.gcode")
-                    },
-                    slicerContent = {
-                        SlicerScreen(
+                    onPickFile = { filePickerLauncher.launch(pickFileMimeTypes) },
+                    onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") },
+                    prepareContent = {
+                        PrepareScreen(
                             viewModel = viewModel,
-                            onPickFile = {
-                                filePickerLauncher.launch(arrayOf(
-                                    "application/sla",
-                                    "model/stl",
-                                    "application/vnd.ms-pki.stl",
-                                    "application/octet-stream",
-                                    "model/3mf",
-                                    "application/vnd.ms-3mfdocument",
-                                    "model/obj",
-                                    "*/*"
-                                ))
-                            },
+                            onPickFile = { filePickerLauncher.launch(pickFileMimeTypes) },
+                            onNavigatePrepare = { },
+                            onNavigatePreview = { navigateTab(Routes.PREVIEW) },
+                            onNavigateSettings = { navController.navigate(Routes.SETTINGS) },
+                            onNavigatePrinter = { navController.navigate(Routes.PRINTER) },
+                            onNavigateJobs = { navController.navigate(Routes.JOBS) },
+                            onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) }
+                        )
+                    },
+                    previewContent = {
+                        PreviewScreen(
+                            viewModel = viewModel,
+                            onNavigatePrepare = { navigateTab(Routes.PREPARE) },
+                            onNavigatePreview = { },
                             onNavigateSettings = { navController.navigate(Routes.SETTINGS) },
                             onNavigatePrinter = { navController.navigate(Routes.PRINTER) },
                             onSendToPrinter = { gcodePath ->
@@ -201,7 +210,6 @@ class MainActivity : ComponentActivity() {
                             },
                             onNavigateJobs = { navController.navigate(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
-                            onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
                             onShareGcode = { viewModel.shareGcode() },
                             onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") }
                         )
@@ -236,28 +244,68 @@ fun U1SlicerTheme(content: @Composable () -> Unit) {
 }
 
 // =============================================================================
-// Main Screen
+// Shared Bottom Navigation Bar
+// =============================================================================
+@Composable
+fun RowScope.U1BottomNavItems(
+    selectedTab: String,
+    onNavigatePrepare: () -> Unit,
+    onNavigatePreview: () -> Unit,
+    onNavigatePrinter: () -> Unit,
+    onNavigateJobs: () -> Unit,
+    onNavigateSettings: () -> Unit
+) {
+    NavigationBarItem(
+        icon = { Icon(Icons.Default.ViewInAr, null) },
+        label = { Text("Prepare") },
+        selected = selectedTab == "prepare",
+        onClick = onNavigatePrepare
+    )
+    NavigationBarItem(
+        icon = { Icon(Icons.Default.Layers, null) },
+        label = { Text("Preview") },
+        selected = selectedTab == "preview",
+        onClick = onNavigatePreview
+    )
+    NavigationBarItem(
+        icon = { Icon(Icons.Default.Print, null) },
+        label = { Text("Printer") },
+        selected = false,
+        onClick = onNavigatePrinter
+    )
+    NavigationBarItem(
+        icon = { Icon(Icons.Default.History, null) },
+        label = { Text("Jobs") },
+        selected = false,
+        onClick = onNavigateJobs
+    )
+    NavigationBarItem(
+        icon = { Icon(Icons.Default.Settings, null) },
+        label = { Text("Settings") },
+        selected = false,
+        onClick = onNavigateSettings
+    )
+}
+
+// =============================================================================
+// Prepare Screen
 // =============================================================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SlicerScreen(
+fun PrepareScreen(
     viewModel: SlicerViewModel,
     onPickFile: () -> Unit,
+    onNavigatePrepare: () -> Unit,
+    onNavigatePreview: () -> Unit,
     onNavigateSettings: () -> Unit,
     onNavigatePrinter: () -> Unit,
-    onSendToPrinter: (gcodePath: String) -> Unit = {},
     onNavigateJobs: () -> Unit,
-    onNavigateGcodeViewer3D: () -> Unit,
-    onNavigateModelViewer: () -> Unit,
-    onShareGcode: () -> Unit,
-    onSaveGcode: () -> Unit
+    onNavigateModelViewer: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     val config by viewModel.config.collectAsState()
     val slicingOverrides by viewModel.slicingOverrides.collectAsState()
     val coreVersion by viewModel.coreVersion.collectAsState()
-    val gcodePreview by viewModel.gcodePreview.collectAsState()
-    val parsedGcode by viewModel.parsedGcode.collectAsState()
     val showPlateSelector by viewModel.showPlateSelector.collectAsState()
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
@@ -344,32 +392,297 @@ fun SlicerScreen(
             )
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                U1BottomNavItems(
+                    selectedTab = "prepare",
+                    onNavigatePrepare = onNavigatePrepare,
+                    onNavigatePreview = onNavigatePreview,
+                    onNavigatePrinter = onNavigatePrinter,
+                    onNavigateJobs = onNavigateJobs,
+                    onNavigateSettings = onNavigateSettings
+                )
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { padding ->
+        // Determine what to show — even during Slicing/SliceComplete, Prepare shows the model
+        val modelLoaded = state is SlicerViewModel.SlicerState.ModelLoaded ||
+                state is SlicerViewModel.SlicerState.Slicing ||
+                state is SlicerViewModel.SlicerState.SliceComplete
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    // Extra top padding when model loaded to make room for the sticky slice button
+                    .padding(top = if (modelLoaded) 72.dp else 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.ViewInAr, null) },
-                    label = { Text("Slicer") },
-                    selected = true,
-                    onClick = { }
+                when {
+                    state is SlicerViewModel.SlicerState.Idle -> {
+                        PrepareEmptyState(
+                            onPickFile = onPickFile,
+                            onImportUrl = { showImportDialog = true }
+                        )
+                    }
+                    state is SlicerViewModel.SlicerState.Loading -> {
+                        val s = state as SlicerViewModel.SlicerState.Loading
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(32.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                                Text("Loading ${s.filename}…",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                            }
+                        }
+                    }
+                    state is SlicerViewModel.SlicerState.Error -> {
+                        ErrorCard((state as SlicerViewModel.SlicerState.Error).message, onPickFile)
+                    }
+                    modelLoaded -> {
+                        val info = when (val s = state) {
+                            is SlicerViewModel.SlicerState.ModelLoaded -> s.info
+                            is SlicerViewModel.SlicerState.Slicing -> null
+                            is SlicerViewModel.SlicerState.SliceComplete -> null
+                            else -> null
+                        }
+                        // Inline 3D model preview
+                        val modelPath = viewModel.previewModelPath
+                        if (modelPath != null && (
+                            modelPath.endsWith(".stl", ignoreCase = true) ||
+                            modelPath.endsWith(".3mf", ignoreCase = true)
+                        )) {
+                            var showInfoDialog by remember { mutableStateOf(false) }
+                            val positions = viewModel.getPlacementPositions()
+                            val loadedInfo = info
+                            InlineModelPreview(
+                                modelFilePath = modelPath,
+                                onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
+                                    onNavigateModelViewer else ({}),
+                                extruderColors = extruderColors,
+                                objectPositions = positions,
+                                modelSizeX = loadedInfo?.sizeX ?: 0f,
+                                modelSizeY = loadedInfo?.sizeY ?: 0f,
+                                wipeTowerEnabled = config.wipeTowerEnabled,
+                                wipeTowerX = config.wipeTowerX,
+                                wipeTowerY = config.wipeTowerY,
+                                wipeTowerWidth = config.wipeTowerWidth,
+                                wipeTowerDepth = config.wipeTowerWidth,
+                                onPositionsChanged = { pos, towerPos ->
+                                    viewModel.applyPlacementPositions(pos, towerPos)
+                                },
+                                onInfoClick = { showInfoDialog = true }
+                            )
+                            if (showInfoDialog && loadedInfo != null) {
+                                ModelInfoDialog(
+                                    info = loadedInfo,
+                                    threeMfInfo = threeMfInfo,
+                                    config = config,
+                                    onToggleWipeTower = {
+                                        viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
+                                    },
+                                    onReassign = { viewModel.showMultiColorReassign() },
+                                    onDismiss = { showInfoDialog = false }
+                                )
+                            }
+                        }
+                        // Inline extruder/color assignment + prime tower toggle
+                        PrintSetupSection(
+                            detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
+                            colorMapping = colorMapping,
+                            extruderPresets = extruderPresets,
+                            filaments = filaments,
+                            wipeTowerEnabled = config.wipeTowerEnabled,
+                            extruderCount = config.extruderCount,
+                            onMappingChange = { newMapping ->
+                                viewModel.applyMultiColorAssignments(newMapping, extruderPresets, filaments)
+                            },
+                            onToggleWipeTower = {
+                                viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
+                            }
+                        )
+                        // Scale controls
+                        ScaleSection(
+                            scale = modelScale,
+                            onScaleChange = { viewModel.setModelScale(it) }
+                        )
+                        ConfigCard(
+                            config, viewModel::updateConfig, copyCount, viewModel::setCopyCount,
+                            slicingOverrides = slicingOverrides,
+                            onOverridesChange = { viewModel.saveSlicingOverrides(it) }
+                        )
+                    }
+                }
+            }
+
+            // Sticky slice button overlayed at the top
+            if (modelLoaded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                colors = listOf(
+                                    MaterialTheme.colorScheme.background,
+                                    MaterialTheme.colorScheme.background,
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .align(Alignment.TopCenter)
+                ) {
+                    SliceButton(onClick = {
+                        viewModel.startSlicing()
+                        onNavigatePreview()
+                    })
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// Prepare Empty State — dimmed bed background with + button overlay
+// =============================================================================
+@Composable
+fun PrepareEmptyState(onPickFile: () -> Unit, onImportUrl: () -> Unit = {}) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(300.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        // Decorative grid lines to suggest build plate
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            val gridColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.04f)
+            val step = 30.dp.toPx()
+            var x = 0f
+            while (x < size.width) {
+                drawLine(gridColor, androidx.compose.ui.geometry.Offset(x, 0f),
+                    androidx.compose.ui.geometry.Offset(x, size.height))
+                x += step
+            }
+            var y = 0f
+            while (y < size.height) {
+                drawLine(gridColor, androidx.compose.ui.geometry.Offset(0f, y),
+                    androidx.compose.ui.geometry.Offset(size.width, y))
+                y += step
+            }
+        }
+
+        // Semi-transparent overlay
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background.copy(alpha = 0.5f))
+        )
+
+        // Content overlay
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            FloatingActionButton(
+                onClick = onPickFile,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = Color.White,
+                modifier = Modifier.size(64.dp)
+            ) {
+                Icon(Icons.Default.Add, "Load model", modifier = Modifier.size(32.dp))
+            }
+            Text(
+                "Load a 3D Model",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                "Supports STL, 3MF, OBJ, STEP",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            )
+        }
+    }
+
+    // MakerWorld button below the empty state
+    OutlinedButton(
+        onClick = onImportUrl,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Icon(Icons.Default.Language, null, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Import from MakerWorld")
+    }
+}
+
+// =============================================================================
+// Preview Screen
+// =============================================================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PreviewScreen(
+    viewModel: SlicerViewModel,
+    onNavigatePrepare: () -> Unit,
+    onNavigatePreview: () -> Unit,
+    onNavigateSettings: () -> Unit,
+    onNavigatePrinter: () -> Unit,
+    onSendToPrinter: (gcodePath: String) -> Unit = {},
+    onNavigateJobs: () -> Unit,
+    onNavigateGcodeViewer3D: () -> Unit,
+    onShareGcode: () -> Unit,
+    onSaveGcode: () -> Unit
+) {
+    val state by viewModel.state.collectAsState()
+    val coreVersion by viewModel.coreVersion.collectAsState()
+    val parsedGcode by viewModel.parsedGcode.collectAsState()
+    val extruderColors by viewModel.activeExtruderColors.collectAsState()
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text("U1 Slicer", fontWeight = FontWeight.Bold)
+                        Text(
+                            coreVersion,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Print, null) },
-                    label = { Text("Printer") },
-                    selected = false,
-                    onClick = onNavigatePrinter
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.History, null) },
-                    label = { Text("Jobs") },
-                    selected = false,
-                    onClick = onNavigateJobs
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Settings, null) },
-                    label = { Text("Settings") },
-                    selected = false,
-                    onClick = onNavigateSettings
+            )
+        },
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                U1BottomNavItems(
+                    selectedTab = "preview",
+                    onNavigatePrepare = onNavigatePrepare,
+                    onNavigatePreview = onNavigatePreview,
+                    onNavigatePrinter = onNavigatePrinter,
+                    onNavigateJobs = onNavigateJobs,
+                    onNavigateSettings = onNavigateSettings
                 )
             }
         },
@@ -384,97 +697,6 @@ fun SlicerScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             when (val s = state) {
-                is SlicerViewModel.SlicerState.Idle -> {
-                    IdleContent(
-                        onPickFile = onPickFile,
-                        onImportUrl = { showImportDialog = true }
-                    )
-                }
-                is SlicerViewModel.SlicerState.Loading -> {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                            Text("Loading ${s.filename}…",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
-                        }
-                    }
-                }
-                is SlicerViewModel.SlicerState.ModelLoaded -> {
-                    // Inline 3D model preview — top of page, larger
-                    // Use previewModelPath (original source) so component files are available
-                    val modelPath = viewModel.previewModelPath
-                    if (modelPath != null && (
-                        modelPath.endsWith(".stl", ignoreCase = true) ||
-                        modelPath.endsWith(".3mf", ignoreCase = true)
-                    )) {
-                        var showInfoDialog by remember { mutableStateOf(false) }
-                        val positions = viewModel.getPlacementPositions()
-                        InlineModelPreview(
-                            modelFilePath = modelPath,
-                            onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
-                                onNavigateModelViewer else ({}),
-                            extruderColors = extruderColors,
-                            objectPositions = positions,
-                            modelSizeX = s.info.sizeX,
-                            modelSizeY = s.info.sizeY,
-                            wipeTowerEnabled = config.wipeTowerEnabled,
-                            wipeTowerX = config.wipeTowerX,
-                            wipeTowerY = config.wipeTowerY,
-                            wipeTowerWidth = config.wipeTowerWidth,
-                            wipeTowerDepth = config.wipeTowerWidth,
-                            onPositionsChanged = { pos, towerPos ->
-                                viewModel.applyPlacementPositions(pos, towerPos)
-                            },
-                            onInfoClick = { showInfoDialog = true }
-                        )
-                        if (showInfoDialog) {
-                            ModelInfoDialog(
-                                info = s.info,
-                                threeMfInfo = threeMfInfo,
-                                config = config,
-                                onToggleWipeTower = {
-                                    viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
-                                },
-                                onReassign = { viewModel.showMultiColorReassign() },
-                                onDismiss = { showInfoDialog = false }
-                            )
-                        }
-                    }
-                    // Inline extruder/color assignment + prime tower toggle
-                    PrintSetupSection(
-                        detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
-                        colorMapping = colorMapping,
-                        extruderPresets = extruderPresets,
-                        filaments = filaments,
-                        wipeTowerEnabled = config.wipeTowerEnabled,
-                        extruderCount = config.extruderCount,
-                        onMappingChange = { newMapping ->
-                            viewModel.applyMultiColorAssignments(newMapping, extruderPresets, filaments)
-                        },
-                        onToggleWipeTower = {
-                            viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
-                        }
-                    )
-                    // Scale controls
-                    ScaleSection(
-                        scale = modelScale,
-                        onScaleChange = { viewModel.setModelScale(it) }
-                    )
-                    ConfigCard(
-                        config, viewModel::updateConfig, copyCount, viewModel::setCopyCount,
-                        slicingOverrides = slicingOverrides,
-                        onOverridesChange = { viewModel.saveSlicingOverrides(it) }
-                    )
-                    SliceButton(onClick = { viewModel.startSlicing() })
-                }
                 is SlicerViewModel.SlicerState.Slicing -> {
                     SlicingProgressCard(s.progress, s.stage)
                 }
@@ -493,25 +715,72 @@ fun SlicerScreen(
                             onExpand = onNavigateGcodeViewer3D
                         )
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { viewModel.backToModelLoaded() },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Re-slice")
-                        }
-                    }
                 }
                 is SlicerViewModel.SlicerState.Error -> {
-                    ErrorCard(s.message, onPickFile)
+                    ErrorCard(s.message) { onNavigatePrepare() }
+                }
+                else -> {
+                    // Empty state — no slice results yet, show empty bed
+                    PreviewEmptyState()
                 }
             }
+        }
+    }
+}
+
+// =============================================================================
+// Preview Empty State — empty build plate
+// =============================================================================
+@Composable
+fun PreviewEmptyState() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(300.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        // Decorative grid lines to suggest build plate
+        androidx.compose.foundation.Canvas(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            val gridColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.04f)
+            val step = 30.dp.toPx()
+            var x = 0f
+            while (x < size.width) {
+                drawLine(gridColor, androidx.compose.ui.geometry.Offset(x, 0f),
+                    androidx.compose.ui.geometry.Offset(x, size.height))
+                x += step
+            }
+            var y = 0f
+            while (y < size.height) {
+                drawLine(gridColor, androidx.compose.ui.geometry.Offset(0f, y),
+                    androidx.compose.ui.geometry.Offset(size.width, y))
+                y += step
+            }
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                Icons.Default.Layers,
+                contentDescription = null,
+                modifier = Modifier.size(48.dp),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+            )
+            Text(
+                "No slice results",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+            )
+            Text(
+                "Load a model and slice it to see the preview",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+            )
         }
     }
 }
@@ -520,63 +789,7 @@ fun SlicerScreen(
 // UI Components
 // =============================================================================
 
-@Composable
-fun IdleContent(onPickFile: () -> Unit, onImportUrl: () -> Unit = {}) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        ),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Icon(
-                Icons.Default.Add,
-                contentDescription = null,
-                modifier = Modifier.size(64.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                "Load a 3D Model",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                "Supports STL, 3MF, OBJ, STEP",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Button(
-                onClick = onPickFile,
-                modifier = Modifier.fillMaxWidth(0.6f),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
-            ) {
-                Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Browse Files")
-            }
-            OutlinedButton(
-                onClick = onImportUrl,
-                modifier = Modifier.fillMaxWidth(0.6f),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Default.Language, null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("MakerWorld")
-            }
-        }
-    }
-}
+// IdleContent removed — replaced by PrepareEmptyState
 
 @Composable
 fun ModelInfoCard(info: ModelInfo) {
