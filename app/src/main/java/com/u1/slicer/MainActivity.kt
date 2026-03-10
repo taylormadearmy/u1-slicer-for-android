@@ -76,22 +76,51 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun clearStaleCacheOnUpgrade() {
-        // Always clear cached sanitized/embedded 3MF files on cold start.
-        // These are regenerated on demand from the original source file, so there's
-        // no cost to deleting them. Stale files from previous versions (or debug builds
-        // with the same versionCode) cause "Coordinate outside allowed range" Clipper
-        // errors in OrcaSlicer because the sanitizer output format changes between versions.
-        var count = 0
-        filesDir.listFiles()?.forEach { f ->
-            if (f.name.startsWith("embedded_") || f.name.startsWith("sanitized_") ||
-                (f.name.startsWith("plate") && f.name.endsWith(".3mf"))) {
-                f.delete()
-                count++
+        val prefs = getSharedPreferences("upgrade_state", MODE_PRIVATE)
+        val currentVersion = try {
+            packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
+        } catch (_: Exception) { -1 }
+        val lastVersion = prefs.getInt("lastVersionCode", -1)
+
+        if (lastVersion != -1 && lastVersion != currentVersion) {
+            // Version changed — aggressively delete ALL cached 3MF and G-code files,
+            // then force-kill the process so the native .so is loaded fresh.
+            // On upgrade, Android may keep the old process alive with stale native
+            // memory state, causing "Coordinate outside allowed range" Clipper errors.
+            // Clearing cache alone doesn't fix this — the process must be restarted.
+            var count = 0
+            filesDir.listFiles()?.forEach { f ->
+                if (f.name.endsWith(".3mf") || f.name.endsWith(".gcode")) {
+                    f.delete()
+                    count++
+                }
+            }
+            Log.i("SlicerVM", "Version upgrade ($lastVersion → $currentVersion): cleared $count cached files, restarting process")
+            prefs.edit().putInt("lastVersionCode", currentVersion).commit()  // sync — must flush before exit()
+
+            // Force-restart: kill this process so Android launches a fresh one next time.
+            // The user sees the app briefly close and can tap to reopen with a clean state.
+            val intent = packageManager.getLaunchIntentForPackage(packageName)
+            intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            startActivity(intent)
+            Runtime.getRuntime().exit(0)
+            return
+        } else {
+            // Same version — still clear known cache patterns as a safety net
+            // (e.g. debug builds with the same versionCode).
+            var count = 0
+            filesDir.listFiles()?.forEach { f ->
+                if (f.name.startsWith("embedded_") || f.name.startsWith("sanitized_") ||
+                    (f.name.startsWith("plate") && f.name.endsWith(".3mf"))) {
+                    f.delete()
+                    count++
+                }
+            }
+            if (count > 0) {
+                Log.i("SlicerVM", "Cleared $count cached 3MF files on startup")
             }
         }
-        if (count > 0) {
-            Log.i("SlicerVM", "Cleared $count cached 3MF files on startup")
-        }
+        prefs.edit().putInt("lastVersionCode", currentVersion).apply()
     }
 
     override fun onDestroy() {
