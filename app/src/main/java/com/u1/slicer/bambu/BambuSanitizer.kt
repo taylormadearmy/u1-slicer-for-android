@@ -201,21 +201,29 @@ object BambuSanitizer {
                         val hasMultiColorComponents = bambuObjectParts.values.any { parts ->
                             parts.filter { it.extruder in 1..4 }.map { it.extruder }.distinct().size > 1
                         }
-                        // Guard against OOM: check total component file size before loading.
-                        // Large multi-plate files (e.g. 7-plate coasters) have many large component
-                        // files.  Loading them all to inline meshes exhausts the Android heap.
-                        // When they're too large, skip restructuring and preserve component refs
-                        // instead — OrcaSlicer (BBS fork) handles p:path component refs natively.
+                        // Guard against OOM and oversized XML: check total component file size
+                        // before loading.  Restructuring inlines ALL objects' meshes into the main
+                        // model XML.  For multi-plate files (e.g. 7-plate Dragon Scale, Shashibo),
+                        // this creates a 40+ MB XML that exceeds OrcaSlicer's BBS 3MF reader
+                        // capacity on Android.  Skip restructuring for multi-plate files — each
+                        // plate is extracted later by extractPlate() which keeps the per-plate
+                        // files small.  OrcaSlicer handles component refs (p:path) natively.
                         val totalComponentSize = if (hasMultiColorComponents) {
                             componentFileNames.sumOf { name -> srcZip.getEntry(name)?.size ?: 0L }
                         } else 0L
-                        // Raise threshold to 50MB: OrcaSlicer's _generate_volumes_new does NOT
-                        // support firstid/lastid volume splitting — it matches volumes by subobject_id.
-                        // Without restructuring, multi-color models (e.g. Dragon Scale at 19.9MB) lose
-                        // per-volume extruder assignments and slice as single-colour.  The old 15MB
-                        // threshold was too conservative for modern devices with 8GB+ RAM.
-                        val safeToInline = totalComponentSize <= 50_000_000L  // 50 MB
-                        if (hasMultiColorComponents && !safeToInline) {
+                        // Detect multi-plate: check for virtual-position build items (TX>270 or
+                        // TY<0) which indicate multiple plates packed into one model.
+                        val modelXml = String(mainModelContent!!)
+                        val isMultiPlate = detectMultiPlateFromBuild(modelXml)
+                        if (isMultiPlate && hasMultiColorComponents) {
+                            Log.i(TAG, "Multi-plate file detected — skipping restructuring " +
+                                "(${totalComponentSize / 1_000_000}MB components), will restructure per-plate")
+                        }
+                        // For single-plate files: 50MB threshold allows restructuring of large
+                        // multi-color models.  For multi-plate files: always skip — inlining all
+                        // plates' meshes creates oversized XML that crashes the BBS reader.
+                        val safeToInline = !isMultiPlate && totalComponentSize <= 50_000_000L  // 50 MB
+                        if (hasMultiColorComponents && !safeToInline && !isMultiPlate) {
                             Log.w(TAG, "Component files too large to inline " +
                                 "(${totalComponentSize / 1_000_000}MB > 50MB), preserving component refs")
                         }
@@ -812,6 +820,32 @@ object BambuSanitizer {
         return text.toByteArray()
     }
 
+    // ---- Multi-plate detection (used by process()) ----
+
+    /**
+     * Detect whether the model XML represents a multi-plate file by inspecting
+     * <build> items for virtual-position transforms (TX>270 or TY<-10 or TY>270)
+     * or p:object_id plate markers.
+     */
+    private fun detectMultiPlateFromBuild(modelXml: String): Boolean {
+        val buildRegex = Regex("""<build\b[^>]*>(.*?)</build>""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val buildBody = buildRegex.find(modelXml)?.groupValues?.get(1) ?: return false
+        val itemRegex = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val items = itemRegex.findAll(buildBody).map { it.value }.toList()
+        if (items.size <= 1) return false
+        // Check for p:object_id plate markers (older Bambu format with explicit plate tags)
+        if (items.any { it.contains("p:object_id=") }) return true
+        // Check for virtual-position transforms
+        val transformRegex = Regex("""transform="([^"]+)"""")
+        return items.any { item ->
+            val parts = transformRegex.find(item)?.groupValues?.get(1)
+                ?.trim()?.split(Regex("\\s+")) ?: emptyList()
+            val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
+            val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
+            tx > 270f || ty < -10f || ty > 270f
+        }
+    }
+
     // ---- Model XML Cleanup (used by process()) ----
 
     private fun cleanModelXml(content: ByteArray): ByteArray {
@@ -1131,24 +1165,50 @@ object BambuSanitizer {
             val actualHasPlateJsons = hasPlateJsons ?: srcZip.entries().asSequence()
                 .any { it.name.matches(Regex("Metadata/plate_\\d+\\.json")) }
 
+            // Two-pass approach: first filter the main model to determine which
+            // object IDs are referenced, then write entries — stripping unreferenced
+            // objects from config.  This keeps plate files lean when the original
+            // file has many plates.
+            var referencedObjectIds: Set<String>? = null
+
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
                 for (entry in srcZip.entries()) {
                     val content = srcZip.getInputStream(entry).readBytes()
 
                     when {
-                        entry.name.endsWith("3dmodel.model") -> {
+                        entry.name == "3D/3dmodel.model" -> {
                             val filtered = filterModelToPlate(String(content), targetPlateId,
                                 actualHasPlateJsons)
-                            writeStored(destZip, entry.name, filtered.toByteArray())
+                            val (stripped, refIds) = stripUnreferencedResources(filtered)
+                            referencedObjectIds = refIds
+                            if (refIds != null) {
+                                Log.i(TAG, "extractPlate: stripped unreferenced resources, " +
+                                    "keeping ${refIds.size} object(s)")
+                            }
+                            writeStored(destZip, entry.name, stripped.toByteArray())
+                        }
+                        // Component model files: keep only if they contain meshes
+                        // referenced by the target plate's objects
+                        entry.name.endsWith(".model") && entry.name != "3D/3dmodel.model" -> {
+                            writeStored(destZip, entry.name, content)
                         }
                         entry.name == "Metadata/model_settings.config" -> {
-                            // Strip <assemble> section: OrcaSlicer's _handle_start_assemble_item
-                            // looks up each assemble_item's object_id in m_objects (which only
-                            // contains objects that appear in <build>).  A plate-extracted file
-                            // has only one build item, so assemble_items for the other 6 objects
-                            // cause "can not find object for assemble item" → load failure.
-                            val stripped = stripAssembleSection(String(content))
+                            // Strip <assemble> section and unreferenced object entries
+                            var stripped = stripAssembleSection(String(content))
+                            val refIds = referencedObjectIds
+                            if (refIds != null) {
+                                stripped = stripUnreferencedConfigObjects(stripped, refIds)
+                            }
                             writeStored(destZip, entry.name, stripped.toByteArray())
+                        }
+                        entry.name == "Metadata/Slic3r_PE_model.config" -> {
+                            // Strip unreferenced object entries from PrusaSlicer config too
+                            var text = String(content)
+                            val refIds = referencedObjectIds
+                            if (refIds != null) {
+                                text = stripUnreferencedConfigObjects(text, refIds)
+                            }
+                            writeStored(destZip, entry.name, text.toByteArray())
                         }
                         else -> writeStored(destZip, entry.name, content)
                     }
@@ -1156,6 +1216,62 @@ object BambuSanitizer {
             }
         }
         return outputFile
+    }
+
+    /**
+     * Strip `<object>` blocks from `<resources>` that are NOT referenced by any `<build>` item.
+     * After filterModelToPlate reduces the build section to a single plate's items, the
+     * resources may contain objects for all other plates — stripping them keeps the file lean.
+     *
+     * Returns the stripped XML and the set of referenced object IDs (null if no stripping needed).
+     */
+    private fun stripUnreferencedResources(xml: String): Pair<String, Set<String>?> {
+        val buildRegex = Regex("""<build\b[^>]*>(.*?)</build>""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val buildMatch = buildRegex.find(xml) ?: return Pair(xml, null)
+        val itemObjIdRegex = Regex("""objectid="(\d+)"""")
+        val buildItemIds = itemObjIdRegex.findAll(buildMatch.groupValues[1])
+            .map { it.groupValues[1] }.toSet()
+        if (buildItemIds.isEmpty()) return Pair(xml, null)
+
+        // BFS: collect all transitively referenced objects via component refs
+        val allReferencedIds = buildItemIds.toMutableSet()
+        val objectBlockRegex = Regex("""<object\s+id="(\d+)"[^>]*>[\s\S]*?</object>""")
+        val componentObjIdRegex = Regex("""<component[^>]*\bobjectid="(\d+)"[^>]*>""")
+        val objectBlocks = objectBlockRegex.findAll(xml).toList()
+        val queue = ArrayDeque(buildItemIds)
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            val block = objectBlocks.find { it.groupValues[1] == id } ?: continue
+            for (ref in componentObjIdRegex.findAll(block.value).map { it.groupValues[1] }) {
+                if (allReferencedIds.add(ref)) queue.addLast(ref)
+            }
+        }
+
+        val allObjectIds = objectBlocks.map { it.groupValues[1] }.toSet()
+        val unreferenced = allObjectIds - allReferencedIds
+        if (unreferenced.isEmpty()) return Pair(xml, null)
+
+        var result = xml
+        for (block in objectBlocks) {
+            if (block.groupValues[1] in unreferenced) {
+                result = result.replace(block.value, "")
+            }
+        }
+        result = result.replace(Regex("""\n\s*\n\s*\n"""), "\n\n")
+        Log.i(TAG, "stripUnreferencedResources: removed ${unreferenced.size} object(s), " +
+                "kept ${allReferencedIds.size}: $allReferencedIds")
+        return Pair(result, allReferencedIds)
+    }
+
+    /**
+     * Strip `<object>` entries from model_settings.config or Slic3r_PE_model.config
+     * that don't match any of the [referencedIds].
+     */
+    private fun stripUnreferencedConfigObjects(xml: String, referencedIds: Set<String>): String {
+        val objectBlockRegex = Regex("""[ \t]*<object\s+id="(\d+)"[^>]*>[\s\S]*?</object>[ \t]*\r?\n?""")
+        return objectBlockRegex.replace(xml) { match ->
+            if (match.groupValues[1] in referencedIds) match.value else ""
+        }
     }
 
     /**
