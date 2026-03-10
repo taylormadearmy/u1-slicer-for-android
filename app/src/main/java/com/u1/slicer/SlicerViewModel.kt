@@ -352,8 +352,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // (process() strips plate_N.json files from the ZIP, so auto-detection
                 // on the processed file would always return false).
                 val hasPlateJsons = _threeMfInfo.value?.hasPlateJsons
-                val plateFile = BambuSanitizer.extractPlate(file, plateId, context.filesDir,
+                val rawPlateFile = BambuSanitizer.extractPlate(file, plateId, context.filesDir,
                     hasPlateJsons = hasPlateJsons)
+                // Restructure per-plate: inline component meshes so OrcaSlicer
+                // can assign per-volume extruders (deferred from process()).
+                val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, context.filesDir)
                 // plateFile is now the source for any subsequent re-embed with remap
                 val plateInfo = ThreeMfParser.parse(plateFile)
                 sourceModelFile = plateFile

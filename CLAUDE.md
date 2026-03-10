@@ -28,7 +28,7 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 
 ```bash
 ./gradlew testDebugUnitTest                                                    # 255 JVM unit tests
-ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 97 instrumented tests
+ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 98 instrumented tests (uses Orchestrator)
 ```
 
 ### MANDATORY: End-to-end testing before a feature is "done"
@@ -68,7 +68,7 @@ All Gradle commands must be run from **Windows PowerShell**, not WSL:
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
-# Instrumented tests (96) — test device must be connected
+# Instrumented tests (98) — test device must be connected, uses Orchestrator
 Remove-Item -Recurse -Force app\build\outputs\androidTest-results -ErrorAction SilentlyContinue
 .\gradlew connectedDebugAndroidTest --no-daemon
 
@@ -100,13 +100,13 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (9) — Grid layout, bed bounds, copy capping
 
-### Instrumented tests (`app/src/androidTest/`) — 97 tests across 9 classes
+### Instrumented tests (`app/src/androidTest/`) — 98 tests across 9 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (24) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` (24) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression
+- `slicing/BambuPipelineIntegrationTest.kt` (25) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression, restructurePlateFile multi-extruder config guard
 - `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/ThreeMfMeshParserTest.kt` (2) — 3MF mesh parsing and transform resolution
@@ -146,6 +146,9 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ProfileEmbedder.buildConfig()` sets `extruder_count` in the embedded `project_settings.config` — OrcaSlicer defaults to 1 without it, ignoring per-volume extruder assignments
 - `TestCommandReceiver` (debug-only): BroadcastReceiver for ADB-driven E2E testing — supports LOAD_FILE, SLICE, CHECK_GCODE, DUMP_STATE, DUMP_EMBEDDED_CONFIG, SET_COLORS, SET_PRINTER, SYNC_FILAMENTS, SELECT_PLATE, NAVIGATE
 - Default extruder colours are R/G/B/W (`ExtruderPreset.DEFAULT_COLORS`) — aids visual testing of multi-colour slicing
+- `BambuSanitizer.restructurePlateFile()` — deferred per-plate restructuring for multi-plate multi-colour files; `process()` preserves `model_settings.config` and defers restructuring, `selectPlate()` calls `extractPlate()` then `restructurePlateFile()` to inline component meshes and write OrcaSlicer-format config
+- `BambuSanitizer.process()` writes EITHER `model_settings.config` (deferred restructuring) OR `Slic3r_PE_model.config` (immediate restructuring), never both — duplicate entries cause ProfileEmbedder ZIP corruption
+- Android Test Orchestrator (`execution 'ANDROIDX_TEST_ORCHESTRATOR'`) runs each instrumented test in its own process — prevents native memory accumulation OOM crashes across slicing test classes
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 

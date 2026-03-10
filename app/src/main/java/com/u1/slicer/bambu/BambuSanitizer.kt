@@ -102,6 +102,11 @@ object BambuSanitizer {
                     var mainModelContent: ByteArray? = null
                     // Track component file names — content loaded on-demand from srcZip to reduce memory
                     val componentFileNames = mutableListOf<String>()
+                    // Buffer model_settings.config — preserved for multi-plate files so
+                    // restructurePlateFile() can restructure per-plate later
+                    var modelSettingsContent: ByteArray? = null
+                    // Set to true when multi-plate restructuring was deferred
+                    var deferredRestructuring = false
                     // Buffer model rels file — only dropped when restructuring inlines meshes
                     var modelRelsContent: ByteArray? = null
 
@@ -141,10 +146,12 @@ object BambuSanitizer {
                                 projectSettingsWritten = true
                             }
 
-                            // Read model_settings.config for extruder assignments but don't write
-                            // (references pre-restructured object IDs that no longer exist)
+                            // Read model_settings.config for extruder assignments.
+                            // For restructured files: don't write (IDs change).
+                            // For multi-plate files (restructuring skipped): buffer for later.
                             name == "Metadata/model_settings.config" -> {
                                 parseModelSettingsExtruders(content, bambuObjectParts)
+                                modelSettingsContent = content
                             }
 
                             // Buffer all .model files — main one for restructuring,
@@ -218,6 +225,7 @@ object BambuSanitizer {
                         if (isMultiPlate && hasMultiColorComponents) {
                             Log.i(TAG, "Multi-plate file detected — skipping restructuring " +
                                 "(${totalComponentSize / 1_000_000}MB components), will restructure per-plate")
+                            deferredRestructuring = true
                         }
                         // For single-plate files: 50MB threshold allows restructuring of large
                         // multi-color models.  For multi-plate files: always skip — inlining all
@@ -308,13 +316,22 @@ object BambuSanitizer {
                     val needsModelConfig = bambuObjectParts.values.any { parts ->
                         parts.any { it.extruder > 1 }
                     }
-                    if (needsModelConfig) {
+                    if (deferredRestructuring && modelSettingsContent != null) {
+                        // For multi-plate files where restructuring was deferred, preserve
+                        // model_settings.config so restructurePlateFile() can restructure
+                        // each plate individually after extraction.  Skip Slic3r_PE_model.config
+                        // to avoid embed() writing duplicate model_settings.config entries.
+                        writeStored(destZip, "Metadata/model_settings.config", modelSettingsContent!!)
+                        Log.i(TAG, "Preserved model_settings.config for deferred per-plate restructuring")
+                    } else if (needsModelConfig) {
                         val slic3rModelConfig = buildSlic3rModelConfig(bambuObjectParts)
                         writeStored(destZip, "Metadata/Slic3r_PE_model.config", slic3rModelConfig.toByteArray())
                         Log.i(TAG, "Generated Slic3r_PE_model.config:\n$slic3rModelConfig")
+                    } else {
+                        // No model config needed — no-op
                     }
-                }
-            }
+                } // ZipOutputStream
+            } // ZipFile
 
             Log.i(TAG, "Sanitization complete: ${outputFile.absolutePath}")
             return outputFile
@@ -1216,6 +1233,110 @@ object BambuSanitizer {
             }
         }
         return outputFile
+    }
+
+    /**
+     * Restructure an extracted single-plate file: inline component meshes into
+     * the main model so OrcaSlicer can assign per-volume extruders.
+     *
+     * This is needed for multi-plate files where [process] skips restructuring
+     * to avoid oversized XML.  After [extractPlate] produces a manageable
+     * single-plate file, this method inlines the component meshes and generates
+     * the correct Slic3r_PE_model.config for per-object extruder assignments.
+     *
+     * @return The restructured file, or [plateFile] unchanged if no
+     *   restructuring was needed.
+     */
+    fun restructurePlateFile(plateFile: File, outDir: File): File {
+        ZipFile(plateFile).use { srcZip ->
+            // 1. Parse extruder assignments from model_settings.config
+            val bambuObjectParts = mutableMapOf<String, MutableList<PartInfo>>()
+            val modelSettingsEntry = srcZip.getEntry("Metadata/model_settings.config")
+            if (modelSettingsEntry != null) {
+                parseModelSettingsExtruders(
+                    srcZip.getInputStream(modelSettingsEntry).readBytes(),
+                    bambuObjectParts
+                )
+            }
+
+            // Check if multi-color restructuring is needed
+            val hasMultiColorComponents = bambuObjectParts.values.any { parts ->
+                parts.filter { it.extruder in 1..4 }.map { it.extruder }.distinct().size > 1
+            }
+            if (!hasMultiColorComponents) {
+                Log.d(TAG, "restructurePlateFile: no multi-color components, skipping")
+                return plateFile
+            }
+
+            // 2. Read main model and component files
+            val mainModelEntry = srcZip.getEntry("3D/3dmodel.model")
+                ?: return plateFile
+            val mainModelContent = srcZip.getInputStream(mainModelEntry).readBytes()
+
+            val componentFileNames = mutableListOf<String>()
+            for (entry in srcZip.entries()) {
+                if (entry.name.endsWith(".model") && entry.name != "3D/3dmodel.model") {
+                    componentFileNames.add(entry.name)
+                }
+            }
+
+            val componentFiles = componentFileNames.associateWith { name ->
+                srcZip.getEntry(name)?.let { srcZip.getInputStream(it).readBytes() }
+                    ?: ByteArray(0)
+            }
+
+            // 3. Restructure
+            val (restructuredModel, newObjectExtruders) =
+                restructureForMultiColor(mainModelContent, bambuObjectParts, componentFiles)
+
+            if (newObjectExtruders.isEmpty()) {
+                Log.w(TAG, "restructurePlateFile: restructuring produced no new objects")
+                return plateFile
+            }
+
+            Log.i(TAG, "restructurePlateFile: inlined ${newObjectExtruders.size} objects " +
+                "from ${componentFileNames.size} component file(s)")
+
+            // 4. Update object parts for config generation
+            val originalParts = bambuObjectParts.values.flatMap { it }
+            bambuObjectParts.clear()
+            var idx = 0
+            for ((objId, ext) in newObjectExtruders.entries.sortedBy { it.key.toIntOrNull() ?: 0 }) {
+                val faceCount = originalParts.getOrNull(idx)?.faceCount ?: 128
+                bambuObjectParts[objId] = mutableListOf(PartInfo(faceCount, ext))
+                idx++
+            }
+
+            // 5. Write output ZIP
+            val cleanedModel = cleanModelXml(restructuredModel)
+            val cleanedModelFinal = stripNonPrintableBuildItems(cleanedModel)
+
+            val outputFile = File(outDir, "restructured_${plateFile.name}")
+            ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
+                writeStored(destZip, "3D/3dmodel.model", cleanedModelFinal)
+
+                // Generate model_settings.config in OrcaSlicer format — the BBS 3MF
+                // reader looks for this file (not Slic3r_PE_model.config).
+                val slic3rConfig = buildSlic3rModelConfig(bambuObjectParts)
+                val modelSettings = ProfileEmbedder.convertToModelSettings(
+                    slic3rConfig.toByteArray(), null)
+                writeStored(destZip, "Metadata/model_settings.config", modelSettings.toByteArray())
+
+                // Copy remaining entries (skip old model, components, configs)
+                for (entry in srcZip.entries()) {
+                    when {
+                        entry.name == "3D/3dmodel.model" -> {} // already written
+                        entry.name.endsWith(".model") -> {} // skip component files (inlined)
+                        entry.name.endsWith(".rels") && entry.name.contains("3dmodel.model") -> {} // not needed
+                        entry.name == "Metadata/model_settings.config" -> {} // already written (OrcaSlicer format)
+                        entry.name == "Metadata/Slic3r_PE_model.config" -> {} // replaced by model_settings
+                        else -> writeStored(destZip, entry.name,
+                            srcZip.getInputStream(entry).readBytes())
+                    }
+                }
+            }
+            return outputFile
+        }
     }
 
     /**

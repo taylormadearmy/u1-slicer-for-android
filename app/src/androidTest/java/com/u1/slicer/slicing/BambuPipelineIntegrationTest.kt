@@ -311,7 +311,7 @@ class BambuPipelineIntegrationTest {
      * mergeThreeMfInfoForPlate() call in selectPlate() can be simplified / removed.
      */
     @Test
-    fun selectPlate_extractedPlateFromProcessedFile_hasNoColors_dragonScale() {
+    fun selectPlate_extractedPlateFromProcessedFile_hasColors_dragonScale() {
         val input = asset("Dragon Scale infinity.3mf")
         val origInfo = ThreeMfParser.parse(input)
         val processed = BambuSanitizer.process(input, outDir)
@@ -321,9 +321,11 @@ class BambuPipelineIntegrationTest {
             hasPlateJsons = mergedInfo.hasPlateJsons)
         val plateInfo = ThreeMfParser.parse(plateFile)
 
-        assertEquals(
-            "plateInfo from processed file should have 0 colors — confirming bug precondition",
-            0, plateInfo.detectedColors.size
+        // Since v1.2.11: model_settings.config is preserved for multi-plate files,
+        // so extracted plates now have color info directly (no merge needed).
+        assertTrue(
+            "plateInfo should have colors (model_settings.config preserved)",
+            plateInfo.detectedColors.isNotEmpty()
         )
     }
 
@@ -349,10 +351,7 @@ class BambuPipelineIntegrationTest {
             hasPlateJsons = mergedInfo.hasPlateJsons)
         val plateInfo = ThreeMfParser.parse(plateFile)
 
-        assertEquals("plateInfo precondition: 0 colors from processed file",
-            0, plateInfo.detectedColors.size)
-
-        // This is the call that selectPlate() must make (and currently does NOT make).
+        // mergeThreeMfInfoForPlate should still produce >= 2 colors/extruders
         val result = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, mergedInfo)
 
         assertTrue(
@@ -385,9 +384,7 @@ class BambuPipelineIntegrationTest {
             hasPlateJsons = mergedInfo.hasPlateJsons)
         val plateInfo = ThreeMfParser.parse(plateFile)
 
-        assertEquals("plateInfo precondition: 0 colors from processed file",
-            0, plateInfo.detectedColors.size)
-
+        // mergeThreeMfInfoForPlate should still produce >= 2 colors/extruders
         val result = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, mergedInfo)
 
         assertTrue(
@@ -415,7 +412,7 @@ class BambuPipelineIntegrationTest {
      *
      * This test mirrors the CURRENT ViewModel pipeline:
      *   openModel():    process → embed(processedInfo, 1-extruder) → sanitized
-     *   selectPlate(5): extractPlate(sanitized) → plateFile
+     *   selectPlate(5): extractPlate(sanitized) → restructurePlateFile → plateFile
      *   startSlicing(): loadModel(plateFile) + slice(dualConfig)  [identity toolRemap path]
      *
      * MUST FAIL if the pipeline produces single-extruder G-code.
@@ -437,13 +434,12 @@ class BambuPipelineIntegrationTest {
             outDir, processedInfo
         )
 
-        // selectPlate(5) step: extract from sanitized (as ViewModel does)
-        val plateFile = BambuSanitizer.extractPlate(sanitized, 5, outDir,
+        // selectPlate(5) step: extract from sanitized then restructure (as ViewModel does)
+        val rawPlateFile = BambuSanitizer.extractPlate(sanitized, 5, outDir,
             hasPlateJsons = mergedInfo.hasPlateJsons)
+        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
 
         // startSlicing() identity path: load plateFile directly, slice with 2-extruder config.
-        // Shashibo plates are single-color geometrically — each plate is one solid filament color.
-        // With wipeTowerEnabled=true, the wipe tower produces a few T1 purge moves at the start.
         assertTrue("loadModel should succeed", lib.loadModel(plateFile.absolutePath))
         val result = lib.slice(dualConfig())
         assertNotNull("slice returned null", result)
@@ -453,7 +449,7 @@ class BambuPipelineIntegrationTest {
         val gcode = File(result.gcodePath).readText()
         val hasT1 = gcode.lines().any { it.trimStart().startsWith("T1") }
         assertTrue(
-            "G-code should contain T1 (wipe-tower purge) — wipeTowerEnabled must be true for multi-extruder",
+            "G-code should contain T1 — multi-extruder plate must have tool changes",
             hasT1
         )
     }
@@ -479,11 +475,12 @@ class BambuPipelineIntegrationTest {
             outDir, processedInfo
         )
 
-        val plateFile = BambuSanitizer.extractPlate(sanitized, 5, outDir,
+        val rawPlateFile = BambuSanitizer.extractPlate(sanitized, 5, outDir,
             hasPlateJsons = mergedInfo.hasPlateJsons)
+        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
         val plateInfo = ThreeMfParser.parse(plateFile)
 
-        // startSlicing() non-identity path: re-embed with sourceModelInfo=plateInfo (0 colors)
+        // startSlicing() non-identity path: re-embed with sourceModelInfo=plateInfo
         // targetExtruderCount=2 simulates toolRemapSlots.size=2
         val reembedded = embedder.embed(
             plateFile,
@@ -500,13 +497,13 @@ class BambuPipelineIntegrationTest {
         val gcode = File(result.gcodePath).readText()
         val hasT1 = gcode.lines().any { it.trimStart().startsWith("T1") }
         assertTrue(
-            "Re-embedded G-code should contain T1 — Shashibo plate 5 is multi-colour",
+            "Re-embedded G-code should contain T1 — multi-extruder plate must have tool changes",
             hasT1
         )
     }
 
     /**
-     * Positive control: the CORRECT pipeline (extract from processed, embed with mergedInfo)
+     * Positive control: the CORRECT pipeline (extract from processed, restructure, embed with mergedInfo)
      * must always produce T1 in the G-code.  If this fails, the issue is in the
      * BambuSanitizer/ProfileEmbedder layer, not in ViewModel state management.
      */
@@ -518,9 +515,10 @@ class BambuPipelineIntegrationTest {
         val processedInfo = ThreeMfParser.parse(processed)
         val mergedInfo = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
 
-        // Extract from processed (not sanitized), embed with merged info
-        val plateFile = BambuSanitizer.extractPlate(processed, 5, outDir,
+        // Extract from processed (not sanitized), restructure, embed with merged info
+        val rawPlateFile = BambuSanitizer.extractPlate(processed, 5, outDir,
             hasPlateJsons = mergedInfo.hasPlateJsons)
+        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
         val plateMergedInfo = SlicerViewModel.mergeThreeMfInfoForPlate(
             ThreeMfParser.parse(plateFile), mergedInfo)
 
@@ -542,6 +540,52 @@ class BambuPipelineIntegrationTest {
         assertTrue(
             "Correct-pipeline G-code must contain T1 — if this fails the bug is in BambuSanitizer/Embedder",
             hasT1
+        )
+    }
+
+    // ─── restructurePlateFile regression guard ─────────────────────────────────
+
+    /**
+     * Regression guard: restructurePlateFile() must actually inline component
+     * meshes for multi-plate files.  Without this, per-volume extruder assignment
+     * is silently lost — OrcaSlicer falls back to single-extruder slicing.
+     *
+     * Checks the Slic3r_PE_model.config in the restructured ZIP for multiple
+     * objects with DIFFERENT extruder values.
+     */
+    @Test
+    fun restructurePlateFile_producesMultiExtruderConfig() {
+        val input = asset("Shashibo-h2s-textured.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        assertTrue("Shashibo should have >= 2 colors", origInfo.detectedColors.size >= 2)
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(ThreeMfParser.parse(processed), origInfo)
+
+        // Extract a multi-color plate and restructure
+        val rawPlateFile = BambuSanitizer.extractPlate(processed, 5, outDir,
+            hasPlateJsons = mergedInfo.hasPlateJsons)
+        val restructured = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
+
+        // The restructured file should be different from the raw plate (inlining happened)
+        assertNotEquals("restructurePlateFile should produce a new file",
+            rawPlateFile.absolutePath, restructured.absolutePath)
+
+        // Check the config inside the ZIP for multiple extruder values
+        val zip = java.util.zip.ZipFile(restructured)
+        val configEntry = zip.getEntry("Metadata/model_settings.config")
+        assertNotNull("Restructured ZIP should have model_settings.config", configEntry)
+        val configText = zip.getInputStream(configEntry!!).bufferedReader().readText()
+        zip.close()
+
+        // Parse extruder values from config — expect at least 2 different values
+        val extruderValues = Regex("""key="extruder"\s+value="(\d+)"""")
+            .findAll(configText)
+            .map { it.groupValues[1].toInt() }
+            .toSet()
+        assertTrue(
+            "Restructured config should have >= 2 different extruder values, got: $extruderValues",
+            extruderValues.size >= 2
         )
     }
 
@@ -780,8 +824,9 @@ class BambuPipelineIntegrationTest {
         // Pass hasPlateJsons=true explicitly: process() strips plate_N.json files, so
         // auto-detection on the sanitised ZIP would return false (no JSONs present).
         // We know the original had plate JSONs (detected above via info.hasPlateJsons).
-        val sanitizedPlate = BambuSanitizer.extractPlate(sanitized, 2, outDir,
+        val rawSanitizedPlate = BambuSanitizer.extractPlate(sanitized, 2, outDir,
             hasPlateJsons = info.hasPlateJsons)
+        val sanitizedPlate = BambuSanitizer.restructurePlateFile(rawSanitizedPlate, outDir)
         val embedded = embedder.embed(sanitizedPlate, embedder.buildConfig(info = info), outDir, info)
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
         val mi = lib.getModelInfo()
@@ -791,9 +836,10 @@ class BambuPipelineIntegrationTest {
     }
 
     /**
-     * E2E: Dragon Scale infinity (old format, virtual positions) — pipeline up to loadModel.
-     * Verifies that process() → extractPlate() with hasPlateJsons=false uses virtual-position
-     * detection and produces a valid single-plate file that loads without error.
+     * E2E: Dragon Scale infinity (old format, virtual positions) — full pipeline up to loadModel.
+     * Verifies that process() → extractPlate() → restructurePlateFile() with hasPlateJsons=false
+     * uses virtual-position detection, restructures per-plate component meshes, and produces a
+     * valid single-plate file that loads without error.
      * We do NOT call slice() because Dragon Scale (260K triangles) OOMs the test process;
      * the slicing path is covered by smaller models in SlicingIntegrationTest.
      */
@@ -805,8 +851,10 @@ class BambuPipelineIntegrationTest {
         assertFalse("Dragon Scale should NOT have plate JSONs", info.hasPlateJsons)
 
         val sanitized = BambuSanitizer.process(input, outDir)
-        val plateFile = BambuSanitizer.extractPlate(sanitized, 1, outDir,
+        val rawPlateFile = BambuSanitizer.extractPlate(sanitized, 1, outDir,
             hasPlateJsons = info.hasPlateJsons)
+        // Restructure: inline component meshes for per-volume extruder assignment
+        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
         val plateInfo = ThreeMfParser.parse(plateFile)
         assertTrue("Plate 1 should be single-plate after extraction", !plateInfo.isMultiPlate)
 
