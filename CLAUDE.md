@@ -146,3 +146,28 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ProfileEmbedder.buildConfig()` sets `extruder_count` in the embedded `project_settings.config` — OrcaSlicer defaults to 1 without it, ignoring per-volume extruder assignments
 - `TestCommandReceiver` (debug-only): BroadcastReceiver for ADB-driven E2E testing — supports LOAD_FILE, SLICE, CHECK_GCODE, DUMP_STATE, DUMP_EMBEDDED_CONFIG, SET_COLORS, SET_PRINTER, SYNC_FILAMENTS, SELECT_PLATE, NAVIGATE
 - Default extruder colours are R/G/B/W (`ExtruderPreset.DEFAULT_COLORS`) — aids visual testing of multi-colour slicing
+
+## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
+
+Settings reach OrcaSlicer's native engine through **two paths** — a setting that's only in one path will silently fall back to OrcaSlicer's compiled default (often wrong for Snapmaker U1):
+
+### Path 1: `applyConfigToPrusa()` in `sapil_print.cpp`
+- Hardcoded fallback values, always applied (even for raw STL files without embedded profiles)
+- `applyConfigToPrusa()` runs AFTER `profile_keys[]`, so these are the lowest-priority defaults
+- **Add new settings here** when you need a sensible fallback for files with no embedded profile
+
+### Path 2: `profile_keys[]` whitelist in `sapil_print.cpp`
+- Keys in this array are read from the embedded `project_settings.config` JSON in the 3MF
+- Only applied when `is_snapmaker_profile = true` (start gcode contains "PRINT_START")
+- **Add new settings here** when they come from the Snapmaker profiles (pla.json, standard_0.20mm.json, snapmaker_u1.json)
+
+### What does NOT work
+- Adding a key to `orca_profiles/*.json` or `ProfileEmbedder.buildConfig()` alone — the key goes into the 3MF JSON but the native side ignores it unless it's in `profile_keys[]`
+- Adding a key to `buildProfileOverrides()` alone — same problem, it's only in the embedded JSON
+
+### Checklist for adding a new slicer setting
+1. Check the OrcaSlicer default in `PrintConfig.cpp` (`set_default_value` call) — is it acceptable?
+2. If not, add a fallback in `applyConfigToPrusa()` with the correct `ConfigOption` type (check `PrintConfig.cpp` for `coFloat` vs `coFloats` vs `coInts` etc.)
+3. Add the key name to `profile_keys[]` so the embedded profile can override the fallback
+4. If the setting should be user-controllable, also add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
+5. **Rebuild the native `.so`** (enable CMake in build.gradle, set `-Xmx8g`, build, strip, disable CMake)
