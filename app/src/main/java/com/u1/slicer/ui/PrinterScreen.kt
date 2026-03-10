@@ -14,7 +14,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -44,8 +43,11 @@ import java.util.concurrent.TimeUnit
 fun PrinterScreen(
     viewModel: PrinterViewModel,
     filaments: List<FilamentProfile> = emptyList(),
-    onBack: () -> Unit,
-    onNavigateSettings: () -> Unit = {}
+    onNavigateSettings: () -> Unit = {},
+    onNavigatePrepare: () -> Unit = {},
+    onNavigatePreview: () -> Unit = {},
+    onNavigatePrinter: () -> Unit = {},
+    onNavigateJobs: () -> Unit = {},
 ) {
     val status by viewModel.status.collectAsState()
     val sendingState by viewModel.sendingState.collectAsState()
@@ -106,11 +108,6 @@ fun PrinterScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Printer", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
                 actions = {
                     val isLightOn by viewModel.isLightOn.collectAsState()
                     if (status.isConnected) {
@@ -127,6 +124,16 @@ fun PrinterScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+            )
+        },
+        bottomBar = {
+            com.u1.slicer.U1BottomNavBar(
+                selectedTab = "printer",
+                onNavigatePrepare = onNavigatePrepare,
+                onNavigatePreview = onNavigatePreview,
+                onNavigatePrinter = onNavigatePrinter,
+                onNavigateJobs = onNavigateJobs,
+                onNavigateSettings = onNavigateSettings
             )
         },
         containerColor = MaterialTheme.colorScheme.background

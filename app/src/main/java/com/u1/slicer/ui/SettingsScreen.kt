@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Save
@@ -42,7 +41,11 @@ fun SettingsScreen(
     viewModel: SlicerViewModel,
     printerViewModel: PrinterViewModel? = null,
     onNavigateFilaments: (() -> Unit)? = null,
-    onBack: () -> Unit
+    onNavigatePrepare: () -> Unit = {},
+    onNavigatePreview: () -> Unit = {},
+    onNavigatePrinter: () -> Unit = {},
+    onNavigateJobs: () -> Unit = {},
+    onNavigateSettings: () -> Unit = {}
 ) {
     val config by viewModel.config.collectAsState()
     var nozzleTemp by remember(config) { mutableStateOf(config.nozzleTemp.toString()) }
@@ -60,11 +63,6 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Settings", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
                 actions = {
                     IconButton(onClick = {
                         viewModel.updateConfig {
@@ -80,7 +78,6 @@ fun SettingsScreen(
                         }
                         viewModel.saveConfig()
                         viewModel.saveSlicingOverrides(overrides)
-                        onBack()
                     }) {
                         Icon(Icons.Default.Save, "Save")
                     }
@@ -88,6 +85,16 @@ fun SettingsScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
+            )
+        },
+        bottomBar = {
+            com.u1.slicer.U1BottomNavBar(
+                selectedTab = "settings",
+                onNavigatePrepare = onNavigatePrepare,
+                onNavigatePreview = onNavigatePreview,
+                onNavigatePrinter = onNavigatePrinter,
+                onNavigateJobs = onNavigateJobs,
+                onNavigateSettings = onNavigateSettings
             )
         },
         containerColor = MaterialTheme.colorScheme.background

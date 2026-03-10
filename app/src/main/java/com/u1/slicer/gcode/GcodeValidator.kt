@@ -170,6 +170,30 @@ object GcodeValidator {
         return tools.none { it in actual }
     }
 
+    /**
+     * True if the G-code contains a "; Retract(unload)" comment, which indicates
+     * the wipe tower is performing a bowden-style multi-step filament unload sequence.
+     * This should NEVER appear in Snapmaker U1 G-code — the U1 has independent extruders,
+     * not a single-extruder-multi-material (SEMM) bowden setup.
+     */
+    fun hasBowdenUnloadSequence(gcode: String): Boolean {
+        return gcode.lines().any { it.trim() == "; Retract(unload)" }
+    }
+
+    /**
+     * Extract a config value from OrcaSlicer G-code comments.
+     * OrcaSlicer emits lines like "; key = value" in the G-code header/footer.
+     * Returns null if not found.
+     */
+    fun extractConfigComment(gcode: String, key: String): String? {
+        val prefix = "; $key = "
+        for (line in gcode.lines()) {
+            val t = line.trim()
+            if (t.startsWith(prefix)) return t.substringAfter(prefix).trim()
+        }
+        return null
+    }
+
     data class BedBoundsResult(
         val withinBounds: Boolean,
         val minX: Double, val maxX: Double,

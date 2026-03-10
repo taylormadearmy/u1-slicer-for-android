@@ -5,7 +5,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,7 +24,11 @@ fun JobsScreen(
     onDelete: (SliceJob) -> Unit,
     onDeleteAll: () -> Unit,
     onShare: (SliceJob) -> Unit,
-    onBack: () -> Unit
+    onNavigatePrepare: () -> Unit = {},
+    onNavigatePreview: () -> Unit = {},
+    onNavigatePrinter: () -> Unit = {},
+    onNavigateJobs: () -> Unit = {},
+    onNavigateSettings: () -> Unit = {}
 ) {
     var showDeleteAllConfirm by remember { mutableStateOf(false) }
 
@@ -52,11 +55,6 @@ fun JobsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("Job History", fontWeight = FontWeight.Bold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
                 actions = {
                     if (jobs.isNotEmpty()) {
                         IconButton(onClick = { showDeleteAllConfirm = true }) {
@@ -67,6 +65,16 @@ fun JobsScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
+            )
+        },
+        bottomBar = {
+            com.u1.slicer.U1BottomNavBar(
+                selectedTab = "jobs",
+                onNavigatePrepare = onNavigatePrepare,
+                onNavigatePreview = onNavigatePreview,
+                onNavigatePrinter = onNavigatePrinter,
+                onNavigateJobs = onNavigateJobs,
+                onNavigateSettings = onNavigateSettings
             )
         },
         containerColor = MaterialTheme.colorScheme.background

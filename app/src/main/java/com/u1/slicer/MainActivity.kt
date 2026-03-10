@@ -17,7 +17,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,6 +38,9 @@ import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
 import com.u1.slicer.printer.PrinterViewModel
+import com.u1.slicer.ui.JobsScreen
+import com.u1.slicer.ui.PrinterScreen
+import com.u1.slicer.ui.SettingsScreen
 
 class MainActivity : ComponentActivity() {
     private val viewModel: SlicerViewModel by viewModels()
@@ -139,6 +141,15 @@ class MainActivity : ComponentActivity() {
             U1SlicerTheme {
                 val navController = rememberNavController()
 
+                // Shared tab navigation helpers — single-top + pop to start to avoid stacking
+                val navigateTab = { route: String ->
+                    navController.navigate(route) {
+                        popUpTo(Routes.PREPARE) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }
+
                 // Wire up the test receiver's navigate callback now that we have navController
                 if (isDebug) {
                     LaunchedEffect(navController) {
@@ -151,17 +162,8 @@ class MainActivity : ComponentActivity() {
                                 "settings" -> Routes.SETTINGS
                                 else -> screen // allow direct route names
                             }
-                            navController.navigate(route)
+                            navigateTab(route)
                         }
-                    }
-                }
-
-                // Shared tab navigation helpers — single-top + pop to start to avoid stacking
-                val navigateTab = { route: String ->
-                    navController.navigate(route) {
-                        popUpTo(Routes.PREPARE) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
                     }
                 }
                 val pickFileMimeTypes = arrayOf(
@@ -187,9 +189,9 @@ class MainActivity : ComponentActivity() {
                             onPickFile = { filePickerLauncher.launch(pickFileMimeTypes) },
                             onNavigatePrepare = { },
                             onNavigatePreview = { navigateTab(Routes.PREVIEW) },
-                            onNavigateSettings = { navController.navigate(Routes.SETTINGS) },
-                            onNavigatePrinter = { navController.navigate(Routes.PRINTER) },
-                            onNavigateJobs = { navController.navigate(Routes.JOBS) },
+                            onNavigateSettings = { navigateTab(Routes.SETTINGS) },
+                            onNavigatePrinter = { navigateTab(Routes.PRINTER) },
+                            onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) }
                         )
                     },
@@ -198,16 +200,54 @@ class MainActivity : ComponentActivity() {
                             viewModel = viewModel,
                             onNavigatePrepare = { navigateTab(Routes.PREPARE) },
                             onNavigatePreview = { },
-                            onNavigateSettings = { navController.navigate(Routes.SETTINGS) },
-                            onNavigatePrinter = { navController.navigate(Routes.PRINTER) },
+                            onNavigateSettings = { navigateTab(Routes.SETTINGS) },
+                            onNavigatePrinter = { navigateTab(Routes.PRINTER) },
                             onSendToPrinter = { gcodePath ->
                                 printerViewModel.sendAndPrint(gcodePath)
-                                navController.navigate(Routes.PRINTER)
+                                navigateTab(Routes.PRINTER)
                             },
-                            onNavigateJobs = { navController.navigate(Routes.JOBS) },
+                            onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
                             onShareGcode = { viewModel.shareGcode() },
                             onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") }
+                        )
+                    },
+                    printerContent = {
+                        val filaments by viewModel.filaments.collectAsState(initial = emptyList())
+                        PrinterScreen(
+                            viewModel = printerViewModel,
+                            filaments = filaments,
+                            onNavigateSettings = { navigateTab(Routes.SETTINGS) },
+                            onNavigatePrepare = { navigateTab(Routes.PREPARE) },
+                            onNavigatePreview = { navigateTab(Routes.PREVIEW) },
+                            onNavigatePrinter = { },
+                            onNavigateJobs = { navigateTab(Routes.JOBS) }
+                        )
+                    },
+                    jobsContent = {
+                        val jobs by viewModel.sliceJobs.collectAsState(initial = emptyList())
+                        JobsScreen(
+                            jobs = jobs,
+                            onDelete = { viewModel.deleteJob(it) },
+                            onDeleteAll = { viewModel.deleteAllJobs() },
+                            onShare = { viewModel.shareJobGcode(it) },
+                            onNavigatePrepare = { navigateTab(Routes.PREPARE) },
+                            onNavigatePreview = { navigateTab(Routes.PREVIEW) },
+                            onNavigatePrinter = { navigateTab(Routes.PRINTER) },
+                            onNavigateJobs = { },
+                            onNavigateSettings = { navigateTab(Routes.SETTINGS) }
+                        )
+                    },
+                    settingsContent = {
+                        SettingsScreen(
+                            viewModel = viewModel,
+                            printerViewModel = printerViewModel,
+                            onNavigateFilaments = { navController.navigate(Routes.FILAMENTS) },
+                            onNavigatePrepare = { navigateTab(Routes.PREPARE) },
+                            onNavigatePreview = { navigateTab(Routes.PREVIEW) },
+                            onNavigatePrinter = { navigateTab(Routes.PRINTER) },
+                            onNavigateJobs = { navigateTab(Routes.JOBS) },
+                            onNavigateSettings = { }
                         )
                     }
                 )
@@ -243,6 +283,27 @@ fun U1SlicerTheme(content: @Composable () -> Unit) {
 // Shared Bottom Navigation Bar
 // =============================================================================
 @Composable
+fun U1BottomNavBar(
+    selectedTab: String,
+    onNavigatePrepare: () -> Unit,
+    onNavigatePreview: () -> Unit,
+    onNavigatePrinter: () -> Unit,
+    onNavigateJobs: () -> Unit,
+    onNavigateSettings: () -> Unit
+) {
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+        U1BottomNavItems(
+            selectedTab = selectedTab,
+            onNavigatePrepare = onNavigatePrepare,
+            onNavigatePreview = onNavigatePreview,
+            onNavigatePrinter = onNavigatePrinter,
+            onNavigateJobs = onNavigateJobs,
+            onNavigateSettings = onNavigateSettings
+        )
+    }
+}
+
+@Composable
 fun RowScope.U1BottomNavItems(
     selectedTab: String,
     onNavigatePrepare: () -> Unit,
@@ -266,19 +327,19 @@ fun RowScope.U1BottomNavItems(
     NavigationBarItem(
         icon = { Icon(Icons.Default.Print, null) },
         label = { Text("Printer") },
-        selected = false,
+        selected = selectedTab == "printer",
         onClick = onNavigatePrinter
     )
     NavigationBarItem(
         icon = { Icon(Icons.Default.History, null) },
         label = { Text("Jobs") },
-        selected = false,
+        selected = selectedTab == "jobs",
         onClick = onNavigateJobs
     )
     NavigationBarItem(
         icon = { Icon(Icons.Default.Settings, null) },
         label = { Text("Settings") },
-        selected = false,
+        selected = selectedTab == "settings",
         onClick = onNavigateSettings
     )
 }

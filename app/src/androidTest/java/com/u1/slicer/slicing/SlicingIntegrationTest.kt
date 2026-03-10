@@ -246,6 +246,26 @@ class SlicingIntegrationTest {
         assertTrue("Max retraction ${maxRetract}mm must be ≤ 5mm for direct drive", maxRetract <= 5.0)
     }
 
+    /**
+     * Regression: OrcaSlicer WipeTower2 bowden unload sequence (94mm retraction)
+     * must never appear in Snapmaker U1 output.  The U1 has independent extruders,
+     * not a single-extruder-multi-material (SEMM) setup.
+     */
+    @Test
+    fun dualExtruder_noBowdenUnloadSequence() {
+        val file = asset("tetrahedron.stl")
+        assertTrue(lib.loadModel(file.absolutePath))
+        val config = DEFAULT_CONFIG.copy(extruderCount = 2)
+        val result = lib.slice(config)
+        assertNotNull(result)
+        assertTrue(result!!.success)
+        val gcode = File(result.gcodePath).readText()
+        assertFalse(
+            "G-code must NOT contain '; Retract(unload)' bowden sequence",
+            GcodeValidator.hasBowdenUnloadSequence(gcode)
+        )
+    }
+
     // ─── SliceResult metadata ─────────────────────────────────────────────────
 
     @Test

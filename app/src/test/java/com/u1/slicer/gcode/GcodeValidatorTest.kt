@@ -179,6 +179,86 @@ class GcodeValidatorTest {
         assertEquals(10.0, GcodeValidator.maxRetractionMm(gcode), 0.001)
     }
 
+    // ─── hasBowdenUnloadSequence (regression: filament jam from SEMM defaults) ─
+
+    @Test
+    fun hasBowdenUnloadSequence_detectsUnloadComment() {
+        val gcode = """
+            G1 X10 Y10
+            ; Retract(unload)
+            G1 E-15.0000 F6000
+            G1 E-55.3000 F5400
+        """.trimIndent()
+        assertTrue(
+            "Should detect bowden-style unload sequence",
+            GcodeValidator.hasBowdenUnloadSequence(gcode)
+        )
+    }
+
+    @Test
+    fun hasBowdenUnloadSequence_absentInCorrectGcode() {
+        // A correctly configured Snapmaker U1 multi-tool print should NOT have this
+        val gcode = "G28\nT0\nG1 X10 E1.0\nT1\nG1 X20 E1.0\n"
+        assertFalse(
+            "Correct U1 gcode should NOT have bowden unload sequence",
+            GcodeValidator.hasBowdenUnloadSequence(gcode)
+        )
+    }
+
+    @Test
+    fun maxRetractionMm_rejectsBowdenToolchangeRetraction() {
+        // Regression: OrcaSlicer SEMM defaults caused 94mm retraction during tool changes,
+        // jamming the Snapmaker U1's direct-drive extruders. Max safe retraction is ~5mm.
+        val bowdenGcode = """
+            G1 E-.4 F3000
+            ; Retract(unload)
+            G1 E-15.0000 F6000
+            G1 E-55.3000 F5400
+            G1 E-15.8000 F2700
+            G1 E-7.9000 F1620
+        """.trimIndent()
+        val maxRetract = GcodeValidator.maxRetractionMm(bowdenGcode)
+        assertTrue(
+            "Max retraction ${maxRetract}mm exceeds 5mm safe limit for direct drive — " +
+                    "bowden SEMM defaults are leaking through",
+            maxRetract > 5.0  // This SHOULD be true for the bad gcode — test proves we can detect it
+        )
+    }
+
+    @Test
+    fun maxRetractionMm_safeForDirectDrive() {
+        // Correct direct-drive gcode has only small retractions (0.4-0.8mm typical)
+        val correctGcode = "G1 E-.4 F3000\nG1 X10 Y10 E1.0\nG1 E-.8 F2700\n"
+        val maxRetract = GcodeValidator.maxRetractionMm(correctGcode)
+        assertTrue(
+            "Direct drive retraction should be ≤5mm, got ${maxRetract}mm",
+            maxRetract <= 5.0
+        )
+    }
+
+    // ─── extractConfigComment ───────────────────────────────────────────────────
+
+    @Test
+    fun extractConfigComment_findsKey() {
+        val gcode = "; enable_filament_ramming = 0\n; cooling_tube_retraction = 0\n"
+        assertEquals("0", GcodeValidator.extractConfigComment(gcode, "enable_filament_ramming"))
+        assertEquals("0", GcodeValidator.extractConfigComment(gcode, "cooling_tube_retraction"))
+    }
+
+    @Test
+    fun extractConfigComment_nullWhenMissing() {
+        val gcode = "G28\nG1 X10\n"
+        assertNull(GcodeValidator.extractConfigComment(gcode, "enable_filament_ramming"))
+    }
+
+    @Test
+    fun extractConfigComment_detectsBowdenDefaults() {
+        // Regression guard: these are the dangerous OrcaSlicer defaults
+        val gcode = "; enable_filament_ramming = 1\n; cooling_tube_retraction = 91.5\n"
+        assertEquals("1", GcodeValidator.extractConfigComment(gcode, "enable_filament_ramming"))
+        assertEquals("91.5", GcodeValidator.extractConfigComment(gcode, "cooling_tube_retraction"))
+    }
+
     // ─── parsePrimeTowerFootprint ─────────────────────────────────────────────
 
     @Test

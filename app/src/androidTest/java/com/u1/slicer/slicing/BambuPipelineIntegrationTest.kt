@@ -675,6 +675,62 @@ class BambuPipelineIntegrationTest {
         assertTrue("Max retraction ${maxRetract}mm must be ≤ 5mm for direct drive", maxRetract <= 5.0)
     }
 
+    /**
+     * Regression: OrcaSlicer's WipeTower2 performs a 94mm bowden-style filament unload
+     * when single_extruder_multi_material=true (default) and enable_filament_ramming=true
+     * (default) with cooling_tube_retraction=91.5mm (default).  This is completely wrong
+     * for the Snapmaker U1's independent tool-changer extruders and causes filament jams.
+     *
+     * The "; Retract(unload)" comment in G-code is the smoking gun — it should NEVER
+     * appear in Snapmaker U1 output.
+     *
+     * Uses the FULL pipeline (sanitize → ProfileEmbedder → slice) which produces actual
+     * T0/T1 tool changes.  The simple sanitizeAndSlice() path (no ProfileEmbedder)
+     * produces 0 tool changes, so the bowden unload never triggers — useless as a guard.
+     *
+     * MUST FAIL with old .so (single_extruder_multi_material not in profile_keys[]).
+     * MUST PASS after native rebuild with the fix in sapil_print.cpp.
+     */
+    @Test
+    fun calibCube_dualColour_noBowdenUnloadSequence() {
+        val input = asset("calib-cube-10-dual-colour-merged.3mf")
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val info = ThreeMfParser.parse(input)
+
+        // Full pipeline: embed Snapmaker profile (same as the extruder remap test)
+        val config = embedder.buildConfig(info = info, targetExtruderCount = 2)
+        val embedded = embedder.embed(sanitized, config, outDir, info)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(dualConfig())
+        assertNotNull(result); result!!
+        assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
+
+        val gcode = File(result.gcodePath).readText()
+
+        // Precondition: tool changes must actually happen (otherwise this test is vacuous)
+        assertTrue(
+            "Must have T0/T1 tool changes for this test to be meaningful",
+            GcodeValidator.hasToolChanges(gcode, "T0", "T1")
+        )
+
+        // THE ACTUAL REGRESSION TEST:
+        // With old .so: single_extruder_multi_material not in profile_keys[] → defaults true →
+        // WipeTower2 m_semm=true → bowden unload sequence → 94mm retraction → filament jam.
+        assertFalse(
+            "G-code must NOT contain bowden-style '; Retract(unload)' sequence — " +
+                    "Snapmaker U1 has independent extruders, not SEMM bowden. " +
+                    "If this fails, single_extruder_multi_material is defaulting to true.",
+            GcodeValidator.hasBowdenUnloadSequence(gcode)
+        )
+
+        // Also verify max retraction is within direct-drive safe range
+        val maxRetract = GcodeValidator.maxRetractionMm(gcode)
+        assertTrue(
+            "Max retraction ${maxRetract}mm must be ≤ 5mm for direct drive",
+            maxRetract <= 5.0
+        )
+    }
+
     // ─── Extruder remap regression (bridge: multicolour-slice.spec.ts line 98) ──
 
     /**

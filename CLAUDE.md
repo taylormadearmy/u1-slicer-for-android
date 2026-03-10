@@ -44,6 +44,7 @@ End-to-end test checklist:
 6. Only then mark the feature complete
 
 **Never test on NE12442001324 (model: NF22E1, Android 13) — that is the user's personal device.**
+User also has a Pixel 9a (serial: 5A101JEBF24790) — this is a personal device, do not run automated tests on it.
 
 ## ADB helpers
 
@@ -139,7 +140,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - Do NOT call `clearModel()+loadModel()` before `setModelInstances()` in `startSlicing()` — `setModelInstances()` clears instances internally; the extra reload causes "Coordinate outside allowed range" Clipper errors
 - `BambuSanitizer.extractPlate()` copies ALL ZIP entries including PNG previews (unlike `process()` which strips them) — plate files therefore work with `GcodeThumbnailInjector`
 - `startSlicing()` wraps its entire body in `try/catch(Throwable)` with `finally { native.progressListener = null }` — any uncaught exception sets `SlicerState.Error` instead of leaving UI stuck at "100% Slicing"
-- Stale cache auto-cleared: `MainActivity.clearStaleCacheOnUpgrade()` deletes `embedded_*`, `sanitized_*`, and `plate*.3mf` cache files on first launch after a version upgrade — prevents "Coordinate outside allowed range" Clipper errors from stale sanitizer output
+- Stale cache auto-cleared: `MainActivity.clearStaleCacheOnUpgrade()` deletes `embedded_*`, `sanitized_*`, and `plate*.3mf` cache files on **every cold start** (not just version upgrades) — prevents "Coordinate outside allowed range" Clipper errors from stale sanitizer output; files are regenerated on demand so no user data is lost
 - `ensureMultiSlotMapping(rawMapping, colorCount)` in `MultiColorDialog.kt` — detects all-same-slot collapse for multi-color models and distributes 0,1,0,1,… to guarantee multi-extruder initial mapping
 - `resolveInto()` and `resolvePrimeTower()` in `SlicingOverrides` both force wipe tower true when `extruderCount > 1` unless the user explicitly set `OVERRIDE` mode to false — OrcaSlicer requires a wipe tower for T1 tool changes; `buildProfileOverrides()` uses `resolvePrimeTower()` to set `enable_prime_tower` in the embedded profile
 - `ThreeMfParser.detectPaintData()` checks ALL `.model` entries in the ZIP, not just the main `3D/3dmodel.model` — Bambu files using p:path component refs store `paint_color` on triangles in component files (e.g. `3D/Objects/*.model`)

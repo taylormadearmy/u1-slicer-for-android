@@ -10,10 +10,7 @@ import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.printer.PrinterViewModel
 import com.u1.slicer.ui.FilamentScreen
 import com.u1.slicer.ui.GcodeViewer3DScreen
-import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.ModelViewerScreen
-import com.u1.slicer.ui.PrinterScreen
-import com.u1.slicer.ui.SettingsScreen
 
 object Routes {
     const val PREPARE = "prepare"
@@ -30,11 +27,14 @@ object Routes {
 fun U1NavGraph(
     navController: NavHostController,
     viewModel: SlicerViewModel,
-    printerViewModel: PrinterViewModel,
+    @Suppress("UNUSED_PARAMETER") printerViewModel: PrinterViewModel,
     @Suppress("UNUSED_PARAMETER") onPickFile: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onSaveGcode: () -> Unit,
     prepareContent: @Composable () -> Unit,
-    previewContent: @Composable () -> Unit
+    previewContent: @Composable () -> Unit,
+    printerContent: @Composable () -> Unit,
+    jobsContent: @Composable () -> Unit,
+    settingsContent: @Composable () -> Unit
 ) {
     NavHost(navController = navController, startDestination = Routes.PREPARE) {
         composable(Routes.PREPARE) {
@@ -44,21 +44,10 @@ fun U1NavGraph(
             previewContent()
         }
         composable(Routes.SETTINGS) {
-            SettingsScreen(
-                viewModel = viewModel,
-                printerViewModel = printerViewModel,
-                onNavigateFilaments = { navController.navigate(Routes.FILAMENTS) },
-                onBack = { navController.popBackStack() }
-            )
+            settingsContent()
         }
         composable(Routes.PRINTER) {
-            val filaments by viewModel.filaments.collectAsState(initial = emptyList())
-            PrinterScreen(
-                viewModel = printerViewModel,
-                filaments = filaments,
-                onBack = { navController.popBackStack() },
-                onNavigateSettings = { navController.navigate(Routes.SETTINGS) }
-            )
+            printerContent()
         }
         composable(Routes.FILAMENTS) {
             val filaments by viewModel.filaments.collectAsState(initial = emptyList())
@@ -77,14 +66,7 @@ fun U1NavGraph(
             )
         }
         composable(Routes.JOBS) {
-            val jobs by viewModel.sliceJobs.collectAsState(initial = emptyList())
-            JobsScreen(
-                jobs = jobs,
-                onDelete = { viewModel.deleteJob(it) },
-                onDeleteAll = { viewModel.deleteAllJobs() },
-                onShare = { viewModel.shareJobGcode(it) },
-                onBack = { navController.popBackStack() }
-            )
+            jobsContent()
         }
         composable(Routes.GCODE_VIEWER_3D) {
             val parsedGcode by viewModel.parsedGcode.collectAsState()

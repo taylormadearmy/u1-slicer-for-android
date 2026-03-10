@@ -162,6 +162,33 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // during the standby period between tool changes.  Use the same length as normal retraction.
     dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
 
+    // Multi-extruder machine type — the Snapmaker U1 has 4 independent extruders, NOT a
+    // single-extruder multi-material (SEMM) setup like Bambu/Prusa MMU.  OrcaSlicer defaults
+    // single_extruder_multi_material to true, which makes WipeTower2 perform bowden-style
+    // 94mm filament unload/reload sequences during tool changes — completely wrong for the U1
+    // and causes filament jams.  Must be set to false.
+    dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+
+    // Wipe tower filament handling — OrcaSlicer defaults are for bowden SEMM printers
+    // (cooling_tube_retraction=91.5, cooling_tube_length=5, parking_pos=92, ramming=on).
+    // Snapmaker fdm_common.json sets all of these to 0 and disables ramming, because the U1
+    // tool changer physically parks/unparks extruders — filament stays loaded in each hotend.
+    dpc.set_key_value("cooling_tube_retraction", new Slic3r::ConfigOptionFloat(0.0));
+    dpc.set_key_value("cooling_tube_length", new Slic3r::ConfigOptionFloat(0.0));
+    dpc.set_key_value("parking_pos_retraction", new Slic3r::ConfigOptionFloat(0.0));
+    dpc.set_key_value("extra_loading_move", new Slic3r::ConfigOptionFloat(-2.0));
+    dpc.set_key_value("enable_filament_ramming", new Slic3r::ConfigOptionBool(false));
+
+    // Filament loading/unloading speeds — Snapmaker profile uses conservative 25mm/s (not
+    // OrcaSlicer's 90/100mm/s bowden defaults).  These only matter if ramming were re-enabled,
+    // but set them correctly as a safety net.
+    dpc.set_key_value("filament_unloading_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 25.0)));
+    dpc.set_key_value("filament_unloading_speed_start", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 3.0)));
+    dpc.set_key_value("filament_loading_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 25.0)));
+    dpc.set_key_value("filament_loading_speed_start", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 3.0)));
+    dpc.set_key_value("filament_cooling_moves", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 0)));
+    dpc.set_key_value("filament_toolchange_delay", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 0.0)));
+
     // Nozzle/filament diameter (per-extruder — same key names)
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(nozzle_diameters));
     dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(filament_diameters));
@@ -207,6 +234,20 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("top_surface_line_width",  new Slic3r::ConfigOptionFloatOrPercent(nd * 1.05,  false));
     dpc.set_key_value("sparse_infill_line_width",new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
     dpc.set_key_value("initial_layer_line_width",new Slic3r::ConfigOptionFloatOrPercent(nd * 1.25,  false));
+
+    // Support speeds — OrcaSlicer defaults to 80mm/s which is fine today, but pin to
+    // Snapmaker profile values so future OrcaSlicer changes don't silently regress.
+    dpc.set_key_value("support_speed", new Slic3r::ConfigOptionFloat(100.0));
+    dpc.set_key_value("support_interface_speed", new Slic3r::ConfigOptionFloat(80.0));
+
+    // Overhang speed control — OrcaSlicer defaults enable_overhang_speed=true with all
+    // overhang speeds at 0 (= use wall speed).  Pin to Snapmaker 0.4mm nozzle profile
+    // values so a future default change doesn't break overhang quality.
+    dpc.set_key_value("enable_overhang_speed", new Slic3r::ConfigOptionBool(true));
+    dpc.set_key_value("overhang_1_4_speed", new Slic3r::ConfigOptionFloatOrPercent(55, false));
+    dpc.set_key_value("overhang_2_4_speed", new Slic3r::ConfigOptionFloatOrPercent(30, false));
+    dpc.set_key_value("overhang_3_4_speed", new Slic3r::ConfigOptionFloatOrPercent(10, false));
+    dpc.set_key_value("overhang_4_4_speed", new Slic3r::ConfigOptionFloatOrPercent(10, false));
 
     // Support (OrcaSlicer keys)
     dpc.set_key_value("enable_support", new Slic3r::ConfigOptionBool(config.support_enabled));
@@ -330,6 +371,19 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // Support speeds
                     "support_speed",
                     "support_interface_speed",
+                    // Tool change / wipe tower filament handling (from printer+filament profile)
+                    "single_extruder_multi_material",
+                    "cooling_tube_retraction",
+                    "cooling_tube_length",
+                    "parking_pos_retraction",
+                    "extra_loading_move",
+                    "enable_filament_ramming",
+                    "filament_unloading_speed",
+                    "filament_unloading_speed_start",
+                    "filament_loading_speed",
+                    "filament_loading_speed_start",
+                    "filament_cooling_moves",
+                    "filament_toolchange_delay",
                     nullptr
                 };
                 int applied = 0;
