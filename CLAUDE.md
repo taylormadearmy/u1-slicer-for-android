@@ -27,7 +27,7 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 240 JVM unit tests
+./gradlew testDebugUnitTest                                                    # 255 JVM unit tests
 ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 97 instrumented tests
 ```
 
@@ -139,7 +139,10 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - Do NOT call `clearModel()+loadModel()` before `setModelInstances()` in `startSlicing()` — `setModelInstances()` clears instances internally; the extra reload causes "Coordinate outside allowed range" Clipper errors
 - `BambuSanitizer.extractPlate()` copies ALL ZIP entries including PNG previews (unlike `process()` which strips them) — plate files therefore work with `GcodeThumbnailInjector`
 - `startSlicing()` wraps its entire body in `try/catch(Throwable)` with `finally { native.progressListener = null }` — any uncaught exception sets `SlicerState.Error` instead of leaving UI stuck at "100% Slicing"
-- Stale plate cache: after changing sanitizer/extraction logic, delete `files/plate*_embedded_*.3mf` on device (or reinstall app) — cached pre-fix files will produce wrong results silently
+- Stale cache auto-cleared: `MainActivity.clearStaleCacheOnUpgrade()` deletes `embedded_*`, `sanitized_*`, and `plate*.3mf` cache files on first launch after a version upgrade — prevents "Coordinate outside allowed range" Clipper errors from stale sanitizer output
 - `ensureMultiSlotMapping(rawMapping, colorCount)` in `MultiColorDialog.kt` — detects all-same-slot collapse for multi-color models and distributes 0,1,0,1,… to guarantee multi-extruder initial mapping
 - `resolveInto()` and `resolvePrimeTower()` in `SlicingOverrides` both force wipe tower true when `extruderCount > 1` unless the user explicitly set `OVERRIDE` mode to false — OrcaSlicer requires a wipe tower for T1 tool changes; `buildProfileOverrides()` uses `resolvePrimeTower()` to set `enable_prime_tower` in the embedded profile
 - `ThreeMfParser.detectPaintData()` checks ALL `.model` entries in the ZIP, not just the main `3D/3dmodel.model` — Bambu files using p:path component refs store `paint_color` on triangles in component files (e.g. `3D/Objects/*.model`)
+- `ProfileEmbedder.buildConfig()` sets `extruder_count` in the embedded `project_settings.config` — OrcaSlicer defaults to 1 without it, ignoring per-volume extruder assignments
+- `TestCommandReceiver` (debug-only): BroadcastReceiver for ADB-driven E2E testing — supports LOAD_FILE, SLICE, CHECK_GCODE, DUMP_STATE, DUMP_EMBEDDED_CONFIG, SET_COLORS, SET_PRINTER, SYNC_FILAMENTS, SELECT_PLATE, NAVIGATE
+- Default extruder colours are R/G/B/W (`ExtruderPreset.DEFAULT_COLORS`) — aids visual testing of multi-colour slicing
