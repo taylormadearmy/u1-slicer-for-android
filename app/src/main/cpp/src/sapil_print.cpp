@@ -166,6 +166,35 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(nozzle_diameters));
     dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(filament_diameters));
 
+    // Filament max volumetric speed — OrcaSlicer defaults to 2 mm³/s which throttles all
+    // print speeds to ~22 mm/s.  Set to 21 mm³/s (matching Snapmaker PLA profile) as fallback;
+    // the embedded config can override via the profile_keys[] list.
+    dpc.set_key_value("filament_max_volumetric_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 21.0)));
+    // Filament density for weight estimation (PLA = 1.24 g/cm³)
+    dpc.set_key_value("filament_density", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.24)));
+
+    // Fan / cooling — OrcaSlicer defaults fan_min_speed to 20%, but PLA needs 100%.
+    // These fallbacks match pla.json; embedded config overrides via profile_keys[].
+    // fan_min_speed and fan_max_speed are coFloats in OrcaSlicer (per-extruder arrays).
+    dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+    dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+    // overhang_fan_speed is coInts (per-extruder)
+    dpc.set_key_value("overhang_fan_speed", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 100)));
+    // Slow-down cooling — OrcaSlicer default is 5s, Snapmaker profile uses 4s
+    dpc.set_key_value("slow_down_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 4.0)));
+    dpc.set_key_value("slow_down_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 20.0)));
+
+    // G-code dialect — NOT set as a fallback here because gcode_flavor=klipper suppresses
+    // M104/M109 temp commands from the slicer body, relying on the start G-code template.
+    // For raw STL files (no embedded profile), the Marlin default is correct.
+    // When the Snapmaker profile IS embedded, gcode_flavor=klipper is applied from the
+    // profile_keys[] whitelist in the is_snapmaker_profile block above.
+
+    // Deretraction speed — OrcaSlicer defaults to 0 (= same as retraction speed).
+    // Snapmaker profile uses 35 mm/s for smoother prime-after-retract.
+    dpc.set_key_value("deretraction_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 35.0)));
+    dpc.set_key_value("retraction_minimum_travel", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.0)));
+
     // Line widths — must be set explicitly.
     // When left at 0 (absolute), MultiMaterialSegmentation calls
     // config.get_abs_value("outer_wall_line_width", nozzle_diameter) which returns
@@ -274,6 +303,33 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "travel_acceleration",
                     "initial_layer_acceleration",
                     "initial_layer_travel_acceleration",
+                    // Filament flow limits
+                    "filament_max_volumetric_speed",
+                    "filament_density",
+                    // Fan / cooling (from filament profile)
+                    "fan_min_speed",
+                    "fan_max_speed",
+                    "overhang_fan_speed",
+                    "close_fan_the_first_x_layers",
+                    "full_fan_speed_layer",
+                    "fan_cooling_layer_time",
+                    "additional_cooling_fan_speed",
+                    "slow_down_layer_time",
+                    "slow_down_min_speed",
+                    // G-code dialect (klipper vs marlin — affects SET_VELOCITY_LIMIT)
+                    "gcode_flavor",
+                    // Retraction details (from printer profile)
+                    "deretraction_speed",
+                    "retraction_minimum_travel",
+                    // Overhang speed limits (from process profile)
+                    "enable_overhang_speed",
+                    "overhang_1_4_speed",
+                    "overhang_2_4_speed",
+                    "overhang_3_4_speed",
+                    "overhang_4_4_speed",
+                    // Support speeds
+                    "support_speed",
+                    "support_interface_speed",
                     nullptr
                 };
                 int applied = 0;
