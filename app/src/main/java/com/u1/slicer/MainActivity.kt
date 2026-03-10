@@ -1,7 +1,10 @@
 package com.u1.slicer
 
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +35,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.SliceResult
+import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
 import com.u1.slicer.printer.PrinterViewModel
@@ -39,6 +43,7 @@ import com.u1.slicer.printer.PrinterViewModel
 class MainActivity : ComponentActivity() {
     private val viewModel: SlicerViewModel by viewModels()
     private val printerViewModel: PrinterViewModel by viewModels()
+    private var testReceiver: TestCommandReceiver? = null
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -68,15 +73,63 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onDestroy() {
+        testReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
+        }
+        testReceiver = null
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Only handle VIEW intents on fresh launch, not on recreation
         if (savedInstanceState == null) {
             handleIncomingIntent(intent)
         }
+
+        // Register debug test command receiver (debug builds only)
+        val isDebug = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+        if (isDebug) {
+            // Navigation callback will be set once Compose creates the navController
+            var navigateCallback: ((String) -> Unit) = { screen ->
+                Log.w("TestCmd", "NavController not ready yet, ignoring navigate to: $screen")
+            }
+            testReceiver = TestCommandReceiver(viewModel, printerViewModel) { screen ->
+                navigateCallback(screen)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(testReceiver, TestCommandReceiver.intentFilter(), RECEIVER_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                registerReceiver(testReceiver, TestCommandReceiver.intentFilter())
+            }
+            Log.i("TestCmd", "TestCommandReceiver registered (debug build)")
+
+            // Store navigateCallback setter for use inside Compose
+            viewModel.setNavigateCallback = { cb -> navigateCallback = cb }
+        }
+
         setContent {
             U1SlicerTheme {
                 val navController = rememberNavController()
+
+                // Wire up the test receiver's navigate callback now that we have navController
+                if (isDebug) {
+                    LaunchedEffect(navController) {
+                        viewModel.setNavigateCallback?.invoke { screen ->
+                            val route = when (screen.lowercase()) {
+                                "slicer" -> Routes.SLICER
+                                "printer" -> Routes.PRINTER
+                                "jobs" -> Routes.JOBS
+                                "settings" -> Routes.SETTINGS
+                                else -> screen // allow direct route names
+                            }
+                            navController.navigate(route)
+                        }
+                    }
+                }
+
                 U1NavGraph(
                     navController = navController,
                     viewModel = viewModel,

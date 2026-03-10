@@ -10,15 +10,20 @@ import org.json.JSONObject
  */
 data class ExtruderPreset(
     val index: Int,                     // 0-based (E1=0, E2=1, E3=2, E4=3)
-    val color: String = "#FFFFFF",      // "#RRGGBB" — physical filament color
+    val color: String = DEFAULT_COLORS[0], // "#RRGGBB" — physical filament color
     val materialType: String = "PLA",   // "PLA", "PETG", "ABS", "TPU", …
     val filamentProfileId: Long? = null // optional link to FilamentProfile for settings
 ) {
     val label: String get() = "E${index + 1}"
+
+    companion object {
+        /** Default colours: Red, Green, Blue, White — distinct for multi-colour testing. */
+        val DEFAULT_COLORS = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+    }
 }
 
 fun defaultExtruderPresets(): List<ExtruderPreset> =
-    (0..3).map { ExtruderPreset(it) }
+    (0..3).map { ExtruderPreset(it, color = ExtruderPreset.DEFAULT_COLORS[it]) }
 
 fun serializeExtruderPresets(presets: List<ExtruderPreset>): String {
     val arr = JSONArray()

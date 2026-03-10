@@ -209,10 +209,15 @@ object BambuSanitizer {
                         val totalComponentSize = if (hasMultiColorComponents) {
                             componentFileNames.sumOf { name -> srcZip.getEntry(name)?.size ?: 0L }
                         } else 0L
-                        val safeToInline = totalComponentSize <= 15_000_000L  // 15 MB
+                        // Raise threshold to 50MB: OrcaSlicer's _generate_volumes_new does NOT
+                        // support firstid/lastid volume splitting — it matches volumes by subobject_id.
+                        // Without restructuring, multi-color models (e.g. Dragon Scale at 19.9MB) lose
+                        // per-volume extruder assignments and slice as single-colour.  The old 15MB
+                        // threshold was too conservative for modern devices with 8GB+ RAM.
+                        val safeToInline = totalComponentSize <= 50_000_000L  // 50 MB
                         if (hasMultiColorComponents && !safeToInline) {
                             Log.w(TAG, "Component files too large to inline " +
-                                "(${totalComponentSize / 1_000_000}MB > 15MB), preserving component refs")
+                                "(${totalComponentSize / 1_000_000}MB > 50MB), preserving component refs")
                         }
                         // Load component files only when safe to do so
                         val componentFiles = if (hasMultiColorComponents && safeToInline) {

@@ -64,7 +64,7 @@ rm -rf app/build/outputs/androidTest-results/
 All Gradle commands must be run from **Windows PowerShell**, not WSL:
 
 ```powershell
-# Unit tests (235)
+# Unit tests (255)
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
@@ -81,7 +81,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 251 tests across 16 classes
+### Unit tests (`app/src/test/`) — 255 tests across 17 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (31) — Tool changes, nozzle temps, layer count, prime tower footprint
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -94,9 +94,10 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `data/SettingsBackupTest.kt` (10) — Export/import round-trip, version validation, partial restore
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
 - `bambu/BambuSanitizerTest.kt` (21) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
+- `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
-- `ui/MultiColorMappingTest.kt` (8) — ensureMultiSlotMapping collapse detection and sequential distribution
+- `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (9) — Grid layout, bed bounds, copy capping
 
 ### Instrumented tests (`app/src/androidTest/`) — 97 tests across 9 classes
@@ -133,7 +134,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `BambuSanitizer.filterModelToPlate` position-based fallback (no `p:object_id`) runs when `hasPlateJsons=true` OR any item has virtual TX/TY >270 or <0 — covers new format (foldy+coaster) and old format (Dragon Scale, Shashibo); picks N-th item by XML order and re-centres to (135,135)
 - `BambuSanitizer.extractPlate()` accepts `hasPlateJsons` param — pass `sourceModelInfo.hasPlateJsons` from SlicerViewModel since process() strips plate_N.json files; also strips `<assemble>` section to avoid OrcaSlicer load failure
 - `ThreeMfInfo.hasPlateJsons` — true when original Bambu ZIP has Metadata/plate_N.json files; persisted through the pipeline
-- `BambuSanitizer.process()` skips `restructureForMultiColor` when total component file size > 15MB (OOM guard) — OrcaSlicer handles `p:path` component refs natively for large files
+- `BambuSanitizer.process()` skips `restructureForMultiColor` when total component file size > 50MB (OOM guard) — raised from 15MB because OrcaSlicer's `_generate_volumes_new` does NOT support firstid/lastid volume splitting; multi-color models MUST be restructured for per-volume extruder assignments to work
 - `ThreeMfParser.isMultiPlate`: uses plate JSON count (new format) OR virtual-plate item positions (TX>270 or TY<0 on printable items) for old format detection
 - Do NOT call `clearModel()+loadModel()` before `setModelInstances()` in `startSlicing()` — `setModelInstances()` clears instances internally; the extra reload causes "Coordinate outside allowed range" Clipper errors
 - `BambuSanitizer.extractPlate()` copies ALL ZIP entries including PNG previews (unlike `process()` which strips them) — plate files therefore work with `GcodeThumbnailInjector`

@@ -46,6 +46,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val sliceJobDao = container.sliceJobDao
     private val profileEmbedder by lazy { ProfileEmbedder(getApplication()) }
 
+    /** Debug-only: set by MainActivity to wire TestCommandReceiver navigation. */
+    @Volatile var setNavigateCallback: ((((String) -> Unit)) -> Unit)? = null
+
     // ---- UI State ----
     sealed class SlicerState {
         object Idle : SlicerState()
@@ -472,11 +475,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Store per-extruder colors for G-code viewers, indexed by physical slot.
         // After tool remapping the G-code uses physical T-indices (e.g. T2, T3),
         // so the color list must have entries at those positions.
+        // Prefer detected model colors when preset colors are default white (#FFFFFF),
+        // so the G-code preview always shows distinct colors for multi-color models.
         val detectedColors = _threeMfInfo.value?.detectedColors ?: emptyList()
         val fullColors = MutableList(4) { "" }  // 4 slots on Snapmaker U1
         usedSlots.forEachIndexed { compactIdx, slotIndex ->
-            fullColors[slotIndex] = extruderPresets.firstOrNull { it.index == slotIndex }?.color
-                ?: detectedColors.getOrElse(compactIdx) { "#808080" }
+            val presetColor = extruderPresets.firstOrNull { it.index == slotIndex }?.color
+            val modelColor = detectedColors.getOrElse(compactIdx) { "" }
+            fullColors[slotIndex] = when {
+                // Use preset color if user configured a non-default color
+                presetColor != null && presetColor != "#FFFFFF" -> presetColor
+                // Fall back to detected model color (from 3MF metadata)
+                modelColor.isNotBlank() -> modelColor
+                // Last resort: leave blank to use GcodeRenderer defaults (orange, blue, green, pink)
+                else -> ""
+            }
         }
         _activeExtruderColors.value = fullColors
         Log.i("SlicerVM", "Applied color mapping: $extCount extruders used=${usedSlots}, remap=${toolRemapSlots}, temps=${temps.toList()}, colors=$fullColors")

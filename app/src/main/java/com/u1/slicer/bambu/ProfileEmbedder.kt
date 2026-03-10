@@ -54,6 +54,56 @@ class ProfileEmbedder(private val context: Context) {
             "Metadata/plate", "Metadata/top", "Metadata/pick"
         )
 
+        /**
+         * Convert BambuSanitizer's Slic3r_PE_model.config XML into OrcaSlicer's
+         * model_settings.config format, optionally remapping extruder indices.
+         *
+         * Per-volume extruder assignments are critical for multi-color models where a single
+         * object has different triangle ranges assigned to different extruders (e.g. Dragon Scale).
+         */
+        internal fun convertToModelSettings(
+            slic3rConfigBytes: ByteArray,
+            extruderRemap: Map<Int, Int>?
+        ): String {
+            val text = String(slic3rConfigBytes)
+            val sb = StringBuilder()
+            sb.appendLine("""<?xml version="1.0" encoding="utf-8"?>""")
+            sb.appendLine("<config>")
+
+            val objectRe = Regex("""<object id="(\d+)"[^>]*>([\s\S]*?)</object>""")
+            val extruderRe = Regex("""key="extruder"\s+value="(\d+)"|value="(\d+)"\s+key="extruder"""")
+            val volumeRe = Regex("""<volume\s+firstid="(\d+)"\s+lastid="(\d+)"[^>]*>([\s\S]*?)</volume>""")
+
+            for (objMatch in objectRe.findAll(text)) {
+                val objectId = objMatch.groupValues[1]
+                val body = objMatch.groupValues[2]
+
+                val objExtMatch = extruderRe.find(body)
+                val rawObjExt = (objExtMatch?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() })?.toIntOrNull() ?: 1
+                val remappedObj = extruderRemap?.get(rawObjExt) ?: rawObjExt
+
+                sb.appendLine("""  <object id="$objectId">""")
+                sb.appendLine("""    <metadata key="extruder" value="$remappedObj"/>""")
+
+                for (volMatch in volumeRe.findAll(body)) {
+                    val firstId = volMatch.groupValues[1]
+                    val lastId = volMatch.groupValues[2]
+                    val volBody = volMatch.groupValues[3]
+                    val volExtMatch = extruderRe.find(volBody)
+                    val rawVolExt = (volExtMatch?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() })?.toIntOrNull() ?: rawObjExt
+                    val remappedVol = extruderRemap?.get(rawVolExt) ?: rawVolExt
+                    sb.appendLine("""    <volume firstid="$firstId" lastid="$lastId">""")
+                    sb.appendLine("""      <metadata key="extruder" value="$remappedVol"/>""")
+                    sb.appendLine("""    </volume>""")
+                }
+
+                sb.appendLine("""  </object>""")
+            }
+
+            sb.appendLine("</config>")
+            return sb.toString()
+        }
+
         // Parameters to clamp
         private val CLAMP_INT_RULES = mapOf(
             "raft_first_layer_expansion" to 0,
@@ -210,6 +260,12 @@ class ProfileEmbedder(private val context: Context) {
             config["single_extruder_multi_material"] = "0"
             Log.i(TAG, "SEMM disabled (paint data present but algorithm not stable on Android)")
         }
+
+        // OrcaSlicer reads extruder_count from project_settings.config to determine how many
+        // extruders are active. Without this key it defaults to 1 and ignores per-volume
+        // extruder assignments in model_settings.config — the root cause of the multi-colour
+        // regression where Dragon Scale sliced as single-colour despite correct volume entries.
+        config["extruder_count"] = targetExtruderCount.toString()
 
         Log.i(TAG, "Built config with ${config.size} keys, $targetExtruderCount extruders")
         return config
@@ -464,43 +520,11 @@ class ProfileEmbedder(private val context: Context) {
         return outputFile
     }
 
-    /**
-     * Convert BambuSanitizer's Slic3r_PE_model.config XML into OrcaSlicer's model_settings.config
-     * format, optionally remapping extruder indices.
-     *
-     * Input format (from BambuSanitizer.buildSlic3rModelConfig):
-     *   <object id="N"><metadata type="object" key="extruder" value="M"/></object>
-     *
-     * Output format (OrcaSlicer model_settings.config):
-     *   <object id="N"><metadata key="extruder" value="M"/></object>
-     */
+    /** Instance delegate to companion for backward compatibility with embed(). */
     internal fun convertToModelSettings(
         slic3rConfigBytes: ByteArray,
         extruderRemap: Map<Int, Int>?
-    ): String {
-        val text = String(slic3rConfigBytes)
-        val sb = StringBuilder()
-        sb.appendLine("""<?xml version="1.0" encoding="utf-8"?>""")
-        sb.appendLine("<config>")
-
-        // Match each <object id="N"> block and extract its first extruder metadata value
-        val objectRe = Regex("""<object id="(\d+)"[^>]*>([\s\S]*?)</object>""")
-        val extruderRe = Regex("""key="extruder"\s+value="(\d+)"|value="(\d+)"\s+key="extruder"""")
-
-        for (objMatch in objectRe.findAll(text)) {
-            val objectId = objMatch.groupValues[1]
-            val body = objMatch.groupValues[2]
-            val extMatch = extruderRe.find(body)
-            val rawExt = (extMatch?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() })?.toIntOrNull() ?: 1
-            val remapped = extruderRemap?.get(rawExt) ?: rawExt
-            sb.appendLine("""  <object id="$objectId">""")
-            sb.appendLine("""    <metadata key="extruder" value="$remapped"/>""")
-            sb.appendLine("""  </object>""")
-        }
-
-        sb.appendLine("</config>")
-        return sb.toString()
-    }
+    ): String = Companion.convertToModelSettings(slic3rConfigBytes, extruderRemap)
 
     /**
      * Strip Bambu-specific XML extensions from a .model file so OrcaSlicer's BBS 3MF reader

@@ -411,17 +411,22 @@ class BambuSanitizerTest {
 
     @Test
     fun `component file size guard - large files skip restructuring`() {
-        // Verify the 15MB threshold logic: total component size > 15MB → safeToInline = false.
-        // This prevents OOM when processing large multi-plate files (e.g. a 7-plate coaster).
-        val threshold = 15_000_000L
+        // Verify the 50MB threshold logic: total component size > 50MB → safeToInline = false.
+        // Raised from 15MB to 50MB because OrcaSlicer's _generate_volumes_new doesn't support
+        // firstid/lastid volume splitting — multi-color models MUST be restructured.
+        val threshold = 50_000_000L
 
         // Small file set: 3 files × 2MB = 6MB → safe to inline
         val smallTotal = 3 * 2_000_000L
         assertTrue("6MB total should be safe to inline", smallTotal <= threshold)
 
-        // Large file set: 7 files × 5MB = 35MB → too large
-        val largeTotal = 7 * 5_000_000L
-        assertFalse("35MB total should skip inlining", largeTotal <= threshold)
+        // Medium file: Dragon Scale at ~20MB → now safe to inline (was blocked at 15MB)
+        val mediumTotal = 20_000_000L
+        assertTrue("20MB total should be safe to inline (multi-color models)", mediumTotal <= threshold)
+
+        // Large file set: 7 files × 10MB = 70MB → too large
+        val largeTotal = 7 * 10_000_000L
+        assertFalse("70MB total should skip inlining", largeTotal <= threshold)
     }
 
     @Test
