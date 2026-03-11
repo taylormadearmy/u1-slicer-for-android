@@ -570,7 +570,8 @@ fun PrepareScreen(
                                 onPositionsChanged = { pos, towerPos ->
                                     viewModel.applyPlacementPositions(pos, towerPos)
                                 },
-                                onInfoClick = { showInfoDialog = true }
+                                onInfoClick = { showInfoDialog = true },
+                                modelScale = modelScale
                             )
                             if (showInfoDialog && loadedInfo != null) {
                                 ModelInfoDialog(
@@ -598,15 +599,20 @@ fun PrepareScreen(
                             },
                             onToggleWipeTower = {
                                 viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
+                            },
+                            onAutoMap = {
+                                viewModel.reAutoMapColors(extruderPresets, filaments)
                             }
                         )
-                        // Scale controls
+                        // Scale & copies controls
                         ScaleSection(
                             scale = modelScale,
-                            onScaleChange = { viewModel.setModelScale(it) }
+                            onScaleChange = { viewModel.setModelScale(it) },
+                            copyCount = copyCount,
+                            onSetCopyCount = viewModel::setCopyCount
                         )
                         ConfigCard(
-                            config, viewModel::updateConfig, copyCount, viewModel::setCopyCount,
+                            config, viewModel::updateConfig,
                             slicingOverrides = slicingOverrides,
                             onOverridesChange = { viewModel.saveSlicingOverrides(it) }
                         )
@@ -1132,16 +1138,6 @@ fun ConfigCard(
                         )
                     }
 
-                    // Multiple copies
-                    Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                    Text("Copies: $copyCount", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = copyCount.toFloat(),
-                        onValueChange = { v -> onSetCopyCount(v.toInt()) },
-                        valueRange = 1f..16f,
-                        steps = 14
-                    )
-
                     InfoRow("Nozzle Diameter", "${config.nozzleDiameter} mm")
                     InfoRow("Filament", config.filamentType)
                     InfoRow("Build Volume", "270 x 270 x 270 mm")
@@ -1579,7 +1575,8 @@ fun InlineModelPreview(
     wipeTowerWidth: Float = 60f,
     wipeTowerDepth: Float = 60f,
     onPositionsChanged: ((FloatArray, Pair<Float, Float>) -> Unit)? = null,
-    onInfoClick: (() -> Unit)? = null
+    onInfoClick: (() -> Unit)? = null,
+    modelScale: SlicerViewModel.ModelScale = SlicerViewModel.ModelScale()
 ) {
     var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
@@ -1707,6 +1704,30 @@ fun InlineModelPreview(
                     color = Color.White.copy(alpha = 0.7f)
                 )
             }
+            // Scale overlay
+            val isScaled = modelScale.x != 1f || modelScale.y != 1f || modelScale.z != 1f
+            if (isScaled) {
+                val scaleText = if (modelScale.x == modelScale.y && modelScale.y == modelScale.z) {
+                    "%.0f%%".format(modelScale.x * 100)
+                } else {
+                    "X:%.0f%% Y:%.0f%% Z:%.0f%%".format(
+                        modelScale.x * 100, modelScale.y * 100, modelScale.z * 100)
+                }
+                Text(
+                    scaleText,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .background(
+                            Color.Black.copy(alpha = 0.6f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
         }
     }
 }
@@ -1799,7 +1820,8 @@ fun PrintSetupSection(
     wipeTowerEnabled: Boolean,
     extruderCount: Int,
     onMappingChange: (List<Int>) -> Unit,
-    onToggleWipeTower: () -> Unit
+    onToggleWipeTower: () -> Unit,
+    onAutoMap: (() -> Unit)? = null
 ) {
     val isMultiColor = detectedColors.isNotEmpty() && colorMapping != null
     val showSection = isMultiColor || extruderCount > 1
@@ -1821,6 +1843,19 @@ fun PrintSetupSection(
             }
 
             if (isMultiColor) {
+                if (onAutoMap != null) {
+                    OutlinedButton(
+                        onClick = onAutoMap,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Default.AutoFixHigh, null,
+                            modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Auto Map to Extruders", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
                 detectedColors.forEachIndexed { colorIdx, modelColor ->
                     var expanded by remember { mutableStateOf(false) }
                     val selectedSlot = mapping.getOrElse(colorIdx) { 0 }
@@ -1929,7 +1964,9 @@ fun PrintSetupSection(
 @Composable
 fun ScaleSection(
     scale: SlicerViewModel.ModelScale,
-    onScaleChange: (SlicerViewModel.ModelScale) -> Unit
+    onScaleChange: (SlicerViewModel.ModelScale) -> Unit,
+    copyCount: Int = 1,
+    onSetCopyCount: (Int) -> Unit = {}
 ) {
     var uniformMode by remember { mutableStateOf(true) }
     var uniformValue by remember(scale) { mutableFloatStateOf(scale.uniform) }
@@ -1949,7 +1986,7 @@ fun ScaleSection(
                     Icon(Icons.Default.OpenWith, null, tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Scale", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Scale & Copies", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Uniform", style = MaterialTheme.typography.labelSmall,
@@ -1958,6 +1995,17 @@ fun ScaleSection(
                     Switch(checked = uniformMode, onCheckedChange = { uniformMode = it })
                 }
             }
+
+            // Copies
+            Text("Copies: $copyCount", style = MaterialTheme.typography.labelMedium)
+            Slider(
+                value = copyCount.toFloat(),
+                onValueChange = { v -> onSetCopyCount(v.toInt()) },
+                valueRange = 1f..16f,
+                steps = 14
+            )
+
+            Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
 
             if (uniformMode) {
                 val pct = "%.0f%%".format(uniformValue * 100)

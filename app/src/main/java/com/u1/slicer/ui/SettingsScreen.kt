@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import com.u1.slicer.BuildConfig
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
@@ -112,6 +113,7 @@ fun SettingsScreen(
                 InfoRow("Model", "Snapmaker U1")
                 InfoRow("Build Volume", "270 x 270 x 270 mm")
                 InfoRow("Extruders", "4")
+                InfoRow("App Version", "v${BuildConfig.VERSION_NAME}")
 
                 // Connection sub-section
                 if (printerViewModel != null) {

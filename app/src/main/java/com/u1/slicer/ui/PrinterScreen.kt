@@ -489,7 +489,8 @@ private fun ExtruderSlotRow(
             .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
         Column(modifier = Modifier.weight(1f)) {
             Text(preset.label, fontWeight = FontWeight.Medium)
-            Text(preset.materialType, style = MaterialTheme.typography.bodySmall,
+            val profileName = filaments.firstOrNull { it.id == preset.filamentProfileId }?.name
+            Text(profileName ?: preset.materialType, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Icon(Icons.Default.Edit, null, modifier = Modifier.size(16.dp),
@@ -507,9 +508,7 @@ private fun ExtruderSlotEditDialog(
 ) {
     var color by remember { mutableStateOf(preset.color) }
     var materialType by remember { mutableStateOf(preset.materialType) }
-    var materialExpanded by remember { mutableStateOf(false) }
     var filamentExpanded by remember { mutableStateOf(false) }
-    val materials = listOf("PLA", "PETG", "ABS", "TPU", "ASA", "PA", "PVA", "HIPS")
 
     // Track which filament profile is linked (if any)
     var linkedProfileId by remember { mutableStateOf(preset.filamentProfileId) }
@@ -534,17 +533,6 @@ private fun ExtruderSlotEditDialog(
                         ))
                     }
                 )
-                ExposedDropdownMenuBox(expanded = materialExpanded, onExpandedChange = { materialExpanded = it }) {
-                    OutlinedTextField(value = materialType, onValueChange = {}, readOnly = true,
-                        label = { Text("Material") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = materialExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor())
-                    ExposedDropdownMenu(expanded = materialExpanded, onDismissRequest = { materialExpanded = false }) {
-                        materials.forEach { mat ->
-                            DropdownMenuItem(text = { Text(mat) }, onClick = { materialType = mat; materialExpanded = false })
-                        }
-                    }
-                }
                 // Filament profile picker — links a FilamentProfile for temperature/speed settings
                 if (filaments.isNotEmpty()) {
                     ExposedDropdownMenuBox(expanded = filamentExpanded, onExpandedChange = { filamentExpanded = it }) {

@@ -502,6 +502,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _showMultiColorDialog.value = false
     }
 
+    /**
+     * Re-trigger auto-mapping of detected model colors to the closest extruder slots.
+     * Useful after changing extruder filament colors.
+     */
+    fun reAutoMapColors(
+        extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+        filaments: List<FilamentProfile>
+    ) {
+        val colors = _threeMfInfo.value?.detectedColors ?: return
+        if (colors.isEmpty()) return
+        val rawMapping = colors.map { modelColor ->
+            com.u1.slicer.ui.findClosestExtruder(modelColor, extruderPresets)?.index ?: 0
+        }
+        val mapping = com.u1.slicer.ui.ensureMultiSlotMapping(rawMapping, colors.size)
+        applyMultiColorAssignments(mapping, extruderPresets, filaments)
+        Log.i("SlicerVM", "Re-auto-mapped colors: mapping=$mapping")
+    }
+
     fun showMultiColorReassign() {
         _showMultiColorDialog.value = true
     }
