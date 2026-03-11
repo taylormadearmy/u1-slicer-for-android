@@ -74,4 +74,66 @@ class CopyArrangeCalculatorTest {
         assertEquals(0f, positions[0], 0.01f)
         assertEquals(0f, positions[1], 0.01f)
     }
+
+    // --- computeWipeTowerPosition tests ---
+
+    @Test
+    fun `tower avoids centered model - picks corner with most clearance`() {
+        // Model centered at (125, 125), size 20x20 → occupies (125,125)-(145,145)
+        val objPos = floatArrayOf(125f, 125f)
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 20f, 20f, 60f)
+        // Tower should NOT overlap the model
+        val tMaxX = tx + 60f; val tMaxY = ty + 60f
+        val oMinX = 125f; val oMinY = 125f; val oMaxX = 145f; val oMaxY = 145f
+        val overlapsX = tx < oMaxX && tMaxX > oMinX
+        val overlapsY = ty < oMaxY && tMaxY > oMinY
+        assertFalse("Tower at ($tx,$ty) overlaps model", overlapsX && overlapsY)
+    }
+
+    @Test
+    fun `tower avoids large centered model - picks edge midpoint`() {
+        // 150x150 model centered at (60, 60) → occupies (60,60)-(210,210)
+        // Corners only have 55mm clearance, not enough for 60mm tower.
+        // Edge midpoints (e.g. bottom-center, top-center) should be clear.
+        val objPos = floatArrayOf(60f, 60f)
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 150f, 150f, 60f)
+        val tMaxX = tx + 60f; val tMaxY = ty + 60f
+        val overlapsX = tx < 210f && tMaxX > 60f
+        val overlapsY = ty < 210f && tMaxY > 60f
+        // With edge candidates, the tower should find a non-overlapping spot
+        // (e.g. bottom-center at (105, 5) is fully below the model at y=60)
+        assertFalse("Tower at ($tx,$ty) overlaps 150mm model", overlapsX && overlapsY)
+    }
+
+    @Test
+    fun `tower position is within bed bounds`() {
+        val objPos = floatArrayOf(125f, 125f)
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 20f, 20f, 60f)
+        assertTrue("tx=$tx out of bounds", tx >= 0f && tx + 60f <= 270f)
+        assertTrue("ty=$ty out of bounds", ty >= 0f && ty + 60f <= 270f)
+    }
+
+    @Test
+    fun `tower avoids multiple grid copies`() {
+        // 4 copies of 50x50 in grid: (5,5), (60,5), (5,60), (60,60)
+        val objPos = CopyArrangeCalculator.calculate(50f, 50f, 4)
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 50f, 50f, 60f)
+        // Verify no overlap with any copy
+        for (i in 0 until objPos.size / 2) {
+            val ox = objPos[i * 2]; val oy = objPos[i * 2 + 1]
+            val overlapsX = tx < ox + 50f && tx + 60f > ox
+            val overlapsY = ty < oy + 50f && ty + 60f > oy
+            assertFalse("Tower at ($tx,$ty) overlaps copy $i at ($ox,$oy)", overlapsX && overlapsY)
+        }
+    }
+
+    @Test
+    fun `tower picks bottom-left when model is in top-right`() {
+        // Model at (200, 200), size 50x50
+        val objPos = floatArrayOf(200f, 200f)
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 50f, 50f, 60f)
+        // Should pick bottom-left corner (0, 0)
+        assertEquals(0f, tx, 0.01f)
+        assertEquals(0f, ty, 0.01f)
+    }
 }

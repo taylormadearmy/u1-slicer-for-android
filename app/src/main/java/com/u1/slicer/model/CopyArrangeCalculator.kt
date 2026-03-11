@@ -62,4 +62,82 @@ object CopyArrangeCalculator {
         val rows = maxOf(1, ((bedSizeY + margin) / (objectSizeY + margin)).toInt())
         return cols * rows
     }
+
+    /**
+     * Compute a wipe tower position that avoids overlapping the model(s).
+     * Tries the four corners of the bed (with margin), picks the one with
+     * the most clearance from all object bounding boxes.
+     *
+     * @param objectPositions flat [x0,y0,x1,y1,...] model positions (min-corner, mm)
+     * @param objectSizeX model bounding box X
+     * @param objectSizeY model bounding box Y
+     * @param towerWidth wipe tower width (square footprint assumed)
+     * @param bedSizeX bed X dimension
+     * @param bedSizeY bed Y dimension
+     * @return Pair(towerX, towerY) in mm
+     */
+    fun computeWipeTowerPosition(
+        objectPositions: FloatArray,
+        objectSizeX: Float,
+        objectSizeY: Float,
+        towerWidth: Float = 60f,
+        bedSizeX: Float = 270f,
+        bedSizeY: Float = 270f
+    ): Pair<Float, Float> {
+        val bedCenter = bedSizeX / 2f
+        // Candidate positions: 4 corners + 4 edge midpoints (no bed-edge margin —
+        // we'd rather be flush with the edge than overlapping the model)
+        val candidates = listOf(
+            0f to 0f,                                                   // bottom-left
+            bedSizeX - towerWidth to 0f,                                // bottom-right
+            0f to bedSizeY - towerWidth,                                // top-left
+            bedSizeX - towerWidth to bedSizeY - towerWidth,             // top-right
+            bedCenter - towerWidth / 2f to 0f,                          // bottom-center
+            bedCenter - towerWidth / 2f to bedSizeY - towerWidth,       // top-center
+            0f to bedCenter - towerWidth / 2f,                          // left-center
+            bedSizeX - towerWidth to bedCenter - towerWidth / 2f        // right-center
+        )
+
+        // Build list of object bounding boxes [minX, minY, maxX, maxY]
+        val objectCount = objectPositions.size / 2
+        val objectBoxes = (0 until objectCount).map { i ->
+            val ox = objectPositions[i * 2]
+            val oy = objectPositions[i * 2 + 1]
+            floatArrayOf(ox, oy, ox + objectSizeX, oy + objectSizeY)
+        }
+
+        // For each candidate, compute the minimum distance to any object box
+        var bestCandidate = candidates[0]
+        var bestMinDist = Float.NEGATIVE_INFINITY
+
+        for ((cx, cy) in candidates) {
+            val tMinX = cx; val tMinY = cy
+            val tMaxX = cx + towerWidth; val tMaxY = cy + towerWidth
+            var minDist = Float.MAX_VALUE
+
+            for (box in objectBoxes) {
+                val oMinX = box[0]; val oMinY = box[1]
+                val oMaxX = box[2]; val oMaxY = box[3]
+                // Signed distance: negative = overlapping
+                val dx = maxOf(oMinX - tMaxX, tMinX - oMaxX, 0f)
+                val dy = maxOf(oMinY - tMaxY, tMinY - oMaxY, 0f)
+                val dist = if (dx == 0f && dy == 0f) {
+                    // Overlapping — compute negative penetration
+                    val overlapX = minOf(tMaxX - oMinX, oMaxX - tMinX)
+                    val overlapY = minOf(tMaxY - oMinY, oMaxY - tMinY)
+                    -minOf(overlapX, overlapY)
+                } else {
+                    dx + dy
+                }
+                minDist = minOf(minDist, dist)
+            }
+
+            if (minDist > bestMinDist) {
+                bestMinDist = minDist
+                bestCandidate = cx to cy
+            }
+        }
+
+        return bestCandidate
+    }
 }

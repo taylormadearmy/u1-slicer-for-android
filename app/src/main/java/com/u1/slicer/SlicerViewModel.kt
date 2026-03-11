@@ -405,10 +405,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // colors the model has.  OrcaSlicer's toolpath optimizer OOMs with >2
                     // extruders.  G-code post-processing remaps T-commands to physical slots.
                     val extCount = mfInfo.detectedExtruderCount.coerceAtMost(2)
+                    // Compute tower position that avoids the model
+                    val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
+                    val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
+                        positions, info.sizeX, info.sizeY, _config.value.wipeTowerWidth
+                    )
                     _config.value = _config.value.copy(
                         extruderCount = extCount,
-                        wipeTowerEnabled = true
+                        wipeTowerEnabled = true,
+                        wipeTowerX = towerPos.first,
+                        wipeTowerY = towerPos.second
                     )
+                    customWipeTowerPos = towerPos
+                    Log.i("SlicerVM", "Auto-placed wipe tower at (${towerPos.first}, ${towerPos.second})")
                     // Auto-apply closest-extruder mapping immediately — no dialog popup.
                     // The inline UI on the model page lets the user change assignments.
                     val presets = extruderPresets.value
@@ -468,13 +477,33 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val profileId = preset?.filamentProfileId
             filaments.firstOrNull { it.id == profileId }?.nozzleTemp ?: 210
         }
-        _config.value = _config.value.copy(
-            extruderCount = extCount,
-            extruderTemps = temps,
-            extruderRetractLength = FloatArray(extCount) { _config.value.retractLength },
-            extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
-            wipeTowerEnabled = extCount > 1
-        )
+        // Recompute wipe tower position if multi-extruder (unless user already placed it)
+        val mi = lastModelInfo
+        if (extCount > 1 && mi != null && mi.sizeX > 0f && customWipeTowerPos == null) {
+            val objPos = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, _copyCount.value)
+            val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
+                objPos, mi.sizeX, mi.sizeY, _config.value.wipeTowerWidth
+            )
+            _config.value = _config.value.copy(
+                extruderCount = extCount,
+                extruderTemps = temps,
+                extruderRetractLength = FloatArray(extCount) { _config.value.retractLength },
+                extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
+                wipeTowerEnabled = true,
+                wipeTowerX = towerPos.first,
+                wipeTowerY = towerPos.second
+            )
+            customWipeTowerPos = towerPos
+            Log.i("SlicerVM", "Auto-placed wipe tower at (${towerPos.first}, ${towerPos.second})")
+        } else {
+            _config.value = _config.value.copy(
+                extruderCount = extCount,
+                extruderTemps = temps,
+                extruderRetractLength = FloatArray(extCount) { _config.value.retractLength },
+                extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
+                wipeTowerEnabled = extCount > 1
+            )
+        }
         // Store per-extruder colors for G-code viewers, indexed by physical slot.
         // After tool remapping the G-code uses physical T-indices (e.g. T2, T3),
         // so the color list must have entries at those positions.
