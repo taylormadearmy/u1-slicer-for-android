@@ -11,23 +11,6 @@ object SettingsBackup {
 
     private const val VERSION = 1
 
-    fun export(
-        sliceConfig: SliceConfig,
-        slicingOverrides: SlicingOverrides,
-        printerUrl: String,
-        extruderPresets: List<ExtruderPreset>,
-        filamentProfiles: List<FilamentProfile>
-    ): String {
-        val root = JSONObject()
-        root.put("version", VERSION)
-        root.put("sliceConfig", exportSliceConfig(sliceConfig))
-        root.put("slicingOverrides", JSONObject(slicingOverrides.toJson()))
-        root.put("printerUrl", printerUrl)
-        root.put("extruderPresets", exportExtruderPresets(extruderPresets))
-        root.put("filamentProfiles", exportFilamentProfiles(filamentProfiles))
-        return root.toString(2)
-    }
-
     data class BackupData(
         val sliceConfig: SliceConfig?,
         val slicingOverrides: SlicingOverrides?,
@@ -110,25 +93,63 @@ object SettingsBackup {
         )
     }
 
-    private fun exportExtruderPresets(presets: List<ExtruderPreset>): JSONArray {
+    fun export(
+        sliceConfig: SliceConfig,
+        slicingOverrides: SlicingOverrides,
+        printerUrl: String,
+        extruderPresets: List<ExtruderPreset>,
+        filamentProfiles: List<FilamentProfile>,
+        filamentNameResolver: (Long) -> String? = { null }
+    ): String {
+        val root = JSONObject()
+        root.put("version", VERSION)
+        root.put("sliceConfig", exportSliceConfig(sliceConfig))
+        root.put("slicingOverrides", JSONObject(slicingOverrides.toJson()))
+        root.put("printerUrl", printerUrl)
+        root.put("extruderPresets", exportExtruderPresets(extruderPresets, filamentNameResolver))
+        root.put("filamentProfiles", exportFilamentProfiles(filamentProfiles))
+        return root.toString(2)
+    }
+
+    private fun exportExtruderPresets(
+        presets: List<ExtruderPreset>,
+        filamentNameResolver: (Long) -> String? = { null }
+    ): JSONArray {
         return JSONArray().apply {
             presets.forEach { p ->
                 put(JSONObject().apply {
                     put("slot", p.index + 1) // 1-based in backup
                     put("color", p.color)
                     put("materialType", p.materialType)
+                    p.filamentProfileId?.let { id ->
+                        filamentNameResolver(id)?.let { name ->
+                            put("filamentProfileName", name)
+                        }
+                    }
                 })
             }
         }
     }
 
+    data class ParsedExtruderPreset(
+        val preset: ExtruderPreset,
+        val filamentProfileName: String?
+    )
+
     private fun parseExtruderPresetsArray(arr: JSONArray): List<ExtruderPreset> {
+        return parseExtruderPresetsWithNames(arr).map { it.preset }
+    }
+
+    fun parseExtruderPresetsWithNames(arr: JSONArray): List<ParsedExtruderPreset> {
         return (0 until arr.length()).map { i ->
             val obj = arr.getJSONObject(i)
-            ExtruderPreset(
-                index = obj.optInt("slot", i + 1) - 1, // back to 0-based
-                color = obj.optString("color", "#FFFFFF"),
-                materialType = obj.optString("materialType", "PLA")
+            ParsedExtruderPreset(
+                preset = ExtruderPreset(
+                    index = obj.optInt("slot", i + 1) - 1, // back to 0-based
+                    color = obj.optString("color", "#FFFFFF"),
+                    materialType = obj.optString("materialType", "PLA")
+                ),
+                filamentProfileName = if (obj.has("filamentProfileName")) obj.getString("filamentProfileName") else null
             )
         }
     }

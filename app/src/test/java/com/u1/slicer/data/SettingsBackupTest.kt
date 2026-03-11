@@ -89,6 +89,29 @@ class SettingsBackupTest {
     }
 
     @Test
+    fun `round-trip preserves filament profile names on extruder presets`() {
+        val profiles = mapOf(1L to "My PLA", 3L to "My PETG")
+        val presets = listOf(
+            ExtruderPreset(0, "#FF0000", "PLA", filamentProfileId = 1L),
+            ExtruderPreset(1, "#00FF00", "PETG", filamentProfileId = 3L),
+            ExtruderPreset(2, "#0000FF", "ABS"),
+            ExtruderPreset(3, "#FFFF00", "TPU")
+        )
+        val json = SettingsBackup.export(
+            SliceConfig(), SlicingOverrides(), "", presets, emptyList()
+        ) { id -> profiles[id] }
+
+        // Verify filamentProfileName is in the JSON
+        val root = JSONObject(json)
+        val arr = root.getJSONArray("extruderPresets")
+        val parsed = SettingsBackup.parseExtruderPresetsWithNames(arr)
+        assertEquals("My PLA", parsed[0].filamentProfileName)
+        assertEquals("My PETG", parsed[1].filamentProfileName)
+        assertNull(parsed[2].filamentProfileName)
+        assertNull(parsed[3].filamentProfileName)
+    }
+
+    @Test
     fun `round-trip preserves filament profiles`() {
         val profiles = listOf(
             FilamentProfile(name = "Test PLA", material = "PLA", nozzleTemp = 210,

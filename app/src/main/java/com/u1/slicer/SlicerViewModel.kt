@@ -13,6 +13,7 @@ import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.FilamentProfile
+import org.json.JSONObject
 import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
 import com.u1.slicer.gcode.GcodeToolRemapper
@@ -946,7 +947,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val presets = extruderPresets.value
             val printerUrl = settingsRepo.printerUrl.first()
             val profiles = filamentDao.getAll().first()
-            val json = SettingsBackup.export(cfg, overrides, printerUrl, presets, profiles)
+            val profileMap = profiles.associateBy { it.id }
+            val json = SettingsBackup.export(cfg, overrides, printerUrl, presets, profiles) { id ->
+                profileMap[id]?.name
+            }
             onResult(json)
         }
     }
@@ -965,11 +969,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 data.printerUrl?.let {
                     settingsRepo.savePrinterUrl(it)
                 }
-                data.extruderPresets?.let {
-                    settingsRepo.saveExtruderPresets(it)
-                }
+                // Insert filament profiles first so we can resolve names → IDs
+                val nameToId = mutableMapOf<String, Long>()
                 data.filamentProfiles?.let { profiles ->
-                    profiles.forEach { filamentDao.insert(it) }
+                    profiles.forEach { profile ->
+                        val newId = filamentDao.insert(profile)
+                        nameToId[profile.name] = newId
+                    }
+                }
+                // Resolve filament profile names to new IDs on extruder presets
+                val root = JSONObject(json)
+                val presetsArr = root.optJSONArray("extruderPresets")
+                if (presetsArr != null && data.extruderPresets != null) {
+                    val parsed = SettingsBackup.parseExtruderPresetsWithNames(presetsArr)
+                    val resolved = parsed.map { p ->
+                        val resolvedId = p.filamentProfileName?.let { nameToId[it] }
+                        p.preset.copy(filamentProfileId = resolvedId)
+                    }
+                    settingsRepo.saveExtruderPresets(resolved)
+                } else {
+                    data.extruderPresets?.let {
+                        settingsRepo.saveExtruderPresets(it)
+                    }
                 }
                 Log.i("SlicerVM", "Settings backup imported successfully")
             } catch (e: Exception) {
