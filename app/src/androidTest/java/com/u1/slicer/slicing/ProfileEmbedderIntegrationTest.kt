@@ -192,6 +192,11 @@ class ProfileEmbedderIntegrationTest {
         val gcode = File(result.gcodePath).readText()
         assertTrue("G-code must have non-zero nozzle temps",
             GcodeValidator.hasNonZeroNozzleTemps(gcode))
+        val bounds = GcodeValidator.checkBedBounds(gcode)
+        assertTrue(
+            "Fan cover G-code out of bed bounds: X=[${bounds.minX}, ${bounds.maxX}] Y=[${bounds.minY}, ${bounds.maxY}]",
+            bounds.withinBounds
+        )
     }
 
     /**

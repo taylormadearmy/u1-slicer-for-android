@@ -27,7 +27,7 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 255 JVM unit tests
+./gradlew testDebugUnitTest                                                    # 261 JVM unit tests
 ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 98 instrumented tests (uses Orchestrator)
 ```
 
@@ -65,11 +65,11 @@ rm -rf app/build/outputs/androidTest-results/
 All Gradle commands must be run from **Windows PowerShell**, not WSL:
 
 ```powershell
-# Unit tests (255)
+# Unit tests (260)
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
-# Instrumented tests (98) — test device must be connected, uses Orchestrator
+# Instrumented tests (97) — test device must be connected, uses Orchestrator
 Remove-Item -Recurse -Force app\build\outputs\androidTest-results -ErrorAction SilentlyContinue
 .\gradlew connectedDebugAndroidTest --no-daemon
 
@@ -82,7 +82,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 255 tests across 17 classes
+### Unit tests (`app/src/test/`) — 260 tests across 17 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (31) — Tool changes, nozzle temps, layer count, prime tower footprint
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -99,15 +99,16 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
 - `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
-- `model/CopyArrangeCalculatorTest.kt` (9) — Grid layout, bed bounds, copy capping
+- `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 
-### Instrumented tests (`app/src/androidTest/`) — 98 tests across 9 classes
+### Instrumented tests (`app/src/androidTest/`) — 97 tests across 10 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
-- `slicing/SlicingIntegrationTest.kt` (24) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` (25) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression, restructurePlateFile multi-extruder config guard
+- `slicing/SlicingIntegrationTest.kt` (25) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
+- `slicing/BambuPipelineIntegrationTest.kt` (26) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression, restructurePlateFile multi-extruder config guard
+- `slicing/SemmSlicingTest.kt` (1) — SEMM (paint data) slicing pipeline
 - `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/ThreeMfMeshParserTest.kt` (2) — 3MF mesh parsing and transform resolution
@@ -148,8 +149,11 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `TestCommandReceiver` (debug-only): BroadcastReceiver for ADB-driven E2E testing — supports LOAD_FILE, SLICE, CHECK_GCODE, DUMP_STATE, DUMP_EMBEDDED_CONFIG, SET_COLORS, SET_PRINTER, SYNC_FILAMENTS, SELECT_PLATE, NAVIGATE
 - Default extruder colours are R/G/B/W (`ExtruderPreset.DEFAULT_COLORS`) — aids visual testing of multi-colour slicing
 - `BambuSanitizer.restructurePlateFile()` — deferred per-plate restructuring for multi-plate multi-colour files; `process()` preserves `model_settings.config` and defers restructuring, `selectPlate()` calls `extractPlate()` then `restructurePlateFile()` to inline component meshes and write OrcaSlicer-format config
-- `BambuSanitizer.process()` writes EITHER `model_settings.config` (deferred restructuring) OR `Slic3r_PE_model.config` (immediate restructuring), never both — duplicate entries cause ProfileEmbedder ZIP corruption
+- `BambuSanitizer.process()` writes EITHER `model_settings.config` (deferred restructuring OR compound objects) OR `Slic3r_PE_model.config` (non-compound immediate restructuring), never both — duplicate entries cause ProfileEmbedder ZIP corruption
+- `restructureForMultiColor()` creates **compound objects** (parent with `<components>` referencing inlined mesh objects) — ONE build item per assembly, so `ensure_on_bed()` operates on the whole assembly as a unit (B8 fix: parts stay in relative positions)
+- `buildOrcaModelConfig()` generates `<part id="N">` entries for compound objects — maps 1:1 to `<component objectid="N">` elements for per-volume extruder assignment
 - Android Test Orchestrator (`execution 'ANDROIDX_TEST_ORCHESTRATOR'`) runs each instrumented test in its own process — prevents native memory accumulation OOM crashes across slicing test classes
+- `CopyArrangeCalculator.computeWipeTowerPosition()` — auto-positions wipe tower by evaluating 8 candidate spots (4 corners + 4 edge midpoints) with 5mm edge margin (skirt clearance), picking the one with most clearance from all model bounding boxes; called in `loadNativeModel()` and `applyMultiColorAssignments()` when multi-extruder detected; user can override by dragging tower in placement viewer
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 

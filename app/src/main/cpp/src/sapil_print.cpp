@@ -12,6 +12,7 @@
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Config.hpp"
+#include "libslic3r/Exception.hpp"
 
 // =============================================================================
 // sapil_print.cpp — Slicing using PrusaSlicer's Slic3r::Print
@@ -389,9 +390,80 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "overhang_2_4_speed",
                     "overhang_3_4_speed",
                     "overhang_4_4_speed",
-                    // Support speeds
+                    // Support — full settings from embedded profile (critical for
+                    // USE_FILE override mode to honour Bambu 3MF support settings)
+                    "enable_support",
+                    "support_type",
+                    "support_threshold_angle",
+                    "support_on_build_plate_only",
+                    "support_object_xy_distance",
+                    "support_interface_top_layers",
+                    "support_interface_bottom_layers",
+                    "support_base_pattern",
+                    "support_base_pattern_spacing",
+                    "support_interface_pattern",
+                    "support_interface_spacing",
                     "support_speed",
                     "support_interface_speed",
+                    // Tree support parameters
+                    "tree_support_branch_angle",
+                    "tree_support_branch_distance",
+                    "tree_support_branch_diameter",
+                    "tree_support_wall_count",
+                    // Brim (brim_type is critical — without it OrcaSlicer defaults
+                    // to auto_brim which adds brims even when brim_width=0)
+                    "brim_type",
+                    "brim_width",
+                    "brim_object_gap",
+                    // Surface patterns (top/bottom finish)
+                    "top_surface_pattern",
+                    "bottom_surface_pattern",
+                    // Seam
+                    "seam_position",
+                    // Ironing
+                    "ironing_type",
+                    "ironing_speed",
+                    "ironing_flow",
+                    "ironing_spacing",
+                    // Print speeds (from embedded profile — overrides applyConfigToPrusa
+                    // fallbacks when Snapmaker profile is embedded)
+                    "outer_wall_speed",
+                    "inner_wall_speed",
+                    "sparse_infill_speed",
+                    "internal_solid_infill_speed",
+                    "top_surface_speed",
+                    "initial_layer_speed",
+                    "initial_layer_infill_speed",
+                    "bridge_speed",
+                    "gap_infill_speed",
+                    "small_perimeter_speed",
+                    "travel_speed",
+                    // Layer / wall / infill (from embedded profile)
+                    "layer_height",
+                    "initial_layer_print_height",
+                    "wall_loops",
+                    "top_shell_layers",
+                    "bottom_shell_layers",
+                    "sparse_infill_density",
+                    "sparse_infill_pattern",
+                    // Line widths (from embedded profile)
+                    "line_width",
+                    "outer_wall_line_width",
+                    "inner_wall_line_width",
+                    "top_surface_line_width",
+                    "sparse_infill_line_width",
+                    "initial_layer_line_width",
+                    "support_line_width",
+                    // Skirt
+                    "skirt_loops",
+                    "skirt_distance",
+                    "skirt_height",
+                    // Prime tower
+                    "enable_prime_tower",
+                    "prime_tower_width",
+                    "prime_volume",
+                    "wipe_tower_x",
+                    "wipe_tower_y",
                     // Tool change / wipe tower filament handling (from printer+filament profile)
                     "single_extruder_multi_material",
                     "cooling_tube_retraction",
@@ -430,7 +502,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Apply model + config to the print
         Slic3r::Model& model = getGlobalModel();
 
-        // Ensure all objects are positioned on the bed (z = 0)
+        // Ensure every object sits on the bed (min z = 0).
+        // Per-object ensure_on_bed() is correct: each restructured Bambu build
+        // item is an independent printable piece that should touch the bed.
         for (auto* obj : model.objects) {
             obj->ensure_on_bed();
         }
@@ -491,6 +565,16 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         // Apply the config to the print
         print.apply(model, dpc);
+
+        // Validate the print configuration before processing
+        {
+            auto validation = print.validate();
+            if (!validation.string.empty()) {
+                SAPIL_LOGW("Print validation: %s", validation.string.c_str());
+            } else {
+                SAPIL_LOGI("Print validation: OK");
+            }
+        }
 
         // Set up progress callback — monotonic (never goes backwards).
         // PrusaSlicer resets status.percent to 0 at each new step, so we
@@ -579,6 +663,15 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         return result;
 
+    } catch (const Slic3r::SlicingErrors& e) {
+        result.success = false;
+        std::string msg = "Slicing errors:";
+        for (const auto& err : e.errors_) {
+            msg += "\n  [obj " + std::to_string(err.objectId()) + "] " + err.what();
+            SAPIL_LOGE("Slicing error [obj %zu]: %s", err.objectId(), err.what());
+        }
+        result.error_message = msg;
+        SAPIL_LOGE("Total slicing errors: %d", (int)e.errors_.size());
     } catch (const Slic3r::SlicingError& e) {
         result.success = false;
         result.error_message = std::string("Slicing error: ") + e.what();

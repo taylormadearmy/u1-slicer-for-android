@@ -16,7 +16,7 @@
     "sparse_infill_pattern": "grid",
     "top_surface_pattern": "monotonicline",
     "bottom_surface_pattern": "monotonicline",
-    "support_type": "none(soluble)",
+    "support_type": "normal(auto)",
     "enable_support": "0",
     "brim_width": "5",
     "brim_type": "auto_brim",

@@ -7,6 +7,7 @@ import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.gcode.GcodeValidator
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -137,6 +138,12 @@ class SemmSlicingTest {
             "SEMM disabled: expected T1 count = 0 (single-extruder). " +
                 "If non-zero, SEMM is running and may crash — check ProfileEmbedder.cleanModelXmlForOrcaSlicer().",
             0, t1Count
+        )
+
+        val bounds = GcodeValidator.checkBedBounds(gcode)
+        assertTrue(
+            "SEMM Benchy G-code out of bed bounds: X=[${bounds.minX}, ${bounds.maxX}] Y=[${bounds.minY}, ${bounds.maxY}]",
+            bounds.withinBounds
         )
     }
 }

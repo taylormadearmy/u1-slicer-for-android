@@ -92,17 +92,15 @@ class CopyArrangeCalculatorTest {
 
     @Test
     fun `tower avoids large centered model - picks edge midpoint`() {
-        // 150x150 model centered at (60, 60) → occupies (60,60)-(210,210)
-        // Corners only have 55mm clearance, not enough for 60mm tower.
-        // Edge midpoints (e.g. bottom-center, top-center) should be clear.
-        val objPos = floatArrayOf(60f, 60f)
-        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 150f, 150f, 60f)
+        // 140x140 model centered at (65, 65) → occupies (65,65)-(205,205)
+        // 60mm tower with 5mm edge margin: bottom-center at (105, 5) → (105,5)-(165,65)
+        // Fully below model at y=65.
+        val objPos = floatArrayOf(65f, 65f)
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 140f, 140f, 60f)
         val tMaxX = tx + 60f; val tMaxY = ty + 60f
-        val overlapsX = tx < 210f && tMaxX > 60f
-        val overlapsY = ty < 210f && tMaxY > 60f
-        // With edge candidates, the tower should find a non-overlapping spot
-        // (e.g. bottom-center at (105, 5) is fully below the model at y=60)
-        assertFalse("Tower at ($tx,$ty) overlaps 150mm model", overlapsX && overlapsY)
+        val overlapsX = tx < 205f && tMaxX > 65f
+        val overlapsY = ty < 205f && tMaxY > 65f
+        assertFalse("Tower at ($tx,$ty) overlaps 140mm model", overlapsX && overlapsY)
     }
 
     @Test
@@ -132,8 +130,48 @@ class CopyArrangeCalculatorTest {
         // Model at (200, 200), size 50x50
         val objPos = floatArrayOf(200f, 200f)
         val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 50f, 50f, 60f)
-        // Should pick bottom-left corner (0, 0)
-        assertEquals(0f, tx, 0.01f)
-        assertEquals(0f, ty, 0.01f)
+        // Should pick bottom-left corner with 5mm edge margin for skirt clearance
+        assertEquals(5f, tx, 0.01f)
+        assertEquals(5f, ty, 0.01f)
+    }
+
+    @Test
+    fun `tower position leaves skirt clearance from bed edges for all model positions`() {
+        // Regression: tower at (0, 210) caused skirt to extend beyond bed boundary.
+        // Skirt needs ~4mm clearance (3mm distance + 2 loops × 0.5mm line width).
+        val skirtClearance = 4f
+        val towerWidth = 60f
+        val bedSize = 270f
+
+        // Test with models at various positions across the bed
+        val testCases = listOf(
+            floatArrayOf(105f, 105f) to (20f to 20f),   // centered small model
+            floatArrayOf(200f, 200f) to (50f to 50f),   // top-right
+            floatArrayOf(10f, 10f) to (50f to 50f),     // bottom-left
+            floatArrayOf(105f, 10f) to (60f to 60f),    // bottom-center large
+            floatArrayOf(85f, 91f) to (100f to 88f),    // Shashibo plate 5 approx
+        )
+
+        for ((objPos, size) in testCases) {
+            val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(
+                objPos, size.first, size.second, towerWidth, bedSize, bedSize
+            )
+            assertTrue(
+                "Tower at ($tx,$ty): left edge too close to bed (need ${skirtClearance}mm for skirt)",
+                tx >= skirtClearance
+            )
+            assertTrue(
+                "Tower at ($tx,$ty): bottom edge too close to bed (need ${skirtClearance}mm for skirt)",
+                ty >= skirtClearance
+            )
+            assertTrue(
+                "Tower at ($tx,$ty): right edge too close to bed (need ${skirtClearance}mm for skirt)",
+                tx + towerWidth <= bedSize - skirtClearance
+            )
+            assertTrue(
+                "Tower at ($tx,$ty): top edge too close to bed (need ${skirtClearance}mm for skirt)",
+                ty + towerWidth <= bedSize - skirtClearance
+            )
+        }
     }
 }

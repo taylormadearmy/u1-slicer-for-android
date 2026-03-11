@@ -244,7 +244,7 @@ object BambuSanitizer {
                             emptyMap()
                         }
 
-                        val (finalModelBytes, newObjectExtruders) = if (hasMultiColorComponents && safeToInline) {
+                        val (finalModelBytes, newParentParts) = if (hasMultiColorComponents && safeToInline) {
                             restructureForMultiColor(mainModelContent!!, bambuObjectParts, componentFiles)
                         } else {
                             Pair(convertMmuSegmentation(mainModelContent!!), emptyMap())
@@ -253,7 +253,7 @@ object BambuSanitizer {
                         // Clean model XML: strip Bambu extensions.
                         // For restructured files: strip everything including p:path.
                         // For non-restructured files: preserve p:path (needed for component refs).
-                        val cleanedModel = if (hasMultiColorComponents && newObjectExtruders.isNotEmpty()) {
+                        val cleanedModel = if (hasMultiColorComponents && newParentParts.isNotEmpty()) {
                             cleanModelXml(finalModelBytes)
                         } else {
                             cleanModelXmlPreserveComponentRefs(finalModelBytes)
@@ -266,7 +266,7 @@ object BambuSanitizer {
                         val cleanedModelFinal = stripNonPrintableBuildItems(cleanedModel)
                         writeStored(destZip, "3D/3dmodel.model", cleanedModelFinal)
 
-                        val wasRestructured = newObjectExtruders.isNotEmpty()
+                        val wasRestructured = newParentParts.isNotEmpty()
 
                         // Write component files and rels:
                         // - If restructured (meshes inlined): skip component files + rels entirely
@@ -292,16 +292,11 @@ object BambuSanitizer {
                             Log.d(TAG, "Skipping ${componentFileNames.size} component file(s) — meshes inlined")
                         }
 
-                        // Override bambuObjectParts with the new per-object extruder assignments
-                        if (newObjectExtruders.isNotEmpty()) {
-                            // Collect face counts from original parts before clearing
-                            val originalParts = bambuObjectParts.values.flatMap { it }
+                        // Override bambuObjectParts with the new per-parent-object part lists
+                        if (newParentParts.isNotEmpty()) {
                             bambuObjectParts.clear()
-                            var idx = 0
-                            for ((objId, ext) in newObjectExtruders.entries.sortedBy { it.key.toIntOrNull() ?: 0 }) {
-                                val faceCount = originalParts.getOrNull(idx)?.faceCount ?: 128
-                                bambuObjectParts[objId] = mutableListOf(PartInfo(faceCount, ext))
-                                idx++
+                            for ((parentId, parts) in newParentParts) {
+                                bambuObjectParts[parentId] = parts.toMutableList()
                             }
                         }
                     }
@@ -324,9 +319,23 @@ object BambuSanitizer {
                         writeStored(destZip, "Metadata/model_settings.config", modelSettingsContent!!)
                         Log.i(TAG, "Preserved model_settings.config for deferred per-plate restructuring")
                     } else if (needsModelConfig) {
-                        val slic3rModelConfig = buildSlic3rModelConfig(bambuObjectParts)
-                        writeStored(destZip, "Metadata/Slic3r_PE_model.config", slic3rModelConfig.toByteArray())
-                        Log.i(TAG, "Generated Slic3r_PE_model.config:\n$slic3rModelConfig")
+                        // For compound objects (restructured with components), use OrcaSlicer-format
+                        // model_settings.config with <part> entries.  The BBS 3MF reader matches
+                        // part IDs to component objectids for per-volume extruder assignment.
+                        // Slic3r_PE_model.config with firstid/lastid doesn't work for compound
+                        // objects because each component has its own mesh (no shared triangle index).
+                        val isCompound = bambuObjectParts.values.any { parts ->
+                            parts.any { it.meshObjectId.isNotEmpty() }
+                        }
+                        if (isCompound) {
+                            val modelConfig = buildOrcaModelConfig(bambuObjectParts)
+                            writeStored(destZip, "Metadata/model_settings.config", modelConfig.toByteArray())
+                            Log.i(TAG, "Generated model_settings.config (compound):\n$modelConfig")
+                        } else {
+                            val slic3rModelConfig = buildSlic3rModelConfig(bambuObjectParts)
+                            writeStored(destZip, "Metadata/Slic3r_PE_model.config", slic3rModelConfig.toByteArray())
+                            Log.i(TAG, "Generated Slic3r_PE_model.config:\n$slic3rModelConfig")
+                        }
                     } else {
                         // No model config needed — no-op
                     }
@@ -343,8 +352,10 @@ object BambuSanitizer {
         }
     }
 
-    /** Per-part info extracted from Bambu model_settings.config. */
-    private data class PartInfo(val faceCount: Int, val extruder: Int)
+    /** Per-part info extracted from Bambu model_settings.config.
+     *  [meshObjectId] is set after restructuring — it's the inlined mesh object ID used as
+     *  the `<part id>` in model_settings.config for compound objects. */
+    private data class PartInfo(val faceCount: Int, val extruder: Int, val meshObjectId: String = "")
 
     /**
      * Parse Bambu model_settings.config XML for per-object, per-part extruder assignments.
@@ -480,6 +491,42 @@ object BambuSanitizer {
         return sb.toString()
     }
 
+    /**
+     * Build OrcaSlicer-format model_settings.config for compound objects (parent + components).
+     *
+     * Unlike [buildSlic3rModelConfig] which uses firstid/lastid triangle ranges (only works
+     * for single-mesh objects), this generates `<part>` entries that map 1:1 to the compound
+     * object's `<component>` elements.  OrcaSlicer's BBS 3MF reader matches part IDs to
+     * component object IDs for per-volume extruder assignment.
+     */
+    private fun buildOrcaModelConfig(objectParts: Map<String, List<PartInfo>>): String {
+        val sb = StringBuilder()
+        sb.appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
+        sb.appendLine("<config>")
+
+        for ((objectId, parts) in objectParts.entries.sortedBy { it.key.toIntOrNull() ?: 0 }) {
+            if (parts.isEmpty()) continue
+            val overallExtruder = parts.maxOf { it.extruder }
+            sb.appendLine("""  <object id="$objectId">""")
+            sb.appendLine("""    <metadata key="name" value=""/>""")
+            sb.appendLine("""    <metadata key="extruder" value="$overallExtruder"/>""")
+
+            for (part in parts) {
+                if (part.meshObjectId.isNotEmpty()) {
+                    sb.appendLine("""    <part id="${part.meshObjectId}" subtype="normal_part">""")
+                    sb.appendLine("""      <metadata key="name" value=""/>""")
+                    sb.appendLine("""      <metadata key="extruder" value="${part.extruder}"/>""")
+                    sb.appendLine("""    </part>""")
+                }
+            }
+
+            sb.appendLine("""  </object>""")
+        }
+
+        sb.appendLine("</config>")
+        return sb.toString()
+    }
+
     // ---- Multi-color restructuring ----
 
     /** A single <component> reference within a 3MF object. */
@@ -491,24 +538,32 @@ object BambuSanitizer {
 
     /**
      * Restructure a Bambu 3D/3dmodel.model that has compound objects (one object, multiple
-     * component parts with different extruders) into separate top-level build items.
+     * component parts with different extruders) into a single parent object with inlined
+     * mesh components.
      *
      * For example, a Calicube stored as:
-     *   Object 2 → {Component→mesh, extruder=1}, {Component→mesh, extruder=2}
+     *   Object 2 → {Component→mesh (p:path), extruder=1}, {Component→mesh (p:path), extruder=2}
      *   Build: item objectid=2, transform=T
      *
      * becomes:
-     *   Object 100 → single component (mesh at combined transform T*T1), extruder=1
-     *   Object 101 → single component (mesh at combined transform T*T2), extruder=2
-     *   Build: item objectid=100 | item objectid=101
+     *   Object 1 → inlined mesh from component 1
+     *   Object 2 → inlined mesh from component 2
+     *   Object 3 (parent) → <components> refs to 1 and 2 (with component transforms)
+     *   Build: item objectid=3, transform=T
      *
-     * Returns (new model bytes, objectId→extruder map for Slic3r_PE_model.config).
+     * This keeps the assembly as ONE OrcaSlicer object with multiple volumes, so
+     * ensure_on_bed() operates on the whole assembly (B8 fix: assembly parts stay in
+     * their relative positions instead of being dropped individually).
+     *
+     * Per-volume extruder assignments use firstid/lastid face ranges in model config.
+     *
+     * Returns (new model bytes, parentObjectId → list of PartInfo for config generation).
      */
     private fun restructureForMultiColor(
         modelContent: ByteArray,
         objectParts: Map<String, List<PartInfo>>,
         componentFiles: Map<String, ByteArray> = emptyMap()
-    ): Pair<ByteArray, Map<String, Int>> {
+    ): Pair<ByteArray, Map<String, List<PartInfo>>> {
         // Identify compound objects that need splitting
         val splitTargets = objectParts.filter { (_, parts) ->
             parts.map { it.extruder }.distinct().size > 1
@@ -518,7 +573,7 @@ object BambuSanitizer {
         }
 
         val modelStr = String(modelContent)
-        val newObjectExtruders = mutableMapOf<String, Int>()
+        val newParentParts = mutableMapOf<String, List<PartInfo>>()
 
         // Parse component refs and build transforms from the model
         val objectComponents = mutableMapOf<String, List<ComponentRef>>()
@@ -526,7 +581,7 @@ object BambuSanitizer {
         parseMainModelStructure(modelContent, objectComponents, buildTransforms)
 
         var result = modelStr
-        // Use small sequential IDs (starting at 1) — PrusaSlicer's Slic3r_PE_model.config
+        // Use small sequential IDs (starting at 1) — OrcaSlicer's model config
         // maps by these IDs and breaks with large IDs that don't match internal indices
         var nextId = 1
 
@@ -542,52 +597,76 @@ object BambuSanitizer {
                 continue
             }
 
-            val newObjectDefs = StringBuilder()
-            val newBuildItems = StringBuilder()
+            val meshObjectDefs = StringBuilder()
+            val componentRefs = StringBuilder()
+            val partInfos = mutableListOf<PartInfo>()
 
             for ((idx, component) in components.withIndex()) {
-                val newId = (nextId++).toString()
+                val meshId = (nextId++).toString()
                 val extruder = parts[idx].extruder
-                newObjectExtruders[newId] = extruder
 
-                val combined = combineTransforms(buildTransform, component.transform)
-                val tStr = combined.joinToString(" ") { "%.9f".format(it) }
-
-                // Try to inline the mesh so PrusaSlicer tracks each object independently.
-                // Component references to the same objectid get deduplicated by PrusaSlicer's
-                // 3MF reader, breaking per-object extruder assignment via Slic3r_PE_model.config.
+                // Inline the mesh as a separate object in <resources>
                 val meshXml = componentFiles[component.path.trimStart('/')]
                     ?.let { extractMeshXml(it, component.objectId) }
 
                 if (meshXml != null) {
-                    newObjectDefs.append("""  <object id="$newId" type="model">
+                    meshObjectDefs.append("""  <object id="$meshId" type="model">
     $meshXml
   </object>
 """)
+                    val faceCount = countTriangles(meshXml)
+                    // Component ref with the COMPONENT transform (not combined with build)
+                    val tStr = component.transform.joinToString(" ") { "%.9f".format(it) }
+                    componentRefs.append("""      <component objectid="$meshId" transform="$tStr"/>
+""")
+                    partInfos.add(PartInfo(faceCount, extruder, meshObjectId = meshId))
                 } else {
-                    // Fallback: component reference (may not work for extruder assignment)
+                    // Fallback: p:path component reference (preserves original structure)
                     Log.w(TAG, "Could not inline mesh for component ${component.path}/${component.objectId}, using component ref")
-                    newObjectDefs.append("""  <object id="$newId" type="model">
-    <components>
-      <component p:path="${component.path}" objectid="${component.objectId}"/>
-    </components>
-  </object>
+                    val tStr = component.transform.joinToString(" ") { "%.9f".format(it) }
+                    componentRefs.append("""      <component p:path="${component.path}" objectid="${component.objectId}" transform="$tStr"/>
 """)
+                    val faceCount = parts[idx].faceCount
+                    partInfos.add(PartInfo(faceCount, extruder))
                 }
-                newBuildItems.append("""    <item objectid="$newId" transform="$tStr"/>
-""")
             }
+
+            // Create parent object with <components> referencing the inlined meshes.
+            // ONE build item for the parent keeps the assembly as a single OrcaSlicer object.
+            val parentId = (nextId++).toString()
+            val parentObjectDef = """  <object id="$parentId" type="model">
+    <components>
+$componentRefs    </components>
+  </object>
+"""
+            val tStr = buildTransform.joinToString(" ") { "%.9f".format(it) }
+            val buildItem = """    <item objectid="$parentId" transform="$tStr"/>
+"""
 
             // Remove original compound object and its build item; insert new ones
             result = removeObjectBlock(result, objectId)
             result = removeBuildItem(result, objectId)
-            result = result.replace("</resources>", "${newObjectDefs}</resources>")
-            result = result.replace("</build>", "${newBuildItems}</build>")
+            result = result.replace("</resources>", "${meshObjectDefs}${parentObjectDef}</resources>")
+            result = result.replace("</build>", "${buildItem}</build>")
 
-            Log.i(TAG, "Restructured object $objectId into ${components.size} separate build items: ${newObjectExtruders.entries.toList().takeLast(components.size)}")
+            newParentParts[parentId] = partInfos
+            Log.i(TAG, "Restructured object $objectId into compound object $parentId with ${partInfos.size} component volumes")
         }
 
-        return Pair(convertMmuSegmentation(result.toByteArray()), newObjectExtruders)
+        return Pair(convertMmuSegmentation(result.toByteArray()), newParentParts)
+    }
+
+    /** Count <triangle> elements in a mesh XML string. */
+    private fun countTriangles(meshXml: String): Int {
+        var count = 0
+        var idx = 0
+        while (true) {
+            idx = meshXml.indexOf("<triangle", idx)
+            if (idx < 0) break
+            count++
+            idx += 9
+        }
+        return count
     }
 
     /**
@@ -1285,26 +1364,22 @@ object BambuSanitizer {
                     ?: ByteArray(0)
             }
 
-            // 3. Restructure
-            val (restructuredModel, newObjectExtruders) =
+            // 3. Restructure — keeps assembly as one compound object with per-volume extruders
+            val (restructuredModel, newParentParts) =
                 restructureForMultiColor(mainModelContent, bambuObjectParts, componentFiles)
 
-            if (newObjectExtruders.isEmpty()) {
+            if (newParentParts.isEmpty()) {
                 Log.w(TAG, "restructurePlateFile: restructuring produced no new objects")
                 return plateFile
             }
 
-            Log.i(TAG, "restructurePlateFile: inlined ${newObjectExtruders.size} objects " +
+            Log.i(TAG, "restructurePlateFile: created ${newParentParts.size} compound object(s) " +
                 "from ${componentFileNames.size} component file(s)")
 
             // 4. Update object parts for config generation
-            val originalParts = bambuObjectParts.values.flatMap { it }
             bambuObjectParts.clear()
-            var idx = 0
-            for ((objId, ext) in newObjectExtruders.entries.sortedBy { it.key.toIntOrNull() ?: 0 }) {
-                val faceCount = originalParts.getOrNull(idx)?.faceCount ?: 128
-                bambuObjectParts[objId] = mutableListOf(PartInfo(faceCount, ext))
-                idx++
+            for ((parentId, parts) in newParentParts) {
+                bambuObjectParts[parentId] = parts.toMutableList()
             }
 
             // 5. Write output ZIP
@@ -1315,12 +1390,10 @@ object BambuSanitizer {
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
                 writeStored(destZip, "3D/3dmodel.model", cleanedModelFinal)
 
-                // Generate model_settings.config in OrcaSlicer format — the BBS 3MF
-                // reader looks for this file (not Slic3r_PE_model.config).
-                val slic3rConfig = buildSlic3rModelConfig(bambuObjectParts)
-                val modelSettings = ProfileEmbedder.convertToModelSettings(
-                    slic3rConfig.toByteArray(), null)
-                writeStored(destZip, "Metadata/model_settings.config", modelSettings.toByteArray())
+                // Generate model_settings.config in OrcaSlicer format with <part> entries.
+                // Compound objects need per-part extruder assignment (not firstid/lastid).
+                val modelConfig = buildOrcaModelConfig(bambuObjectParts)
+                writeStored(destZip, "Metadata/model_settings.config", modelConfig.toByteArray())
 
                 // Copy remaining entries (skip old model, components, configs)
                 for (entry in srcZip.entries()) {

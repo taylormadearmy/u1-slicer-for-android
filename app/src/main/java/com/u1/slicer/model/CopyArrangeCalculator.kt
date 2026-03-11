@@ -85,17 +85,18 @@ object CopyArrangeCalculator {
         bedSizeY: Float = 270f
     ): Pair<Float, Float> {
         val bedCenter = bedSizeX / 2f
-        // Candidate positions: 4 corners + 4 edge midpoints (no bed-edge margin —
-        // we'd rather be flush with the edge than overlapping the model)
+        // Margin from bed edge: skirt_distance (3mm) + 2 loops × ~0.5mm line width = ~4mm.
+        // Use 5mm to ensure skirt/brim never extends beyond the printable area.
+        val edgeMargin = 5f
         val candidates = listOf(
-            0f to 0f,                                                   // bottom-left
-            bedSizeX - towerWidth to 0f,                                // bottom-right
-            0f to bedSizeY - towerWidth,                                // top-left
-            bedSizeX - towerWidth to bedSizeY - towerWidth,             // top-right
-            bedCenter - towerWidth / 2f to 0f,                          // bottom-center
-            bedCenter - towerWidth / 2f to bedSizeY - towerWidth,       // top-center
-            0f to bedCenter - towerWidth / 2f,                          // left-center
-            bedSizeX - towerWidth to bedCenter - towerWidth / 2f        // right-center
+            edgeMargin to edgeMargin,                                                       // bottom-left
+            bedSizeX - towerWidth - edgeMargin to edgeMargin,                               // bottom-right
+            edgeMargin to bedSizeY - towerWidth - edgeMargin,                               // top-left
+            bedSizeX - towerWidth - edgeMargin to bedSizeY - towerWidth - edgeMargin,       // top-right
+            bedCenter - towerWidth / 2f to edgeMargin,                                      // bottom-center
+            bedCenter - towerWidth / 2f to bedSizeY - towerWidth - edgeMargin,              // top-center
+            edgeMargin to bedCenter - towerWidth / 2f,                                      // left-center
+            bedSizeX - towerWidth - edgeMargin to bedCenter - towerWidth / 2f               // right-center
         )
 
         // Build list of object bounding boxes [minX, minY, maxX, maxY]
