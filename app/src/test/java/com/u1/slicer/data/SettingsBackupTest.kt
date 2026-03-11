@@ -166,6 +166,54 @@ class SettingsBackupTest {
     }
 
     @Test
+    fun `import resolves filament profile names to new IDs`() {
+        // Simulate: export with old IDs, then import and resolve names to new IDs
+        val oldProfiles = mapOf(10L to "My PLA", 20L to "My PETG")
+        val presets = listOf(
+            ExtruderPreset(0, "#FF0000", "PLA", filamentProfileId = 10L),
+            ExtruderPreset(1, "#00FF00", "PETG", filamentProfileId = 20L),
+            ExtruderPreset(2, "#0000FF", "ABS"),
+            ExtruderPreset(3, "#FFFF00", "TPU")
+        )
+        val json = SettingsBackup.export(
+            SliceConfig(), SlicingOverrides(), "", presets, emptyList()
+        ) { id -> oldProfiles[id] }
+
+        // Simulate what importBackup() does: parse names, then resolve to new IDs
+        val root = JSONObject(json)
+        val presetsArr = root.getJSONArray("extruderPresets")
+        val parsed = SettingsBackup.parseExtruderPresetsWithNames(presetsArr)
+
+        // Simulate newly-inserted profiles getting different IDs
+        val newNameToId = mapOf("My PLA" to 99L, "My PETG" to 100L)
+        val resolved = parsed.map { p ->
+            val resolvedId = p.filamentProfileName?.let { newNameToId[it] }
+            p.preset.copy(filamentProfileId = resolvedId)
+        }
+
+        assertEquals(99L, resolved[0].filamentProfileId)
+        assertEquals(100L, resolved[1].filamentProfileId)
+        assertNull(resolved[2].filamentProfileId)
+        assertNull(resolved[3].filamentProfileId)
+    }
+
+    @Test
+    fun `import without filamentProfileName leaves presets unlinked`() {
+        // Backups from older versions won't have filamentProfileName
+        val json = """{"version": 1, "extruderPresets": [
+            {"slot": 1, "color": "#FF0000", "materialType": "PLA"},
+            {"slot": 2, "color": "#00FF00", "materialType": "PETG"}
+        ]}"""
+        val root = JSONObject(json)
+        val parsed = SettingsBackup.parseExtruderPresetsWithNames(root.getJSONArray("extruderPresets"))
+        assertNull(parsed[0].filamentProfileName)
+        assertNull(parsed[1].filamentProfileName)
+        // Presets still import fine, just without profile links
+        assertEquals(0, parsed[0].preset.index)
+        assertEquals("#FF0000", parsed[0].preset.color)
+    }
+
+    @Test
     fun `extruder preset slot numbers are 1-based in JSON`() {
         val presets = listOf(ExtruderPreset(0, "#FF0000", "PLA"))
         val json = SettingsBackup.export(SliceConfig(), SlicingOverrides(), "", presets, emptyList())

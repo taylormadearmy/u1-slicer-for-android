@@ -27,7 +27,7 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 261 JVM unit tests
+./gradlew testDebugUnitTest                                                    # 264 JVM unit tests
 ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 98 instrumented tests (uses Orchestrator)
 ```
 
@@ -65,7 +65,7 @@ rm -rf app/build/outputs/androidTest-results/
 All Gradle commands must be run from **Windows PowerShell**, not WSL:
 
 ```powershell
-# Unit tests (260)
+# Unit tests (264)
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
@@ -82,7 +82,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 260 tests across 17 classes
+### Unit tests (`app/src/test/`) — 264 tests across 17 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (31) — Tool changes, nozzle temps, layer count, prime tower footprint
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -92,7 +92,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
 - `data/SlicingOverridesTest.kt` (25) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path
-- `data/SettingsBackupTest.kt` (10) — Export/import round-trip, version validation, partial restore
+- `data/SettingsBackupTest.kt` (13) — Export/import round-trip, version validation, partial restore, filament profile name resolution
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
 - `bambu/BambuSanitizerTest.kt` (21) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
 - `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
