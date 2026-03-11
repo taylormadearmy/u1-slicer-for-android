@@ -153,7 +153,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `restructureForMultiColor()` creates **compound objects** (parent with `<components>` referencing inlined mesh objects) — ONE build item per assembly, so `ensure_on_bed()` operates on the whole assembly as a unit (B8 fix: parts stay in relative positions)
 - `buildOrcaModelConfig()` generates `<part id="N">` entries for compound objects — maps 1:1 to `<component objectid="N">` elements for per-volume extruder assignment
 - Android Test Orchestrator (`execution 'ANDROIDX_TEST_ORCHESTRATOR'`) runs each instrumented test in its own process — prevents native memory accumulation OOM crashes across slicing test classes
-- `CopyArrangeCalculator.computeWipeTowerPosition()` — auto-positions wipe tower by evaluating 8 candidate spots (4 corners + 4 edge midpoints) with 5mm edge margin (skirt clearance), picking the one with most clearance from all model bounding boxes; called in `loadNativeModel()` and `applyMultiColorAssignments()` when multi-extruder detected; user can override by dragging tower in placement viewer
+- `CopyArrangeCalculator.computeWipeTowerPosition()` — auto-positions wipe tower by evaluating 8 candidate spots (4 corners + 4 edge midpoints) with 10mm edge margin (prime tower brim + skirt clearance), picking the one with most clearance from all model bounding boxes; called in `loadNativeModel()` and `applyMultiColorAssignments()` when multi-extruder detected; user can override by dragging tower in placement viewer
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
