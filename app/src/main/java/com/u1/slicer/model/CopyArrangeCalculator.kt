@@ -85,9 +85,9 @@ object CopyArrangeCalculator {
         bedSizeY: Float = 270f
     ): Pair<Float, Float> {
         val bedCenter = bedSizeX / 2f
-        // Margin from bed edge: skirt_distance (3mm) + 2 loops × ~0.5mm line width = ~4mm.
-        // Use 5mm to ensure skirt/brim never extends beyond the printable area.
-        val edgeMargin = 5f
+        // Margin from bed edge: prime_tower_brim_width (3mm) + skirt_distance (6mm)
+        // + 1 skirt loop (~0.5mm) ≈ 9.5mm. Use 10mm to be safe.
+        val edgeMargin = 10f
         val candidates = listOf(
             edgeMargin to edgeMargin,                                                       // bottom-left
             bedSizeX - towerWidth - edgeMargin to edgeMargin,                               // bottom-right

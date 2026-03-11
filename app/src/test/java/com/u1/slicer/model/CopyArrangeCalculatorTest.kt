@@ -92,15 +92,15 @@ class CopyArrangeCalculatorTest {
 
     @Test
     fun `tower avoids large centered model - picks edge midpoint`() {
-        // 140x140 model centered at (65, 65) → occupies (65,65)-(205,205)
-        // 60mm tower with 5mm edge margin: bottom-center at (105, 5) → (105,5)-(165,65)
-        // Fully below model at y=65.
-        val objPos = floatArrayOf(65f, 65f)
-        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 140f, 140f, 60f)
+        // 130x120 model at (70, 80) → occupies (70,80)-(200,200)
+        // 60mm tower with 10mm edge margin: bottom-center at (105, 10) → (105,10)-(165,70)
+        // Fully below model at y=80.
+        val objPos = floatArrayOf(70f, 80f)
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 130f, 120f, 60f)
         val tMaxX = tx + 60f; val tMaxY = ty + 60f
-        val overlapsX = tx < 205f && tMaxX > 65f
-        val overlapsY = ty < 205f && tMaxY > 65f
-        assertFalse("Tower at ($tx,$ty) overlaps 140mm model", overlapsX && overlapsY)
+        val overlapsX = tx < 200f && tMaxX > 70f
+        val overlapsY = ty < 200f && tMaxY > 80f
+        assertFalse("Tower at ($tx,$ty) overlaps 130x120mm model", overlapsX && overlapsY)
     }
 
     @Test
@@ -130,16 +130,16 @@ class CopyArrangeCalculatorTest {
         // Model at (200, 200), size 50x50
         val objPos = floatArrayOf(200f, 200f)
         val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(objPos, 50f, 50f, 60f)
-        // Should pick bottom-left corner with 5mm edge margin for skirt clearance
-        assertEquals(5f, tx, 0.01f)
-        assertEquals(5f, ty, 0.01f)
+        // Should pick bottom-left corner with 10mm edge margin for skirt+brim clearance
+        assertEquals(10f, tx, 0.01f)
+        assertEquals(10f, ty, 0.01f)
     }
 
     @Test
     fun `tower position leaves skirt clearance from bed edges for all model positions`() {
         // Regression: tower at (0, 210) caused skirt to extend beyond bed boundary.
-        // Skirt needs ~4mm clearance (3mm distance + 2 loops × 0.5mm line width).
-        val skirtClearance = 4f
+        // Clearance needed: prime_tower_brim (3mm) + skirt_distance (6mm) + 1 loop (~0.5mm) ≈ 9.5mm.
+        val skirtClearance = 9.5f
         val towerWidth = 60f
         val bedSize = 270f
 
