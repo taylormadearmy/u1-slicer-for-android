@@ -344,4 +344,29 @@ class GcodeValidatorTest {
         assertEquals(20.0, result.minY, 0.01)
         assertEquals(180.0, result.maxY, 0.01)
     }
+
+    // ─── extractEstimatedTime ────────────────────────────────────────────────
+
+    @Test
+    fun extractEstimatedTime_findsNormalMode() {
+        val gcode = "G28\n; estimated printing time (normal mode) = 1h 23m 45s\nM84\n"
+        val t = GcodeValidator.extractEstimatedTime(gcode)
+        assertNotNull(t)
+        assertTrue(t!!.contains("1h 23m 45s"))
+    }
+
+    @Test
+    fun extractEstimatedTime_findsBblFormat() {
+        val gcode = "G28\n; model printing time: 2h 10m 5s; total estimated time: 2h 15m 30s\nM84\n"
+        val t = GcodeValidator.extractEstimatedTime(gcode)
+        assertNotNull(t)
+        assertTrue(t!!.contains("model printing time"))
+        assertTrue(t.contains("total estimated time"))
+    }
+
+    @Test
+    fun extractEstimatedTime_returnsNullWhenMissing() {
+        val gcode = "G28\nG1 X10\nM84\n"
+        assertNull(GcodeValidator.extractEstimatedTime(gcode))
+    }
 }

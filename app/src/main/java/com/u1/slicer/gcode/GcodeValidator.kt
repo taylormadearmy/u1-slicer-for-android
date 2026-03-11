@@ -194,6 +194,21 @@ object GcodeValidator {
         return null
     }
 
+    /**
+     * Extract the estimated printing time comment from G-code.
+     * OrcaSlicer emits "; estimated printing time (normal mode) = 1h 2m 3s"
+     * or for BBL printers: "; model printing time: 1h 2m; total estimated time: 1h 5m"
+     * Returns null if not found.
+     */
+    fun extractEstimatedTime(gcode: String): String? {
+        for (line in gcode.lines()) {
+            val t = line.trim()
+            if (t.startsWith("; estimated printing time") || t.startsWith("; model printing time"))
+                return t
+        }
+        return null
+    }
+
     data class BedBoundsResult(
         val withinBounds: Boolean,
         val minX: Double, val maxX: Double,

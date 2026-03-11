@@ -816,6 +816,35 @@ class BambuPipelineIntegrationTest {
         assertGcodeWithinBedBounds(remapped, "CalibCube dual-colour extruder remap")
     }
 
+    /**
+     * Regression: GCodeProcessor::run_post_process() crashes with SIGABRT when the
+     * estimated printing time comment exceeds a 128-byte sprintf buffer.
+     * Fixed by increasing buf[128] → buf[256] in GCodeProcessor.cpp.
+     *
+     * This test slices via the full pipeline (sanitize → embed → slice) and asserts
+     * the G-code contains the "; estimated printing time" comment without crashing.
+     */
+    @Test
+    fun calibCube_dualColour_estimatedTimeComment_noBufferOverflow() {
+        val input = asset("calib-cube-10-dual-colour-merged.3mf")
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val info = ThreeMfParser.parse(input)
+
+        val config = embedder.buildConfig(info = info, targetExtruderCount = 2)
+        val embedded = embedder.embed(sanitized, config, outDir, info)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(dualConfig())
+        assertNotNull(result); result!!
+        assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
+
+        val gcode = File(result.gcodePath).readText()
+        val timeComment = GcodeValidator.extractEstimatedTime(gcode)
+        assertNotNull(
+            "G-code must contain estimated printing time comment (run_post_process survived)",
+            timeComment
+        )
+    }
+
     // ── Bug-fix regression: printable="0" + isMultiPlate detection ──────────────
 
     /**
