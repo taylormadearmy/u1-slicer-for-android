@@ -80,54 +80,53 @@ class MainActivity : ComponentActivity() {
         val currentVersion = try {
             packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
         } catch (_: Exception) { -1 }
-        val lastVersion = prefs.getInt("lastVersionCode", -1)
-
-        // Detect ANY APK reinstall (including same-versionCode debug builds) by
-        // comparing the APK's lastUpdateTime. Android updates this on every install,
-        // even when the versionCode is unchanged. This catches the case where
-        // `installDebug` replaces the APK but the old process stays alive with
-        // stale native .so memory, causing "Coordinate outside allowed range" Clipper errors.
         val apkLastUpdate = try {
             packageManager.getPackageInfo(packageName, 0).lastUpdateTime
         } catch (_: Exception) { 0L }
-        val savedApkTime = prefs.getLong("lastApkUpdateTime", 0L)
-        val apkChanged = savedApkTime != 0L && savedApkTime != apkLastUpdate
 
-        if ((lastVersion != -1 && lastVersion != currentVersion) || apkChanged) {
-            // APK changed — aggressively delete ALL cached 3MF and G-code files,
-            // then force-kill the process so the native .so is loaded fresh.
-            var count = 0
-            filesDir.listFiles()?.forEach { f ->
-                if (f.name.endsWith(".3mf") || f.name.endsWith(".gcode")) {
-                    f.delete()
-                    count++
+        val detector = UpgradeDetector()
+        val saved = UpgradeDetector.State(
+            lastVersionCode = prefs.getInt("lastVersionCode", -1),
+            savedApkUpdateTime = prefs.getLong("lastApkUpdateTime", 0L),
+        )
+        val current = UpgradeDetector.Current(
+            versionCode = currentVersion,
+            apkUpdateTime = apkLastUpdate,
+        )
+
+        when (detector.detect(saved, current)) {
+            UpgradeDetector.Result.APK_CHANGED -> {
+                // APK changed — aggressively delete ALL cached 3MF and G-code files,
+                // then SIGKILL the process so the native .so is loaded fresh.
+                val count = detector.filesToClearOnUpgrade(filesDir).onEach { it.delete() }.size
+                val reason = if (saved.lastVersionCode != currentVersion)
+                    "version ${saved.lastVersionCode}→$currentVersion" else "APK reinstalled"
+                Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files, restarting process")
+                prefs.edit()
+                    .putInt("lastVersionCode", currentVersion)
+                    .putLong("lastApkUpdateTime", apkLastUpdate)
+                    .commit()  // sync — must flush before kill
+
+                // Force-restart: SIGKILL this process so Android launches a completely
+                // fresh one. Runtime.exit(0) is too polite — it runs shutdown hooks and
+                // the new Activity may reuse the same process with stale native state.
+                // Process.killProcess() is an immediate SIGKILL that guarantees all
+                // native static variables (g_model, g_engine, Clipper state) are gone.
+                val intent = packageManager.getLaunchIntentForPackage(packageName)
+                intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                startActivity(intent)
+                android.os.Process.killProcess(android.os.Process.myPid())
+                return
+            }
+            UpgradeDetector.Result.SAME_APK -> {
+                // Same APK — still clear known transient cache patterns as a safety net.
+                val count = detector.filesToClearOnStartup(filesDir).onEach { it.delete() }.size
+                if (count > 0) {
+                    Log.i("SlicerVM", "Cleared $count cached 3MF files on startup")
                 }
             }
-            val reason = if (lastVersion != currentVersion) "version $lastVersion→$currentVersion" else "APK reinstalled"
-            Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files, restarting process")
-            prefs.edit()
-                .putInt("lastVersionCode", currentVersion)
-                .putLong("lastApkUpdateTime", apkLastUpdate)
-                .commit()  // sync — must flush before exit()
-
-            // Force-restart: kill this process so Android launches a fresh one next time.
-            val intent = packageManager.getLaunchIntentForPackage(packageName)
-            intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            startActivity(intent)
-            Runtime.getRuntime().exit(0)
-            return
-        } else {
-            // Same APK — still clear known cache patterns as a safety net.
-            var count = 0
-            filesDir.listFiles()?.forEach { f ->
-                if (f.name.startsWith("embedded_") || f.name.startsWith("sanitized_") ||
-                    (f.name.startsWith("plate") && f.name.endsWith(".3mf"))) {
-                    f.delete()
-                    count++
-                }
-            }
-            if (count > 0) {
-                Log.i("SlicerVM", "Cleared $count cached 3MF files on startup")
+            UpgradeDetector.Result.FIRST_INSTALL -> {
+                // Nothing to clear on first install.
             }
         }
         prefs.edit()

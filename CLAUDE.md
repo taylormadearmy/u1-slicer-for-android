@@ -27,7 +27,7 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 264 JVM unit tests
+./gradlew testDebugUnitTest                                                    # 285 JVM unit tests
 ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 98 instrumented tests (uses Orchestrator)
 ```
 
@@ -65,7 +65,7 @@ rm -rf app/build/outputs/androidTest-results/
 All Gradle commands must be run from **Windows PowerShell**, not WSL:
 
 ```powershell
-# Unit tests (274)
+# Unit tests (285)
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
@@ -82,7 +82,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 274 tests across 17 classes
+### Unit tests (`app/src/test/`) — 285 tests across 18 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -100,6 +100,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
 - `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
+- `UpgradeDetectorTest.kt` (11) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 
 ### Instrumented tests (`app/src/androidTest/`) — 98 tests across 10 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
@@ -158,6 +159,8 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `MakerWorldClient.validateZipFile()` checks ZIP magic bytes (PK\x03\x04) after download — provides descriptive errors for login walls, CAPTCHA pages, and rate-limited HTML responses
 - `SettingsBackup.export()` stores filament profile names (not IDs) in extruder preset backup — `parseExtruderPresetsWithNames()` resolves names to new IDs after re-inserting profiles during import
 - `clearStaleCacheOnUpgrade()` compares `PackageInfo.lastUpdateTime` (not just versionCode) — catches same-versionCode debug reinstalls that leave stale native .so memory state
+- `clearStaleCacheOnUpgrade()` uses `Process.killProcess(Process.myPid())` (SIGKILL) instead of `Runtime.exit(0)` — polite exit allows Android to reuse the process with stale native static variables (`g_model`, `g_engine`, Clipper state); SIGKILL guarantees a fresh `JNI_OnLoad` on relaunch
+- `UpgradeDetector` — extracted pure detection logic from MainActivity for testability; decides FIRST_INSTALL / SAME_APK / APK_CHANGED and which files to clear
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
