@@ -209,6 +209,12 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(nozzle_diameters));
     dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(filament_diameters));
 
+    // Extruder offsets — all (0,0) for Snapmaker U1 (firmware handles offsets).
+    // MUST be sized to match extruder count; the default is a single entry, and
+    // WipeTowerIntegration copies the raw vector then indexes by tool ID — OOB
+    // access produces corrupt wipe tower coordinates (2^116 / -inf X values).
+    dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
+
     // Filament max volumetric speed — OrcaSlicer defaults to 2 mm³/s which throttles all
     // print speeds to ~22 mm/s.  Set to 21 mm³/s (matching Snapmaker PLA profile) as fallback;
     // the embedded config can override via the profile_keys[] list.
@@ -471,6 +477,8 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "prime_volume",
                     "wipe_tower_x",
                     "wipe_tower_y",
+                    // Extruder offsets (per-extruder, must match extruder count)
+                    "extruder_offset",
                     // Tool change / wipe tower filament handling (from printer+filament profile)
                     "single_extruder_multi_material",
                     "cooling_tube_retraction",
