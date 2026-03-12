@@ -45,7 +45,7 @@ std::string SlicerEngine::getCoreVersion() const {
 
 // Map SliceConfig to OrcaSlicer DynamicPrintConfig
 // Key names differ from PrusaSlicer 2.8 — use OrcaSlicer names throughout.
-static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config) {
+static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config, bool has_embedded_profile = false) {
     // Layer settings (OrcaSlicer keys)
     dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(config.layer_height));
     dpc.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(config.first_layer_height));
@@ -266,9 +266,16 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("overhang_4_4_speed", new Slic3r::ConfigOptionFloatOrPercent(10, false));
 
     // Support (OrcaSlicer keys)
-    dpc.set_key_value("enable_support", new Slic3r::ConfigOptionBool(config.support_enabled));
-    if (config.support_enabled) {
-        dpc.set_key_value("support_threshold_angle", new Slic3r::ConfigOptionInt((int)config.support_angle));
+    // When an embedded Snapmaker profile is loaded, support settings come from profile_keys[]
+    // (the file's own enable_support, support_threshold_angle, etc.).  Only apply JNI fallback
+    // defaults when NO embedded profile was loaded (e.g. raw STL files).
+    // Without this guard, config.support_enabled (default=false) stomps the file's embedded
+    // enable_support=true — causing supports to silently disappear (B10).
+    if (!has_embedded_profile) {
+        dpc.set_key_value("enable_support", new Slic3r::ConfigOptionBool(config.support_enabled));
+        if (config.support_enabled) {
+            dpc.set_key_value("support_threshold_angle", new Slic3r::ConfigOptionInt((int)config.support_angle));
+        }
     }
 
     // Skirt/Brim (same key names)
@@ -309,12 +316,12 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Applying all 391 keys causes SIGSEGV — many have array sizes, feature flags,
         // or template macros that conflict with our minimal Print pipeline.
         auto& model_config = getModelConfig();
+        bool is_snapmaker_profile = false;
         if (!model_config.empty()) {
             // Only apply G-code templates that were embedded by our ProfileEmbedder
             // (Snapmaker profile).  Raw Bambu 3MFs contain Bambu-specific template
             // variables (flush_volumetric_speeds, M620, etc.) that cause parse errors.
             // Snapmaker's machine_start_gcode always begins with "PRINT_START".
-            bool is_snapmaker_profile = false;
             auto* start_opt = model_config.option<Slic3r::ConfigOptionString>("machine_start_gcode");
             if (start_opt && start_opt->value.find("PRINT_START") != std::string::npos) {
                 is_snapmaker_profile = true;
@@ -492,7 +499,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 SAPIL_LOGI("Skipping embedded G-code templates (not a Snapmaker profile, %zu keys)", model_config.keys().size());
             }
         }
-        applyConfigToPrusa(dpc, config);
+        applyConfigToPrusa(dpc, config, is_snapmaker_profile);
 
         if (progress) progress(5, "Preparing print configuration");
 

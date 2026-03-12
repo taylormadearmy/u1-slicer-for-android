@@ -38,7 +38,10 @@ data class ThreeMfInfo(
      * items share component file refs and must ALL remain in <build> for OrcaSlicer
      * to resolve them correctly.
      */
-    val hasPlateJsons: Boolean = false
+    val hasPlateJsons: Boolean = false,
+    /** 1-based extruder indices actually assigned to objects/volumes in model config.
+     *  Empty when no assignments found. Used to filter colors per-plate. */
+    val usedExtruderIndices: Set<Int> = emptySet()
 ) {
     /** Whether the original Bambu structure must be preserved (not rebuilt with trimesh) */
     val needsPreserve: Boolean get() = isBambu && (

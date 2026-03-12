@@ -92,11 +92,41 @@ class MakerWorldClient {
         onProgress(100)
         Log.i("MakerWorld", "Downloaded ${outputFile.length()} bytes to ${outputFile.name}")
 
+        // Validate the downloaded file is actually a ZIP (3MF is a ZIP format).
+        // MakerWorld may return HTML (login page, CAPTCHA, rate limit) instead of the file.
+        validateZipFile(outputFile)
+
         DownloadResult(
             file = outputFile,
             designId = designId,
             filename = filename
         )
+    }
+
+    private fun validateZipFile(file: File) {
+        if (file.length() < 4) {
+            file.delete()
+            throw RuntimeException("Downloaded file is empty or too small (${file.length()} bytes)")
+        }
+        // ZIP files start with PK\x03\x04 (local file header)
+        val magic = ByteArray(4)
+        file.inputStream().use { it.read(magic) }
+        if (magic[0] != 0x50.toByte() || magic[1] != 0x4B.toByte()) {
+            // Not a ZIP — likely an HTML error page. Read first 200 chars for diagnostics.
+            val preview = file.readText(Charsets.UTF_8).take(200)
+            file.delete()
+            val hint = when {
+                preview.contains("login", ignoreCase = true) || preview.contains("sign in", ignoreCase = true) ->
+                    "MakerWorld requires login for this file. Add cookies in Settings > MakerWorld."
+                preview.contains("captcha", ignoreCase = true) ->
+                    "MakerWorld returned a CAPTCHA challenge. Try again later or add cookies."
+                preview.contains("rate limit", ignoreCase = true) || preview.contains("429", ignoreCase = true) ->
+                    "Rate limited by MakerWorld. Try again in a few minutes."
+                else ->
+                    "MakerWorld returned an unexpected response instead of a 3MF file."
+            }
+            throw RuntimeException(hint)
+        }
     }
 
     companion object {

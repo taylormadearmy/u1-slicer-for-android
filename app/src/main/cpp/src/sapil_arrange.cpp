@@ -99,8 +99,29 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
         return false;
     }
     Slic3r::Model& model = getGlobalModel();
+
+    // For multi-object models, scale around the combined center so gaps between
+    // objects scale proportionally (e.g. calicube cubes stay evenly spaced).
+    // 1. Compute the combined bounding box center of all instances.
+    Slic3r::BoundingBoxf3 worldBB;
     for (auto* obj : model.objects) {
         for (auto* inst : obj->instances) {
+            worldBB.merge(inst->transform_bounding_box(obj->raw_bounding_box()));
+        }
+    }
+    const Slic3r::Vec3d center = worldBB.center();
+
+    // 2. Scale each instance's mesh AND adjust its position relative to center.
+    for (auto* obj : model.objects) {
+        for (auto* inst : obj->instances) {
+            // Current world position of this instance's object origin
+            const Slic3r::Vec3d pos = inst->get_offset();
+            // Scale the offset from the group center
+            inst->set_offset(Slic3r::Vec3d(
+                center.x() + (pos.x() - center.x()) * static_cast<double>(x),
+                center.y() + (pos.y() - center.y()) * static_cast<double>(y),
+                center.z() + (pos.z() - center.z()) * static_cast<double>(z)
+            ));
             inst->set_scaling_factor(Slic3r::Vec3d(
                 static_cast<double>(x),
                 static_cast<double>(y),
@@ -108,7 +129,8 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
             ));
         }
     }
-    SAPIL_LOGI("Set model scale: %.3f, %.3f, %.3f", x, y, z);
+    SAPIL_LOGI("Set model scale: %.3f, %.3f, %.3f (center: %.1f, %.1f, %.1f)",
+        x, y, z, center.x(), center.y(), center.z());
     return true;
 }
 

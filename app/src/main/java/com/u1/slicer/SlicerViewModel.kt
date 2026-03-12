@@ -1023,6 +1023,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    fun clearCacheFiles(): Int {
+        val ctx = getApplication<Application>()
+        var count = 0
+        ctx.filesDir.listFiles()?.forEach { f ->
+            if (f.name.endsWith(".3mf") || f.name.endsWith(".gcode")) {
+                f.delete()
+                count++
+            }
+        }
+        if (count > 0) {
+            clearModel()
+            Log.i("SlicerVM", "Manually cleared $count cached files")
+        }
+        return count
+    }
+
     fun loadProfile(path: String) {
         viewModelScope.launch(Dispatchers.IO) {
             native.loadProfile(path)
@@ -1117,12 +1133,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         fun mergeThreeMfInfoForPlate(
             plateInfo: com.u1.slicer.bambu.ThreeMfInfo,
             sourceInfo: com.u1.slicer.bambu.ThreeMfInfo
-        ): com.u1.slicer.bambu.ThreeMfInfo = plateInfo.copy(
-            detectedColors = sourceInfo.detectedColors,
-            detectedExtruderCount = sourceInfo.detectedExtruderCount,
-            hasPaintData = sourceInfo.hasPaintData,
-            hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
-            hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments
-        )
+        ): com.u1.slicer.bambu.ThreeMfInfo {
+            // Filter colors to only those extruder indices used on this plate.
+            // usedExtruderIndices are 1-based; detectedColors is 0-indexed.
+            // Only filter when the plate definitively uses multiple extruders
+            // (size > 1). When size <= 1, the info may be unpopulated (e.g. plate
+            // not yet restructured) — fall back to all source colors.
+            val usedIndices = plateInfo.usedExtruderIndices
+            val filteredColors = if (usedIndices.size > 1 && sourceInfo.detectedColors.size > 1) {
+                usedIndices.sorted().mapNotNull { idx ->
+                    sourceInfo.detectedColors.getOrNull(idx - 1) // 1-based → 0-indexed
+                }
+            } else {
+                sourceInfo.detectedColors
+            }
+            return plateInfo.copy(
+                detectedColors = filteredColors,
+                detectedExtruderCount = if (filteredColors.isNotEmpty()) filteredColors.size else sourceInfo.detectedExtruderCount,
+                hasPaintData = sourceInfo.hasPaintData,
+                hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
+                hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments
+            )
+        }
     }
 }

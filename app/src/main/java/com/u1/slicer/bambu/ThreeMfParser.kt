@@ -202,7 +202,8 @@ object ThreeMfParser {
                     hasMultiExtruderAssignments = hasMultiExtruderAssignments,
                     detectedColors = detectedColors,
                     detectedExtruderCount = extruderCount,
-                    hasPlateJsons = plateJsonCount > 1
+                    hasPlateJsons = plateJsonCount > 1,
+                    usedExtruderIndices = uniqueExtruders
                 )
             }
         } catch (e: Exception) {

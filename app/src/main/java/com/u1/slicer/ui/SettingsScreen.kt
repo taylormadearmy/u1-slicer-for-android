@@ -564,6 +564,26 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+
+                OutlinedButton(
+                    onClick = {
+                        val count = viewModel.clearCacheFiles()
+                        backupStatus = if (count > 0) "Cleared $count cached files" else "No cached files to clear"
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) { Text("Clear Cache") }
+
+                Text(
+                    "Deletes cached 3MF and G-code files. Use if slicing fails after an update.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
             }
         }
     }

@@ -65,11 +65,11 @@ rm -rf app/build/outputs/androidTest-results/
 All Gradle commands must be run from **Windows PowerShell**, not WSL:
 
 ```powershell
-# Unit tests (264)
+# Unit tests (274)
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
-# Instrumented tests (97) — test device must be connected, uses Orchestrator
+# Instrumented tests (98) — test device must be connected, uses Orchestrator
 Remove-Item -Recurse -Force app\build\outputs\androidTest-results -ErrorAction SilentlyContinue
 .\gradlew connectedDebugAndroidTest --no-daemon
 
@@ -82,9 +82,9 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 264 tests across 17 classes
+### Unit tests (`app/src/test/`) — 274 tests across 17 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
-- `gcode/GcodeValidatorTest.kt` (31) — Tool changes, nozzle temps, layer count, prime tower footprint
+- `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
 - `viewer/StlParserTest.kt` (9) — Binary/ASCII STL parsing, bounding box, vertex data
 - `network/MakerWorldClientTest.kt` (12) — MakerWorld URL parsing and validation
@@ -101,13 +101,13 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 
-### Instrumented tests (`app/src/androidTest/`) — 97 tests across 10 classes
+### Instrumented tests (`app/src/androidTest/`) — 98 tests across 10 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (25) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` (26) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression, restructurePlateFile multi-extruder config guard
+- `slicing/BambuPipelineIntegrationTest.kt` (27) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression, restructurePlateFile multi-extruder config guard
 - `slicing/SemmSlicingTest.kt` (1) — SEMM (paint data) slicing pipeline
 - `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
@@ -154,6 +154,10 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `buildOrcaModelConfig()` generates `<part id="N">` entries for compound objects — maps 1:1 to `<component objectid="N">` elements for per-volume extruder assignment
 - Android Test Orchestrator (`execution 'ANDROIDX_TEST_ORCHESTRATOR'`) runs each instrumented test in its own process — prevents native memory accumulation OOM crashes across slicing test classes
 - `CopyArrangeCalculator.computeWipeTowerPosition()` — auto-positions wipe tower by evaluating 8 candidate spots (4 corners + 4 edge midpoints) with 10mm edge margin (prime tower brim + skirt clearance), picking the one with most clearance from all model bounding boxes; called in `loadNativeModel()` and `applyMultiColorAssignments()` when multi-extruder detected; user can override by dragging tower in placement viewer
+- `mergeThreeMfInfoForPlate()` filters colors by `usedExtruderIndices` only when `size > 1` (definitively multi-extruder) — when size <= 1, falls back to all source colors (index may be unpopulated before `restructurePlateFile()`)
+- `MakerWorldClient.validateZipFile()` checks ZIP magic bytes (PK\x03\x04) after download — provides descriptive errors for login walls, CAPTCHA pages, and rate-limited HTML responses
+- `SettingsBackup.export()` stores filament profile names (not IDs) in extruder preset backup — `parseExtruderPresetsWithNames()` resolves names to new IDs after re-inserting profiles during import
+- `clearStaleCacheOnUpgrade()` compares `PackageInfo.lastUpdateTime` (not just versionCode) — catches same-versionCode debug reinstalls that leave stale native .so memory state
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
@@ -162,6 +166,7 @@ Settings reach OrcaSlicer's native engine through **two paths** — a setting th
 ### Path 1: `applyConfigToPrusa()` in `sapil_print.cpp`
 - Hardcoded fallback values, always applied (even for raw STL files without embedded profiles)
 - `applyConfigToPrusa()` runs AFTER `profile_keys[]`, so these are the lowest-priority defaults
+- Accepts `has_embedded_profile` flag — support settings (`enable_support`, `support_threshold_angle`) are guarded by `!has_embedded_profile` to avoid stomping embedded file values (B10 fix)
 - **Add new settings here** when you need a sensible fallback for files with no embedded profile
 
 ### Path 2: `profile_keys[]` whitelist in `sapil_print.cpp`
