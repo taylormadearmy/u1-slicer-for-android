@@ -1026,7 +1026,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val context = getApplication<Application>()
                 val gcodeFile = File(state.result.gcodePath)
-                context.contentResolver.openOutputStream(uri)?.use { out ->
+                context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
                     gcodeFile.inputStream().use { it.copyTo(out) }
                 }
             } catch (_: Throwable) {
