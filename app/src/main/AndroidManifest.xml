@@ -33,6 +33,17 @@
                 <data android:mimeType="application/vnd.ms-3mfdocument" />
                 <data android:mimeType="model/3mf" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/sla" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="model/stl" />
+                <data android:mimeType="application/vnd.ms-pki.stl" />
+                <data android:mimeType="application/vnd.ms-3mfdocument" />
+                <data android:mimeType="model/3mf" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
 
         <provider

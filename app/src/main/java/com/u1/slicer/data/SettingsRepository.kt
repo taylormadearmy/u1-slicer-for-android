@@ -40,7 +40,6 @@ class SettingsRepository(private val context: Context) {
         val PRINTER_URL = stringPreferencesKey("printer_url")
         val EXTRUDER_PRESETS = stringPreferencesKey("extruder_presets")
         val SLICING_OVERRIDES = stringPreferencesKey("slicing_overrides")
-        val MAKERWORLD_COOKIES = stringPreferencesKey("makerworld_cookies")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.dataStore.data.map { prefs ->
@@ -134,13 +133,4 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    val makerWorldCookies: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[Keys.MAKERWORLD_COOKIES] ?: ""
-    }
-
-    suspend fun saveMakerWorldCookies(cookies: String) {
-        context.dataStore.edit { prefs ->
-            prefs[Keys.MAKERWORLD_COOKIES] = cookies
-        }
-    }
 }

@@ -18,7 +18,7 @@ import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
 import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.ParsedGcode
-import com.u1.slicer.network.MakerWorldClient
+
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
@@ -89,16 +89,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _showPlateSelector = MutableStateFlow(false)
     val showPlateSelector: StateFlow<Boolean> = _showPlateSelector.asStateFlow()
 
-    // MakerWorld import state
-    private val _importLoading = MutableStateFlow(false)
-    val importLoading: StateFlow<Boolean> = _importLoading.asStateFlow()
-
-    private val _importProgress = MutableStateFlow(0)
-    val importProgress: StateFlow<Int> = _importProgress.asStateFlow()
-
-    private val _importError = MutableStateFlow<String?>(null)
-    val importError: StateFlow<String?> = _importError.asStateFlow()
-
     // Multi-color state — dialog only shown when user explicitly requests reassignment
     private val _showMultiColorDialog = MutableStateFlow(false)
     val showMultiColorDialog: StateFlow<Boolean> = _showMultiColorDialog.asStateFlow()
@@ -134,8 +124,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Null / identity mapping → no post-processing needed.
     private var toolRemapSlots: List<Int>? = null
 
-    private val makerWorldClient = MakerWorldClient()
-
     // Filament library
     val filaments = filamentDao.getAll()
 
@@ -149,16 +137,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)
     val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides
         .stateIn(viewModelScope, SharingStarted.Eagerly, SlicingOverrides())
-
-    // MakerWorld cookies (for authenticated downloads)
-    val makerWorldCookies: StateFlow<String> = settingsRepo.makerWorldCookies
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
-
-    fun saveMakerWorldCookies(cookies: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            settingsRepo.saveMakerWorldCookies(cookies)
-        }
-    }
 
     // Track the current working file (may be sanitized copy)
     private var currentModelFile: File? = null
@@ -195,62 +173,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val saved = settingsRepo.sliceConfig.first()
             _config.value = saved
         }
-    }
-
-    fun importFromUrl(urlOrId: String) {
-        if (!NativeLibrary.isLoaded) {
-            _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            _importLoading.value = true
-            _importError.value = null
-            _importProgress.value = 0
-            try {
-                val context = getApplication<Application>()
-                val cookies = settingsRepo.makerWorldCookies.first()
-                val result = makerWorldClient.download(
-                    urlOrId = urlOrId,
-                    outputDir = context.filesDir,
-                    cookies = cookies,
-                    onProgress = { _importProgress.value = it }
-                )
-
-                _importLoading.value = false
-                currentModelName = result.filename
-
-                // Process through the same 3MF pipeline (sanitize, plate detection, etc.)
-                val info = ThreeMfParser.parse(result.file)
-                _threeMfInfo.value = info
-
-                Log.i("SlicerVM", "MakerWorld 3MF: bambu=${info.isBambu}, multiPlate=${info.isMultiPlate}")
-
-                sourceModelFile = result.file
-                sourceModelInfo = info
-                originalSourceConfig = if (info.isBambu) {
-                    java.util.zip.ZipFile(result.file).use { profileEmbedder.parseSourceConfig(it) }
-                } else null
-                toolRemapSlots = null
-                val sanitized = embedProfile(result.file, info, context)
-
-                if (info.isMultiPlate && info.plates.size > 1) {
-                    currentModelFile = sanitized
-                    _showPlateSelector.value = true
-                    return@launch
-                }
-
-                currentModelFile = sanitized
-                loadNativeModel(sanitized)
-            } catch (e: Throwable) {
-                _importLoading.value = false
-                _importError.value = e.message ?: "Download failed"
-                Log.e("SlicerVM", "MakerWorld import failed", e)
-            }
-        }
-    }
-
-    fun clearImportError() {
-        _importError.value = null
     }
 
     fun loadModel(uri: Uri) {

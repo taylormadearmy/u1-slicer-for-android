@@ -65,12 +65,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
-        if (intent?.action == Intent.ACTION_VIEW) {
-            intent.data?.let { uri ->
-                viewModel.loadModel(uri)
-                // Clear the intent to prevent re-processing on recreation
-                intent.action = null
-                intent.data = null
+        when (intent?.action) {
+            Intent.ACTION_VIEW -> {
+                intent.data?.let { uri ->
+                    viewModel.loadModel(uri)
+                    intent.action = null
+                    intent.data = null
+                }
+            }
+            Intent.ACTION_SEND -> {
+                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                }
+                uri?.let {
+                    viewModel.loadModel(it)
+                    intent.action = null
+                    intent.removeExtra(Intent.EXTRA_STREAM)
+                }
             }
         }
     }
@@ -410,36 +424,9 @@ fun PrepareScreen(
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val filaments by viewModel.filaments.collectAsState(initial = emptyList())
     val extruderPresets by viewModel.extruderPresets.collectAsState()
-    val importLoading by viewModel.importLoading.collectAsState()
-    val importProgress by viewModel.importProgress.collectAsState()
-    val importError by viewModel.importError.collectAsState()
     val copyCount by viewModel.copyCount.collectAsState()
     val modelScale by viewModel.modelScale.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
-    var showImportDialog by remember { mutableStateOf(false) }
-
-    // MakerWorld import dialog
-    if (showImportDialog) {
-        com.u1.slicer.ui.ImportUrlDialog(
-            isLoading = importLoading,
-            progress = importProgress,
-            error = importError,
-            onImport = { url ->
-                viewModel.importFromUrl(url)
-            },
-            onDismiss = {
-                showImportDialog = false
-                viewModel.clearImportError()
-            }
-        )
-    }
-
-    // Close dialog on successful import
-    LaunchedEffect(state) {
-        if (state is SlicerViewModel.SlicerState.ModelLoaded && showImportDialog) {
-            showImportDialog = false
-        }
-    }
 
     // Plate selector dialog
     if (showPlateSelector && threeMfInfo != null) {
@@ -525,8 +512,7 @@ fun PrepareScreen(
                 when {
                     state is SlicerViewModel.SlicerState.Idle -> {
                         PrepareEmptyState(
-                            onPickFile = onPickFile,
-                            onImportUrl = { showImportDialog = true }
+                            onPickFile = onPickFile
                         )
                     }
                     state is SlicerViewModel.SlicerState.Loading -> {
@@ -663,7 +649,7 @@ fun PrepareScreen(
 // Prepare Empty State — dimmed bed background with + button overlay
 // =============================================================================
 @Composable
-fun PrepareEmptyState(onPickFile: () -> Unit, onImportUrl: () -> Unit = {}) {
+fun PrepareEmptyState(onPickFile: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -724,17 +710,6 @@ fun PrepareEmptyState(onPickFile: () -> Unit, onImportUrl: () -> Unit = {}) {
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
         }
-    }
-
-    // MakerWorld button below the empty state
-    OutlinedButton(
-        onClick = onImportUrl,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Icon(Icons.Default.Language, null, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(8.dp))
-        Text("Import from MakerWorld")
     }
 }
 

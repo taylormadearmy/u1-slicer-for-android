@@ -27,7 +27,7 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 291 JVM unit tests
+./gradlew testDebugUnitTest                                                    # 279 JVM unit tests
 ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 100 instrumented tests (uses Orchestrator)
 ```
 
@@ -82,12 +82,11 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 291 tests across 18 classes
+### Unit tests (`app/src/test/`) — 279 tests across 17 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
 - `viewer/StlParserTest.kt` (9) — Binary/ASCII STL parsing, bounding box, vertex data
-- `network/MakerWorldClientTest.kt` (12) — MakerWorld URL parsing and validation
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
@@ -120,7 +119,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - **MVVM**: SlicerViewModel (StateFlow) + Compose UI
 - **DI**: Manual via AppContainer
 - **Persistence**: Room DB (filaments, jobs) + DataStore (settings)
-- **Network**: OkHttp (Moonraker printer API, MakerWorld downloads)
+- **Network**: OkHttp (Moonraker printer API)
 - **Native**: Snapmaker Orca C++ via JNI (`app/src/main/cpp/`) — pre-built `.so` in `jniLibs/`
 - **3D**: OpenGL ES 3.0 via GLSurfaceView (`viewer/` package)
 
@@ -157,7 +156,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - Android Test Orchestrator (`execution 'ANDROIDX_TEST_ORCHESTRATOR'`) runs each instrumented test in its own process — prevents native memory accumulation OOM crashes across slicing test classes
 - `CopyArrangeCalculator.computeWipeTowerPosition()` — auto-positions wipe tower by evaluating 8 candidate spots (4 corners + 4 edge midpoints) with 10mm edge margin (prime tower brim + skirt clearance), picking the one with most clearance from all model bounding boxes; called in `loadNativeModel()` and `applyMultiColorAssignments()` when multi-extruder detected; user can override by dragging tower in placement viewer
 - `mergeThreeMfInfoForPlate()` filters colors by `usedExtruderIndices` only when `size > 1` (definitively multi-extruder) — when size <= 1, falls back to all source colors (index may be unpopulated before `restructurePlateFile()`)
-- `MakerWorldClient.validateZipFile()` checks ZIP magic bytes (PK\x03\x04) after download — provides descriptive errors for login walls, CAPTCHA pages, and rate-limited HTML responses
+
 - `SettingsBackup.export()` stores filament profile names (not IDs) in extruder preset backup — `parseExtruderPresetsWithNames()` resolves names to new IDs after re-inserting profiles during import
 - `clearStaleCacheOnUpgrade()` compares `PackageInfo.lastUpdateTime` (not just versionCode) — catches same-versionCode debug reinstalls that leave stale native .so memory state
 - `clearStaleCacheOnUpgrade()` uses `Process.killProcess(Process.myPid())` (SIGKILL) instead of `Runtime.exit(0)` — polite exit allows Android to reuse the process with stale native static variables (`g_model`, `g_engine`, Clipper state); SIGKILL guarantees a fresh `JNI_OnLoad` on relaunch
