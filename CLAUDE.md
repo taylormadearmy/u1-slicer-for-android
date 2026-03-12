@@ -27,7 +27,7 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 285 JVM unit tests
+./gradlew testDebugUnitTest                                                    # 290 JVM unit tests
 ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 98 instrumented tests (uses Orchestrator)
 ```
 
@@ -82,7 +82,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 285 tests across 18 classes
+### Unit tests (`app/src/test/`) — 290 tests across 18 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -91,7 +91,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
-- `data/SlicingOverridesTest.kt` (25) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path
+- `data/SlicingOverridesTest.kt` (30) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path, buildProfileOverrides support preservation
 - `data/SettingsBackupTest.kt` (13) — Export/import round-trip, version validation, partial restore, filament profile name resolution
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
 - `bambu/BambuSanitizerTest.kt` (21) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
@@ -161,6 +161,8 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `clearStaleCacheOnUpgrade()` compares `PackageInfo.lastUpdateTime` (not just versionCode) — catches same-versionCode debug reinstalls that leave stale native .so memory state
 - `clearStaleCacheOnUpgrade()` uses `Process.killProcess(Process.myPid())` (SIGKILL) instead of `Runtime.exit(0)` — polite exit allows Android to reuse the process with stale native static variables (`g_model`, `g_engine`, Clipper state); SIGKILL guarantees a fresh `JNI_OnLoad` on relaunch
 - `UpgradeDetector` — extracted pure detection logic from MainActivity for testability; decides FIRST_INSTALL / SAME_APK / APK_CHANGED and which files to clear
+- `originalSourceConfig` in SlicerViewModel — stores the original Bambu file's `project_settings.config` parsed BEFORE `BambuSanitizer.process()` strips it; used by `embedProfile()` so file-level settings (enable_support, etc.) survive the sanitize→embed→extractPlate→restructure→re-embed pipeline
+- `buildProfileOverridesImpl()` — top-level testable function; omits `enable_support`/`support_threshold_angle` from overrides when mode is `USE_FILE` and `hasSourceConfig=true` (Bambu 3MF), so the file's original support settings are preserved through ProfileEmbedder's preserve path
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 

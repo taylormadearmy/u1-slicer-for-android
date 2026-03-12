@@ -21,6 +21,7 @@ import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.network.MakerWorldClient
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.OverrideMode
+import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SettingsBackup
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.SliceJob
@@ -168,6 +169,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // when the user sets non-identity slot assignments after initial load.
     private var sourceModelFile: File? = null
     private var sourceModelInfo: ThreeMfInfo? = null
+    // Original Bambu file's project_settings.config, parsed before process() strips it.
+    // Used by embedProfile() so the file's own settings (enable_support, etc.) survive
+    // through the sanitize→embed→extractPlate→restructure→re-embed pipeline.
+    private var originalSourceConfig: Map<String, Any>? = null
 
     /** Exposed for 3D viewer navigation */
     val currentModelPath: String? get() = currentModelFile?.absolutePath
@@ -222,6 +227,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 sourceModelFile = result.file
                 sourceModelInfo = info
+                originalSourceConfig = if (info.isBambu) {
+                    java.util.zip.ZipFile(result.file).use { profileEmbedder.parseSourceConfig(it) }
+                } else null
                 toolRemapSlots = null
                 val sanitized = embedProfile(result.file, info, context)
 
@@ -295,6 +303,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         "colors=${origInfo.detectedColors.size}, extruders=${origInfo.detectedExtruderCount}, " +
                         "paint=${origInfo.hasPaintData}, toolChanges=${origInfo.hasLayerToolChanges}")
 
+                    // Parse original file's config BEFORE process() strips it.
+                    // This preserves file-level settings (enable_support, etc.) through the pipeline.
+                    originalSourceConfig = if (origInfo.isBambu) {
+                        java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
+                    } else null
+
                     // Sanitize first (strip printable="0", restructure multi-color, clean XML),
                     // then embed Snapmaker profile.  Without process(), non-printable build
                     // items cause "Coordinate outside allowed range" Clipper errors.
@@ -328,6 +342,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // pointing at the old 3MF, causing the wrong model to appear in the viewer.
                     sourceModelFile = null
                     sourceModelInfo = null
+                    originalSourceConfig = null
                     file
                 }
 
@@ -618,87 +633,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // No extruder remap in the 3MF — keep compact numbering (1,2,…).
         // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.
         val extruderRemap: Map<Int, Int>? = null
-        val sourceConfig = if (info.isBambu) {
+        // Use the original file's config (parsed before process() strips it) when available.
+        // Falls back to parsing from the current file for non-Bambu or when original is unavailable.
+        val sourceConfig = originalSourceConfig ?: if (info.isBambu) {
             java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
         } else null
         val embeddedConfig = profileEmbedder.buildConfig(
             info = info,
             sourceConfig = sourceConfig,
-            overrides = buildProfileOverrides(cfg, extCount, usedSlots),
+            overrides = buildProfileOverrides(cfg, extCount, usedSlots, hasSourceConfig = sourceConfig != null),
             targetExtruderCount = targetCount
         )
         return profileEmbedder.embed(file, embeddedConfig, context.filesDir, info, extruderRemap)
     }
 
-    private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null): Map<String, Any> {
-        // Always use compact temp arrays (one entry per used extruder, in order).
-        // Non-identity slot mapping (E3+E4) is handled by G-code post-processing,
-        // not by padding the array to physical slot positions.
-        val temps: MutableList<String> = if (cfg.extruderTemps.size >= extCount) {
-            cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
-        } else {
-            MutableList(extCount) { cfg.nozzleTemp.toString() }
-        }
-
-        val ov = slicingOverrides.value
-        val defaults = SlicingOverrides.ORCA_DEFAULTS
-
-        // Resolve an override: USE_FILE → use cfg value, ORCA_DEFAULT → factory default, OVERRIDE → user value
-        fun <T> resolve(override: com.u1.slicer.data.OverrideValue<T>, cfgValue: T, defaultKey: String): T {
-            return when (override.mode) {
-                OverrideMode.USE_FILE -> cfgValue
-                OverrideMode.ORCA_DEFAULT -> {
-                    @Suppress("UNCHECKED_CAST")
-                    (defaults[defaultKey] as? T) ?: cfgValue
-                }
-                OverrideMode.OVERRIDE -> override.value ?: cfgValue
-            }
-        }
-
-        val layerHeight = resolve(ov.layerHeight, cfg.layerHeight, "layerHeight")
-        val infillDensity = resolve(ov.infillDensity, cfg.fillDensity, "infillDensity")
-        val wallCount = resolve(ov.wallCount, cfg.perimeters, "wallCount")
-        val infillPattern = resolve(ov.infillPattern, cfg.fillPattern, "infillPattern")
-        val supportEnabled = resolve(ov.supports, cfg.supportEnabled, "supports")
-        val brimWidth = resolve(ov.brimWidth, cfg.brimWidth, "brimWidth")
-        val skirtLoops = resolve(ov.skirtLoops, cfg.skirtLoops, "skirtLoops")
-        val bedTemp = resolve(ov.bedTemp, cfg.bedTemp, "bedTemp")
-        val primeTower = ov.resolvePrimeTower(extCount, cfg.wipeTowerEnabled)
-
-        // Prime tower detail overrides (ProfileEmbedder JSON path, not JNI)
-        val primeVolume = resolve(ov.primeVolume, 45, "primeVolume")
-        val primeTowerBrimWidth = resolve(ov.primeTowerBrimWidth, 3f, "primeTowerBrimWidth")
-        val primeTowerBrimChamfer = resolve(ov.primeTowerBrimChamfer, true, "primeTowerBrimChamfer")
-        val primeTowerChamferMaxWidth = resolve(ov.primeTowerChamferMaxWidth, 5f, "primeTowerChamferMaxWidth")
-
-        return mapOf(
-            "layer_height" to layerHeight.toString(),
-            "initial_layer_print_height" to cfg.firstLayerHeight.toString(),
-            "wall_loops" to wallCount.toString(),
-            "top_shell_layers" to cfg.topSolidLayers.toString(),
-            "bottom_shell_layers" to cfg.bottomSolidLayers.toString(),
-            "sparse_infill_density" to "${(infillDensity * 100).toInt()}%",
-            "sparse_infill_pattern" to infillPattern,
-            "travel_speed" to cfg.travelSpeed.toString(),
-            "nozzle_temperature" to temps,
-            "nozzle_temperature_initial_layer" to temps.toMutableList(),
-            "bed_temperature" to mutableListOf(bedTemp.toString()),
-            "bed_temperature_initial_layer" to mutableListOf(bedTemp.toString()),
-            "enable_support" to if (supportEnabled) "1" else "0",
-            "support_threshold_angle" to cfg.supportAngle.toInt().toString(),
-            "brim_width" to brimWidth.toString(),
-            "skirt_loops" to skirtLoops.toString(),
-            // Prime tower (wipe_tower_x/y are ConfigOptionFloats arrays in OrcaSlicer)
-            "enable_prime_tower" to if (primeTower) "1" else "0",
-            "prime_tower_width" to cfg.wipeTowerWidth.toString(),
-            "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
-            "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() },
-            // Prime tower detail settings (ProfileEmbedder JSON path)
-            "prime_volume" to primeVolume.toString(),
-            "prime_tower_brim_width" to primeTowerBrimWidth.toString(),
-            "prime_tower_brim_chamfer" to if (primeTowerBrimChamfer) "1" else "0",
-            "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString()
-        )
+    private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
+        return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, usedSlots, hasSourceConfig)
     }
 
     fun startSlicing() {
@@ -1156,4 +1106,92 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             )
         }
     }
+}
+
+/**
+ * Build the profile overrides map for embedding into 3MF.
+ * Extracted as a top-level function for testability.
+ *
+ * When [hasSourceConfig] is true (Bambu 3MF with its own config) and the support override
+ * mode is USE_FILE, support keys are omitted so the file's original enable_support /
+ * support_threshold_angle survive through ProfileEmbedder's preserve path.
+ */
+internal fun buildProfileOverridesImpl(
+    cfg: SliceConfig,
+    ov: SlicingOverrides,
+    extCount: Int,
+    usedSlots: List<Int>? = null,
+    hasSourceConfig: Boolean = false
+): Map<String, Any> {
+    val temps: MutableList<String> = if (cfg.extruderTemps.size >= extCount) {
+        cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
+    } else {
+        MutableList(extCount) { cfg.nozzleTemp.toString() }
+    }
+
+    val defaults = SlicingOverrides.ORCA_DEFAULTS
+
+    fun <T> resolve(override: OverrideValue<T>, cfgValue: T, defaultKey: String): T {
+        return when (override.mode) {
+            OverrideMode.USE_FILE -> cfgValue
+            OverrideMode.ORCA_DEFAULT -> {
+                @Suppress("UNCHECKED_CAST")
+                (defaults[defaultKey] as? T) ?: cfgValue
+            }
+            OverrideMode.OVERRIDE -> override.value ?: cfgValue
+        }
+    }
+
+    val layerHeight = resolve(ov.layerHeight, cfg.layerHeight, "layerHeight")
+    val infillDensity = resolve(ov.infillDensity, cfg.fillDensity, "infillDensity")
+    val wallCount = resolve(ov.wallCount, cfg.perimeters, "wallCount")
+    val infillPattern = resolve(ov.infillPattern, cfg.fillPattern, "infillPattern")
+    val supportEnabled = resolve(ov.supports, cfg.supportEnabled, "supports")
+    val brimWidth = resolve(ov.brimWidth, cfg.brimWidth, "brimWidth")
+    val skirtLoops = resolve(ov.skirtLoops, cfg.skirtLoops, "skirtLoops")
+    val bedTemp = resolve(ov.bedTemp, cfg.bedTemp, "bedTemp")
+    val primeTower = ov.resolvePrimeTower(extCount, cfg.wipeTowerEnabled)
+
+    val primeVolume = resolve(ov.primeVolume, 45, "primeVolume")
+    val primeTowerBrimWidth = resolve(ov.primeTowerBrimWidth, 3f, "primeTowerBrimWidth")
+    val primeTowerBrimChamfer = resolve(ov.primeTowerBrimChamfer, true, "primeTowerBrimChamfer")
+    val primeTowerChamferMaxWidth = resolve(ov.primeTowerChamferMaxWidth, 5f, "primeTowerChamferMaxWidth")
+
+    val result = mutableMapOf<String, Any>(
+        "layer_height" to layerHeight.toString(),
+        "initial_layer_print_height" to cfg.firstLayerHeight.toString(),
+        "wall_loops" to wallCount.toString(),
+        "top_shell_layers" to cfg.topSolidLayers.toString(),
+        "bottom_shell_layers" to cfg.bottomSolidLayers.toString(),
+        "sparse_infill_density" to "${(infillDensity * 100).toInt()}%",
+        "sparse_infill_pattern" to infillPattern,
+        "travel_speed" to cfg.travelSpeed.toString(),
+        "nozzle_temperature" to temps,
+        "nozzle_temperature_initial_layer" to temps.toMutableList(),
+        "bed_temperature" to mutableListOf(bedTemp.toString()),
+        "bed_temperature_initial_layer" to mutableListOf(bedTemp.toString()),
+        "brim_width" to brimWidth.toString(),
+        "skirt_loops" to skirtLoops.toString(),
+        "enable_prime_tower" to if (primeTower) "1" else "0",
+        "prime_tower_width" to cfg.wipeTowerWidth.toString(),
+        "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
+        "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() },
+        "prime_volume" to primeVolume.toString(),
+        "prime_tower_brim_width" to primeTowerBrimWidth.toString(),
+        "prime_tower_brim_chamfer" to if (primeTowerBrimChamfer) "1" else "0",
+        "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString()
+    )
+
+    // Support keys: when mode is USE_FILE and the file has its own config (Bambu 3MF),
+    // omit these keys so the file's original enable_support / support_threshold_angle
+    // survive through ProfileEmbedder's preserve path. Without this, cfg.supportEnabled
+    // defaults to false and stomps the file's embedded support=true (B10 fix).
+    // For STL/non-Bambu files (no source config), always emit — cfg.supportEnabled IS
+    // the user's intent and there's no file value to preserve.
+    if (ov.supports.mode != OverrideMode.USE_FILE || !hasSourceConfig) {
+        result["enable_support"] = if (supportEnabled) "1" else "0"
+        result["support_threshold_angle"] = cfg.supportAngle.toInt().toString()
+    }
+
+    return result
 }

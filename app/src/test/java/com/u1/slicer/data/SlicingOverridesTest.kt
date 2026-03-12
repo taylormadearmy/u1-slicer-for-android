@@ -1,5 +1,6 @@
 package com.u1.slicer.data
 
+import com.u1.slicer.buildProfileOverridesImpl
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -359,5 +360,50 @@ class SlicingOverridesTest {
         overrides.resolveInto(base)
         assertEquals(0.2f, base.layerHeight, 0.001f)
         assertEquals(2, base.perimeters)
+    }
+
+    // --- buildProfileOverridesImpl tests (B10 support preservation) ---
+
+    @Test
+    fun `buildProfileOverrides omits support keys for Bambu file with USE_FILE mode`() {
+        val cfg = SliceConfig(supportEnabled = false)
+        val ov = SlicingOverrides() // defaults to USE_FILE for supports
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        assertFalse("enable_support should be omitted for Bambu USE_FILE", result.containsKey("enable_support"))
+        assertFalse("support_threshold_angle should be omitted for Bambu USE_FILE", result.containsKey("support_threshold_angle"))
+    }
+
+    @Test
+    fun `buildProfileOverrides includes support keys for STL file with USE_FILE mode`() {
+        val cfg = SliceConfig(supportEnabled = true, supportAngle = 45f)
+        val ov = SlicingOverrides() // USE_FILE
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        assertEquals("1", result["enable_support"])
+        assertEquals("45", result["support_threshold_angle"])
+    }
+
+    @Test
+    fun `buildProfileOverrides includes support keys when user sets OVERRIDE mode on Bambu file`() {
+        val cfg = SliceConfig(supportEnabled = false)
+        val ov = SlicingOverrides(supports = OverrideValue(OverrideMode.OVERRIDE, true))
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        assertEquals("1", result["enable_support"])
+    }
+
+    @Test
+    fun `buildProfileOverrides includes support keys when user sets ORCA_DEFAULT mode on Bambu file`() {
+        val cfg = SliceConfig(supportEnabled = true)
+        val ov = SlicingOverrides(supports = OverrideValue(OverrideMode.ORCA_DEFAULT, null))
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        assertTrue("enable_support should be present for ORCA_DEFAULT", result.containsKey("enable_support"))
+    }
+
+    @Test
+    fun `buildProfileOverrides STL with support disabled emits 0`() {
+        val cfg = SliceConfig(supportEnabled = false, supportAngle = 30f)
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        assertEquals("0", result["enable_support"])
+        assertEquals("30", result["support_threshold_angle"])
     }
 }
