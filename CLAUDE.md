@@ -165,6 +165,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `originalSourceConfig` in SlicerViewModel — stores the original Bambu file's `project_settings.config` parsed BEFORE `BambuSanitizer.process()` strips it; used by `embedProfile()` so file-level settings (enable_support, etc.) survive the sanitize→embed→extractPlate→restructure→re-embed pipeline
 - `buildProfileOverridesImpl()` — top-level testable function; omits `enable_support`/`support_threshold_angle` from overrides when mode is `USE_FILE` and `hasSourceConfig=true` (Bambu 3MF), so the file's original support settings are preserved through ProfileEmbedder's preserve path
 - `saveGcodeTo()` uses `openOutputStream(uri, "wt")` (write+truncate) — plain `"w"` mode doesn't reliably truncate on all Android DocumentsProviders, causing stale G-code data to remain when saving a shorter file over a longer one
+- Per-extruder `ConfigOption` vectors MUST be sized to match `n_ext` in `applyConfigToPrusa()` — OrcaSlicer's `get_at()` wraps safely, but `WipeTowerIntegration` copies raw `.values` vectors and indexes by tool ID without bounds checking; a size-1 default with tool index >= 1 causes OOB access (the `extruder_offset` bug: corrupt wipe tower coordinates)
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
@@ -188,6 +189,7 @@ Settings reach OrcaSlicer's native engine through **two paths** — a setting th
 ### Checklist for adding a new slicer setting
 1. Check the OrcaSlicer default in `PrintConfig.cpp` (`set_default_value` call) — is it acceptable?
 2. If not, add a fallback in `applyConfigToPrusa()` with the correct `ConfigOption` type (check `PrintConfig.cpp` for `coFloat` vs `coFloats` vs `coInts` etc.)
-3. Add the key name to `profile_keys[]` so the embedded profile can override the fallback
-4. If the setting should be user-controllable, also add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
-5. **Rebuild the native `.so`** (enable CMake in build.gradle, set `-Xmx8g`, build, strip, disable CMake)
+3. **For per-extruder options**: size the vector to `n_ext`, not 1 — `WipeTowerIntegration` copies raw vectors without bounds checking
+4. Add the key name to `profile_keys[]` so the embedded profile can override the fallback
+5. If the setting should be user-controllable, also add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
+6. **Rebuild the native `.so`** (use `ninja -j1` in `.cxx/Debug/` build dir to avoid OOM, strip with llvm-strip, copy to jniLibs)
