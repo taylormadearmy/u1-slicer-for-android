@@ -28,7 +28,7 @@ Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real chan
 
 ```bash
 ./gradlew testDebugUnitTest                                                    # 291 JVM unit tests
-ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 98 instrumented tests (uses Orchestrator)
+ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 100 instrumented tests (uses Orchestrator)
 ```
 
 ### MANDATORY: End-to-end testing before a feature is "done"
@@ -102,9 +102,10 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (11) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 
-### Instrumented tests (`app/src/androidTest/`) — 98 tests across 10 classes
+### Instrumented tests (`app/src/androidTest/`) — 100 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
+- `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression: shorter-over-longer file, ContentResolver "wt" mode
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (25) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
