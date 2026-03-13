@@ -25,14 +25,42 @@
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" />
                 <data android:scheme="file" />
                 <data android:mimeType="application/sla" />
-                <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="model/stl" />
                 <data android:mimeType="application/vnd.ms-pki.stl" />
                 <data android:mimeType="application/vnd.ms-3mfdocument" />
                 <data android:mimeType="model/3mf" />
+            </intent-filter>
+            <!-- Separate filter for octet-stream with file extension matching -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.3mf" />
+                <data android:pathPattern=".*\\.3MF" />
+                <data android:pathPattern=".*\\.stl" />
+                <data android:pathPattern=".*\\.STL" />
+            </intent-filter>
+            <!-- Wildcard MIME with extension matching for file managers that use */* -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="*/*" />
+                <data android:host="*" />
+                <data android:pathPattern=".*\\.3mf" />
+                <data android:pathPattern=".*\\.3MF" />
+                <data android:pathPattern=".*\\.stl" />
+                <data android:pathPattern=".*\\.STL" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

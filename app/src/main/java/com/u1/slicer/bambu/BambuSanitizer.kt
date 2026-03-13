@@ -1174,22 +1174,32 @@ $componentRefs    </components>
         val slic3rpeNsRegex = Regex("""\s+xmlns:slic3rpe="[^"]*"""")
         val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
         try {
-            // Line-by-line streaming clean to avoid OOM on 100MB+ entries
+            // Line-by-line streaming clean to avoid OOM on 100MB+ entries.
+            // Fast path: 99.9%+ of lines are mesh data (<vertex>/<triangle>) with no
+            // Bambu attributes — skip regex entirely for those lines.
             tmpFile.bufferedWriter().use { out ->
                 srcZip.getInputStream(srcEntry).bufferedReader().use { reader ->
                     reader.forEachLine { line ->
+                        // Fast path: mesh data lines contain none of the target patterns
+                        if (!line.contains("p:UUID") && !line.contains("requiredextensions") &&
+                            !line.contains("xmlns:BambuStudio") && !line.contains("xmlns:slic3rpe") &&
+                            !line.contains("<metadata") && !line.contains("mmu_segmentation") &&
+                            !line.contains("type=\"other\"")) {
+                            if (line.isNotBlank()) {
+                                out.write(line)
+                                out.newLine()
+                            }
+                            return@forEachLine
+                        }
+                        // Slow path: header/footer lines — apply full regex cleaning
                         var cleaned = line.replace(pUuidRegex, "")
                         cleaned = cleaned.replace(reqExtRegex, "")
                         cleaned = cleaned.replace(bambuNsRegex, "")
                         cleaned = cleaned.replace(slic3rpeNsRegex, "")
                         cleaned = cleaned.replace(metadataRegex, "")
-                        // Strip PrusaSlicer mmu_segmentation paint data — different encoding from
-                        // Bambu paint_color; renaming causes malformed data → SIGSEGV in OrcaSlicer.
-                        // Native Bambu paint_color= is preserved as-is.
                         if (cleaned.contains("slic3rpe:mmu_segmentation=")) {
                             cleaned = cleaned.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
                         }
-                        // PrusaSlicer only accepts type="model"; Bambu uses "other" for support geometry
                         cleaned = cleaned.replace("""type="other"""", """type="model"""")
                         if (cleaned.isNotBlank()) {
                             out.write(cleaned)

@@ -165,6 +165,11 @@ object ThreeMfMeshParser {
                         Log.w("ThreeMfMesh", "  Entry not found: ${comp.path}")
                         return@getOrPut emptyMap()
                     }
+                    // Skip oversized component files to prevent OOM (e.g. 146MB mesh → 268MB heap)
+                    if (entry.size > 80_000_000L) {
+                        Log.w("ThreeMfMesh", "  Skipping oversized component: ${comp.path} (${entry.size / 1_000_000}MB) — too large for 3D preview")
+                        return@getOrPut emptyMap()
+                    }
                     Log.d("ThreeMfMesh", "  Reading+parsing ${comp.path} (${entry.compressedSize / 1024}KB compressed)")
                     parseObjects(zip.getInputStream(entry).bufferedReader().readText())
                 }

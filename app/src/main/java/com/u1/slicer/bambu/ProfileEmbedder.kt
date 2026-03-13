@@ -473,6 +473,10 @@ class ProfileEmbedder(private val context: Context) {
                                 // MUST NOT skip when hasPaintData: cleanModelXmlForOrcaSlicer()
                                 // strips paint_color= attributes that cause SEMM SIGSEGV on Android.
                                 rawCopyEntry(srcZip, entry, destZip)
+                            } else if (name != "3D/3dmodel.model" && entry.size > 50_000_000L) {
+                                // Large component (>50MB): stream-clean to avoid OOM.
+                                // Uses line-by-line processing like BambuSanitizer.copyZipEntry().
+                                streamCleanEntry(srcZip, entry, destZip, info.hasPaintData)
                             } else {
                                 val content = srcZip.getInputStream(entry).readBytes()
                                 val cleaned = cleanModelXmlForOrcaSlicer(content, info.hasPaintData)
@@ -599,6 +603,88 @@ class ProfileEmbedder(private val context: Context) {
         zip.putNextEntry(entry)
         zip.write(data)
         zip.closeEntry()
+    }
+
+    /**
+     * Stream-clean a large component .model ZIP entry to avoid OOM.
+     * Uses line-by-line processing with fast-path for mesh data lines
+     * (99.9%+ of lines are <vertex>/<triangle> with no Bambu attributes).
+     * Writes to temp file → computes CRC → writes STORED to ZIP.
+     */
+    private fun streamCleanEntry(
+        srcZip: ZipFile, srcEntry: ZipEntry, destZip: ZipOutputStream, hasPaintData: Boolean
+    ) {
+        val tmpFile = File.createTempFile("embed_component_", ".model")
+        val pUuidRegex = Regex("""\s+p:UUID="[^"]*"""")
+        val reqExtRegex = Regex("""\s+requiredextensions="[^"]*"""")
+        val bambuNsRegex = Regex("""\s+xmlns:BambuStudio="[^"]*"""")
+        val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
+        val paintColorRegex = if (hasPaintData) Regex("""\s+paint_color="[^"]*"""") else null
+        val mmuSegRegex = if (hasPaintData) Regex("""\s+slic3rpe:mmu_segmentation="[^"]*"""") else null
+        val slic3rpeNsRegex = if (hasPaintData) Regex("""\s+xmlns:slic3rpe="[^"]*"""") else null
+        try {
+            tmpFile.bufferedWriter().use { out ->
+                srcZip.getInputStream(srcEntry).bufferedReader().use { reader ->
+                    reader.forEachLine { line ->
+                        // Fast path: mesh data lines contain none of the target patterns
+                        if (!line.contains("p:UUID") && !line.contains("requiredextensions") &&
+                            !line.contains("xmlns:BambuStudio") && !line.contains("<metadata") &&
+                            !line.contains("type=\"other\"") &&
+                            (!hasPaintData || (!line.contains("paint_color") && !line.contains("mmu_segmentation")))) {
+                            if (line.isNotBlank()) {
+                                out.write(line)
+                                out.newLine()
+                            }
+                            return@forEachLine
+                        }
+                        // Slow path: header/footer lines — apply full cleaning
+                        var cleaned = line.replace(pUuidRegex, "")
+                        cleaned = cleaned.replace(reqExtRegex, "")
+                        cleaned = cleaned.replace(bambuNsRegex, "")
+                        cleaned = cleaned.replace(metadataRegex, "")
+                        cleaned = cleaned.replace("""type="other"""", """type="model"""")
+                        if (hasPaintData) {
+                            paintColorRegex?.let { cleaned = cleaned.replace(it, "") }
+                            mmuSegRegex?.let { cleaned = cleaned.replace(it, "") }
+                            slic3rpeNsRegex?.let { cleaned = cleaned.replace(it, "") }
+                        }
+                        if (cleaned.isNotBlank()) {
+                            out.write(cleaned)
+                            out.newLine()
+                        }
+                    }
+                }
+            }
+            // Compute CRC + size from temp file
+            val crc = CRC32()
+            var totalSize = 0L
+            tmpFile.inputStream().use { input ->
+                val buf = ByteArray(8192)
+                var n: Int
+                while (input.read(buf).also { n = it } >= 0) {
+                    crc.update(buf, 0, n)
+                    totalSize += n
+                }
+            }
+            // Write STORED entry from temp file
+            val entry = ZipEntry(srcEntry.name)
+            entry.method = ZipEntry.STORED
+            entry.size = totalSize
+            entry.compressedSize = totalSize
+            entry.crc = crc.value
+            destZip.putNextEntry(entry)
+            tmpFile.inputStream().use { input ->
+                val buf = ByteArray(8192)
+                var n: Int
+                while (input.read(buf).also { n = it } >= 0) {
+                    destZip.write(buf, 0, n)
+                }
+            }
+            destZip.closeEntry()
+            Log.i(TAG, "Stream-cleaned ${srcEntry.name} (${totalSize / 1_000_000}MB)")
+        } finally {
+            tmpFile.delete()
+        }
     }
 
     /**
