@@ -543,11 +543,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissPlateSelector() {
         _showPlateSelector.value = false
-        // Load all plates (first plate by default)
-        val file = currentModelFile ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            loadNativeModel(file)
-        }
+        // Cancel the load — multi-plate files need a plate selection to work correctly.
+        // Loading the full file causes off-bed coordinates and Clipper errors (B12).
+        _state.value = SlicerState.Idle
+        currentModelFile = null
+        sourceModelFile = null
+        sourceModelInfo = null
+        _threeMfInfo.value = null
     }
 
     private fun loadNativeModel(file: File) {
