@@ -19,7 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.filled.CheckCircle
@@ -207,6 +207,67 @@ fun SettingsScreen(
                                 }
                             }
                             else -> {}
+                        }
+                    }
+                }
+            }
+
+            // ---- MakerWorld Cookies ----
+            val cookiesEnabled by viewModel.makerWorldCookiesEnabled.collectAsState()
+            val makerWorldCookies by viewModel.makerWorldCookies.collectAsState()
+            var cookieInput by remember { mutableStateOf("") }
+            val hasCookies = makerWorldCookies.isNotBlank()
+
+            SettingsSection("MakerWorld") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Send cookies with URL downloads",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Switch(
+                        checked = cookiesEnabled,
+                        onCheckedChange = { viewModel.saveMakerWorldCookiesEnabled(it) }
+                    )
+                }
+                if (cookiesEnabled) {
+                    Text(
+                        if (hasCookies) "Session cookies configured"
+                        else "Add cookies for downloads requiring login",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (hasCookies) androidx.compose.ui.graphics.Color(0xFF4CAF50)
+                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    OutlinedTextField(
+                        value = cookieInput,
+                        onValueChange = { cookieInput = it },
+                        label = { Text("MakerWorld Cookies") },
+                        placeholder = { Text("Paste cookies from browser") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                if (cookieInput.isNotBlank()) {
+                                    viewModel.saveMakerWorldCookies(cookieInput)
+                                    cookieInput = ""
+                                }
+                            },
+                            enabled = cookieInput.isNotBlank(),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) { Text("Save Cookies") }
+                        if (hasCookies) {
+                            OutlinedButton(
+                                onClick = { viewModel.saveMakerWorldCookies("") },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("Clear") }
                         }
                     }
                 }

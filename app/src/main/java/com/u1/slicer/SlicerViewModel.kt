@@ -29,6 +29,7 @@ import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.model.CopyArrangeCalculator
 import com.u1.slicer.data.ExtruderPreset
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -138,6 +139,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides
         .stateIn(viewModelScope, SharingStarted.Eagerly, SlicingOverrides())
 
+    // MakerWorld cookies (for authenticated URL downloads)
+    val makerWorldCookies: StateFlow<String> = settingsRepo.makerWorldCookies
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    val makerWorldCookiesEnabled: StateFlow<Boolean> = settingsRepo.makerWorldCookiesEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun saveMakerWorldCookies(cookies: String) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveMakerWorldCookies(cookies) }
+    }
+    fun saveMakerWorldCookiesEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveMakerWorldCookiesEnabled(enabled) }
+    }
+
     // Track the current working file (may be sanitized copy)
     private var currentModelFile: File? = null
     private var currentModelName: String = ""
@@ -172,6 +186,214 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val saved = settingsRepo.sliceConfig.first()
             _config.value = saved
+        }
+    }
+
+    /**
+     * Handle a shared URL (e.g. MakerWorld link from Bambu Handy).
+     * Extracts the design ID, downloads the 3MF, and loads it.
+     */
+    fun importFromSharedUrl(url: String) {
+        if (!NativeLibrary.isLoaded) {
+            _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
+            return
+        }
+        // Extract MakerWorld design ID
+        val designId = com.u1.slicer.network.MakerWorldUtils.extractDesignId(url)
+        if (designId == null) {
+            _state.value = SlicerState.Error("Unsupported URL: $url")
+            return
+        }
+        // Set loading state immediately (before coroutine dispatch) so UI shows spinner
+        _state.value = SlicerState.Loading("Downloading from MakerWorld…")
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                    .followRedirects(true)
+                    .build()
+                val cookies = com.u1.slicer.network.MakerWorldUtils.sanitizeCookies(
+                    settingsRepo.makerWorldCookies.first()
+                )
+                val cookiesEnabled = settingsRepo.makerWorldCookiesEnabled.first()
+                Log.i("SlicerVM", "MakerWorld cookies: enabled=$cookiesEnabled, length=${cookies.length}")
+
+                // Browser-like headers to avoid bot detection (matches u1-slicer-bridge)
+                val browserUA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+                fun okhttp3.Request.Builder.withBrowserHeaders(isApi: Boolean): okhttp3.Request.Builder {
+                    header("User-Agent", browserUA)
+                    header("Accept-Language", "en-US,en;q=0.9")
+                    header("DNT", "1")
+                    header("Sec-Ch-Ua", "\"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"")
+                    header("Sec-Ch-Ua-Mobile", "?1")
+                    header("Sec-Ch-Ua-Platform", "\"Android\"")
+                    if (isApi) {
+                        header("Accept", "application/json, text/plain, */*")
+                        header("Origin", "https://makerworld.com")
+                        header("Sec-Fetch-Dest", "empty")
+                        header("Sec-Fetch-Mode", "cors")
+                        header("Sec-Fetch-Site", "same-origin")
+                        header("X-BBL-Client-Type", "web")
+                        header("X-BBL-Client-Name", "MakerWorld")
+                    } else {
+                        header("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
+                        header("Sec-Fetch-Dest", "document")
+                        header("Sec-Fetch-Mode", "navigate")
+                        header("Sec-Fetch-Site", "none")
+                        header("Sec-Fetch-User", "?1")
+                        header("Upgrade-Insecure-Requests", "1")
+                    }
+                    if (cookiesEnabled && cookies.isNotBlank()) header("Cookie", cookies)
+                    return this
+                }
+
+                // Step 0: Visit model page first (establishes session, avoids bot detection)
+                val pageUrl = "https://makerworld.com/en/models/$designId"
+                val pageRequest = okhttp3.Request.Builder().url(pageUrl)
+                    .withBrowserHeaders(isApi = false).get().build()
+                try {
+                    client.newCall(pageRequest).execute().use { /* consume+close */ }
+                } catch (_: Exception) { /* best-effort */ }
+                delay(kotlin.random.Random.nextLong(500, 1500))
+
+                // Step 1: Resolve design ID → instance ID (MakerWorld page ID ≠ download instance ID)
+                val designApiUrl = "https://makerworld.com/api/v1/design-service/design/$designId"
+                val designRequest = okhttp3.Request.Builder().url(designApiUrl)
+                    .withBrowserHeaders(isApi = true)
+                    .header("Referer", pageUrl)
+                    .get().build()
+                val instanceId = client.newCall(designRequest).execute().use { designResponse ->
+                    if (designResponse.isSuccessful) {
+                        val resolved = com.u1.slicer.network.MakerWorldUtils.extractInstanceId(
+                            designResponse.body?.string() ?: ""
+                        )
+                        if (resolved != null) {
+                            Log.i("SlicerVM", "Resolved design $designId → instance $resolved")
+                            resolved
+                        } else designId
+                    } else {
+                        Log.w("SlicerVM", "Design API failed (${designResponse.code}), falling back to design ID")
+                        designId
+                    }
+                }
+
+                // Step 2: Download the 3MF from the instance endpoint
+                val downloadUrl = "https://makerworld.com/api/v1/design-service/instance/$instanceId/f3mf?type=download"
+                val request = okhttp3.Request.Builder().url(downloadUrl)
+                    .withBrowserHeaders(isApi = true)
+                    .header("Referer", pageUrl)
+                    .get().build()
+                Log.i("SlicerVM", "MakerWorld downloading instance $instanceId...")
+                val response = client.newCall(request).execute()
+                Log.i("SlicerVM", "MakerWorld download response: HTTP ${response.code}")
+                if (!response.isSuccessful) {
+                    val code = response.code
+                    val errorBody = try { response.body?.string()?.take(500) } catch (_: Exception) { null }
+                    response.close()
+                    Log.w("SlicerVM", "MakerWorld download failed: HTTP $code, body: $errorBody")
+                    val msg = com.u1.slicer.network.MakerWorldUtils.classifyDownloadError(code, errorBody)
+                    _state.value = SlicerState.Error(msg)
+                    return@launch
+                }
+                val contentType = response.header("Content-Type") ?: "unknown"
+                Log.i("SlicerVM", "MakerWorld response: HTTP ${response.code}, Content-Type: $contentType")
+
+                // API returns JSON with signed download URL — follow it
+                val outputFile = File(context.filesDir, "makerworld_${designId}.3mf")
+                if (contentType.contains("json")) {
+                    val json = response.body?.string() ?: ""
+                    response.close()
+                    val parsed = com.u1.slicer.network.MakerWorldUtils.parseDownloadResponse(json)
+                    when (parsed) {
+                        is com.u1.slicer.network.MakerWorldUtils.DownloadResponse.ParseError -> {
+                            _state.value = SlicerState.Error("Could not parse MakerWorld response")
+                            return@launch
+                        }
+                        is com.u1.slicer.network.MakerWorldUtils.DownloadResponse.ApiError -> {
+                            Log.w("SlicerVM", "MakerWorld API error: ${parsed.message}")
+                            _state.value = SlicerState.Error(parsed.message)
+                            return@launch
+                        }
+                        is com.u1.slicer.network.MakerWorldUtils.DownloadResponse.Success -> { /* continue below */ }
+                    }
+                    parsed as com.u1.slicer.network.MakerWorldUtils.DownloadResponse.Success
+                    val fileUrl = parsed.url
+                    val fileName = parsed.fileName
+                    Log.i("SlicerVM", "MakerWorld redirect: $fileName -> ${fileUrl.take(80)}...")
+                    currentModelName = fileName
+                    _state.value = SlicerState.Loading(fileName)
+
+                    val fileRequest = okhttp3.Request.Builder().url(fileUrl)
+                        .header("User-Agent", "U1Slicer/1.0 Android").get().build()
+                    val fileResponse = client.newCall(fileRequest).execute()
+                    if (!fileResponse.isSuccessful) {
+                        fileResponse.close()
+                        _state.value = SlicerState.Error("File download failed: HTTP ${fileResponse.code}")
+                        return@launch
+                    }
+                    fileResponse.body?.byteStream()?.use { input ->
+                        outputFile.outputStream().use { input.copyTo(it) }
+                    }
+                    fileResponse.close()
+                } else {
+                    // Direct binary download
+                    response.body?.byteStream()?.use { input ->
+                        outputFile.outputStream().use { input.copyTo(it) }
+                    }
+                    response.close()
+                }
+
+                // Validate ZIP
+                if (outputFile.length() < 4) {
+                    outputFile.delete()
+                    _state.value = SlicerState.Error("Downloaded file is empty")
+                    return@launch
+                }
+                val magic = ByteArray(4)
+                outputFile.inputStream().use { it.read(magic) }
+                if (magic[0] != 0x50.toByte() || magic[1] != 0x4B.toByte()) {
+                    val fileSize = outputFile.length()
+                    val preview = outputFile.readText(Charsets.UTF_8).take(500)
+                    Log.w("SlicerVM", "MakerWorld response is not a ZIP ($fileSize bytes): ${preview.take(200)}")
+                    outputFile.delete()
+                    val hint = com.u1.slicer.network.MakerWorldUtils.classifyNonZipResponse(preview, fileSize)
+                    _state.value = SlicerState.Error(hint)
+                    return@launch
+                }
+
+                Log.i("SlicerVM", "Downloaded MakerWorld #$designId: ${outputFile.length()} bytes")
+                currentModelName = "makerworld_${designId}.3mf"
+                _state.value = SlicerState.Loading("Preparing model…")
+
+                // Same pipeline as loadModel(): parse → sanitize → embed → load
+                val origInfo = ThreeMfParser.parse(outputFile)
+                originalSourceConfig = if (origInfo.isBambu) {
+                    java.util.zip.ZipFile(outputFile).use { profileEmbedder.parseSourceConfig(it) }
+                } else null
+
+                val processed = BambuSanitizer.process(outputFile, context.filesDir)
+                val processedInfo = ThreeMfParser.parse(processed)
+                _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
+
+                sourceModelFile = processed
+                sourceModelInfo = processedInfo
+                toolRemapSlots = null
+                val sanitized = embedProfile(processed, processedInfo, context)
+
+                currentModelFile = sanitized
+                if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
+                    Log.i("SlicerVM", "MakerWorld file is multi-plate (${origInfo.plates.size} plates), showing selector")
+                    _showPlateSelector.value = true
+                    return@launch
+                }
+                Log.i("SlicerVM", "Loading MakerWorld model natively: ${sanitized.name} (${sanitized.length()} bytes)")
+                loadNativeModel(sanitized)
+            } catch (e: Throwable) {
+                _state.value = SlicerState.Error(e.message ?: "Import failed")
+                Log.e("SlicerVM", "Shared URL import failed", e)
+            }
         }
     }
 

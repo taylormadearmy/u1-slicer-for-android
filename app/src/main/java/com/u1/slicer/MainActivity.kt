@@ -74,16 +74,28 @@ class MainActivity : ComponentActivity() {
                 }
             }
             Intent.ACTION_SEND -> {
+                // Try file URI first (EXTRA_STREAM)
                 val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
                 } else {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(Intent.EXTRA_STREAM)
                 }
-                uri?.let {
-                    viewModel.loadModel(it)
+                if (uri != null) {
+                    Log.i("SlicerVM", "ACTION_SEND with EXTRA_STREAM: $uri")
+                    viewModel.loadModel(uri)
                     intent.action = null
                     intent.removeExtra(Intent.EXTRA_STREAM)
+                    return
+                }
+
+                // Fallback: text URL (e.g. Bambu Handy shares MakerWorld URLs as text/plain)
+                val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                if (!text.isNullOrBlank()) {
+                    Log.i("SlicerVM", "ACTION_SEND with EXTRA_TEXT: $text")
+                    viewModel.importFromSharedUrl(text)
+                    intent.action = null
+                    intent.removeExtra(Intent.EXTRA_TEXT)
                 }
             }
         }

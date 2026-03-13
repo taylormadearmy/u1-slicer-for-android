@@ -16,6 +16,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.U1Slicer">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -42,7 +43,7 @@
                 <data android:mimeType="application/vnd.ms-pki.stl" />
                 <data android:mimeType="application/vnd.ms-3mfdocument" />
                 <data android:mimeType="model/3mf" />
-                <data android:mimeType="*/*" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
 
