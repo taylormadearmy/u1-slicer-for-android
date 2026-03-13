@@ -65,7 +65,7 @@ rm -rf app/build/outputs/androidTest-results/
 All Gradle commands must be run from **Windows PowerShell**, not WSL:
 
 ```powershell
-# Unit tests (285)
+# Unit tests (315)
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
@@ -82,11 +82,12 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 279 tests across 17 classes
+### Unit tests (`app/src/test/`) — 315 tests across 19 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
 - `viewer/StlParserTest.kt` (9) — Binary/ASCII STL parsing, bounding box, vertex data
+- `network/MakerWorldUtilsTest.kt` (36) — URL parsing, design→instance ID resolution, download response parsing, error classification, cookie sanitization
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
@@ -165,6 +166,12 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `buildProfileOverridesImpl()` — top-level testable function; omits `enable_support`/`support_threshold_angle` from overrides when mode is `USE_FILE` and `hasSourceConfig=true` (Bambu 3MF), so the file's original support settings are preserved through ProfileEmbedder's preserve path
 - `saveGcodeTo()` uses `openOutputStream(uri, "wt")` (write+truncate) — plain `"w"` mode doesn't reliably truncate on all Android DocumentsProviders, causing stale G-code data to remain when saving a shorter file over a longer one
 - Per-extruder `ConfigOption` vectors MUST be sized to match `n_ext` in `applyConfigToPrusa()` — OrcaSlicer's `get_at()` wraps safely, but `WipeTowerIntegration` copies raw `.values` vectors and indexes by tool ID without bounds checking; a size-1 default with tool index >= 1 causes OOB access (the `extruder_offset` bug: corrupt wipe tower coordinates)
+- `MakerWorldUtils` (in `network/`) — extracted testable functions for MakerWorld URL parsing, API response handling, error classification, and cookie sanitization
+- `importFromSharedUrl()` in SlicerViewModel — handles ACTION_SEND with EXTRA_TEXT (MakerWorld URLs from Bambu Handy): resolves design ID → instance ID via `/api/v1/design-service/design/{id}`, downloads 3MF from instance endpoint, runs full BambuSanitizer pipeline
+- MakerWorld design ID (URL path) ≠ instance ID (download API) — MUST resolve via design API's `defaultInstanceId` field, otherwise downloads the wrong model
+- MakerWorld API requires browser-like headers (Chrome UA, Sec-Fetch-*, X-BBL-*, Origin) and a page-view pre-fetch to avoid CAPTCHA/bot detection — see `withBrowserHeaders()` in importFromSharedUrl()
+- Cookie strings from user input must be sanitized (strip CR/LF) before passing to OkHttp headers — `MakerWorldUtils.sanitizeCookies()`
+- `importFromSharedUrl()` sets `_state.value = Loading` BEFORE launching the IO coroutine — ensures spinner shows immediately when share intent arrives (prevents empty-screen flash with singleTask)
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
