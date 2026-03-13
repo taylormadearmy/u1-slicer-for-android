@@ -91,6 +91,7 @@ class TestCommandReceiver(
         const val ACTION_DUMP_STATE = "${PREFIX}DUMP_STATE"
         const val ACTION_CHECK_GCODE = "${PREFIX}CHECK_GCODE"
         const val ACTION_DUMP_EMBEDDED_CONFIG = "${PREFIX}DUMP_EMBEDDED_CONFIG"
+        const val ACTION_IMPORT_BACKUP = "${PREFIX}IMPORT_BACKUP"
 
         fun intentFilter(): IntentFilter = IntentFilter().apply {
             addAction(ACTION_LOAD_FILE)
@@ -103,6 +104,7 @@ class TestCommandReceiver(
             addAction(ACTION_DUMP_STATE)
             addAction(ACTION_CHECK_GCODE)
             addAction(ACTION_DUMP_EMBEDDED_CONFIG)
+            addAction(ACTION_IMPORT_BACKUP)
         }
     }
 
@@ -129,6 +131,7 @@ class TestCommandReceiver(
             ACTION_DUMP_STATE -> handleDumpState(context)
             ACTION_CHECK_GCODE -> handleCheckGcode(context)
             ACTION_DUMP_EMBEDDED_CONFIG -> handleDumpEmbeddedConfig(context)
+            ACTION_IMPORT_BACKUP -> handleImportBackup(context, intent)
             else -> Log.w(TAG, "Unknown action: $action")
         }
     }
@@ -244,7 +247,7 @@ class TestCommandReceiver(
         Log.i(TAG, "  hasPaintData: ${info?.hasPaintData}")
         Log.i(TAG, "  hasPlateJsons: ${info?.hasPlateJsons}")
         Log.i(TAG, "  isMultiPlate: ${info?.isMultiPlate}")
-        Log.i(TAG, "ExtruderPresets: ${presets.map { "${it.label}=${it.color}" }}")
+        Log.i(TAG, "ExtruderPresets: ${presets.map { "${it.label}=${it.color} profileId=${it.filamentProfileId}" }}")
         Log.i(TAG, "ActiveExtruderColors: ${slicerViewModel.activeExtruderColors.value}")
 
         // List files in app dir
@@ -323,5 +326,21 @@ class TestCommandReceiver(
             Log.e(TAG, "Error reading embedded 3MF: ${e.message}")
         }
         Log.i(TAG, "=== END DUMP_EMBEDDED_CONFIG ===")
+    }
+
+    private fun handleImportBackup(context: Context, intent: Intent) {
+        val path = intent.getStringExtra("path")
+        if (path.isNullOrBlank()) {
+            Log.e(TAG, "IMPORT_BACKUP: missing --es path")
+            return
+        }
+        val file = if (path.startsWith("/")) File(path) else File(context.filesDir, path)
+        if (!file.exists()) {
+            Log.e(TAG, "IMPORT_BACKUP: file not found: ${file.absolutePath}")
+            return
+        }
+        val json = file.readText()
+        Log.i(TAG, "IMPORT_BACKUP: importing ${json.length} chars from ${file.name}")
+        slicerViewModel.importBackup(json)
     }
 }

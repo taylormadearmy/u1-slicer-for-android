@@ -555,7 +555,11 @@ fun SettingsScreen(
                 if (uri != null) {
                     val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
                     if (json != null) {
-                        viewModel.importBackup(json)
+                        viewModel.importBackup(json) { hasPrinterUrl ->
+                            if (hasPrinterUrl && printerViewModel != null) {
+                                printerViewModel.testConnection()
+                            }
+                        }
                         backupStatus = "Settings imported"
                     }
                 }

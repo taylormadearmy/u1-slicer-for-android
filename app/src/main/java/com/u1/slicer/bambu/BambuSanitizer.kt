@@ -81,9 +81,9 @@ object BambuSanitizer {
      * Process a 3MF file: detect if Bambu, sanitize if needed, return the
      * (possibly modified) file path. If not Bambu, returns the original path unchanged.
      */
-    fun process(inputFile: File, outputDir: File): File {
-        val info = ThreeMfParser.parse(inputFile)
-        if (!info.isBambu) {
+    fun process(inputFile: File, outputDir: File, isBambu: Boolean? = null): File {
+        val bambu = isBambu ?: ThreeMfParser.parse(inputFile).isBambu
+        if (!bambu) {
             Log.i(TAG, "Not a Bambu file, no sanitization needed")
             return inputFile
         }
@@ -258,11 +258,6 @@ object BambuSanitizer {
                         } else {
                             cleanModelXmlPreserveComponentRefs(finalModelBytes)
                         }
-                        // Strip printable="0" items from <build>.  Bambu 3MF files can include
-                        // build items with printable="0" for objects that are in the scene but not
-                        // assigned to the current plate.  Loading them causes multiple disjoint
-                        // objects to be sliced together, which produces "Coordinate outside allowed
-                        // range" errors in Clipper when the meshes are positioned far apart.
                         val cleanedModelFinal = stripNonPrintableBuildItems(cleanedModel)
                         writeStored(destZip, "3D/3dmodel.model", cleanedModelFinal)
 
@@ -275,7 +270,11 @@ object BambuSanitizer {
                             // Copy component files — use streaming for large files to avoid OOM
                             for (path in componentFileNames) {
                                 val srcEntry = srcZip.getEntry(path) ?: continue
-                                if (srcEntry.size > 10_000_000) {
+                                if (deferredRestructuring) {
+                                    // Multi-plate deferred: raw-copy without XML cleaning.
+                                    // restructurePlateFile() will clean when inlining meshes.
+                                    rawCopyZipEntry(srcZip, srcEntry, destZip)
+                                } else if (srcEntry.size > 10_000_000) {
                                     // Large file: stream-copy with line-by-line cleaning
                                     copyZipEntry(srcZip, srcEntry, destZip)
                                 } else {
@@ -1230,6 +1229,24 @@ $componentRefs    </components>
         } finally {
             tmpFile.delete()
         }
+    }
+
+    /** Raw-copy a ZIP entry without any processing — preserves original CRC/size. */
+    private fun rawCopyZipEntry(srcZip: ZipFile, srcEntry: ZipEntry, destZip: ZipOutputStream) {
+        val entry = ZipEntry(srcEntry.name)
+        entry.method = ZipEntry.STORED
+        entry.size = srcEntry.size
+        entry.compressedSize = srcEntry.size
+        entry.crc = srcEntry.crc
+        destZip.putNextEntry(entry)
+        srcZip.getInputStream(srcEntry).use { input ->
+            val buf = ByteArray(8192)
+            var n: Int
+            while (input.read(buf).also { n = it } >= 0) {
+                destZip.write(buf, 0, n)
+            }
+        }
+        destZip.closeEntry()
     }
 
     /** Write a ZIP entry using STORED (no compression) method — required by 3MF spec. */

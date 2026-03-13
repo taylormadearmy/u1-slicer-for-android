@@ -373,8 +373,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     java.util.zip.ZipFile(outputFile).use { profileEmbedder.parseSourceConfig(it) }
                 } else null
 
-                val processed = BambuSanitizer.process(outputFile, context.filesDir)
-                val processedInfo = ThreeMfParser.parse(processed)
+                val processed = BambuSanitizer.process(outputFile, context.filesDir, isBambu = origInfo.isBambu)
+                val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
                 _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
 
                 sourceModelFile = processed
@@ -456,8 +456,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Sanitize first (strip printable="0", restructure multi-color, clean XML),
                     // then embed Snapmaker profile.  Without process(), non-printable build
                     // items cause "Coordinate outside allowed range" Clipper errors.
-                    val processed = BambuSanitizer.process(file, context.filesDir)
-                    val processedInfo = ThreeMfParser.parse(processed)
+                    val processed = BambuSanitizer.process(file, context.filesDir, isBambu = origInfo.isBambu)
+                    val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
                     _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
 
                     // Store source before embedding so startSlicing() can re-embed with
@@ -1049,7 +1049,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun importBackup(json: String) {
+    fun importBackup(json: String, onImported: (hasPrinterUrl: Boolean) -> Unit = {}) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val data = SettingsBackup.import(json)
@@ -1060,6 +1060,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 data.slicingOverrides?.let {
                     settingsRepo.saveSlicingOverrides(it)
                 }
+                val hasPrinterUrl = !data.printerUrl.isNullOrBlank()
                 data.printerUrl?.let {
                     settingsRepo.savePrinterUrl(it)
                 }
@@ -1087,8 +1088,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 Log.i("SlicerVM", "Settings backup imported successfully")
+                onImported(hasPrinterUrl)
             } catch (e: Exception) {
-                Log.e("SlicerVM", "Failed to import backup: ${e.message}")
+                Log.e("SlicerVM", "Failed to import backup: ${e.message}", e)
             }
         }
     }

@@ -5,6 +5,7 @@ import android.util.Log
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -457,8 +458,6 @@ class ProfileEmbedder(private val context: Context) {
                     if (name in DROP_FILES) continue
                     if (DROP_PREFIXES.any { name.startsWith(it) }) continue
 
-                    val content = srcZip.getInputStream(entry).readBytes()
-
                     when {
                         // Clean and convert .model files:
                         // - Strip Bambu-specific XML extensions (requiredextensions, p:UUID,
@@ -467,19 +466,26 @@ class ProfileEmbedder(private val context: Context) {
                         // - Preserve p:path and xmlns:p (needed for component file refs).
                         // - Strip PrusaSlicer slic3rpe:mmu_segmentation for paint-data files.
                         name.endsWith(".model") -> {
-                            val cleaned = cleanModelXmlForOrcaSlicer(content, info.hasPaintData)
-                            destZip.putNextEntry(ZipEntry(name))
-                            destZip.write(cleaned)
-                            destZip.closeEntry()
+                            if (name != "3D/3dmodel.model" && entry.method == ZipEntry.STORED && !info.hasPaintData) {
+                                // Component .model files already STORED by BambuSanitizer —
+                                // raw-copy to avoid expensive regex cleaning on large meshes.
+                                // restructurePlateFile() will clean when inlining later.
+                                // MUST NOT skip when hasPaintData: cleanModelXmlForOrcaSlicer()
+                                // strips paint_color= attributes that cause SEMM SIGSEGV on Android.
+                                rawCopyEntry(srcZip, entry, destZip)
+                            } else {
+                                val content = srcZip.getInputStream(entry).readBytes()
+                                val cleaned = cleanModelXmlForOrcaSlicer(content, info.hasPaintData)
+                                writeStored(destZip, name, cleaned)
+                            }
                         }
 
                         // Convert Slic3r_PE_model.config → model_settings.config (OrcaSlicer format),
                         // applying extruder remap so OrcaSlicer uses correct is_extruder_used[N] slots.
                         name == "Metadata/Slic3r_PE_model.config" -> {
+                            val content = srcZip.getInputStream(entry).readBytes()
                             val modelSettings = convertToModelSettings(content, extruderRemap)
-                            destZip.putNextEntry(ZipEntry("Metadata/model_settings.config"))
-                            destZip.write(modelSettings.toByteArray())
-                            destZip.closeEntry()
+                            writeStored(destZip, "Metadata/model_settings.config", modelSettings.toByteArray())
                             Log.i(TAG, "Converted Slic3r_PE_model.config → model_settings.config" +
                                     if (extruderRemap != null) " (remap=$extruderRemap)" else "")
                         }
@@ -489,22 +495,19 @@ class ProfileEmbedder(private val context: Context) {
                         // - Clamp off-bed assemble_item transforms (Bambu multi-plate global coords)
                         // - Apply extruder remap if provided
                         name == "Metadata/model_settings.config" -> {
+                            val content = srcZip.getInputStream(entry).readBytes()
                             var sanitized = BambuSanitizer.sanitizeModelSettings(content)
                             if (extruderRemap != null) {
                                 sanitized = remapModelSettingsExtruders(sanitized, extruderRemap)
                             }
-                            destZip.putNextEntry(ZipEntry(name))
-                            destZip.write(sanitized)
-                            destZip.closeEntry()
+                            writeStored(destZip, name, sanitized)
                             Log.i(TAG, "Sanitized model_settings.config" +
                                     if (extruderRemap != null) " (remap=$extruderRemap)" else "")
                         }
 
-                        // Pass through
+                        // Pass through — raw-copy to avoid decompressing+recompressing
                         else -> {
-                            destZip.putNextEntry(ZipEntry(name))
-                            destZip.write(content)
-                            destZip.closeEntry()
+                            rawCopyEntry(srcZip, entry, destZip)
                         }
                     }
                 }
@@ -582,6 +585,49 @@ class ProfileEmbedder(private val context: Context) {
             mr.groupValues[1] + remapped
         }
         return text.toByteArray()
+    }
+
+    /** Write a ZIP entry using STORED (no compression) method — required by 3MF spec. */
+    private fun writeStored(zip: ZipOutputStream, name: String, data: ByteArray) {
+        val entry = ZipEntry(name)
+        entry.method = ZipEntry.STORED
+        entry.size = data.size.toLong()
+        entry.compressedSize = data.size.toLong()
+        val crc = CRC32()
+        crc.update(data)
+        entry.crc = crc.value
+        zip.putNextEntry(entry)
+        zip.write(data)
+        zip.closeEntry()
+    }
+
+    /**
+     * Raw-copy a ZIP entry without decompressing/recompressing.
+     * For STORED entries, copies bytes directly. For DEFLATED entries,
+     * decompresses and writes as STORED (3MF spec requires STORED).
+     */
+    private fun rawCopyEntry(srcZip: ZipFile, srcEntry: ZipEntry, destZip: ZipOutputStream) {
+        if (srcEntry.method == ZipEntry.STORED) {
+            // Already STORED — copy metadata + bytes directly
+            val entry = ZipEntry(srcEntry.name)
+            entry.method = ZipEntry.STORED
+            entry.size = srcEntry.size
+            entry.compressedSize = srcEntry.size
+            entry.crc = srcEntry.crc
+            destZip.putNextEntry(entry)
+            srcZip.getInputStream(srcEntry).use { input ->
+                val buf = ByteArray(8192)
+                var n: Int
+                while (input.read(buf).also { n = it } >= 0) {
+                    destZip.write(buf, 0, n)
+                }
+            }
+            destZip.closeEntry()
+        } else {
+            // DEFLATED → must decompress and write as STORED
+            val data = srcZip.getInputStream(srcEntry).readBytes()
+            writeStored(destZip, srcEntry.name, data)
+        }
     }
 
 }

@@ -27,7 +27,7 @@ object ThreeMfParser {
         "Metadata/filament_sequence.json"
     )
 
-    fun parse(file: File): ThreeMfInfo {
+    fun parse(file: File, skipPaintDetection: Boolean = false): ThreeMfInfo {
         if (!file.exists() || !file.name.endsWith(".3mf", ignoreCase = true)) {
             return ThreeMfInfo(
                 objects = emptyList(),
@@ -93,11 +93,13 @@ object ThreeMfParser {
                 // Bambu files that use p:path component refs (e.g. colored_3DBenchy) store
                 // paint_color attributes on triangles in the component files
                 // (3D/Objects/*.model), not in the main 3D/3dmodel.model.
-                val hasPaintData = detectPaintData(modelBytes) ||
-                    zip.entries().toList().any { e ->
-                        e.name.endsWith(".model") && e.name != "3D/3dmodel.model" &&
-                            detectPaintData(zip.getInputStream(e).readBytes())
-                    }
+                val hasPaintData = if (skipPaintDetection) false else {
+                    detectPaintData(modelBytes) ||
+                        zip.entries().toList().any { e ->
+                            e.name.endsWith(".model") && e.name != "3D/3dmodel.model" &&
+                                streamDetectPaintData(zip.getInputStream(e))
+                        }
+                }
 
                 // Detect layer tool changes
                 val hasLayerToolChanges = if (isBambu) {
@@ -294,6 +296,50 @@ object ThreeMfParser {
         // Scan for paint_color or mmu_segmentation attributes
         val content = String(modelBytes, Charsets.UTF_8)
         return content.contains("paint_color") || content.contains("mmu_segmentation")
+    }
+
+    /**
+     * Streaming paint data detection — reads from InputStream in chunks to avoid
+     * loading large component .model files (15MB+) entirely into memory.
+     * Searches for "paint_color" or "mmu_segmentation" in overlapping chunks.
+     */
+    private fun streamDetectPaintData(input: InputStream): Boolean {
+        val needle1 = "paint_color".toByteArray()
+        val needle2 = "mmu_segmentation".toByteArray()
+        val maxNeedleLen = maxOf(needle1.size, needle2.size)
+        val bufSize = 8192
+        val buf = ByteArray(bufSize + maxNeedleLen)
+        var carry = 0  // bytes carried over from previous chunk for overlap
+
+        input.use {
+            while (true) {
+                val n = it.read(buf, carry, bufSize)
+                if (n <= 0) break
+                val total = carry + n
+                if (containsBytes(buf, total, needle1) || containsBytes(buf, total, needle2)) {
+                    return true
+                }
+                // Carry the tail for cross-boundary matches
+                if (total > maxNeedleLen) {
+                    System.arraycopy(buf, total - maxNeedleLen, buf, 0, maxNeedleLen)
+                    carry = maxNeedleLen
+                } else {
+                    carry = total
+                }
+            }
+        }
+        return false
+    }
+
+    private fun containsBytes(haystack: ByteArray, haystackLen: Int, needle: ByteArray): Boolean {
+        if (needle.size > haystackLen) return false
+        outer@ for (i in 0..haystackLen - needle.size) {
+            for (j in needle.indices) {
+                if (haystack[i + j] != needle[j]) continue@outer
+            }
+            return true
+        }
+        return false
     }
 
     private fun detectLayerToolChanges(inputStream: InputStream): Boolean {
