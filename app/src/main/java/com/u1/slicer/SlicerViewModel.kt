@@ -517,8 +517,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Restructure per-plate: inline component meshes so OrcaSlicer
                 // can assign per-volume extruders (deferred from process()).
                 val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, context.filesDir)
-                // plateFile is now the source for any subsequent re-embed with remap
-                val plateInfo = ThreeMfParser.parse(plateFile)
+                // Lightweight parse: only reads model_settings.config (~1KB) for extruder
+                // indices, skips the 15MB+ main model XML entirely (~2s saved).
+                val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
                 sourceModelFile = plateFile
                 sourceModelInfo = plateInfo
                 // Merge plate structural info with the pre-select merged info so that

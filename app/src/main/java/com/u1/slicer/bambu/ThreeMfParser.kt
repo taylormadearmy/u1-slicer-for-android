@@ -214,6 +214,44 @@ object ThreeMfParser {
         }
     }
 
+    /**
+     * Lightweight parse for plate selection — only reads model_settings.config
+     * to extract usedExtruderIndices. Skips the 15MB+ main model XML entirely.
+     * Returns a minimal ThreeMfInfo suitable for mergeThreeMfInfoForPlate().
+     */
+    fun parseForPlateSelection(file: File): ThreeMfInfo {
+        return try {
+            ZipFile(file).use { zip ->
+                val entryNames = zip.entries().toList().map { it.name }.toSet()
+                val isBambu = entryNames.any { it in BAMBU_MARKERS }
+
+                val plateNames = mutableMapOf<Int, String>()
+                val objectNames = mutableMapOf<String, String>()
+                val extruderAssignments = mutableMapOf<String, Int>()
+
+                val msEntry = zip.getEntry("Metadata/model_settings.config")
+                if (msEntry != null) {
+                    parseModelSettingsConfig(
+                        zip.getInputStream(msEntry),
+                        plateNames, objectNames, extruderAssignments
+                    )
+                }
+
+                val uniqueExtruders = extruderAssignments.values.toSet()
+                ThreeMfInfo(
+                    objects = emptyList(),
+                    plates = emptyList(),
+                    isBambu = isBambu,
+                    isMultiPlate = false,
+                    usedExtruderIndices = uniqueExtruders
+                )
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parseForPlateSelection: ${e.message}")
+            ThreeMfInfo(emptyList(), emptyList(), isBambu = false, isMultiPlate = false)
+        }
+    }
+
     private data class BuildItem(
         val objectId: String,
         val printable: Boolean,

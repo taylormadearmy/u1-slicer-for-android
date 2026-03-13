@@ -1367,7 +1367,14 @@ $componentRefs    </components>
             // 2. Read main model and component files
             val mainModelEntry = srcZip.getEntry("3D/3dmodel.model")
                 ?: return plateFile
-            val mainModelContent = srcZip.getInputStream(mainModelEntry).readBytes()
+            // Clean the main model XML BEFORE restructuring — it's small (~1KB of XML
+            // wrapper + component refs). After restructuring, the inlined mesh data
+            // bloats it to 15MB+, making regex cleaning 7× slower for no benefit
+            // (mesh data contains no Bambu attributes).
+            // MUST use PreserveComponentRefs variant: restructureForMultiColor() needs
+            // p:path attributes to locate meshes in component files.
+            val rawMainModel = srcZip.getInputStream(mainModelEntry).readBytes()
+            val mainModelContent = cleanModelXmlPreserveComponentRefs(rawMainModel)
 
             val componentFileNames = mutableListOf<String>()
             for (entry in srcZip.entries()) {
@@ -1399,9 +1406,9 @@ $componentRefs    </components>
                 bambuObjectParts[parentId] = parts.toMutableList()
             }
 
-            // 5. Write output ZIP
-            val cleanedModel = cleanModelXml(restructuredModel)
-            val cleanedModelFinal = stripNonPrintableBuildItems(cleanedModel)
+            // 5. Write output ZIP — model already cleaned before restructuring,
+            // only need to strip non-printable build items
+            val cleanedModelFinal = stripNonPrintableBuildItems(restructuredModel)
 
             val outputFile = File(outDir, "restructured_${plateFile.name}")
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
@@ -1420,8 +1427,7 @@ $componentRefs    </components>
                         entry.name.endsWith(".rels") && entry.name.contains("3dmodel.model") -> {} // not needed
                         entry.name == "Metadata/model_settings.config" -> {} // already written (OrcaSlicer format)
                         entry.name == "Metadata/Slic3r_PE_model.config" -> {} // replaced by model_settings
-                        else -> writeStored(destZip, entry.name,
-                            srcZip.getInputStream(entry).readBytes())
+                        else -> rawCopyZipEntry(srcZip, entry, destZip)
                     }
                 }
             }
