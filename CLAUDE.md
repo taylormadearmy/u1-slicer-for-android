@@ -148,7 +148,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `resolveInto()` and `resolvePrimeTower()` in `SlicingOverrides` both force wipe tower true when `extruderCount > 1` unless the user explicitly set `OVERRIDE` mode to false — OrcaSlicer requires a wipe tower for T1 tool changes; `buildProfileOverrides()` uses `resolvePrimeTower()` to set `enable_prime_tower` in the embedded profile
 - `ThreeMfParser.detectPaintData()` checks ALL `.model` entries in the ZIP, not just the main `3D/3dmodel.model` — Bambu files using p:path component refs store `paint_color` on triangles in component files (e.g. `3D/Objects/*.model`)
 - `ProfileEmbedder.buildConfig()` sets `extruder_count` in the embedded `project_settings.config` — OrcaSlicer defaults to 1 without it, ignoring per-volume extruder assignments
-- `TestCommandReceiver` (debug-only): BroadcastReceiver for ADB-driven E2E testing — supports LOAD_FILE, SLICE, CHECK_GCODE, DUMP_STATE, DUMP_EMBEDDED_CONFIG, SET_COLORS, SET_PRINTER, SYNC_FILAMENTS, SELECT_PLATE, NAVIGATE
+- `TestCommandReceiver` (debug-only): BroadcastReceiver for ADB-driven E2E testing — supports LOAD_FILE, SLICE, CHECK_GCODE, DUMP_STATE, DUMP_EMBEDDED_CONFIG, SET_COLORS, SET_PRINTER, SYNC_FILAMENTS, SELECT_PLATE, NAVIGATE, IMPORT_BACKUP
 - Default extruder colours are R/G/B/W (`ExtruderPreset.DEFAULT_COLORS`) — aids visual testing of multi-colour slicing
 - `BambuSanitizer.restructurePlateFile()` — deferred per-plate restructuring for multi-plate multi-colour files; `process()` preserves `model_settings.config` and defers restructuring, `selectPlate()` calls `extractPlate()` then `restructurePlateFile()` to inline component meshes and write OrcaSlicer-format config
 - `BambuSanitizer.process()` writes EITHER `model_settings.config` (deferred restructuring OR compound objects) OR `Slic3r_PE_model.config` (non-compound immediate restructuring), never both — duplicate entries cause ProfileEmbedder ZIP corruption
@@ -172,6 +172,12 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - MakerWorld API requires browser-like headers (Chrome UA, Sec-Fetch-*, X-BBL-*, Origin) and a page-view pre-fetch to avoid CAPTCHA/bot detection — see `withBrowserHeaders()` in importFromSharedUrl()
 - Cookie strings from user input must be sanitized (strip CR/LF) before passing to OkHttp headers — `MakerWorldUtils.sanitizeCookies()`
 - `importFromSharedUrl()` sets `_state.value = Loading` BEFORE launching the IO coroutine — ensures spinner shows immediately when share intent arrives (prevents empty-screen flash with singleTask)
+- `BambuSanitizer.process()` accepts optional `isBambu` param to skip redundant `ThreeMfParser.parse()` — pass `origInfo.isBambu` from the caller when the file was already parsed
+- `BambuSanitizer.rawCopyZipEntry()` — streams ZIP entries without XML processing or CRC recomputation; used for multi-plate deferred restructuring (component files cleaned later by `restructurePlateFile()`)
+- `ThreeMfParser.parse(skipPaintDetection=true)` — skips the expensive component-file scan for paint_color/mmu_segmentation; safe to use on processed files when `origInfo.hasPaintData` is preserved via `mergeThreeMfInfo()`
+- `ThreeMfParser.streamDetectPaintData()` — streaming paint detection using overlapping 8KB chunks; avoids loading 15MB+ component .model files entirely into memory
+- `ProfileEmbedder.rawCopyEntry()` — raw-copies STORED ZIP entries without decompress/recompress; MUST NOT skip `cleanModelXmlForOrcaSlicer()` when `hasPaintData=true` (paint_color attributes cause SEMM SIGSEGV on Android)
+- `importBackup()` accepts `onImported: (hasPrinterUrl: Boolean) -> Unit` callback — used by SettingsScreen to auto-connect printer (F10)
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
