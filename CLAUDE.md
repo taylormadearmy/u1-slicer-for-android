@@ -177,6 +177,8 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ThreeMfParser.parse(skipPaintDetection=true)` — skips the expensive component-file scan for paint_color/mmu_segmentation; safe to use on processed files when `origInfo.hasPaintData` is preserved via `mergeThreeMfInfo()`
 - `ThreeMfParser.streamDetectPaintData()` — streaming paint detection using overlapping 8KB chunks; avoids loading 15MB+ component .model files entirely into memory
 - `ProfileEmbedder.rawCopyEntry()` — raw-copies STORED ZIP entries without decompress/recompress; MUST NOT skip `cleanModelXmlForOrcaSlicer()` when `hasPaintData=true` (paint_color attributes cause SEMM SIGSEGV on Android)
+- `ThreeMfParser.parseForPlateSelection()` — lightweight parse that only reads `model_settings.config` for `usedExtruderIndices`; skips the 15MB+ main model XML entirely; used in `selectPlate()` since full structural info is already available from the initial parse
+- `restructurePlateFile()` cleans main model XML with `cleanModelXmlPreserveComponentRefs` BEFORE inlining meshes (not after) — cleaning after inlining runs 7 regex passes over 15MB+ for no benefit (mesh data contains no Bambu attributes); MUST use PreserveComponentRefs variant because `restructureForMultiColor()` needs `p:path` attributes
 - `importBackup()` accepts `onImported: (hasPrinterUrl: Boolean) -> Unit` callback — used by SettingsScreen to auto-connect printer (F10)
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
