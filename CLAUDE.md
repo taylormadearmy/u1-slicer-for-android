@@ -180,6 +180,10 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ThreeMfParser.parseForPlateSelection()` — lightweight parse that only reads `model_settings.config` for `usedExtruderIndices`; skips the 15MB+ main model XML entirely; used in `selectPlate()` since full structural info is already available from the initial parse
 - `restructurePlateFile()` cleans main model XML with `cleanModelXmlPreserveComponentRefs` BEFORE inlining meshes (not after) — cleaning after inlining runs 7 regex passes over 15MB+ for no benefit (mesh data contains no Bambu attributes); MUST use PreserveComponentRefs variant because `restructureForMultiColor()` needs `p:path` attributes
 - `importBackup()` accepts `onImported: (hasPrinterUrl: Boolean) -> Unit` callback — used by SettingsScreen to auto-connect printer (F10)
+- `BambuSanitizer.copyZipEntry()` fast-path: checks `String.contains()` for target patterns before applying regex — 99.9%+ of mesh data lines (`<vertex>`/`<triangle>`) contain no Bambu attributes, so regex is skipped entirely; reduces 146MB component cleaning from ~60s to ~10s
+- `ThreeMfMeshParser` OOM guard: skips component `.model` files >80MB (`entry.size`) — prevents 268MB Java heap OOM from `readText()` on oversized meshes; model still loads and slices via native OrcaSlicer (graceful degradation, no 3D preview for that component)
+- `ProfileEmbedder.streamCleanEntry()` — streaming fallback for large (>50MB) DEFLATED component files; mirrors `BambuSanitizer.copyZipEntry()` with fast-path optimization; prevents OOM when embed() encounters un-STORED entries
+- AndroidManifest: `BROWSABLE` category + `pathPattern` filters for `.3mf`/`.stl` — separate intent-filters for `application/octet-stream` and `*/*` MIME types ensure the app appears in Android's "Open with" picker from file managers
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
