@@ -798,7 +798,7 @@ fun PreviewScreen(
                         onSave = onSaveGcode,
                         onSendToPrinter = { onSendToPrinter(s.result.gcodePath) }
                     )
-                    // Inline 3D G-code preview
+                    // Inline 3D G-code preview (auto-downsampled for large models)
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
                         InlineGcodePreview(
                             parsedGcode = parsedGcode!!,

@@ -22,4 +22,8 @@ data class ParsedGcode(
     val layers: List<GcodeLayer>,
     val bedWidth: Float = 270f,
     val bedHeight: Float = 270f
-)
+) {
+    /** Total move count across all layers — used for OOM guard in 3D preview. */
+    val totalMoves: Int by lazy { layers.sumOf { it.moves.size } }
+}
+

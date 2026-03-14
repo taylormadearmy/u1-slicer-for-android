@@ -16,21 +16,15 @@ import org.junit.runner.RunWith
 import java.io.File
 
 /**
- * Regression tests for Bambu SEMM (Single Extruder Multi Material) slicing.
+ * Tests for Bambu paint-based multi-color (SEMM) slicing.
  *
  * SEMM models store multi-color segmentation as paint_color= attributes on
  * individual triangles.  OrcaSlicer's multi_material_segmentation_by_painting()
  * processes these to produce per-extruder toolpaths.
  *
- * Current status: SEMM is DISABLED.
- * multi_material_segmentation_by_painting() crashes on Android with SIGSEGV in
- * MultiPoint::bounding_box() (corrupt ExPolygons from TBB parallel slice_volumes).
- * ProfileEmbedder.cleanModelXmlForOrcaSlicer() strips paint_color= attributes to
- * prevent the algorithm from running.
- *
- * TODO: Re-enable SEMM when the algorithm is stable on Android (native rebuild needed).
- * When re-enabling: remove paint_color= stripping, rebuild .so, flip assertion below
- * from assertEquals(0, t1Count) to assertTrue(t1Count > 0).
+ * SEMM is ENABLED — TBB parallel execution algorithms are replaced with serial
+ * shims (extern/tbb_serial/) to prevent ARM64 data races that previously caused
+ * SIGSEGV in ExPolygon moves during parallel_for.
  */
 @RunWith(AndroidJUnit4::class)
 class SemmSlicingTest {
@@ -90,17 +84,13 @@ class SemmSlicingTest {
     }
 
     /**
-     * Regression guard: colored 3DBenchy uses Bambu SEMM (paint_color on triangles).
+     * Colored 3DBenchy uses Bambu paint_color on triangles for multi-color.
      *
-     * SEMM is currently DISABLED — paint_color= is stripped in ProfileEmbedder to prevent
-     * multi_material_segmentation_by_painting() SIGSEGV on Android.
-     *
-     * This test verifies:
-     *   1. The pipeline completes without crashing (no process death).
+     * Verifies the full pipeline:
+     *   1. Pipeline completes without crashing (TBB serial shim prevents SIGSEGV).
      *   2. G-code is produced (slice succeeds).
-     *   3. T1 count == 0 (SEMM disabled — single-extruder output expected).
-     *
-     * When SEMM is re-enabled, flip the final assertion to assertTrue(t1Count > 0).
+     *   3. T1 tool changes present (paint segmentation assigns colors to extruders).
+     *   4. G-code stays within bed bounds.
      */
     @Test
     fun coloredBenchy_semm_gcodeHasToolChanges() {
@@ -111,15 +101,15 @@ class SemmSlicingTest {
         assertTrue("colored_3DBenchy must have >= 2 detected colors",
             origInfo.detectedColors.size >= 2)
 
-        // Full pipeline: process → embed with 2-extruder SEMM config → load → slice
+        // Full pipeline: process → embed with 2-extruder config → load → slice
         val processed = BambuSanitizer.process(input, outDir)
         val config = embedder.buildConfig(
             info = origInfo,
             targetExtruderCount = 2
         )
-        // Verify SEMM is DISABLED in the embedded config (algorithm crashes on Android).
-        // When SEMM is re-enabled, change this assertion to assertEquals("1", ...).
-        assertEquals("single_extruder_multi_material must be '0' while SEMM is disabled",
+        // U1 has independent extruders (not MMU), so single_extruder_multi_material=0.
+        // Paint segmentation runs based on filament_diameter.size() > 1, not SEMM flag.
+        assertEquals("single_extruder_multi_material must be '0' (U1 has independent extruders)",
             "0", config["single_extruder_multi_material"])
 
         val embedded = embedder.embed(processed, config, outDir, origInfo)
@@ -132,12 +122,12 @@ class SemmSlicingTest {
 
         val gcode = File(result.gcodePath).readText()
         val t1Count = gcode.lines().count { it.trimStart().startsWith("T1") }
-        // SEMM disabled: paint_color= is stripped → single-extruder output, T1 count must be 0.
-        // When SEMM is re-enabled (native rebuild + remove paint_color stripping), flip to > 0.
-        assertEquals(
-            "SEMM disabled: expected T1 count = 0 (single-extruder). " +
-                "If non-zero, SEMM is running and may crash — check ProfileEmbedder.cleanModelXmlForOrcaSlicer().",
-            0, t1Count
+        // Paint segmentation enabled: paint_color attributes preserved → multi-extruder output.
+        // T1 tool changes must be present (paint data assigns triangles to different extruders).
+        assertTrue(
+            "Paint segmentation must produce T1 tool changes (got $t1Count). " +
+                "If 0, paint_color may be stripped or paint segmentation is not running.",
+            t1Count > 0
         )
 
         val bounds = GcodeValidator.checkBedBounds(gcode)

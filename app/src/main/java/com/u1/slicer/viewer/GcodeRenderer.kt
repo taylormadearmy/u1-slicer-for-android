@@ -133,18 +133,37 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         // Each move = 2 vertices, each vertex = 3 pos + 4 color = 7 floats
         val floatsPerVertex = 7
-        val totalFloats = totalMoves * 2 * floatsPerVertex
-        val data = FloatArray(totalFloats)
+        val maxBufferBytes = 80_000_000L  // 80MB limit for GPU buffer
+        val fullBytes = totalMoves.toLong() * 2 * floatsPerVertex * 4
+
+        // Downsample if needed: keep every Nth extrusion move, skip travel moves
+        val sampleRate = if (fullBytes > maxBufferBytes) {
+            val rate = ((fullBytes + maxBufferBytes - 1) / maxBufferBytes).toInt()
+            android.util.Log.i("GcodeRenderer", "Downsampling G-code preview: keeping 1/$rate of $totalMoves moves (${fullBytes / 1_000_000}MB → ~${fullBytes / rate / 1_000_000}MB)")
+            rate
+        } else 1
+
+        // Allocate for the downsampled size
+        val estimatedMoves = if (sampleRate > 1) totalMoves / sampleRate + totalLayers else totalMoves
+        val data = FloatArray(estimatedMoves * 2 * floatsPerVertex)
         var offset = 0
 
         for (layer in gcode.layers) {
             val layerStart = offset / floatsPerVertex
+            var moveIdx = 0
             for (move in layer.moves) {
+                // When downsampling, skip travel moves and sample extrusions
+                if (sampleRate > 1) {
+                    if (move.type != MoveType.EXTRUDE) continue
+                    if (moveIdx++ % sampleRate != 0) continue
+                }
                 val color = if (move.type == MoveType.EXTRUDE) {
                     extruderColors[move.extruder.coerceIn(0, 3)]
                 } else {
                     travelColor
                 }
+                // Bounds check — downsampling estimate may be slightly off
+                if (offset + floatsPerVertex * 2 > data.size) break
                 // Start vertex
                 data[offset++] = move.x0; data[offset++] = move.y0; data[offset++] = layer.z
                 data[offset++] = color[0]; data[offset++] = color[1]; data[offset++] = color[2]; data[offset++] = color[3]

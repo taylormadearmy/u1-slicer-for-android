@@ -380,7 +380,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceModelFile = processed
                 sourceModelInfo = processedInfo
                 toolRemapSlots = null
-                val sanitized = embedProfile(processed, processedInfo, context)
+                val mergedInfo = _threeMfInfo.value!!
+                val sanitized = embedProfile(processed, mergedInfo, context)
 
                 currentModelFile = sanitized
                 if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
@@ -391,6 +392,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 Log.i("SlicerVM", "Loading MakerWorld model natively: ${sanitized.name} (${sanitized.length()} bytes)")
                 loadNativeModel(sanitized)
             } catch (e: Throwable) {
+                native.clearModel() // Reset native state to prevent stale Clipper errors on retry
                 _state.value = SlicerState.Error(e.message ?: "Import failed")
                 Log.e("SlicerVM", "Shared URL import failed", e)
             }
@@ -465,7 +467,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceModelFile = processed
                     sourceModelInfo = processedInfo
                     toolRemapSlots = null  // reset on each new file load
-                    val sanitized = embedProfile(processed, processedInfo, context)
+                    // Use merged info (preserves origInfo's extruder count, paint data, etc.)
+                    // so the preserve path in buildConfig() activates correctly for Bambu files
+                    // with multi-extruder assignments (needed for support preservation — B10 fix).
+                    val mergedInfo = _threeMfInfo.value!!
+                    val sanitized = embedProfile(processed, mergedInfo, context)
 
                     // Show plate selector for multi-plate files (use origInfo since
                     // process() strips plate_N.json files that isMultiPlate relies on).
@@ -493,6 +499,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 currentModelFile = fileToLoad
                 loadNativeModel(fileToLoad)
             } catch (e: Throwable) {
+                native.clearModel() // Reset native state to prevent stale Clipper errors on retry
                 _state.value = SlicerState.Error("Error: ${e.message}")
             }
         }
@@ -536,6 +543,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 currentModelFile = plateFile
                 loadNativeModel(plateFile)
             } catch (e: Throwable) {
+                native.clearModel() // Reset native state to prevent stale Clipper errors on retry
                 _state.value = SlicerState.Error("Error extracting plate: ${e.message}")
             }
         }
@@ -785,6 +793,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val sourceConfig = originalSourceConfig ?: if (info.isBambu) {
             java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
         } else null
+        Log.d("SlicerVM", "embedProfile: info.isBambu=${info.isBambu}, info.detectedExtruders=${info.detectedExtruderCount}, " +
+            "info.hasToolChanges=${info.hasLayerToolChanges}, info.hasPaint=${info.hasPaintData}, " +
+            "info.isMultiPlate=${info.isMultiPlate}, sourceConfig=${sourceConfig != null}, targetCount=$targetCount")
         val embeddedConfig = profileEmbedder.buildConfig(
             info = info,
             sourceConfig = sourceConfig,
@@ -1209,6 +1220,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             processedInfo: com.u1.slicer.bambu.ThreeMfInfo,
             origInfo: com.u1.slicer.bambu.ThreeMfInfo
         ): com.u1.slicer.bambu.ThreeMfInfo = processedInfo.copy(
+            isBambu = origInfo.isBambu,
             plates = origInfo.plates,
             hasPlateJsons = origInfo.hasPlateJsons,
             detectedColors = origInfo.detectedColors,
@@ -1247,6 +1259,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceInfo.detectedColors
             }
             return plateInfo.copy(
+                isBambu = sourceInfo.isBambu,
                 detectedColors = filteredColors,
                 detectedExtruderCount = if (filteredColors.isNotEmpty()) filteredColors.size else sourceInfo.detectedExtruderCount,
                 hasPaintData = sourceInfo.hasPaintData,

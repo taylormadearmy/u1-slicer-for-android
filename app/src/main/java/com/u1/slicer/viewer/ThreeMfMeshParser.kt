@@ -1,18 +1,24 @@
 package com.u1.slicer.viewer
 
 import android.util.Log
+import java.io.BufferedReader
 import java.io.File
+import java.io.InputStream
 import java.util.zip.ZipFile
 import kotlin.math.sqrt
 
 /**
  * Parses mesh data from 3MF files for OpenGL preview rendering.
- * Uses indexOf-based parsing (no regex) and flat arrays to minimise allocations
- * and avoid GC pressure when processing large models (500K+ triangles).
+ * Uses line-by-line streaming with indexOf-based attribute parsing —
+ * never loads the full XML into memory, but parses as fast as the old
+ * readText() approach by avoiding XmlPullParser's per-attribute String allocations.
+ *
+ * Memory for Baby Dragon Egg (146MB XML, 1.7M triangles):
+ *   Old: ~268MB (full XML string)
+ *   New: ~40MB (vertex + triangle arrays only)
  */
 object ThreeMfMeshParser {
 
-    // Flat arrays: verts = [x0,y0,z0, x1,y1,z1, ...], tris = [i0,i1,i2, ...]
     private data class RawMesh(
         val verts: FloatArray,
         val tris: IntArray,
@@ -32,6 +38,11 @@ object ThreeMfMeshParser {
         val transform: FloatArray?
     )
 
+    private data class ModelParseResult(
+        val buildItems: List<BuildItem>,
+        val objects: Map<String, ObjectInfo>
+    )
+
     fun parse(file: File): MeshData? {
         Log.d("ThreeMfMesh", "Parsing ${file.name} (${file.length() / 1024}KB)")
         ZipFile(file).use { zip ->
@@ -39,15 +50,13 @@ object ThreeMfMeshParser {
                 Log.w("ThreeMfMesh", "No 3D/3dmodel.model in ZIP")
                 return null
             }
-            val modelXml = zip.getInputStream(modelEntry).bufferedReader().readText()
-            Log.d("ThreeMfMesh", "Main model XML: ${modelXml.length / 1024}KB")
 
-            val buildItems = parseBuildItems(modelXml)
-            val mainObjects = parseObjects(modelXml)
+            val result = zip.getInputStream(modelEntry).use { streamParseModel(it) }
+            val buildItems = filterBuildItems(result.buildItems)
+            val mainObjects = result.objects
             Log.d("ThreeMfMesh", "Build items: ${buildItems.size}, main objects: ${mainObjects.size}")
 
             val meshList = mutableListOf<Pair<RawMesh, FloatArray?>>()
-            // Cache parsed objects per component path to avoid re-parsing the same file
             val componentCache = mutableMapOf<String, Map<String, ObjectInfo>>()
 
             for (item in buildItems) {
@@ -64,210 +73,169 @@ object ThreeMfMeshParser {
             Log.d("ThreeMfMesh", "Collected ${meshList.size} mesh segments")
 
             if (meshList.isEmpty()) {
-                // Legacy fallback for simple 3MF files
-                val raw = extractRawMesh(modelXml) ?: run {
-                    val componentPath = Regex("""p:path="([^"]*\.model)"""").find(modelXml)
-                        ?.groupValues?.get(1)?.trimStart('/')
-                    if (componentPath != null) {
-                        val compEntry = zip.getEntry(componentPath) ?: return null
-                        val compXml = zip.getInputStream(compEntry).bufferedReader().readText()
-                        extractRawMesh(compXml)
-                    } else null
-                } ?: return null
-                return buildMeshData(listOf(Pair(raw, null)))
+                val firstCompPath = mainObjects.values
+                    .flatMap { it.components }
+                    .firstOrNull { it.path != null }?.path
+                if (firstCompPath != null) {
+                    val compEntry = zip.getEntry(firstCompPath) ?: return null
+                    Log.d("ThreeMfMesh", "Legacy fallback: streaming ${firstCompPath} (${compEntry.size / 1_000_000}MB)")
+                    val compResult = zip.getInputStream(compEntry).use { streamParseModel(it) }
+                    val compMesh = compResult.objects.values.firstOrNull()?.mesh
+                    if (compMesh != null) {
+                        return buildMeshData(listOf(Pair(compMesh, null)))
+                    }
+                }
+                return null
             }
 
             return buildMeshData(meshList)
         }
     }
 
-    private fun parseBuildItems(xml: String): List<BuildItem> {
-        val items = mutableListOf<BuildItem>()
-        val regex = Regex("""<item\s+([^>]+)>""")
-        for (match in regex.findAll(xml)) {
-            val attrs = match.groupValues[1]
-            val printable = Regex("""printable="([^"]+)"""").find(attrs)?.groupValues?.get(1)
-            if (printable == "0") continue
-            val objId = Regex("""objectid="(\d+)"""").find(attrs)?.groupValues?.get(1) ?: continue
-            val transform = Regex("""transform="([^"]+)"""").find(attrs)?.groupValues?.get(1)
-            items.add(BuildItem(objId, parseTransform(transform)))
-        }
-        if (items.size > 1) {
-            val txVals = items.mapNotNull { it.transform?.get(12) }
-            val tyVals = items.mapNotNull { it.transform?.get(13) }
-            val spreadX = if (txVals.size > 1) txVals.max() - txVals.min() else 0f
-            val spreadY = if (tyVals.size > 1) tyVals.max() - tyVals.min() else 0f
-            if (spreadX > 270f || spreadY > 270f) {
-                Log.d("ThreeMfMesh", "Multi-plate source detected (spread ${spreadX.toInt()}x${spreadY.toInt()}mm), showing plate 1 only")
-                return items.take(1)
-            }
-        }
-        return items
-    }
-
-    // O(n) indexOf-based object parser — avoids catastrophic backtracking of (.*?) regex on large XML
-    private fun parseObjects(xml: String): Map<String, ObjectInfo> {
-        val objects = mutableMapOf<String, ObjectInfo>()
-        val openTag = "<object"
-        val closeTag = "</object>"
-        var pos = 0
-        while (pos < xml.length) {
-            val objStart = xml.indexOf(openTag, pos)
-            if (objStart < 0) break
-            val tagEnd = xml.indexOf('>', objStart)
-            if (tagEnd < 0) break
-            val tag = xml.substring(objStart, tagEnd + 1)
-            val id = Regex("""id="(\d+)"""").find(tag)?.groupValues?.get(1)
-            if (id == null) { pos = tagEnd + 1; continue }
-            val bodyStart = tagEnd + 1
-            val bodyEnd = xml.indexOf(closeTag, bodyStart)
-            if (bodyEnd < 0) break
-            val body = xml.substring(bodyStart, bodyEnd)
-            val mesh = extractRawMesh(body)
-            val components = parseComponents(body)
-            objects[id] = ObjectInfo(id, mesh, components)
-            pos = bodyEnd + closeTag.length
-        }
-        return objects
-    }
-
-    private fun parseComponents(xml: String): List<ComponentRef> {
-        val comps = mutableListOf<ComponentRef>()
-        val regex = Regex("""<component\b([^>]*)""")
-        for (match in regex.findAll(xml)) {
-            val attrs = match.groupValues[1]
-            val objId = Regex("""objectid="(\d+)"""").find(attrs)?.groupValues?.get(1) ?: continue
-            val path = Regex("""p:path="([^"]+)"""").find(attrs)?.groupValues?.get(1)?.trimStart('/')
-            val transform = Regex("""transform="([^"]+)"""").find(attrs)?.groupValues?.get(1)
-            comps.add(ComponentRef(objId, path, parseTransform(transform)))
-        }
-        return comps
-    }
-
-    private fun collectMeshes(
-        obj: ObjectInfo,
-        parentTransform: FloatArray?,
-        mainObjects: Map<String, ObjectInfo>,
-        zip: ZipFile,
-        meshList: MutableList<Pair<RawMesh, FloatArray?>>,
-        componentCache: MutableMap<String, Map<String, ObjectInfo>>
-    ) {
-        if (obj.mesh != null) {
-            meshList.add(Pair(obj.mesh, parentTransform))
-        }
-        for (comp in obj.components) {
-            val combinedTransform = multiplyTransforms(parentTransform, comp.transform)
-            if (comp.path != null) {
-                Log.d("ThreeMfMesh", "  Component path=${comp.path} objectId=${comp.objectId} (cached=${componentCache.containsKey(comp.path)})")
-                val extObjects = componentCache.getOrPut(comp.path) {
-                    val entry = zip.getEntry(comp.path)
-                    if (entry == null) {
-                        Log.w("ThreeMfMesh", "  Entry not found: ${comp.path}")
-                        return@getOrPut emptyMap()
-                    }
-                    // Skip oversized component files to prevent OOM (e.g. 146MB mesh → 268MB heap)
-                    if (entry.size > 80_000_000L) {
-                        Log.w("ThreeMfMesh", "  Skipping oversized component: ${comp.path} (${entry.size / 1_000_000}MB) — too large for 3D preview")
-                        return@getOrPut emptyMap()
-                    }
-                    Log.d("ThreeMfMesh", "  Reading+parsing ${comp.path} (${entry.compressedSize / 1024}KB compressed)")
-                    parseObjects(zip.getInputStream(entry).bufferedReader().readText())
-                }
-                val extObj = extObjects[comp.objectId]
-                if (extObj != null) {
-                    collectMeshes(extObj, combinedTransform, extObjects, zip, meshList, componentCache)
-                } else {
-                    Log.w("ThreeMfMesh", "  Object ${comp.objectId} not found in component (have: ${extObjects.keys})")
-                }
-            } else {
-                val refObj = mainObjects[comp.objectId]
-                if (refObj != null) {
-                    collectMeshes(refObj, combinedTransform, mainObjects, zip, meshList, componentCache)
-                }
-            }
-        }
-    }
-
     /**
-     * Parse vertices and triangles using indexOf — no regex, no per-vertex allocations.
-     * Uses flat FloatArray/IntArray instead of List<FloatArray>/List<IntArray>.
+     * Stream-parse a 3MF model XML line-by-line using indexOf-based attribute extraction.
+     * 3MF XML has one tag per line for vertex/triangle data, so this is both
+     * memory-efficient (one line in memory at a time) and fast (no XML parser overhead).
      */
-    private fun extractRawMesh(xml: String): RawMesh? {
-        val verticesStart = xml.indexOf("<vertices>")
-        val verticesEnd = xml.indexOf("</vertices>")
-        val trianglesStart = xml.indexOf("<triangles>")
-        val trianglesEnd = xml.indexOf("</triangles>")
-        if (verticesStart < 0 || verticesEnd < 0 || trianglesStart < 0 || trianglesEnd < 0) return null
+    private fun streamParseModel(input: InputStream): ModelParseResult {
+        val reader = input.bufferedReader()
+        val objects = mutableMapOf<String, ObjectInfo>()
+        val buildItems = mutableListOf<BuildItem>()
 
-        val vertCount = countTag(xml, "<vertex", verticesStart, verticesEnd)
-        val triCount = countTag(xml, "<triangle", trianglesStart, trianglesEnd)
-        if (vertCount == 0 || triCount == 0) return null
+        var currentObjId: String? = null
+        var currentComponents = mutableListOf<ComponentRef>()
+        var vertList: GrowableFloatArray? = null
+        var triList: GrowableIntArray? = null
+        var inVertices = false
+        var inTriangles = false
+        var inBuild = false
 
-        val verts = FloatArray(vertCount * 3)
-        var vi = 0
-        var pos = verticesStart
-        while (vi < vertCount * 3) {
-            val xq1 = xml.indexOf("x=\"", pos); if (xq1 < 0 || xq1 >= verticesEnd) break; val xqS = xq1 + 3
-            val xq2 = xml.indexOf('"', xqS); if (xq2 < 0) break
-            val yq1 = xml.indexOf("y=\"", xq2); if (yq1 < 0 || yq1 >= verticesEnd) break; val yqS = yq1 + 3
-            val yq2 = xml.indexOf('"', yqS); if (yq2 < 0) break
-            val zq1 = xml.indexOf("z=\"", yq2); if (zq1 < 0 || zq1 >= verticesEnd) break; val zqS = zq1 + 3
-            val zq2 = xml.indexOf('"', zqS); if (zq2 < 0) break
-            verts[vi++] = parseFloat(xml, xqS, xq2)
-            verts[vi++] = parseFloat(xml, yqS, yq2)
-            verts[vi++] = parseFloat(xml, zqS, zq2)
-            pos = zq2 + 1
+        reader.forEachLine { line ->
+            // Fast path: mesh data lines are the vast majority (>99.9%)
+            // Check for the most common tags first to minimize indexOf calls
+            if (inVertices) {
+                if (line.contains("<vertex")) {
+                    parseVertexLine(line, vertList!!)
+                    return@forEachLine
+                }
+                if (line.contains("</vertices>")) {
+                    inVertices = false
+                    return@forEachLine
+                }
+            }
+            if (inTriangles) {
+                if (line.contains("<triangle")) {
+                    parseTriangleLine(line, triList!!)
+                    return@forEachLine
+                }
+                if (line.contains("</triangles>")) {
+                    inTriangles = false
+                    return@forEachLine
+                }
+            }
+
+            // Structural tags — infrequent
+            if (line.contains("<object")) {
+                currentObjId = extractAttr(line, "id")
+                currentComponents = mutableListOf()
+                vertList = null
+                triList = null
+            } else if (line.contains("</object>")) {
+                val id = currentObjId
+                if (id != null) {
+                    val mesh = if (vertList != null && triList != null &&
+                        vertList!!.size >= 3 && triList!!.size >= 3) {
+                        val vArr = vertList!!.toArray()
+                        val tArr = triList!!.toArray()
+                        RawMesh(vArr, tArr, vArr.size / 3, tArr.size / 3)
+                    } else null
+                    objects[id] = ObjectInfo(id, mesh, currentComponents.toList())
+                    vertList = null
+                    triList = null
+                }
+                currentObjId = null
+            } else if (line.contains("<vertices>")) {
+                inVertices = true
+                if (vertList == null) vertList = GrowableFloatArray()
+            } else if (line.contains("<triangles>")) {
+                inTriangles = true
+                if (triList == null) triList = GrowableIntArray()
+            } else if (line.contains("<component") && currentObjId != null) {
+                val objId = extractAttr(line, "objectid")
+                if (objId != null) {
+                    val path = extractAttr(line, "p:path")?.trimStart('/')
+                        ?: extractAttr(line, "path")?.trimStart('/')
+                    val transform = extractAttr(line, "transform")
+                    currentComponents.add(ComponentRef(objId, path, parseTransform(transform)))
+                }
+            } else if (line.contains("<build")) {
+                inBuild = true
+            } else if (line.contains("</build>")) {
+                inBuild = false
+            } else if (inBuild && line.contains("<item")) {
+                val objId = extractAttr(line, "objectid")
+                if (objId != null) {
+                    val printable = extractAttr(line, "printable")
+                    if (printable != "0") {
+                        val transform = extractAttr(line, "transform")
+                        buildItems.add(BuildItem(objId, parseTransform(transform)))
+                    }
+                }
+            }
         }
-        val actualVertCount = vi / 3
 
-        val tris = IntArray(triCount * 3)
-        var ti = 0
-        pos = trianglesStart
-        while (ti < triCount * 3) {
-            val v1q1 = xml.indexOf("v1=\"", pos); if (v1q1 < 0 || v1q1 >= trianglesEnd) break; val v1qS = v1q1 + 4
-            val v1q2 = xml.indexOf('"', v1qS); if (v1q2 < 0) break
-            val v2q1 = xml.indexOf("v2=\"", v1q2); if (v2q1 < 0 || v2q1 >= trianglesEnd) break; val v2qS = v2q1 + 4
-            val v2q2 = xml.indexOf('"', v2qS); if (v2q2 < 0) break
-            val v3q1 = xml.indexOf("v3=\"", v2q2); if (v3q1 < 0 || v3q1 >= trianglesEnd) break; val v3qS = v3q1 + 4
-            val v3q2 = xml.indexOf('"', v3qS); if (v3q2 < 0) break
-            tris[ti++] = parseInt(xml, v1qS, v1q2)
-            tris[ti++] = parseInt(xml, v2qS, v2q2)
-            tris[ti++] = parseInt(xml, v3qS, v3q2)
-            pos = v3q2 + 1
-        }
-        val actualTriCount = ti / 3
-        if (actualVertCount == 0 || actualTriCount == 0) return null
-
-        return RawMesh(
-            if (actualVertCount == vertCount) verts else verts.copyOf(actualVertCount * 3),
-            if (actualTriCount == triCount) tris else tris.copyOf(actualTriCount * 3),
-            actualVertCount,
-            actualTriCount
-        )
+        return ModelParseResult(buildItems, objects)
     }
 
-    private fun countTag(s: String, tag: String, from: Int, to: Int): Int {
-        var count = 0; var pos = from
-        while (true) {
-            pos = s.indexOf(tag, pos)
-            if (pos < 0 || pos >= to) break
-            count++; pos += tag.length
-        }
-        return count
+    /** Extract attribute value from an XML tag line: `attrName="value"` → `value` */
+    private fun extractAttr(line: String, name: String): String? {
+        val prefix = "$name=\""
+        val start = line.indexOf(prefix)
+        if (start < 0) return null
+        val valStart = start + prefix.length
+        val valEnd = line.indexOf('"', valStart)
+        if (valEnd < 0) return null
+        return line.substring(valStart, valEnd)
     }
 
-    /** Parse int in s[start..<end] without creating a substring. */
-    private fun parseInt(s: String, start: Int, end: Int): Int {
-        var result = 0
-        for (i in start until end) {
-            val c = s[i]
-            if (c in '0'..'9') result = result * 10 + (c - '0')
-        }
-        return result
+    /** Parse x/y/z float attributes directly from a `<vertex .../>` line. */
+    private fun parseVertexLine(line: String, verts: GrowableFloatArray) {
+        val x = extractFloatAttr(line, "x=\"") ?: return
+        val y = extractFloatAttr(line, "y=\"") ?: return
+        val z = extractFloatAttr(line, "z=\"") ?: return
+        verts.add(x); verts.add(y); verts.add(z)
+    }
+
+    /** Parse v1/v2/v3 int attributes directly from a `<triangle .../>` line. */
+    private fun parseTriangleLine(line: String, tris: GrowableIntArray) {
+        val v1 = extractIntAttr(line, "v1=\"") ?: return
+        val v2 = extractIntAttr(line, "v2=\"") ?: return
+        val v3 = extractIntAttr(line, "v3=\"") ?: return
+        tris.add(v1); tris.add(v2); tris.add(v3)
+    }
+
+    /** Parse a float attribute value inline without creating a substring. */
+    private fun extractFloatAttr(line: String, prefix: String): Float? {
+        val start = line.indexOf(prefix)
+        if (start < 0) return null
+        val valStart = start + prefix.length
+        val valEnd = line.indexOf('"', valStart)
+        if (valEnd < 0) return null
+        return parseFloatInline(line, valStart, valEnd)
+    }
+
+    /** Parse an int attribute value inline without creating a substring. */
+    private fun extractIntAttr(line: String, prefix: String): Int? {
+        val start = line.indexOf(prefix)
+        if (start < 0) return null
+        val valStart = start + prefix.length
+        val valEnd = line.indexOf('"', valStart)
+        if (valEnd < 0) return null
+        return parseIntInline(line, valStart, valEnd)
     }
 
     /** Parse float in s[start..<end] without creating a substring. Handles sign, decimal, exponent. */
-    private fun parseFloat(s: String, start: Int, end: Int): Float {
+    private fun parseFloatInline(s: String, start: Int, end: Int): Float {
         var intPart = 0L; var fracPart = 0L; var fracDivisor = 1L
         var negative = false; var inFrac = false; var inExp = false
         var expSign = 1; var exp = 0
@@ -299,10 +267,70 @@ object ThreeMfMeshParser {
         return result.toFloat()
     }
 
-    /**
-     * Parse a 3MF transform string "m00 m01 m02 m10 m11 m12 m20 m21 m22 tx ty tz"
-     * into a 4x4 column-major matrix.
-     */
+    /** Parse int in s[start..<end] without creating a substring. */
+    private fun parseIntInline(s: String, start: Int, end: Int): Int {
+        var result = 0
+        for (i in start until end) {
+            val c = s[i]
+            if (c in '0'..'9') result = result * 10 + (c - '0')
+        }
+        return result
+    }
+
+    private fun filterBuildItems(items: List<BuildItem>): List<BuildItem> {
+        if (items.size > 1) {
+            val txVals = items.mapNotNull { it.transform?.get(12) }
+            val tyVals = items.mapNotNull { it.transform?.get(13) }
+            val spreadX = if (txVals.size > 1) txVals.max() - txVals.min() else 0f
+            val spreadY = if (tyVals.size > 1) tyVals.max() - tyVals.min() else 0f
+            if (spreadX > 270f || spreadY > 270f) {
+                Log.d("ThreeMfMesh", "Multi-plate source detected (spread ${spreadX.toInt()}x${spreadY.toInt()}mm), showing plate 1 only")
+                return items.take(1)
+            }
+        }
+        return items
+    }
+
+    private fun collectMeshes(
+        obj: ObjectInfo,
+        parentTransform: FloatArray?,
+        mainObjects: Map<String, ObjectInfo>,
+        zip: ZipFile,
+        meshList: MutableList<Pair<RawMesh, FloatArray?>>,
+        componentCache: MutableMap<String, Map<String, ObjectInfo>>
+    ) {
+        if (obj.mesh != null) {
+            meshList.add(Pair(obj.mesh, parentTransform))
+        }
+        for (comp in obj.components) {
+            val combinedTransform = multiplyTransforms(parentTransform, comp.transform)
+            if (comp.path != null) {
+                Log.d("ThreeMfMesh", "  Component path=${comp.path} objectId=${comp.objectId} (cached=${componentCache.containsKey(comp.path)})")
+                val extObjects = componentCache.getOrPut(comp.path) {
+                    val entry = zip.getEntry(comp.path)
+                    if (entry == null) {
+                        Log.w("ThreeMfMesh", "  Entry not found: ${comp.path}")
+                        return@getOrPut emptyMap()
+                    }
+                    Log.d("ThreeMfMesh", "  Stream-parsing ${comp.path} (${entry.size / 1_000_000}MB uncompressed)")
+                    val compResult = zip.getInputStream(entry).use { streamParseModel(it) }
+                    compResult.objects
+                }
+                val extObj = extObjects[comp.objectId]
+                if (extObj != null) {
+                    collectMeshes(extObj, combinedTransform, extObjects, zip, meshList, componentCache)
+                } else {
+                    Log.w("ThreeMfMesh", "  Object ${comp.objectId} not found in component (have: ${extObjects.keys})")
+                }
+            } else {
+                val refObj = mainObjects[comp.objectId]
+                if (refObj != null) {
+                    collectMeshes(refObj, combinedTransform, mainObjects, zip, meshList, componentCache)
+                }
+            }
+        }
+    }
+
     private fun parseTransform(str: String?): FloatArray? {
         if (str == null) return null
         val parts = str.trim().split(Regex("\\s+"))
@@ -330,10 +358,6 @@ object ThreeMfMeshParser {
         return r
     }
 
-    /**
-     * Build a MeshData buffer from a list of (RawMesh, transform) pairs.
-     * Applies transforms and computes face normals in a single pass with no intermediate allocations.
-     */
     private fun buildMeshData(meshes: List<Pair<RawMesh, FloatArray?>>): MeshData? {
         val totalTris = meshes.sumOf { it.first.triCount }
         if (totalTris == 0) return null
@@ -354,7 +378,6 @@ object ThreeMfMeshParser {
                 val c = tris[i * 3 + 2] * 3
                 if (a + 2 >= verts.size || b + 2 >= verts.size || c + 2 >= verts.size) continue
 
-                // Apply transform inline — no FloatArray allocation per vertex
                 val ax: Float; val ay: Float; val az: Float
                 val bx: Float; val by: Float; val bz: Float
                 val cx: Float; val cy: Float; val cz: Float
@@ -394,5 +417,31 @@ object ThreeMfMeshParser {
         val vertexCount = buf.limit() / MeshData.FLOATS_PER_VERTEX
         if (vertexCount == 0) return null
         return MeshData(buf, vertexCount, minX, minY, minZ, maxX, maxY, maxZ)
+    }
+
+    // ── Growable primitive array helpers (avoid boxing overhead of ArrayList<Float/Int>) ──
+
+    private class GrowableFloatArray(initialCapacity: Int = 8192) {
+        private var data = FloatArray(initialCapacity)
+        var size = 0; private set
+
+        fun add(value: Float) {
+            if (size == data.size) data = data.copyOf(data.size * 2)
+            data[size++] = value
+        }
+
+        fun toArray(): FloatArray = data.copyOf(size)
+    }
+
+    private class GrowableIntArray(initialCapacity: Int = 8192) {
+        private var data = IntArray(initialCapacity)
+        var size = 0; private set
+
+        fun add(value: Int) {
+            if (size == data.size) data = data.copyOf(data.size * 2)
+            data[size++] = value
+        }
+
+        fun toArray(): IntArray = data.copyOf(size)
     }
 }

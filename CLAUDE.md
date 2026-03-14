@@ -110,7 +110,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (25) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
 - `slicing/BambuPipelineIntegrationTest.kt` (27) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression, restructurePlateFile multi-extruder config guard
-- `slicing/SemmSlicingTest.kt` (1) — SEMM (paint data) slicing pipeline
+- `slicing/SemmSlicingTest.kt` (1) — SEMM (paint data) slicing pipeline: verifies paint_color preserved, T1 tool changes produced
 - `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/ThreeMfMeshParserTest.kt` (2) — 3MF mesh parsing and transform resolution
@@ -176,7 +176,10 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `BambuSanitizer.rawCopyZipEntry()` — streams ZIP entries without XML processing or CRC recomputation; used for multi-plate deferred restructuring (component files cleaned later by `restructurePlateFile()`)
 - `ThreeMfParser.parse(skipPaintDetection=true)` — skips the expensive component-file scan for paint_color/mmu_segmentation; safe to use on processed files when `origInfo.hasPaintData` is preserved via `mergeThreeMfInfo()`
 - `ThreeMfParser.streamDetectPaintData()` — streaming paint detection using overlapping 8KB chunks; avoids loading 15MB+ component .model files entirely into memory
-- `ProfileEmbedder.rawCopyEntry()` — raw-copies STORED ZIP entries without decompress/recompress; MUST NOT skip `cleanModelXmlForOrcaSlicer()` when `hasPaintData=true` (paint_color attributes cause SEMM SIGSEGV on Android)
+- **SEMM (paint-based multi-color) ENABLED on Android ARM64**: `paint_color=` and `mmu_segmentation=` attributes are preserved through the pipeline. Two fixes enable this:
+  1. **TBB serial shims** (`extern/tbb_serial/`): Replace parallel execution algorithms (parallel_for, parallel_reduce, parallel_sort, parallel_for_each, parallel_invoke) with serial implementations via include-path priority. Non-shimmed TBB features (containers, mutexes, allocators) pass through to real TBB. `tbb::task_arena(1)` in `sapil_print.cpp` forces compiled TBB library functions (parallel_pipeline, task_group) onto one thread.
+  2. **`filament_colour` sizing**: `applyConfigToPrusa()` sets `filament_colour` to `n_ext` entries. `multi_material_segmentation_by_painting()` uses `filament_colour.size()+1` as `num_facets_states` to dimension per-layer arrays — the default size-1 caused OOB array access (SIGSEGV at address 0x12) when paint data referenced the second extruder.
+- `ProfileEmbedder.rawCopyEntry()` — raw-copies STORED ZIP entries without decompress/recompress; when `hasPaintData=true`, component files go through `cleanModelXmlForOrcaSlicer()` or `streamCleanEntry()` but paint_color/mmu_segmentation attributes are preserved
 - `ThreeMfParser.parseForPlateSelection()` — lightweight parse that only reads `model_settings.config` for `usedExtruderIndices`; skips the 15MB+ main model XML entirely; used in `selectPlate()` since full structural info is already available from the initial parse
 - `restructurePlateFile()` cleans main model XML with `cleanModelXmlPreserveComponentRefs` BEFORE inlining meshes (not after) — cleaning after inlining runs 7 regex passes over 15MB+ for no benefit (mesh data contains no Bambu attributes); MUST use PreserveComponentRefs variant because `restructureForMultiColor()` needs `p:path` attributes
 - `importBackup()` accepts `onImported: (hasPrinterUrl: Boolean) -> Unit` callback — used by SettingsScreen to auto-connect printer (F10)

@@ -252,14 +252,13 @@ class ProfileEmbedder(private val context: Context) {
         config["print_settings_id"] = "0.20mm Standard @Snapmaker U1"
         config["print_compatible_printers"] = mutableListOf("Snapmaker U1 (0.4 nozzle) - multiplate")
 
-        // SEMM is DISABLED: multi_material_segmentation_by_painting() crashes on Android
-        // (SIGSEGV in MultiPoint::bounding_box() via TBB parallel slice_volumes).
-        // Explicitly set to 0 to prevent OrcaSlicer from attempting SEMM even if the
-        // source Bambu config or any preserve-path config carries single_extruder_multi_material=1.
-        // TODO: Re-enable when the algorithm is stable on Android (native rebuild required).
+        // Snapmaker U1 has independent extruders (NOT SEMM/MMU), but OrcaSlicer's
+        // multi_material_segmentation_by_painting() runs based on filament_diameter.size() > 1,
+        // not single_extruder_multi_material. Force SEMM=0 to prevent 94mm retraction sequences.
+        // Paint segmentation still runs correctly with SEMM=0 + extruder_count > 1.
         if (info.hasPaintData) {
             config["single_extruder_multi_material"] = "0"
-            Log.i(TAG, "SEMM disabled (paint data present but algorithm not stable on Android)")
+            Log.i(TAG, "Paint data present, SEMM=0 (U1 has independent extruders, not MMU)")
         }
 
         // OrcaSlicer reads extruder_count from project_settings.config to determine how many
@@ -547,19 +546,10 @@ class ProfileEmbedder(private val context: Context) {
      */
     private fun cleanModelXmlForOrcaSlicer(content: ByteArray, hasPaintData: Boolean): ByteArray {
         var text = String(content)
-        if (hasPaintData) {
-            // Strip ALL per-triangle paint segmentation data to prevent
-            // multi_material_segmentation_by_painting() from running — that algorithm produces
-            // corrupt ExPolygons on Android → SIGSEGV in MultiPoint::bounding_box().
-            // TODO: Fix when SEMM algorithm is stable on Android (native rebuild required).
-            if (text.contains("paint_color=")) {
-                text = text.replace(Regex("""\s+paint_color="[^"]*""""), "")
-            }
-            if (text.contains("slic3rpe:mmu_segmentation")) {
-                text = text.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
-                text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
-            }
-        }
+        // SEMM (paint-based multi-color) is now enabled — TBB parallel execution algorithms
+        // are replaced with serial shims (extern/tbb_serial/) to prevent ARM64 data races.
+        // paint_color and mmu_segmentation attributes are PRESERVED for OrcaSlicer's
+        // multi_material_segmentation_by_painting() to process.
         text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
         text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
@@ -619,18 +609,16 @@ class ProfileEmbedder(private val context: Context) {
         val reqExtRegex = Regex("""\s+requiredextensions="[^"]*"""")
         val bambuNsRegex = Regex("""\s+xmlns:BambuStudio="[^"]*"""")
         val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
-        val paintColorRegex = if (hasPaintData) Regex("""\s+paint_color="[^"]*"""") else null
-        val mmuSegRegex = if (hasPaintData) Regex("""\s+slic3rpe:mmu_segmentation="[^"]*"""") else null
-        val slic3rpeNsRegex = if (hasPaintData) Regex("""\s+xmlns:slic3rpe="[^"]*"""") else null
+        // SEMM enabled — paint_color/mmu_segmentation are PRESERVED (TBB serial shim prevents ARM64 data races)
         try {
             tmpFile.bufferedWriter().use { out ->
                 srcZip.getInputStream(srcEntry).bufferedReader().use { reader ->
                     reader.forEachLine { line ->
-                        // Fast path: mesh data lines contain none of the target patterns
+                        // Fast path: mesh data lines without any Bambu attributes
+                        // (paint_color/mmu_segmentation are preserved for SEMM)
                         if (!line.contains("p:UUID") && !line.contains("requiredextensions") &&
                             !line.contains("xmlns:BambuStudio") && !line.contains("<metadata") &&
-                            !line.contains("type=\"other\"") &&
-                            (!hasPaintData || (!line.contains("paint_color") && !line.contains("mmu_segmentation")))) {
+                            !line.contains("type=\"other\"")) {
                             if (line.isNotBlank()) {
                                 out.write(line)
                                 out.newLine()
@@ -643,11 +631,7 @@ class ProfileEmbedder(private val context: Context) {
                         cleaned = cleaned.replace(bambuNsRegex, "")
                         cleaned = cleaned.replace(metadataRegex, "")
                         cleaned = cleaned.replace("""type="other"""", """type="model"""")
-                        if (hasPaintData) {
-                            paintColorRegex?.let { cleaned = cleaned.replace(it, "") }
-                            mmuSegRegex?.let { cleaned = cleaned.replace(it, "") }
-                            slic3rpeNsRegex?.let { cleaned = cleaned.replace(it, "") }
-                        }
+                        // paint_color/mmu_segmentation preserved for SEMM
                         if (cleaned.isNotBlank()) {
                             out.write(cleaned)
                             out.newLine()

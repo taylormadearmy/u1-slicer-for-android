@@ -3,6 +3,7 @@ package com.u1.slicer.slicing
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.NativeLibrary
+import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
@@ -224,6 +225,59 @@ class ProfileEmbedderIntegrationTest {
         assertTrue(lib.loadModel(embedded.absolutePath))
         val result = lib.slice(defaultSliceConfig)!!
         assertTrue("Button-for-S-trousers should slice: ${result.errorMessage}", result.success)
+    }
+
+    // ─── Support preservation (B10 regression guard) ──────────────────────────
+
+    /**
+     * Regression guard: Bambu files with enable_support=1 in their source config
+     * must preserve that setting through the embed pipeline when using merged info
+     * (which has detectedExtruderCount > 1, triggering the preserve path).
+     *
+     * Bug: SlicerViewModel passed processedInfo (detectedExtruderCount=1) instead of
+     * mergedInfo (detectedExtruderCount>1), causing needsPreserve=false and losing
+     * the file's support settings.
+     */
+    @Test
+    fun shashibo_supportPreservedInEmbeddedConfig() {
+        val input = asset("Shashibo-h2s-textured.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+
+        // Parse source config BEFORE sanitizer strips it (mirrors originalSourceConfig in VM)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        assertNotNull("Shashibo should have source config", sourceConfig)
+        assertEquals("Source config should have enable_support=1",
+            "1", sourceConfig!!["enable_support"]?.toString())
+
+        // Sanitize (strips project_settings.config)
+        val processed = BambuSanitizer.process(input, outDir)
+        val processedInfo = ThreeMfParser.parse(processed)
+
+        // Merge info — this is what SlicerViewModel does
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+        assertTrue("Merged info should preserve isBambu=true", mergedInfo.isBambu)
+        assertTrue("Merged info should have detectedExtruderCount > 1",
+            mergedInfo.detectedExtruderCount > 1)
+
+        // Build config with merged info + source config (correct path)
+        val config = embedder.buildConfig(
+            info = mergedInfo,
+            sourceConfig = sourceConfig,
+            targetExtruderCount = 2
+        )
+        assertEquals("Embedded config must preserve enable_support=1",
+            "1", config["enable_support"]?.toString())
+
+        // processedInfo now also preserves support because BambuSanitizer.process()
+        // preserves model_settings.config in the deferred restructuring path,
+        // so processedInfo.detectedExtruderCount > 1 and needsPreserve=true.
+        val configWithProcessedInfo = embedder.buildConfig(
+            info = processedInfo,
+            sourceConfig = sourceConfig,
+            targetExtruderCount = 2
+        )
+        assertEquals("processedInfo now preserves support (deferred restructuring keeps model_settings.config)",
+            "1", configWithProcessedInfo["enable_support"]?.toString())
     }
 
     // ─── INI / JSON import ────────────────────────────────────────────────────

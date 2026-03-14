@@ -5,6 +5,13 @@
 #include <fstream>
 #include <sstream>
 
+// TBB task_arena for single-threaded execution — prevents data races on ARM64's
+// weak memory ordering. Header-level shims (extern/tbb_serial/) handle parallel_for,
+// parallel_reduce, etc. but compiled TBB library functions (parallel_pipeline in
+// GCode.cpp, task_group in SupportMaterial.cpp) bypass our shims. Wrapping process()
+// and export_gcode() in a 1-thread arena forces ALL TBB work onto one thread.
+#include <tbb/task_arena.h>
+
 // Slicer includes
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -208,6 +215,12 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // Nozzle/filament diameter (per-extruder — same key names)
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(nozzle_diameters));
     dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(filament_diameters));
+
+    // Filament colour — MUST be sized to n_ext.  multi_material_segmentation_by_painting()
+    // uses filament_colour.size()+1 as num_facets_states to dimension per-layer arrays.
+    // Default is a single entry, so with 2+ extruders the segmentation function creates
+    // arrays too small for the paint data's color indices, causing OOB → SIGSEGV.
+    dpc.set_key_value("filament_colour", new Slic3r::ConfigOptionStrings(std::vector<std::string>(n_ext, "#FFFFFF")));
 
     // Extruder offsets — all (0,0) for Snapmaker U1 (firmware handles offsets).
     // MUST be sized to match extruder count; the default is a single entry, and
@@ -492,6 +505,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "filament_loading_speed_start",
                     "filament_cooling_moves",
                     "filament_toolchange_delay",
+                    // Filament colour (per-extruder — used by multi_material_segmentation_by_painting
+                    // to dimension per-layer arrays; must be sized to extruder count)
+                    "filament_colour",
                     nullptr
                 };
                 int applied = 0;
@@ -560,21 +576,12 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             }
         }
 
-        // TODO(SEMM): Enable paint-based multi-color slicing for Bambu SEMM files.
-        //
-        // Currently DISABLED: OrcaSlicer's multi_material_segmentation_by_painting()
-        // crashes with SIGSEGV in MultiPoint::bounding_box() when processing Bambu
-        // paint_color= triangle data on Android ARM64.  The crash occurs in TBB
-        // parallel slice_volumes() → get_extents(vector<ExPolygon>) with corrupt
-        // polygon data (null _begin_ pointers).
-        //
-        // Workaround: ProfileEmbedder strips paint_color= attributes before loading
-        // and sets single_extruder_multi_material=0 so the algorithm never runs.
-        // Painted Bambu files (e.g. colored 3DBenchy) therefore slice as single-color.
-        //
-        // To fix: investigate TBB thread-safety on Android ARM64 in slice_volumes(),
-        // possibly reduce parallelism or add synchronisation around ExPolygon vectors.
-        // Requires native .so rebuild.  See SemmSlicingTest for regression guard.
+        // SEMM (paint-based multi-color): ENABLED via serialized TBB loops.
+        // multi_material_segmentation_by_painting() in MultiMaterialSegmentation.cpp
+        // uses serial loops on Android (#ifdef __ANDROID__) instead of tbb::parallel_for
+        // to prevent SIGSEGV from data races in ExPolygon move semantics on ARM64.
+        // Paint data (paint_color= attributes) is preserved through ProfileEmbedder.
+        // See SemmSlicingTest for regression guard.
 
         if (progress) progress(10, "Applying configuration to model");
 
@@ -605,17 +612,24 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         if (progress) progress(15, "Starting slicing...");
 
-        // Process (slice + generate toolpaths)
-        print.process();
-
-        if (progress) progress(90, "Generating G-code");
-
-        // Generate G-code — use the same directory as the loaded model
+        // Run slicing + G-code export inside a 1-thread task_arena.
+        // This forces all real TBB parallelism (parallel_pipeline in GCode.cpp,
+        // task_group in SupportMaterial.cpp) onto a single thread, complementing
+        // the header-level serial shims for parallel_for/parallel_reduce/etc.
         extern std::string getFilesDir();
         std::string output_path = getFilesDir() + "/output.gcode";
-        // OrcaSlicer dereferences result without null check, so provide a real object
         Slic3r::GCodeProcessorResult gcode_result;
-        print.export_gcode(output_path, &gcode_result, nullptr);
+        tbb::task_arena arena(1);
+        arena.execute([&] {
+            // Process (slice + generate toolpaths)
+            print.process();
+
+            if (progress) progress(90, "Generating G-code");
+
+            // Generate G-code — use the same directory as the loaded model
+            // OrcaSlicer dereferences result without null check, so provide a real object
+            print.export_gcode(output_path, &gcode_result, nullptr);
+        });
 
         if (progress) progress(95, "Reading results");
 

@@ -158,6 +158,15 @@ set(BOOST_LIBS
 include_directories("${EXTERN_DIR}/eigen/include")
 
 # --- TBB ---
+# Serial shim: replace parallel execution algorithms (parallel_for, parallel_reduce,
+# parallel_sort, parallel_for_each, parallel_invoke) with serial implementations
+# to prevent data races on ARM64's weak memory ordering. The crash manifests as
+# SIGSEGV in ExPolygon moves during multi_material_segmentation_by_painting()
+# (TBB parallel_for corrupts std::vector<ExPolygon> via concurrent reallocation
+# with defaulted move constructors that have no memory barriers on ARM64).
+# Non-shimmed headers (data structures, allocators, mutexes, task_group) fall
+# through to real TBB — they work correctly in single-threaded execution.
+include_directories(BEFORE "${EXTERN_DIR}/tbb_serial")
 include_directories("${EXTERN_DIR}/tbb/include")
 link_directories("${EXTERN_DIR}/tbb/lib/${ABI_DIR}")
 
