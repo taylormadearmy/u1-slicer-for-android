@@ -166,6 +166,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // through the sanitize→embed→extractPlate→restructure→re-embed pipeline.
     private var originalSourceConfig: Map<String, Any>? = null
 
+    // Recovery fields — track the pre-sanitize raw input so attemptClipperRecovery() can
+    // re-run the full pipeline after clearing intermediate files.  rawInputFile is NOT an
+    // intermediate (no embedded_/sanitized_/plate prefix) so clearIntermediateCache() leaves
+    // it intact.  sourceModelFile/plateFiles ARE intermediates and get deleted by the clear,
+    // which is why we can't use them in recovery.
+    private var rawInputFile: File? = null
+    private var recoveryOrigInfo: ThreeMfInfo? = null
+    private var recoveryPlateId: Int = -1
+
     /** Exposed for 3D viewer navigation */
     val currentModelPath: String? get() = currentModelFile?.absolutePath
 
@@ -369,10 +378,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 Log.i("SlicerVM", "Downloaded MakerWorld #$designId: ${outputFile.length()} bytes")
                 currentModelName = "makerworld_${designId}.3mf"
+                rawInputFile = outputFile   // Track for Clipper recovery
+                recoveryPlateId = -1
                 _state.value = SlicerState.Loading("Preparing model…")
 
                 // Same pipeline as loadModel(): parse → sanitize → embed → load
                 val origInfo = ThreeMfParser.parse(outputFile)
+                recoveryOrigInfo = origInfo  // Saved for Clipper recovery pipeline
                 originalSourceConfig = if (origInfo.isBambu) {
                     java.util.zip.ZipFile(outputFile).use { profileEmbedder.parseSourceConfig(it) }
                 } else null
@@ -435,6 +447,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     tmpFile.delete()
                 }
 
+                // Track raw input for Clipper recovery (rawInputFile is never an intermediate,
+                // so clearIntermediateCache() won't delete it — safe to use after a cache clear).
+                rawInputFile = file
+                recoveryPlateId = -1
+
                 // For 3MF files: parse metadata and sanitize if Bambu
                 val fileToLoad = if (filename.endsWith(".3mf", ignoreCase = true)) {
                     // Verify it's a valid ZIP first
@@ -453,6 +470,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Parse original file first for multi-plate detection (process()
                     // strips plate_N.json so detection would fail on the processed file).
                     val origInfo = ThreeMfParser.parse(file)
+                    recoveryOrigInfo = origInfo  // Saved for Clipper recovery pipeline
 
                     Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
                         "colors=${origInfo.detectedColors.size}, extruders=${origInfo.detectedExtruderCount}, " +
@@ -496,6 +514,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sanitized
                 } else {
                     _threeMfInfo.value = null
+                    recoveryOrigInfo = null  // STL: no 3MF pipeline needed for recovery
                     // Clear source file so previewModelPath uses the STL directly.
                     // Without this, loading an STL after a 3MF leaves sourceModelFile
                     // pointing at the old 3MF, causing the wrong model to appear in the viewer.
@@ -520,6 +539,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun selectPlate(plateId: Int) {
         _showPlateSelector.value = false
         val file = currentModelFile ?: return
+        recoveryPlateId = plateId          // Track for Clipper recovery
+        clipperRetryAttempted = false      // New plate = fresh retry allowance
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1006,38 +1027,84 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Proactive recovery from Clipper errors: clear all intermediate cache files,
-     * reset native state, re-run the full pipeline from sourceModelFile, then re-slice.
+     * reset native state, re-run the full pipeline from rawInputFile, then re-slice.
+     *
+     * Uses rawInputFile (the pre-sanitize raw copy, e.g. "Button-for-S-trousers.3mf") rather
+     * than sourceModelFile / plateFile because those are intermediate files (sanitized_* /
+     * plate*.3mf) and are deleted by clearIntermediateCache().  rawInputFile has no prefix
+     * and survives the cache clear.
      */
     private fun attemptClipperRecovery() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
-                val src = sourceModelFile
-                val srcInfo = _threeMfInfo.value ?: sourceModelInfo
+                // Capture recovery inputs BEFORE clearing (rawInputFile is safe — not intermediate)
+                val rawFile = rawInputFile
+                val origInfo = recoveryOrigInfo
+                val plateId = recoveryPlateId
 
-                // Step 1: Nuke all intermediate cache files
+                // Step 1: Nuke all intermediate cache files (rawInputFile is NOT affected)
                 val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
-                Log.i("SlicerVM", "Clipper recovery: cleared $cleared intermediate files")
+                Log.i("SlicerVM", "Clipper recovery: cleared $cleared intermediate files, " +
+                    "rawFile=${rawFile?.name}, plateId=$plateId")
 
                 // Step 2: Reset native state completely
                 native.clearModel()
 
-                if (src == null || srcInfo == null) {
-                    Log.e("SlicerVM", "Clipper recovery: no source model to retry from")
+                if (rawFile == null || !rawFile.exists()) {
+                    Log.e("SlicerVM", "Clipper recovery: raw input file unavailable")
                     _state.value = SlicerState.Error(
                         "Slicing failed (Clipper error). Auto-recovery could not retry — try restarting the app."
                     )
                     return@launch
                 }
 
-                // Step 3: Re-embed and reload from source
                 _state.value = SlicerState.Slicing(0, "Recovering…")
-                val reembedded = embedProfile(src, srcInfo, context)
-                currentModelFile = reembedded
-                native.loadModel(reembedded.absolutePath)
-                loadNativeModel(reembedded)
 
-                // Step 4: Re-slice (calls startSlicing which will not retry again due to flag)
+                // Step 3: Re-run the full pipeline from the raw input
+                if (rawFile.name.endsWith(".3mf", ignoreCase = true) && origInfo != null) {
+                    // Re-parse original config (before process() strips it)
+                    originalSourceConfig = if (origInfo.isBambu) {
+                        java.util.zip.ZipFile(rawFile).use { profileEmbedder.parseSourceConfig(it) }
+                    } else null
+
+                    // Re-sanitize from raw input (generates new sanitized_* + restructured_* files)
+                    val processed = BambuSanitizer.process(rawFile, context.filesDir, isBambu = origInfo.isBambu)
+                    val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
+                    _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
+                    sourceModelFile = processed
+                    sourceModelInfo = processedInfo
+                    toolRemapSlots = null
+
+                    val mergedInfo = _threeMfInfo.value!!
+                    val embedded = embedProfile(processed, mergedInfo, context)
+                    currentModelFile = embedded
+
+                    if (plateId >= 0) {
+                        // Re-extract the originally selected plate from freshly sanitized file
+                        val hasPlateJsons = origInfo.hasPlateJsons
+                        val plateObjectIds = origInfo.plates.find { it.plateId == plateId }?.objectIds?.toSet()
+                        val rawPlateFile = BambuSanitizer.extractPlate(
+                            embedded, plateId, context.filesDir,
+                            hasPlateJsons = hasPlateJsons, plateObjectIds = plateObjectIds
+                        )
+                        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, context.filesDir)
+                        val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
+                        sourceModelFile = plateFile
+                        sourceModelInfo = plateInfo
+                        _threeMfInfo.value = mergeThreeMfInfoForPlate(plateInfo, mergedInfo)
+                        currentModelFile = plateFile
+                        loadNativeModel(plateFile)
+                    } else {
+                        loadNativeModel(embedded)
+                    }
+                } else {
+                    // STL: reload directly (no 3MF pipeline)
+                    currentModelFile = rawFile
+                    loadNativeModel(rawFile)
+                }
+
+                // Step 4: Re-slice (clipperRetryAttempted=true prevents another loop)
                 Log.i("SlicerVM", "Clipper recovery: model reloaded, retrying slice")
                 startSlicing()
             } catch (e: Throwable) {
@@ -1211,6 +1278,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearModel() {
         native.clearModel()
+        rawInputFile = null
+        recoveryOrigInfo = null
+        recoveryPlateId = -1
+        clipperRetryAttempted = false
         _state.value = SlicerState.Idle
         _gcodePreview.value = ""
         _parsedGcode.value = null
