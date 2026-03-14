@@ -82,7 +82,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 318 tests across 19 classes
+### Unit tests (`app/src/test/`) — 319 tests across 18 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -94,13 +94,13 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `data/SlicingOverridesTest.kt` (30) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path, buildProfileOverrides support preservation
 - `data/SettingsBackupTest.kt` (13) — Export/import round-trip, version validation, partial restore, filament profile name resolution
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
-- `bambu/BambuSanitizerTest.kt` (21) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard
+- `bambu/BambuSanitizerTest.kt` (22) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard, config-based plate filtering
 - `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
 - `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
-- `UpgradeDetectorTest.kt` (14) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns, pipeline output coverage
+- `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns, pipeline output coverage
 
 ### Instrumented tests (`app/src/androidTest/`) — 102 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
@@ -157,6 +157,9 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - Android Test Orchestrator (`execution 'ANDROIDX_TEST_ORCHESTRATOR'`) runs each instrumented test in its own process — prevents native memory accumulation OOM crashes across slicing test classes
 - `CopyArrangeCalculator.computeWipeTowerPosition()` — auto-positions wipe tower by evaluating 8 candidate spots (4 corners + 4 edge midpoints) with 10mm edge margin (prime tower brim + skirt clearance), picking the one with most clearance from all model bounding boxes; called in `loadNativeModel()` and `applyMultiColorAssignments()` when multi-extruder detected; user can override by dragging tower in placement viewer
 - `mergeThreeMfInfoForPlate()` filters colors by `usedExtruderIndices` only when `size > 1` (definitively multi-extruder) — when size <= 1, falls back to all source colors (index may be unpopulated before `restructurePlateFile()`)
+- `ThreeMfParser.parseModelSettingsConfig()` parses `<plate>` → `<model_instance>` → `<metadata key="object_id">` mappings into `plateObjectMap` — `plater_id` is a nested `<metadata>` child element, NOT an attribute on `<plate>`
+- `selectPlate()` passes `plateObjectIds` from `_threeMfInfo.value` (parsed from original file) to `extractPlate()` — `process()` strips `model_settings.config` for non-multi-color files, so the sanitized file no longer has plate→object mappings; must use the pre-process parse result
+- `filterModelToPlate()` priority: (1) config-based objectIds from `plateObjectIds`, (2) `p:object_id` attribute matching, (3) position-based fallback — config-based is most reliable for multi-object plates (e.g. Sydney buttons: 12 items → 3 plates of 4)
 
 - `SettingsBackup.export()` stores filament profile names (not IDs) in extruder preset backup — `parseExtruderPresetsWithNames()` resolves names to new IDs after re-inserting profiles during import
 - `clearStaleCacheOnUpgrade()` compares `PackageInfo.lastUpdateTime` (not just versionCode) — catches same-versionCode debug reinstalls that leave stale native .so memory state
