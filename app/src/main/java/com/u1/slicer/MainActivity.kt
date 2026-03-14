@@ -133,14 +133,20 @@ class MainActivity : ComponentActivity() {
                     .putLong("lastApkUpdateTime", apkLastUpdate)
                     .commit()  // sync — must flush before kill
 
-                // Force-restart: SIGKILL this process so Android launches a completely
-                // fresh one. Runtime.exit(0) is too polite — it runs shutdown hooks and
-                // the new Activity may reuse the same process with stale native state.
-                // Process.killProcess() is an immediate SIGKILL that guarantees all
-                // native static variables (g_model, g_engine, Clipper state) are gone.
+                // Force-restart: kill this process so Android launches a fresh one with
+                // a new native .so (clean g_model, g_engine, Clipper state).
+                // Use PendingIntent + AlarmManager to schedule relaunch AFTER the kill
+                // completes — avoids race where startActivity() before killProcess()
+                // causes Android to reuse the dying process with stale native state.
+                // Use set() not setExact() — exact alarms need SCHEDULE_EXACT_ALARM on API 31+.
                 val intent = packageManager.getLaunchIntentForPackage(packageName)
                 intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                startActivity(intent)
+                val pi = android.app.PendingIntent.getActivity(
+                    this, 0, intent,
+                    android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+                val am = getSystemService(android.app.AlarmManager::class.java)
+                am.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 500, pi)
                 android.os.Process.killProcess(android.os.Process.myPid())
                 return
             }
