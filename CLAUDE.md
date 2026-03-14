@@ -65,7 +65,7 @@ rm -rf app/build/outputs/androidTest-results/
 All Gradle commands must be run from **Windows PowerShell**, not WSL:
 
 ```powershell
-# Unit tests (315)
+# Unit tests (318)
 cd C:\Users\kevin\projects\u1-slicer-orca
 .\gradlew testDebugUnitTest --no-daemon
 
@@ -82,7 +82,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 315 tests across 19 classes
+### Unit tests (`app/src/test/`) — 318 tests across 19 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -100,7 +100,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
 - `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
-- `UpgradeDetectorTest.kt` (11) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
+- `UpgradeDetectorTest.kt` (14) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns, pipeline output coverage
 
 ### Instrumented tests (`app/src/androidTest/`) — 102 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
