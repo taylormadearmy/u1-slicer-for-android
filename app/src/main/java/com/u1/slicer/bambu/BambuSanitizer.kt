@@ -1280,7 +1280,8 @@ $componentRefs    </components>
      *   When null (default), the flag is auto-detected by inspecting the inputFile ZIP.
      */
     fun extractPlate(inputFile: File, targetPlateId: Int, outputDir: File,
-                     hasPlateJsons: Boolean? = null): File {
+                     hasPlateJsons: Boolean? = null,
+                     plateObjectIds: Set<String>? = null): File {
         val outputFile = File(outputDir, "plate${targetPlateId}_${inputFile.name}")
 
         ZipFile(inputFile).use { srcZip ->
@@ -1288,16 +1289,19 @@ $componentRefs    </components>
             val actualHasPlateJsons = hasPlateJsons ?: srcZip.entries().asSequence()
                 .any { it.name.matches(Regex("Metadata/plate_\\d+\\.json")) }
 
-            // Parse plate→object mappings from model_settings.config so we can
-            // filter build items by which objects belong to the target plate.
-            val plateObjectMap = mutableMapOf<Int, MutableList<String>>()
-            val msEntry = srcZip.getEntry("Metadata/model_settings.config")
-            if (msEntry != null) {
-                parseModelSettingsPlateObjects(
-                    srcZip.getInputStream(msEntry).readBytes(), plateObjectMap
-                )
+            // Use caller-provided plate object IDs (from ThreeMfParser which reads the
+            // original file before process() strips model_settings.config), or fall back
+            // to parsing from the file if still available.
+            val effectivePlateObjectIds = plateObjectIds ?: run {
+                val map = mutableMapOf<Int, MutableList<String>>()
+                val msEntry = srcZip.getEntry("Metadata/model_settings.config")
+                if (msEntry != null) {
+                    parseModelSettingsPlateObjects(
+                        srcZip.getInputStream(msEntry).readBytes(), map
+                    )
+                }
+                map[targetPlateId]?.toSet()
             }
-            val plateObjectIds = plateObjectMap[targetPlateId]?.toSet()
 
             // Two-pass approach: first filter the main model to determine which
             // object IDs are referenced, then write entries — stripping unreferenced
@@ -1312,7 +1316,7 @@ $componentRefs    </components>
                     when {
                         entry.name == "3D/3dmodel.model" -> {
                             val filtered = filterModelToPlate(String(content), targetPlateId,
-                                actualHasPlateJsons, plateObjectIds)
+                                actualHasPlateJsons, effectivePlateObjectIds)
                             val (stripped, refIds) = stripUnreferencedResources(filtered)
                             referencedObjectIds = refIds
                             if (refIds != null) {

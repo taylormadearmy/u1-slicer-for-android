@@ -89,6 +89,9 @@ object ThreeMfParser {
                             plateNames, objectNames, extruderAssignments,
                             plateObjectMap
                         )
+                        if (plateObjectMap.isNotEmpty()) {
+                            Log.i(TAG, "Plate→object mapping: ${plateObjectMap.size} plates — $plateObjectMap")
+                        }
                     }
                 }
 
@@ -546,6 +549,7 @@ object ThreeMfParser {
             val parser = createParser(inputStream)
             var currentPlateId: String? = null
             var currentObjectId: String? = null
+            var inPlate = false
             var inModelInstance = false
 
             while (parser.eventType != XmlPullParser.END_DOCUMENT) {
@@ -553,6 +557,8 @@ object ThreeMfParser {
                     XmlPullParser.START_TAG -> {
                         when (parser.name) {
                             "plate" -> {
+                                inPlate = true
+                                // Some formats have plater_id as attribute; most use nested <metadata>
                                 currentPlateId = parser.getAttributeValue(null, "plater_id")
                                     ?: parser.getAttributeValue(null, "id")
                             }
@@ -566,12 +572,16 @@ object ThreeMfParser {
                                 val key = parser.getAttributeValue(null, "key") ?: ""
                                 val value = parser.getAttributeValue(null, "value") ?: ""
                                 when {
+                                    // <plate> → <metadata key="plater_id" value="N"/>
+                                    key == "plater_id" && inPlate -> {
+                                        currentPlateId = value
+                                    }
                                     key == "plater_name" && currentPlateId != null -> {
                                         currentPlateId?.toIntOrNull()?.let { id ->
                                             if (value.isNotBlank()) plateNames[id] = value
                                         }
                                     }
-                                    // plate → model_instance → object_id: maps objects to plates
+                                    // plate → model_instance → <metadata key="object_id" value="N"/>
                                     key == "object_id" && inModelInstance && currentPlateId != null -> {
                                         currentPlateId?.toIntOrNull()?.let { plateId ->
                                             plateObjectMap.getOrPut(plateId) { mutableListOf() }.add(value)
@@ -593,7 +603,7 @@ object ThreeMfParser {
                     }
                     XmlPullParser.END_TAG -> {
                         when (parser.name) {
-                            "plate" -> currentPlateId = null
+                            "plate" -> { currentPlateId = null; inPlate = false }
                             "model_instance" -> inModelInstance = false
                             "object" -> currentObjectId = null
                         }
