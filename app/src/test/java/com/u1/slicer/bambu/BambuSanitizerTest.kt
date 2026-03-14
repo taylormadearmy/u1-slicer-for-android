@@ -287,11 +287,16 @@ class BambuSanitizerTest {
                 val hasPlateIds = allItems.any { plateIdRegex.containsMatchIn(it) }
                 if (hasPlateIds) return@replace m.value
                 val hasVirtualPositions = allItems.any { isVirtual(it) }
-                // Filter when triggered by plate JSONs OR virtual positions
                 if (allItems.size <= 1 || (!hasPlateJsons && !hasVirtualPositions)) return@replace m.value
-                val idx = (targetPlateId - 1).coerceIn(0, allItems.size - 1)
-                val selected = recenterItemXY(allItems[idx])
-                "${m.groupValues[1]}\n    $selected\n  ${m.groupValues[3]}"
+                if (hasVirtualPositions) {
+                    // Virtual-layout: each item is a separate plate, select by index
+                    val idx = (targetPlateId - 1).coerceIn(0, allItems.size - 1)
+                    val selected = recenterItemXY(allItems[idx])
+                    "${m.groupValues[1]}\n    $selected\n  ${m.groupValues[3]}"
+                } else {
+                    // hasPlateJsons but no virtual positions: all items on same plate, keep all
+                    m.value
+                }
             }
         }
 
@@ -366,6 +371,22 @@ class BambuSanitizerTest {
         val onBedBuild = onBedResult.substringAfter("<build>").substringBefore("</build>")
         assertTrue("On-bed: item 10 kept", onBedBuild.contains("""objectid="10""""))
         assertTrue("On-bed: item 11 kept", onBedBuild.contains("""objectid="11""""))
+
+        // B13 regression: multi-object single plate WITH plate JSONs but NO virtual positions.
+        // Sydney Opera House buttons: 4 items on one plate at normal bed coordinates.
+        // hasPlateJsons=true but no virtual positions — all items belong together.
+        val multiObjSinglePlateXml = """<build>
+    <item objectid="20" transform="1 0 0 0 1 0 0 0 1 80 80 0" printable="1"/>
+    <item objectid="21" transform="1 0 0 0 1 0 0 0 1 190 80 0" printable="1"/>
+    <item objectid="22" transform="1 0 0 0 1 0 0 0 1 80 190 0" printable="1"/>
+    <item objectid="23" transform="1 0 0 0 1 0 0 0 1 190 190 0" printable="1"/>
+</build>"""
+        val b13Result = filterByIndex(multiObjSinglePlateXml, 1, hasPlateJsons = true)
+        val b13Build = b13Result.substringAfter("<build>").substringBefore("</build>")
+        assertTrue("B13: item 20 kept", b13Build.contains("""objectid="20""""))
+        assertTrue("B13: item 21 kept", b13Build.contains("""objectid="21""""))
+        assertTrue("B13: item 22 kept", b13Build.contains("""objectid="22""""))
+        assertTrue("B13: item 23 kept", b13Build.contains("""objectid="23""""))
     }
 
     @Test

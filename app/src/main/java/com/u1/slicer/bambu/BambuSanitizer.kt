@@ -1638,12 +1638,20 @@ $componentRefs    </components>
 
             if (allItems.size <= 1 || (!hasPlateJsons && !hasVirtualPositions)) return@replace m.value
 
-            val idx = targetPlateIndex.coerceIn(0, allItems.size - 1)
-            val selected = recenterItemXY(allItems[idx])
-            val mode = if (hasPlateJsons) "json" else "virtual"
-            Log.i(TAG, "filterModelToPlate: plate $targetPlateId — position-based ($mode), selected item ${idx + 1}/${allItems.size}")
-            val newBody = "\n    $selected\n  "
-            "$open$newBody$close"
+            if (hasVirtualPositions) {
+                // Virtual-layout format (Dragon Scale, Shashibo): each item at a different
+                // virtual position represents a separate plate.  Select the N-th item.
+                val idx = targetPlateIndex.coerceIn(0, allItems.size - 1)
+                val selected = recenterItemXY(allItems[idx])
+                Log.i(TAG, "filterModelToPlate: plate $targetPlateId — position-based (virtual), selected item ${idx + 1}/${allItems.size}")
+                val newBody = "\n    $selected\n  "
+                "$open$newBody$close"
+            } else {
+                // hasPlateJsons but no virtual positions: all items are on the same plate
+                // at normal bed coordinates (e.g. Sydney Opera House buttons).  Keep all.
+                Log.i(TAG, "filterModelToPlate: plate $targetPlateId — json format, no virtual positions, keeping all ${allItems.size} items")
+                m.value
+            }
         }
     }
 

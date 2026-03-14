@@ -91,11 +91,18 @@ object GcodeThumbnailInjector {
         val sb = StringBuilder()
         for ((w, h) in THUMBNAIL_SIZES) {
             val scaled = Bitmap.createScaledBitmap(source, w, h, true)
+            // Convert to RGB (strip alpha) — matches u1-slicer-bridge's PIL .convert("RGB").
+            // Some Klipper/Moonraker firmware doesn't handle RGBA PNGs correctly.
+            val rgb = Bitmap.createBitmap(w, h, Bitmap.Config.RGB_565)
+            val canvas = android.graphics.Canvas(rgb)
+            canvas.drawColor(android.graphics.Color.WHITE)
+            canvas.drawBitmap(scaled, 0f, 0f, null)
+            if (scaled !== source) scaled.recycle()
             val pngBytes = ByteArrayOutputStream().use { out ->
-                scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
+                rgb.compress(Bitmap.CompressFormat.PNG, 100, out)
                 out.toByteArray()
             }
-            if (scaled !== source) scaled.recycle()
+            rgb.recycle()
 
             val b64 = Base64.encodeToString(pngBytes, Base64.NO_WRAP)
             sb.append("; thumbnail begin ${w}x${h} ${b64.length}\n")

@@ -22,6 +22,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Known 3MF/STL MIME types — works with both content:// and file:// -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -33,13 +34,15 @@
                 <data android:mimeType="application/vnd.ms-pki.stl" />
                 <data android:mimeType="application/vnd.ms-3mfdocument" />
                 <data android:mimeType="model/3mf" />
+                <!-- 3MF is ZIP-based; some file managers send these MIME types -->
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
             </intent-filter>
-            <!-- Separate filter for octet-stream with file extension matching -->
+            <!-- file:// URIs with octet-stream — pathPattern only works for file:// scheme -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="content" />
                 <data android:scheme="file" />
                 <data android:mimeType="application/octet-stream" />
                 <data android:host="*" />
@@ -48,19 +51,13 @@
                 <data android:pathPattern=".*\\.stl" />
                 <data android:pathPattern=".*\\.STL" />
             </intent-filter>
-            <!-- Wildcard MIME with extension matching for file managers that use */* -->
+            <!-- content:// with octet-stream — no pathPattern (doesn't work with content://) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" />
-                <data android:scheme="file" />
-                <data android:mimeType="*/*" />
-                <data android:host="*" />
-                <data android:pathPattern=".*\\.3mf" />
-                <data android:pathPattern=".*\\.3MF" />
-                <data android:pathPattern=".*\\.stl" />
-                <data android:pathPattern=".*\\.STL" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
