@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -552,7 +553,11 @@ fun PrepareScreen(
                         }
                     }
                     state is SlicerViewModel.SlicerState.Error -> {
-                        ErrorCard((state as SlicerViewModel.SlicerState.Error).message, onPickFile)
+                        ErrorCard(
+                            (state as SlicerViewModel.SlicerState.Error).message,
+                            onPickFile,
+                            onRestart = { viewModel.restartApp() }
+                        )
                     }
                     modelLoaded -> {
                         val info = when (val s = state) {
@@ -814,7 +819,7 @@ fun PreviewScreen(
                     }
                 }
                 is SlicerViewModel.SlicerState.Error -> {
-                    ErrorCard(s.message) { onNavigatePrepare() }
+                    ErrorCard(s.message, onRetry = { onNavigatePrepare() }, onRestart = { viewModel.restartApp() })
                 }
                 else -> {
                     // Empty state — no slice results yet, show empty bed
@@ -1534,7 +1539,9 @@ fun MultiColorInfoCard(
 }
 
 @Composable
-fun ErrorCard(message: String, onRetry: () -> Unit) {
+fun ErrorCard(message: String, onRetry: () -> Unit, onRestart: (() -> Unit)? = null) {
+    val isClipperError = message.contains("Coordinate outside allowed range", ignoreCase = true) ||
+        message.contains("clipper", ignoreCase = true)
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -1553,13 +1560,26 @@ fun ErrorCard(message: String, onRetry: () -> Unit) {
                     color = MaterialTheme.colorScheme.error)
             }
             Text(message, color = Color.White.copy(alpha = 0.8f))
-            Button(
-                onClick = onRetry,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error
-                )
-            ) {
-                Text("Try Again")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onRetry,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Try Again")
+                }
+                if (isClipperError && onRestart != null) {
+                    OutlinedButton(
+                        onClick = onRestart,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Restart App")
+                    }
+                }
             }
         }
     }

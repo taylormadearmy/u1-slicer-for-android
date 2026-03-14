@@ -52,9 +52,22 @@ class UpgradeDetector {
      * Returns the list of transient cache files to clear on normal startup (SAME_APK).
      */
     fun filesToClearOnStartup(filesDir: File): List<File> {
-        return filesDir.listFiles()?.filter { f ->
-            f.name.startsWith("embedded_") || f.name.startsWith("sanitized_") ||
-                (f.name.startsWith("plate") && f.name.endsWith(".3mf"))
-        } ?: emptyList()
+        return intermediateFiles(filesDir)
+    }
+
+    companion object {
+        /** Matches all intermediate 3MF files created by the sanitize/embed/plate pipeline. */
+        fun intermediateFiles(filesDir: File): List<File> {
+            return filesDir.listFiles()?.filter { f ->
+                f.name.startsWith("embedded_") || f.name.startsWith("sanitized_") ||
+                    f.name.startsWith("restructured_") ||
+                    (f.name.startsWith("plate") && f.name.endsWith(".3mf"))
+            } ?: emptyList()
+        }
+
+        /** Delete all intermediate cache files. Returns count deleted. */
+        fun clearIntermediateCache(filesDir: File): Int {
+            return intermediateFiles(filesDir).onEach { it.delete() }.size
+        }
     }
 }

@@ -209,6 +209,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
+                // Clean intermediate files from previous model loads
+                val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
+                if (cleared > 0) Log.i("SlicerVM", "Cleared $cleared intermediate cache files before MakerWorld import")
+                clipperRetryAttempted = false  // Reset retry flag for new model
                 val client = okhttp3.OkHttpClient.Builder()
                     .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                     .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
@@ -407,6 +411,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
+                // Clean intermediate files from previous model loads to prevent stale
+                // sanitized/embedded/plate files from accidentally being referenced.
+                val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
+                if (cleared > 0) Log.i("SlicerVM", "Cleared $cleared intermediate cache files before new model load")
+                clipperRetryAttempted = false  // Reset retry flag for new model
                 val inputStream = context.contentResolver.openInputStream(uri) ?: run {
                     _state.value = SlicerState.Error("Could not open file")
                     return@launch
@@ -962,15 +971,103 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     )
                 } else {
-                    _state.value = SlicerState.Error(result?.errorMessage ?: "Slicing failed")
+                    val errorMsg = result?.errorMessage ?: "Slicing failed"
+                    if (isClipperError(errorMsg) && !clipperRetryAttempted) {
+                        Log.w("SlicerVM", "Clipper error detected in slice result, attempting auto-recovery")
+                        clipperRetryAttempted = true
+                        attemptClipperRecovery()
+                        return@launch
+                    }
+                    _state.value = SlicerState.Error(errorMsg)
                 }
             } catch (e: Throwable) {
                 Log.e("SlicerVM", "Unexpected error during slicing", e)
-                _state.value = SlicerState.Error("Slicing error: ${e.message ?: e.javaClass.simpleName}")
+                val errorMsg = e.message ?: e.javaClass.simpleName
+                if (isClipperError(errorMsg) && !clipperRetryAttempted) {
+                    Log.w("SlicerVM", "Clipper error detected in exception, attempting auto-recovery")
+                    clipperRetryAttempted = true
+                    attemptClipperRecovery()
+                    return@launch
+                }
+                _state.value = SlicerState.Error("Slicing error: $errorMsg")
             } finally {
                 native.progressListener = null
             }
         }
+    }
+
+    /** Flag to prevent infinite retry loops — reset on each new model load. */
+    private var clipperRetryAttempted = false
+
+    private fun isClipperError(msg: String): Boolean {
+        return msg.contains("Coordinate outside allowed range", ignoreCase = true) ||
+            msg.contains("clipper", ignoreCase = true)
+    }
+
+    /**
+     * Proactive recovery from Clipper errors: clear all intermediate cache files,
+     * reset native state, re-run the full pipeline from sourceModelFile, then re-slice.
+     */
+    private fun attemptClipperRecovery() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val src = sourceModelFile
+                val srcInfo = _threeMfInfo.value ?: sourceModelInfo
+
+                // Step 1: Nuke all intermediate cache files
+                val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
+                Log.i("SlicerVM", "Clipper recovery: cleared $cleared intermediate files")
+
+                // Step 2: Reset native state completely
+                native.clearModel()
+
+                if (src == null || srcInfo == null) {
+                    Log.e("SlicerVM", "Clipper recovery: no source model to retry from")
+                    _state.value = SlicerState.Error(
+                        "Slicing failed (Clipper error). Auto-recovery could not retry — try restarting the app."
+                    )
+                    return@launch
+                }
+
+                // Step 3: Re-embed and reload from source
+                _state.value = SlicerState.Slicing(0, "Recovering…")
+                val reembedded = embedProfile(src, srcInfo, context)
+                currentModelFile = reembedded
+                native.loadModel(reembedded.absolutePath)
+                loadNativeModel(reembedded)
+
+                // Step 4: Re-slice (calls startSlicing which will not retry again due to flag)
+                Log.i("SlicerVM", "Clipper recovery: model reloaded, retrying slice")
+                startSlicing()
+            } catch (e: Throwable) {
+                Log.e("SlicerVM", "Clipper recovery failed", e)
+                _state.value = SlicerState.Error(
+                    "Slicing failed after auto-recovery. Try restarting the app.\n(${e.message})"
+                )
+            } finally {
+                native.progressListener = null
+            }
+        }
+    }
+
+    /**
+     * Nuclear option: clear all cache, kill process, restart via AlarmManager.
+     * Guarantees fresh native state (clean JNI_OnLoad). Used as last resort for Clipper errors.
+     */
+    fun restartApp() {
+        val app = getApplication<Application>()
+        UpgradeDetector.clearIntermediateCache(app.filesDir)
+        native.clearModel()
+        val intent = app.packageManager.getLaunchIntentForPackage(app.packageName)
+        intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            app, 0, intent,
+            android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val am = app.getSystemService(android.app.AlarmManager::class.java)
+        am.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 500, pi)
+        android.os.Process.killProcess(android.os.Process.myPid())
     }
 
     // ---- Filament Library ----
