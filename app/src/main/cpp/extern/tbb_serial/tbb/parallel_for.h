@@ -8,6 +8,12 @@
     Include path priority: CMake adds tbb_serial/ BEFORE real tbb/include/,
     so this file intercepts all #include <tbb/parallel_for.h>.
     Non-shimmed headers (blocked_range, partitioner, etc.) fall through to real TBB.
+
+    IMPORTANT: Range+Body forms split the range into grain-sized chunks using
+    the Range's splitting constructor, then call body on each chunk individually.
+    This is necessary because some bodies use barriers or per-chunk assertions
+    (e.g. name_tbb_thread_pool_threads_set_locale in Thread.cpp expects body
+    to be called once per thread with a single-element range).
 */
 #ifndef __TBB_parallel_for_H
 #define __TBB_parallel_for_H
@@ -25,59 +31,72 @@ namespace tbb {
 namespace detail {
 namespace d1 {
 
+// --- Internal: split range into grain-sized chunks and call body on each ---
+// Uses tail recursion: processes left half, then iterates on right half.
+// Stack depth: O(log(range_size / grain_size)) — safe for any practical range.
+template<typename Range, typename Body>
+void serial_for_each_grain( Range range, const Body& body ) {
+    while (range.is_divisible()) {
+        // Split: range becomes left half, right becomes right half
+        Range right(range, tbb::split());
+        serial_for_each_grain(range, body);  // process left (recurse)
+        range = right;  // continue with right (tail position)
+    }
+    body(range);  // process the final non-divisible piece
+}
+
 // --- Range + Body forms ---
-// Serial: just call body(range) directly.
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, const simple_partitioner& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, const auto_partitioner& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, const static_partitioner& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, affinity_partitioner& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 // With task_group_context (ignored in serial mode)
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, task_group_context& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, const simple_partitioner&, task_group_context& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, const auto_partitioner&, task_group_context& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, const static_partitioner&, task_group_context& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 template<typename Range, typename Body>
 void parallel_for( const Range& range, const Body& body, affinity_partitioner&, task_group_context& ) {
-    body(const_cast<Range&>(range));
+    serial_for_each_grain(Range(range), body);
 }
 
 // --- Index range forms ---

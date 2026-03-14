@@ -5,13 +5,6 @@
 #include <fstream>
 #include <sstream>
 
-// TBB task_arena for single-threaded execution — prevents data races on ARM64's
-// weak memory ordering. Header-level shims (extern/tbb_serial/) handle parallel_for,
-// parallel_reduce, etc. but compiled TBB library functions (parallel_pipeline in
-// GCode.cpp, task_group in SupportMaterial.cpp) bypass our shims. Wrapping process()
-// and export_gcode() in a 1-thread arena forces ALL TBB work onto one thread.
-#include <tbb/task_arena.h>
-
 // Slicer includes
 #include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -612,24 +605,24 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         if (progress) progress(15, "Starting slicing...");
 
-        // Run slicing + G-code export inside a 1-thread task_arena.
-        // This forces all real TBB parallelism (parallel_pipeline in GCode.cpp,
-        // task_group in SupportMaterial.cpp) onto a single thread, complementing
-        // the header-level serial shims for parallel_for/parallel_reduce/etc.
+        // Process (slice + generate toolpaths)
+        // Header-level serial shims (extern/tbb_serial/) replace parallel_for,
+        // parallel_reduce, etc. with serial implementations, preventing ARM64
+        // data races. Compiled TBB library functions (parallel_pipeline in
+        // GCode.cpp, task_group in SupportMaterial.cpp) still run with real TBB
+        // threads — these are not in the crash path and work correctly.
+        // NOTE: Do NOT use tbb::task_arena(1) — it deadlocks because libtbb.so's
+        // scheduler cannot schedule child tasks when the arena is limited to 1 thread.
+        print.process();
+
+        if (progress) progress(90, "Generating G-code");
+
+        // Generate G-code — use the same directory as the loaded model
         extern std::string getFilesDir();
         std::string output_path = getFilesDir() + "/output.gcode";
+        // OrcaSlicer dereferences result without null check, so provide a real object
         Slic3r::GCodeProcessorResult gcode_result;
-        tbb::task_arena arena(1);
-        arena.execute([&] {
-            // Process (slice + generate toolpaths)
-            print.process();
-
-            if (progress) progress(90, "Generating G-code");
-
-            // Generate G-code — use the same directory as the loaded model
-            // OrcaSlicer dereferences result without null check, so provide a real object
-            print.export_gcode(output_path, &gcode_result, nullptr);
-        });
+        print.export_gcode(output_path, &gcode_result, nullptr);
 
         if (progress) progress(95, "Reading results");
 
