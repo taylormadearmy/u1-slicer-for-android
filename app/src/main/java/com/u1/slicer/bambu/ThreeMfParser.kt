@@ -74,17 +74,20 @@ object ThreeMfParser {
                 }
                 val isMultiPlate = plateJsonCount > 1 || hasVirtualPlateItems
 
-                // Read Bambu model_settings.config for plate names and extruder assignments
+                // Read Bambu model_settings.config for plate names, extruder assignments,
+                // and plate-to-object mappings (which objects belong to which plate).
                 val plateNames = mutableMapOf<Int, String>()
                 val objectNames = mutableMapOf<String, String>()
                 val extruderAssignments = mutableMapOf<String, Int>()
+                val plateObjectMap = mutableMapOf<Int, MutableList<String>>()
 
                 if (isBambu) {
                     val msEntry = zip.getEntry("Metadata/model_settings.config")
                     if (msEntry != null) {
                         parseModelSettingsConfig(
                             zip.getInputStream(msEntry),
-                            plateNames, objectNames, extruderAssignments
+                            plateNames, objectNames, extruderAssignments,
+                            plateObjectMap
                         )
                     }
                 }
@@ -158,24 +161,49 @@ object ThreeMfParser {
                     }
                 }
 
-                // Build plates with name resolution and extract PNG thumbnails
-                val plates = buildItems.mapIndexed { idx, item ->
-                    val plateId = idx + 1
-                    val name = resolvePlateName(
-                        plateId, item.objectId,
-                        plateNames, objectNames, objects
-                    )
-                    // Try Bambu-style plate thumbnails: Metadata/plate_N.png
-                    val thumbnailBytes = zip.getEntry("Metadata/plate_$plateId.png")
-                        ?.let { entry -> runCatching { zip.getInputStream(entry).readBytes() }.getOrNull() }
-                    ThreeMfPlate(
-                        plateId = plateId,
-                        name = name,
-                        objectIds = listOf(item.objectId),
-                        printable = item.printable,
-                        transform = item.transform,
-                        thumbnailBytes = thumbnailBytes
-                    )
+                // Build plates: use model_settings.config plate→object mappings when
+                // available (groups multiple objects per plate correctly), otherwise
+                // fall back to 1 build item = 1 plate (old behavior for non-Bambu files).
+                val plates = if (plateObjectMap.isNotEmpty()) {
+                    // Bambu format: plates defined in model_settings.config with
+                    // model_instance entries mapping object_ids to each plate.
+                    plateObjectMap.keys.sorted().map { plateId ->
+                        val objIds = plateObjectMap[plateId] ?: emptyList()
+                        val firstItem = buildItems.find { it.objectId in objIds }
+                        val name = resolvePlateName(
+                            plateId, firstItem?.objectId ?: "",
+                            plateNames, objectNames, objects
+                        )
+                        val thumbnailBytes = zip.getEntry("Metadata/plate_$plateId.png")
+                            ?.let { entry -> runCatching { zip.getInputStream(entry).readBytes() }.getOrNull() }
+                        ThreeMfPlate(
+                            plateId = plateId,
+                            name = name,
+                            objectIds = objIds,
+                            printable = firstItem?.printable ?: true,
+                            transform = firstItem?.transform ?: floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f),
+                            thumbnailBytes = thumbnailBytes
+                        )
+                    }
+                } else {
+                    // Non-Bambu or old format: 1 build item = 1 plate
+                    buildItems.mapIndexed { idx, item ->
+                        val plateId = idx + 1
+                        val name = resolvePlateName(
+                            plateId, item.objectId,
+                            plateNames, objectNames, objects
+                        )
+                        val thumbnailBytes = zip.getEntry("Metadata/plate_$plateId.png")
+                            ?.let { entry -> runCatching { zip.getInputStream(entry).readBytes() }.getOrNull() }
+                        ThreeMfPlate(
+                            plateId = plateId,
+                            name = name,
+                            objectIds = listOf(item.objectId),
+                            printable = item.printable,
+                            transform = item.transform,
+                            thumbnailBytes = thumbnailBytes
+                        )
+                    }
                 }
 
                 // Count unique extruders
@@ -511,12 +539,14 @@ object ThreeMfParser {
         inputStream: InputStream,
         plateNames: MutableMap<Int, String>,
         objectNames: MutableMap<String, String>,
-        extruderAssignments: MutableMap<String, Int>
+        extruderAssignments: MutableMap<String, Int>,
+        plateObjectMap: MutableMap<Int, MutableList<String>> = mutableMapOf()
     ) {
         try {
             val parser = createParser(inputStream)
             var currentPlateId: String? = null
             var currentObjectId: String? = null
+            var inModelInstance = false
 
             while (parser.eventType != XmlPullParser.END_DOCUMENT) {
                 when (parser.eventType) {
@@ -525,6 +555,9 @@ object ThreeMfParser {
                             "plate" -> {
                                 currentPlateId = parser.getAttributeValue(null, "plater_id")
                                     ?: parser.getAttributeValue(null, "id")
+                            }
+                            "model_instance" -> {
+                                inModelInstance = true
                             }
                             "object" -> {
                                 currentObjectId = parser.getAttributeValue(null, "id")
@@ -536,6 +569,12 @@ object ThreeMfParser {
                                     key == "plater_name" && currentPlateId != null -> {
                                         currentPlateId?.toIntOrNull()?.let { id ->
                                             if (value.isNotBlank()) plateNames[id] = value
+                                        }
+                                    }
+                                    // plate → model_instance → object_id: maps objects to plates
+                                    key == "object_id" && inModelInstance && currentPlateId != null -> {
+                                        currentPlateId?.toIntOrNull()?.let { plateId ->
+                                            plateObjectMap.getOrPut(plateId) { mutableListOf() }.add(value)
                                         }
                                     }
                                     key == "name" && currentObjectId != null -> {
@@ -555,6 +594,7 @@ object ThreeMfParser {
                     XmlPullParser.END_TAG -> {
                         when (parser.name) {
                             "plate" -> currentPlateId = null
+                            "model_instance" -> inModelInstance = false
                             "object" -> currentObjectId = null
                         }
                     }

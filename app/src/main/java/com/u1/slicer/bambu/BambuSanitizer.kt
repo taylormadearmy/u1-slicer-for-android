@@ -1288,6 +1288,17 @@ $componentRefs    </components>
             val actualHasPlateJsons = hasPlateJsons ?: srcZip.entries().asSequence()
                 .any { it.name.matches(Regex("Metadata/plate_\\d+\\.json")) }
 
+            // Parse plate→object mappings from model_settings.config so we can
+            // filter build items by which objects belong to the target plate.
+            val plateObjectMap = mutableMapOf<Int, MutableList<String>>()
+            val msEntry = srcZip.getEntry("Metadata/model_settings.config")
+            if (msEntry != null) {
+                parseModelSettingsPlateObjects(
+                    srcZip.getInputStream(msEntry).readBytes(), plateObjectMap
+                )
+            }
+            val plateObjectIds = plateObjectMap[targetPlateId]?.toSet()
+
             // Two-pass approach: first filter the main model to determine which
             // object IDs are referenced, then write entries — stripping unreferenced
             // objects from config.  This keeps plate files lean when the original
@@ -1301,7 +1312,7 @@ $componentRefs    </components>
                     when {
                         entry.name == "3D/3dmodel.model" -> {
                             val filtered = filterModelToPlate(String(content), targetPlateId,
-                                actualHasPlateJsons)
+                                actualHasPlateJsons, plateObjectIds)
                             val (stripped, refIds) = stripUnreferencedResources(filtered)
                             referencedObjectIds = refIds
                             if (refIds != null) {
@@ -1579,11 +1590,13 @@ $componentRefs    </components>
      *   where build items share component file refs and OrcaSlicer needs all of them.
      */
     private fun filterModelToPlate(xml: String, targetPlateId: Int,
-                                   hasPlateJsons: Boolean = true): String {
+                                   hasPlateJsons: Boolean = true,
+                                   plateObjectIds: Set<String>? = null): String {
         val targetPlateIndex = targetPlateId - 1  // p:object_id is 0-based
 
         val buildRegex  = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
         val itemRegex   = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""",  setOf(RegexOption.DOT_MATCHES_ALL))
+        val objectIdRegex = Regex("""objectid="(\d+)"""")
         val plateIdRegex = Regex("""p:object_id="(\d+)"""")
 
         return buildRegex.replace(xml) { m ->
@@ -1593,7 +1606,25 @@ $componentRefs    </components>
 
             val allItems = itemRegex.findAll(body).map { it.value }.toList()
 
-            // p:object_id-based filtering (older Bambu format with explicit plate tags)
+            // Priority 1: model_settings.config plate→object mapping (most reliable).
+            // Filters build items by objectid matching the target plate's object list.
+            if (plateObjectIds != null && plateObjectIds.isNotEmpty()) {
+                val targetItems = allItems.filter { item ->
+                    val objId = objectIdRegex.find(item)?.groupValues?.get(1) ?: ""
+                    objId in plateObjectIds
+                }
+                if (targetItems.isEmpty()) {
+                    Log.w(TAG, "filterModelToPlate: plate $targetPlateId — no items matched objectIds $plateObjectIds, keeping all")
+                    return@replace m.value
+                }
+                // Re-centre items that are at virtual positions (off the 270mm bed)
+                val recentered = targetItems.map { recenterItemIfVirtual(it) }
+                Log.i(TAG, "filterModelToPlate: plate $targetPlateId — config-based, kept ${targetItems.size}/${allItems.size} items (objectIds=$plateObjectIds)")
+                val newBody = "\n" + recentered.joinToString("\n") { "    $it" } + "\n  "
+                return@replace "$open$newBody$close"
+            }
+
+            // Priority 2: p:object_id attribute on build items (older Bambu format)
             val hasPlateIds = allItems.any { plateIdRegex.containsMatchIn(it) }
             if (hasPlateIds) {
                 val targetItems = allItems.filter { item ->
@@ -1604,55 +1635,79 @@ $componentRefs    </components>
                     Log.w(TAG, "filterModelToPlate: no items for plate $targetPlateId — keeping all")
                     return@replace m.value
                 }
-                Log.i(TAG, "filterModelToPlate: plate $targetPlateId — kept ${targetItems.size}/${allItems.size} items")
+                Log.i(TAG, "filterModelToPlate: plate $targetPlateId — p:object_id, kept ${targetItems.size}/${allItems.size} items")
                 val newBody = "\n" + targetItems.joinToString("\n") { "    $it" } + "\n  "
                 return@replace "$open$newBody$close"
             }
 
-            // No p:object_id markers — use position-based selection.
-            //
-            // Trigger filtering when EITHER:
-            //  (a) hasPlateJsons  — newer Bambu format (plate_N.json present); each plate is
-            //                       independently loadable.
-            //  (b) hasVirtualPositions — older Bambu format (Dragon Scale, Shashibo): build
-            //                       items placed at virtual TX/TY offsets outside the 270mm bed.
-            //                       Each item represents one physical plate.  We select the
-            //                       N-th item and re-centre it.  The <assemble> section in
-            //                       model_settings.config is stripped separately (stripAssembleSection),
-            //                       so OrcaSlicer won't fail on assemble_item refs for omitted items.
-            //
-            // Do NOT filter when there are no virtual positions and no plate JSONs — those are
-            // genuine single-plate multi-object files where all items belong together.
+            // Priority 3: position-based fallback (no plate mapping, no p:object_id)
             val transformRegex = Regex("""transform="([^"]+)"""")
             val hasVirtualPositions = allItems.any { item ->
                 val parts = transformRegex.find(item)?.groupValues?.get(1)
                     ?.trim()?.split(Regex("\\s+")) ?: emptyList()
                 val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
                 val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
-                // Use -10f not 0f for TY to avoid false positives from legitimate
-                // models placed slightly off-origin due to floating-point precision.
-                // Bambu virtual-plate offsets are hundreds of mm (e.g. TY=-224), so
-                // -10f is a safe threshold that won't catch normal placements.
                 tx > 270f || ty < -10f || ty > 270f
             }
 
             if (allItems.size <= 1 || (!hasPlateJsons && !hasVirtualPositions)) return@replace m.value
 
             if (hasVirtualPositions) {
-                // Virtual-layout format (Dragon Scale, Shashibo): each item at a different
-                // virtual position represents a separate plate.  Select the N-th item.
                 val idx = targetPlateIndex.coerceIn(0, allItems.size - 1)
                 val selected = recenterItemXY(allItems[idx])
                 Log.i(TAG, "filterModelToPlate: plate $targetPlateId — position-based (virtual), selected item ${idx + 1}/${allItems.size}")
                 val newBody = "\n    $selected\n  "
                 "$open$newBody$close"
             } else {
-                // hasPlateJsons but no virtual positions: all items are on the same plate
-                // at normal bed coordinates (e.g. Sydney Opera House buttons).  Keep all.
-                Log.i(TAG, "filterModelToPlate: plate $targetPlateId — json format, no virtual positions, keeping all ${allItems.size} items")
+                Log.i(TAG, "filterModelToPlate: plate $targetPlateId — no virtual positions, keeping all ${allItems.size} items")
                 m.value
             }
         }
+    }
+
+    /**
+     * Lightweight parser to extract plate→object_id mappings from model_settings.config.
+     * Used by extractPlate() to pass plate object IDs to filterModelToPlate().
+     */
+    private fun parseModelSettingsPlateObjects(
+        configBytes: ByteArray,
+        plateObjectMap: MutableMap<Int, MutableList<String>>
+    ) {
+        try {
+            val config = String(configBytes)
+            val plateRegex = Regex("""<plate\b[^>]*>.*?</plate>""", setOf(RegexOption.DOT_MATCHES_ALL))
+            val platerIdRegex = Regex("""<metadata\s+key="plater_id"\s+value="(\d+)"""")
+            val objIdRegex = Regex("""<metadata\s+key="object_id"\s+value="(\d+)"""")
+            val instanceRegex = Regex("""<model_instance>.*?</model_instance>""", setOf(RegexOption.DOT_MATCHES_ALL))
+
+            for (plate in plateRegex.findAll(config)) {
+                val plateId = platerIdRegex.find(plate.value)?.groupValues?.get(1)?.toIntOrNull() ?: continue
+                val objIds = instanceRegex.findAll(plate.value).mapNotNull { inst ->
+                    objIdRegex.find(inst.value)?.groupValues?.get(1)
+                }.toList()
+                if (objIds.isNotEmpty()) {
+                    plateObjectMap[plateId] = objIds.toMutableList()
+                }
+            }
+            if (plateObjectMap.isNotEmpty()) {
+                Log.i(TAG, "parseModelSettingsPlateObjects: ${plateObjectMap.size} plates — $plateObjectMap")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "parseModelSettingsPlateObjects failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Re-centres an item's XY only if it's at a virtual position (outside the 270mm bed).
+     * Items at normal bed coordinates are returned unchanged.
+     */
+    private fun recenterItemIfVirtual(item: String): String {
+        val transformRegex = Regex("""transform="([^"]+)"""")
+        val parts = transformRegex.find(item)?.groupValues?.get(1)
+            ?.trim()?.split(Regex("\\s+")) ?: return item
+        val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
+        val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
+        return if (tx > 270f || ty < -10f || ty > 270f) recenterItemXY(item) else item
     }
 
     /**

@@ -372,9 +372,7 @@ class BambuSanitizerTest {
         assertTrue("On-bed: item 10 kept", onBedBuild.contains("""objectid="10""""))
         assertTrue("On-bed: item 11 kept", onBedBuild.contains("""objectid="11""""))
 
-        // B13 regression: multi-object single plate WITH plate JSONs but NO virtual positions.
-        // Sydney Opera House buttons: 4 items on one plate at normal bed coordinates.
-        // hasPlateJsons=true but no virtual positions — all items belong together.
+        // B13: no virtual positions, no config mapping — fallback keeps all items.
         val multiObjSinglePlateXml = """<build>
     <item objectid="20" transform="1 0 0 0 1 0 0 0 1 80 80 0" printable="1"/>
     <item objectid="21" transform="1 0 0 0 1 0 0 0 1 190 80 0" printable="1"/>
@@ -387,6 +385,102 @@ class BambuSanitizerTest {
         assertTrue("B13: item 21 kept", b13Build.contains("""objectid="21""""))
         assertTrue("B13: item 22 kept", b13Build.contains("""objectid="22""""))
         assertTrue("B13: item 23 kept", b13Build.contains("""objectid="23""""))
+    }
+
+    @Test
+    fun `filterModelToPlate config-based - Sydney buttons multi-object multi-plate`() {
+        // Sydney Opera House buttons: 3 plates, 4 objects per plate, all at virtual positions.
+        // model_settings.config maps plate→object_ids. filterModelToPlate should use the
+        // config mapping (Priority 1) to select all 4 objects for each plate.
+        val buildRegex = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val itemRegex  = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""",  setOf(RegexOption.DOT_MATCHES_ALL))
+        val objectIdRegex = Regex("""objectid="(\d+)"""")
+        val transformRegex = Regex("""transform="([^"]+)"""")
+
+        fun recenterItemIfVirtual(item: String): String {
+            val parts = transformRegex.find(item)?.groupValues?.get(1)
+                ?.trim()?.split(Regex("\\s+")) ?: return item
+            val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
+            val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
+            if (tx > 270f || ty < -10f || ty > 270f) {
+                return transformRegex.replace(item) { match ->
+                    val p = match.groupValues[1].trim().split(Regex("\\s+"))
+                    if (p.size >= 12) {
+                        val np = p.toMutableList(); np[9] = "135"; np[10] = "135"
+                        """transform="${np.joinToString(" ")}""""
+                    } else match.value
+                }
+            }
+            return item
+        }
+
+        @Suppress("UNUSED_PARAMETER")
+        fun filterWithConfig(xml: String, targetPlateId: Int, plateObjectIds: Set<String>?): String {
+            return buildRegex.replace(xml) { m ->
+                val allItems = itemRegex.findAll(m.groupValues[2]).map { it.value }.toList()
+                // Config-based filtering (Priority 1)
+                if (plateObjectIds != null && plateObjectIds.isNotEmpty()) {
+                    val targetItems = allItems.filter { item ->
+                        val objId = objectIdRegex.find(item)?.groupValues?.get(1) ?: ""
+                        objId in plateObjectIds
+                    }
+                    if (targetItems.isEmpty()) return@replace m.value
+                    val recentered = targetItems.map { recenterItemIfVirtual(it) }
+                    return@replace "${m.groupValues[1]}\n" +
+                        recentered.joinToString("\n") { "    $it" } + "\n  ${m.groupValues[3]}"
+                }
+                m.value
+            }
+        }
+
+        // 12 build items across 3 virtual plates (mimics Sydney buttons structure)
+        val xml = """<build>
+    <item objectid="2" transform="-1 0 0 0 -1 0 0 0 1 142 116 1" printable="1"/>
+    <item objectid="3" transform="-1 0 0 0 -1 0 0 0 1 208 116 1" printable="1"/>
+    <item objectid="4" transform="-1 0 0 0 -1 0 0 0 1 142 203 1" printable="1"/>
+    <item objectid="5" transform="-1 0 0 0 -1 0 0 0 1 208 203 1" printable="1"/>
+    <item objectid="7" transform="1 0 0 0 1 0 0 0 1 475 180 1.5" printable="1"/>
+    <item objectid="8" transform="1 0 0 0 1 0 0 0 1 627 186 1.5" printable="1"/>
+    <item objectid="9" transform="1 0 0 0 1 0 0 0 1 477 28 1.5" printable="1"/>
+    <item objectid="10" transform="1 0 0 0 1 0 0 0 1 628 31 1.5" printable="1"/>
+    <item objectid="20" transform="1 0 0 0 1 0 0 0 1 84 -98 1.5" printable="1"/>
+    <item objectid="21" transform="0 -1 0 1 0 0 0 0 1 290 -125 1.5" printable="1"/>
+    <item objectid="22" transform="1 0 0 0 1 0 0 0 1 85 -251 1.5" printable="1"/>
+    <item objectid="23" transform="-1 0 0 0 -1 0 0 0 1 268 -356 1.5" printable="1"/>
+</build>"""
+
+        // Plate 1: objects 2,3,4,5 (at normal bed positions — no recentre needed)
+        val plate1 = filterWithConfig(xml, 1, setOf("2", "3", "4", "5"))
+        val b1 = plate1.substringAfter("<build>").substringBefore("</build>")
+        assertTrue("Plate1 has obj 2", b1.contains("""objectid="2""""))
+        assertTrue("Plate1 has obj 3", b1.contains("""objectid="3""""))
+        assertTrue("Plate1 has obj 4", b1.contains("""objectid="4""""))
+        assertTrue("Plate1 has obj 5", b1.contains("""objectid="5""""))
+        assertFalse("Plate1 no obj 7", b1.contains("""objectid="7""""))
+        assertFalse("Plate1 no obj 20", b1.contains("""objectid="20""""))
+        // Items at normal bed positions — XY should be unchanged
+        assertTrue("Plate1 obj 2 XY preserved", b1.contains("142 116 1"))
+
+        // Plate 2: objects 7,8,9,10 (at virtual X positions — should be recentred)
+        val plate2 = filterWithConfig(xml, 2, setOf("7", "8", "9", "10"))
+        val b2 = plate2.substringAfter("<build>").substringBefore("</build>")
+        assertTrue("Plate2 has obj 7", b2.contains("""objectid="7""""))
+        assertTrue("Plate2 has obj 8", b2.contains("""objectid="8""""))
+        assertTrue("Plate2 has obj 9", b2.contains("""objectid="9""""))
+        assertTrue("Plate2 has obj 10", b2.contains("""objectid="10""""))
+        assertFalse("Plate2 no obj 2", b2.contains("""objectid="2""""))
+        // Virtual items recentred to 135
+        assertTrue("Plate2 obj 7 recentred", b2.contains("135 135 1.5"))
+
+        // Plate 3: objects 20-23 (at negative Y positions — should be recentred)
+        val plate3 = filterWithConfig(xml, 3, setOf("20", "21", "22", "23"))
+        val b3 = plate3.substringAfter("<build>").substringBefore("</build>")
+        assertTrue("Plate3 has obj 20", b3.contains("""objectid="20""""))
+        assertTrue("Plate3 has obj 21", b3.contains("""objectid="21""""))
+        assertTrue("Plate3 has obj 22", b3.contains("""objectid="22""""))
+        assertTrue("Plate3 has obj 23", b3.contains("""objectid="23""""))
+        assertFalse("Plate3 no obj 2", b3.contains("""objectid="2""""))
+        assertTrue("Plate3 obj 20 recentred", b3.contains("135 135 1.5"))
     }
 
     @Test
