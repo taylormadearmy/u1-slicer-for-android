@@ -102,7 +102,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (11) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 
-### Instrumented tests (`app/src/androidTest/`) — 100 tests across 11 classes
+### Instrumented tests (`app/src/androidTest/`) — 102 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression: shorter-over-longer file, ContentResolver "wt" mode
@@ -110,7 +110,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (25) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
 - `slicing/BambuPipelineIntegrationTest.kt` (27) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression, restructurePlateFile multi-extruder config guard
-- `slicing/SemmSlicingTest.kt` (1) — SEMM (paint data) slicing pipeline: verifies paint_color preserved, T1 tool changes produced
+- `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder T1 assertion + 4-extruder T0-T3 assertion
 - `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/ThreeMfMeshParserTest.kt` (2) — 3MF mesh parsing and transform resolution

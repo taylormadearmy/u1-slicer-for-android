@@ -572,10 +572,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Check for multi-color from 3MF parsing
                 val mfInfo = _threeMfInfo.value
                 if (mfInfo != null && mfInfo.detectedExtruderCount > 1) {
-                    // Always use compact extruder count (max 2) regardless of how many
-                    // colors the model has.  OrcaSlicer's toolpath optimizer OOMs with >2
-                    // extruders.  G-code post-processing remaps T-commands to physical slots.
-                    val extCount = mfInfo.detectedExtruderCount.coerceAtMost(2)
+                    // Compact extruder count: use the smaller of detected colors and
+                    // physical extruders (Snapmaker U1 has 4).  Compact mode slices as
+                    // N-extruder and G-code post-processing remaps T-commands to physical slots.
+                    val extCount = mfInfo.detectedExtruderCount.coerceIn(1, 4)
                     // Compute tower position that avoids the model
                     val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
                     val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
@@ -634,11 +634,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _showMultiColorDialog.value = false
         _colorMapping.value = modelColorToExtruder
         val usedSlots = modelColorToExtruder.distinct().sorted()
-        // Always use compact extruder count (max 2) to avoid OrcaSlicer OOM.
-        // G-code post-processing remaps T-commands to physical slots.
-        val extCount = usedSlots.size.coerceIn(1, 2)
-        // Store remap for any non-identity mapping — includes >2 colors (since we compact
-        // to 2) or non-zero-based slots (e.g. E3+E4).
+        // Compact extruder count: number of unique slots used, capped at 4 (U1 max).
+        // G-code post-processing remaps T-commands to physical slots when non-identity.
+        val extCount = usedSlots.size.coerceIn(1, 4)
+        // Store remap for any non-identity mapping — e.g. non-zero-based slots (E3+E4)
+        // or when model colors map to non-contiguous slots.
         val compactSlots = usedSlots.take(extCount)
         val isIdentity = compactSlots == (0 until extCount).toList()
         toolRemapSlots = if (isIdentity) null else compactSlots
@@ -780,10 +780,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val cfg = _config.value
         val extCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
-        // Always use compact extruder count (= number of used extruders, not physical slot max).
-        // OrcaSlicer's toolpath optimizer scales badly with extruder count — using maxSlot+1
-        // (e.g. 4 for E3+E4) causes OOM even on small models.  Compact mode slices as N-extruder
-        // and we post-process the G-code to remap T-commands + SM indices to physical slots.
+        // Use compact extruder count (= number of unique used slots, up to 4).
+        // When slots are non-contiguous (e.g. E2+E4), we slice as compact N-extruder
+        // and post-process G-code to remap T-commands + SM indices to physical slots.
         val targetCount = if (usedSlots != null) usedSlots.size else extCount
         // No extruder remap in the 3MF — keep compact numbering (1,2,…).
         // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.

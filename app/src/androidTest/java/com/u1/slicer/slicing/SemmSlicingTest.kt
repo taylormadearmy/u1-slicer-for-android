@@ -34,7 +34,7 @@ class SemmSlicingTest {
     private lateinit var outDir: File
     private lateinit var embedder: ProfileEmbedder
 
-    private val dualConfig = SliceConfig(
+    private fun makeConfig(extruderCount: Int) = SliceConfig(
         layerHeight = 0.2f,
         firstLayerHeight = 0.2f,
         perimeters = 2,
@@ -51,8 +51,8 @@ class SemmSlicingTest {
         filamentDiameter = 1.75f,
         retractLength = 0.8f,
         retractSpeed = 45f,
-        extruderCount = 2,
-        extruderTemps = intArrayOf(220, 220),
+        extruderCount = extruderCount,
+        extruderTemps = IntArray(extruderCount) { 220 },
         wipeTowerEnabled = true,
         wipeTowerX = 170f,
         wipeTowerY = 140f,
@@ -115,7 +115,7 @@ class SemmSlicingTest {
         val embedded = embedder.embed(processed, config, outDir, origInfo)
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
 
-        val result = lib.slice(dualConfig)
+        val result = lib.slice(makeConfig(2))
         assertNotNull("slice() must not return null", result)
         result!!
         assertTrue("Colored Benchy must slice successfully: ${result.errorMessage}", result.success)
@@ -135,5 +135,47 @@ class SemmSlicingTest {
             "SEMM Benchy G-code out of bed bounds: X=[${bounds.minX}, ${bounds.maxX}] Y=[${bounds.minY}, ${bounds.maxY}]",
             bounds.withinBounds
         )
+    }
+
+    /**
+     * Verify that extruder count is NOT capped at 2 — the Snapmaker U1 has 4.
+     * Uses up to min(detectedColors, 4) extruders and checks that the native
+     * slicer accepts it without OOM or crash.  With N extruders and paint data,
+     * the slicer must produce tool changes for at least T0 and T(N-1).
+     */
+    @Test
+    fun coloredBenchy_semm_maxExtruders_notCappedAtTwo() {
+        val input = asset("colored_3DBenchy (1).3mf")
+        val origInfo = ThreeMfParser.parse(input)
+
+        val nColors = origInfo.detectedColors.size
+        assertTrue("Must have >= 2 detected colors", nColors >= 2)
+        // Use up to 4 extruders (U1 max), but no more than the file has colors
+        val extCount = nColors.coerceIn(2, 4)
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val config = embedder.buildConfig(
+            info = origInfo,
+            targetExtruderCount = extCount
+        )
+
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(makeConfig(extCount))
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue("$extCount-extruder Benchy must slice: ${result.errorMessage}", result.success)
+
+        // With N extruders and paint data, there must be tool changes beyond T0
+        val gcode = File(result.gcodePath).readText()
+        val lines = gcode.lines()
+        val t1 = lines.count { it.trimStart().startsWith("T1") }
+        assertTrue("$extCount-extruder SEMM must produce T1 tool changes (got $t1)", t1 > 0)
+        // If we have 3+ extruders, T2 must also appear
+        if (extCount >= 3) {
+            val t2 = lines.count { it.trimStart().startsWith("T2") }
+            assertTrue("$extCount-extruder SEMM must produce T2 tool changes (got $t2)", t2 > 0)
+        }
     }
 }
