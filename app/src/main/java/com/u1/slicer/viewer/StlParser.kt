@@ -54,6 +54,7 @@ object StlParser {
                 val x = buf.float; val y = buf.float; val z = buf.float
                 vertexBuf.put(x); vertexBuf.put(y); vertexBuf.put(z)
                 vertexBuf.put(nx); vertexBuf.put(ny); vertexBuf.put(nz)
+                vertexBuf.put(0.7f); vertexBuf.put(0.7f); vertexBuf.put(0.7f); vertexBuf.put(1.0f)
 
                 if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z
                 if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z
@@ -67,7 +68,8 @@ object StlParser {
             vertices = vertexBuf,
             vertexCount = triangleCount * 3,
             minX = minX, minY = minY, minZ = minZ,
-            maxX = maxX, maxY = maxY, maxZ = maxZ
+            maxX = maxX, maxY = maxY, maxZ = maxZ,
+            extruderIndices = null
         )
     }
 
@@ -114,6 +116,7 @@ object StlParser {
             vertexBuf.put(normals[i * 3])
             vertexBuf.put(normals[i * 3 + 1])
             vertexBuf.put(normals[i * 3 + 2])
+            vertexBuf.put(0.7f); vertexBuf.put(0.7f); vertexBuf.put(0.7f); vertexBuf.put(1.0f)
         }
         vertexBuf.flip()
 
@@ -121,7 +124,8 @@ object StlParser {
             vertices = vertexBuf,
             vertexCount = vertices.size / 3,
             minX = minX, minY = minY, minZ = minZ,
-            maxX = maxX, maxY = maxY, maxZ = maxZ
+            maxX = maxX, maxY = maxY, maxZ = maxZ,
+            extruderIndices = null
         )
     }
 }

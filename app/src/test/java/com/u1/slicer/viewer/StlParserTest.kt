@@ -170,8 +170,8 @@ class StlParserTest {
     @Test
     fun `MeshData allocateBuffer correct size`() {
         val buf = MeshData.allocateBuffer(2)
-        // 2 triangles * 3 verts * 6 floats = 36 floats capacity
-        assertEquals(36, buf.capacity())
+        // 2 triangles * 3 verts * 10 floats = 60 floats capacity
+        assertEquals(60, buf.capacity())
     }
 
     @Test
@@ -188,7 +188,7 @@ class StlParserTest {
         )
         val mesh = StlParser.parse(file)
 
-        // Read back: x,y,z,nx,ny,nz for first vertex
+        // Read back: x,y,z,nx,ny,nz,r,g,b,a for first vertex
         mesh.vertices.position(0)
         assertEquals(1f, mesh.vertices.get(), 0.001f) // x
         assertEquals(2f, mesh.vertices.get(), 0.001f) // y
@@ -196,6 +196,43 @@ class StlParserTest {
         assertEquals(0f, mesh.vertices.get(), 0.001f) // nx
         assertEquals(0f, mesh.vertices.get(), 0.001f) // ny
         assertEquals(1f, mesh.vertices.get(), 0.001f) // nz
+        assertEquals(0.7f, mesh.vertices.get(), 0.001f) // r
+        assertEquals(0.7f, mesh.vertices.get(), 0.001f) // g
+        assertEquals(0.7f, mesh.vertices.get(), 0.001f) // b
+        assertEquals(1.0f, mesh.vertices.get(), 0.001f) // a
+    }
+
+    @Test
+    fun `parsed STL has null extruderIndices`() {
+        val binaryFile = createBinaryStl(
+            triangles = listOf(
+                Triangle(
+                    normal = floatArrayOf(0f, 0f, 1f),
+                    v1 = floatArrayOf(0f, 0f, 0f),
+                    v2 = floatArrayOf(1f, 0f, 0f),
+                    v3 = floatArrayOf(0f, 1f, 0f)
+                )
+            )
+        )
+        val binaryMesh = StlParser.parse(binaryFile)
+        assertNull("Binary STL should have null extruderIndices", binaryMesh.extruderIndices)
+        assertFalse(binaryMesh.hasPerVertexColor)
+
+        val asciiFile = tempFolder.newFile("ascii.stl")
+        asciiFile.writeText("""
+            solid test
+              facet normal 0 0 1
+                outer loop
+                  vertex 0 0 0
+                  vertex 1 0 0
+                  vertex 0 1 0
+                endloop
+              endfacet
+            endsolid test
+        """.trimIndent())
+        val asciiMesh = StlParser.parse(asciiFile)
+        assertNull("ASCII STL should have null extruderIndices", asciiMesh.extruderIndices)
+        assertFalse(asciiMesh.hasPerVertexColor)
     }
 
     // --- Helpers ---
