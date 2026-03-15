@@ -209,7 +209,9 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `support_filament` and `support_interface_filament` added to `profile_keys[]` in `sapil_print.cpp` — enables F8 support extruder selection to actually take effect (requires native rebuild)
 - `SlicingService` (F13) — foreground service for background slicing; already integrated: `start()` before `native.slice()`, `updateProgress()` during, `stop()` in finally block
 - `DiagnosticsStore` — JSONL event logging for Clipper error investigation; tracks app launches, upgrade detection, native library loading, model loads, slice attempts, Clipper failures, and restart observations; accessible via "Share Diagnostics" button in Settings and ErrorCard
-- `sapil_diagnostics.cpp` — Native-side diagnostics; records `native_jni_onload`, `slice_pre_process` (world bounds, support config), `slice_exception` events; configured via `NativeLibrary.configureDiagnostics(path)`
+- `sapil_diagnostics.cpp` — Native-side diagnostics; records `native_jni_onload`, `slice_pre_process` (world bounds, support config, extruder count, wipe tower, profile keys applied), `slice_exception` events; configured via `NativeLibrary.configureDiagnostics(path)`
+- `GcodeThumbnailInjector` — uses `rawInputFile` (original 3MF before sanitization) for preview image extraction, NOT `sourceModelFile` (post-sanitized, images stripped); STL files have no 3MF preview
+- `ModelRenderer.modelScale` — `floatArrayOf(sx, sy, sz)` applied visually via matrix transform around mesh center; updated from `InlineModelPreview` via `LaunchedEffect(modelScale)`
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
