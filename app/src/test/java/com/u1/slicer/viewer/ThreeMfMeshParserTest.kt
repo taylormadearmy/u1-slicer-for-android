@@ -201,6 +201,103 @@ class ThreeMfMeshParserTest {
         assertEquals(10f, mesh.maxY, 0.01f)
     }
 
+    // ── Extruder index tests ──
+
+    @Test
+    fun `parse with extruder map assigns correct indices`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" />
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        val mesh = ThreeMfMeshParser.parse(file, extruderMap = mapOf(1 to 2.toByte()))
+        assertNotNull(mesh)
+        assertNotNull(mesh!!.extruderIndices)
+        assertEquals(1, mesh.extruderIndices!!.size)
+        assertEquals(2.toByte(), mesh.extruderIndices!![0])
+    }
+
+    @Test
+    fun `parse without extruder map defaults to index 0`() {
+        val model = buildModelXml(
+            transform = null,
+            vertices = listOf(Triple(0f, 0f, 0f), Triple(10f, 0f, 0f), Triple(5f, 10f, 0f)),
+            triangles = listOf(Triple(0, 1, 2))
+        )
+        val mesh = parseModel(model)
+        assertNotNull(mesh)
+        assertNotNull(mesh!!.extruderIndices)
+        assertEquals(1, mesh.extruderIndices!!.size)
+        assertEquals(0.toByte(), mesh.extruderIndices!![0])
+    }
+
+    @Test
+    fun `compound object components get correct extruder indices`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="10" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" />
+                        </triangles>
+                    </mesh>
+                </object>
+                <object id="11" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="5" y="0" z="0" />
+                            <vertex x="2" y="5" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" />
+                        </triangles>
+                    </mesh>
+                </object>
+                <object id="20" type="model">
+                    <components>
+                        <component objectid="10" />
+                        <component objectid="11" />
+                    </components>
+                </object>
+            </resources>
+            <build>
+                <item objectid="20" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        val map = mapOf(10 to 0.toByte(), 11 to 1.toByte())
+        val mesh = ThreeMfMeshParser.parse(file, extruderMap = map)
+        assertNotNull(mesh)
+        assertEquals(6, mesh!!.vertexCount) // 2 triangles x 3 vertices
+        assertNotNull(mesh.extruderIndices)
+        assertEquals(2, mesh.extruderIndices!!.size) // 2 triangles
+        assertEquals(0.toByte(), mesh.extruderIndices!![0]) // object 10 -> extruder 0
+        assertEquals(1.toByte(), mesh.extruderIndices!![1]) // object 11 -> extruder 1
+    }
+
     // ── Helpers ──
 
     private fun buildModelXml(

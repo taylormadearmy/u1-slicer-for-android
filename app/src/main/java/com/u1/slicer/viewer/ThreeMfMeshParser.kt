@@ -37,13 +37,18 @@ object ThreeMfMeshParser {
         val path: String?,
         val transform: FloatArray?
     )
+    private data class MeshWithContext(
+        val mesh: RawMesh,
+        val transform: FloatArray?,
+        val objectId: Int
+    )
 
     private data class ModelParseResult(
         val buildItems: List<BuildItem>,
         val objects: Map<String, ObjectInfo>
     )
 
-    fun parse(file: File): MeshData? {
+    fun parse(file: File, extruderMap: Map<Int, Byte>? = null): MeshData? {
         Log.d("ThreeMfMesh", "Parsing ${file.name} (${file.length() / 1024}KB)")
         ZipFile(file).use { zip ->
             val modelEntry = zip.getEntry("3D/3dmodel.model") ?: run {
@@ -56,7 +61,7 @@ object ThreeMfMeshParser {
             val mainObjects = result.objects
             Log.d("ThreeMfMesh", "Build items: ${buildItems.size}, main objects: ${mainObjects.size}")
 
-            val meshList = mutableListOf<Pair<RawMesh, FloatArray?>>()
+            val meshList = mutableListOf<MeshWithContext>()
             val componentCache = mutableMapOf<String, Map<String, ObjectInfo>>()
 
             for (item in buildItems) {
@@ -64,7 +69,7 @@ object ThreeMfMeshParser {
                 Log.d("ThreeMfMesh", "Build item objectId=${item.objectId} -> obj=${obj != null}, hasMesh=${obj?.mesh != null}, components=${obj?.components?.size}")
                 if (obj != null) {
                     try {
-                        collectMeshes(obj, item.transform, mainObjects, zip, meshList, componentCache)
+                        collectMeshes(obj, item.transform, item.objectId.toIntOrNull() ?: 0, mainObjects, zip, meshList, componentCache)
                     } catch (t: Throwable) {
                         Log.e("ThreeMfMesh", "collectMeshes failed: ${t.javaClass.simpleName}: ${t.message}")
                     }
@@ -82,13 +87,13 @@ object ThreeMfMeshParser {
                     val compResult = zip.getInputStream(compEntry).use { streamParseModel(it) }
                     val compMesh = compResult.objects.values.firstOrNull()?.mesh
                     if (compMesh != null) {
-                        return buildMeshData(listOf(Pair(compMesh, null)))
+                        return buildMeshData(listOf(MeshWithContext(compMesh, null, 0)), extruderMap)
                     }
                 }
                 return null
             }
 
-            return buildMeshData(meshList)
+            return buildMeshData(meshList, extruderMap)
         }
     }
 
@@ -294,16 +299,18 @@ object ThreeMfMeshParser {
     private fun collectMeshes(
         obj: ObjectInfo,
         parentTransform: FloatArray?,
+        objectId: Int,
         mainObjects: Map<String, ObjectInfo>,
         zip: ZipFile,
-        meshList: MutableList<Pair<RawMesh, FloatArray?>>,
+        meshList: MutableList<MeshWithContext>,
         componentCache: MutableMap<String, Map<String, ObjectInfo>>
     ) {
         if (obj.mesh != null) {
-            meshList.add(Pair(obj.mesh, parentTransform))
+            meshList.add(MeshWithContext(obj.mesh, parentTransform, objectId))
         }
         for (comp in obj.components) {
             val combinedTransform = multiplyTransforms(parentTransform, comp.transform)
+            val compObjectId = comp.objectId.toIntOrNull() ?: objectId
             if (comp.path != null) {
                 Log.d("ThreeMfMesh", "  Component path=${comp.path} objectId=${comp.objectId} (cached=${componentCache.containsKey(comp.path)})")
                 val extObjects = componentCache.getOrPut(comp.path) {
@@ -318,14 +325,14 @@ object ThreeMfMeshParser {
                 }
                 val extObj = extObjects[comp.objectId]
                 if (extObj != null) {
-                    collectMeshes(extObj, combinedTransform, extObjects, zip, meshList, componentCache)
+                    collectMeshes(extObj, combinedTransform, compObjectId, extObjects, zip, meshList, componentCache)
                 } else {
                     Log.w("ThreeMfMesh", "  Object ${comp.objectId} not found in component (have: ${extObjects.keys})")
                 }
             } else {
                 val refObj = mainObjects[comp.objectId]
                 if (refObj != null) {
-                    collectMeshes(refObj, combinedTransform, mainObjects, zip, meshList, componentCache)
+                    collectMeshes(refObj, combinedTransform, compObjectId, mainObjects, zip, meshList, componentCache)
                 }
             }
         }
@@ -366,19 +373,25 @@ object ThreeMfMeshParser {
         return r
     }
 
-    private fun buildMeshData(meshes: List<Pair<RawMesh, FloatArray?>>): MeshData? {
-        val totalTris = meshes.sumOf { it.first.triCount }
+    private fun buildMeshData(
+        meshes: List<MeshWithContext>,
+        extruderIndexMap: Map<Int, Byte>? = null
+    ): MeshData? {
+        val totalTris = meshes.sumOf { it.mesh.triCount }
         if (totalTris == 0) return null
 
         val buf = MeshData.allocateBuffer(totalTris)
+        val extruderIdxArray = GrowableByteArray(totalTris)
         var minX = Float.MAX_VALUE;  var minY = Float.MAX_VALUE;  var minZ = Float.MAX_VALUE
         var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
 
-        for ((mesh, transform) in meshes) {
+        for (meshCtx in meshes) {
+            val mesh = meshCtx.mesh
+            val t = meshCtx.transform
+            val extruderIdx = extruderIndexMap?.get(meshCtx.objectId) ?: 0
             val verts = mesh.verts
             val tris = mesh.tris
             val nTris = mesh.triCount
-            val t = transform
 
             for (i in 0 until nTris) {
                 val a = tris[i * 3] * 3
@@ -409,9 +422,15 @@ object ThreeMfMeshParser {
                 val len = sqrt(nx*nx+ny*ny+nz*nz)
                 if (len > 0) { nx /= len; ny /= len; nz /= len }
 
+                // Position + normal + default RGBA color (10 floats per vertex)
                 buf.put(ax); buf.put(ay); buf.put(az); buf.put(nx); buf.put(ny); buf.put(nz)
+                buf.put(0.7f); buf.put(0.7f); buf.put(0.7f); buf.put(1.0f)
                 buf.put(bx); buf.put(by); buf.put(bz); buf.put(nx); buf.put(ny); buf.put(nz)
+                buf.put(0.7f); buf.put(0.7f); buf.put(0.7f); buf.put(1.0f)
                 buf.put(cx); buf.put(cy); buf.put(cz); buf.put(nx); buf.put(ny); buf.put(nz)
+                buf.put(0.7f); buf.put(0.7f); buf.put(0.7f); buf.put(1.0f)
+
+                extruderIdxArray.add(extruderIdx)
 
                 if (ax < minX) minX = ax; if (ay < minY) minY = ay; if (az < minZ) minZ = az
                 if (ax > maxX) maxX = ax; if (ay > maxY) maxY = ay; if (az > maxZ) maxZ = az
@@ -424,7 +443,8 @@ object ThreeMfMeshParser {
         buf.flip()
         val vertexCount = buf.limit() / MeshData.FLOATS_PER_VERTEX
         if (vertexCount == 0) return null
-        return MeshData(buf, vertexCount, minX, minY, minZ, maxX, maxY, maxZ)
+        return MeshData(buf, vertexCount, minX, minY, minZ, maxX, maxY, maxZ,
+            extruderIndices = extruderIdxArray.toArray())
     }
 
     // ── Growable primitive array helpers (avoid boxing overhead of ArrayList<Float/Int>) ──
@@ -451,5 +471,17 @@ object ThreeMfMeshParser {
         }
 
         fun toArray(): IntArray = data.copyOf(size)
+    }
+
+    private class GrowableByteArray(initialCapacity: Int = 8192) {
+        private var data = ByteArray(initialCapacity)
+        var size = 0; private set
+
+        fun add(value: Byte) {
+            if (size == data.size) data = data.copyOf(data.size * 2)
+            data[size++] = value
+        }
+
+        fun toArray(): ByteArray = data.copyOf(size)
     }
 }
