@@ -1641,15 +1641,18 @@ fun InlineModelPreview(
         }
     }
 
-    LaunchedEffect(viewerView, extruderColors) {
+    LaunchedEffect(viewerView, extruderColors, colorMapping) {
         val v = viewerView ?: return@LaunchedEffect
         if (extruderColors.isNotEmpty()) {
             v.setExtruderColors(extruderColors)
             // Recolor per-vertex mesh when extruder colors change
             if (mesh?.hasPerVertexColor == true) {
-                val palette = extruderColors.map { hex ->
-                    if (hex.isBlank()) floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
-                    else try {
+                // Build palette indexed by mesh extruder index (0-based), not by physical slot.
+                // colorMapping[meshIdx] → physical slot; extruderColors[slot] → hex color.
+                // For single-color models (colorMapping==null), extruderColors[0] has the color.
+                fun toRgba(hex: String): FloatArray {
+                    if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
+                    return try {
                         val c = android.graphics.Color.parseColor(hex)
                         floatArrayOf(
                             android.graphics.Color.red(c) / 255f,
@@ -1657,6 +1660,13 @@ fun InlineModelPreview(
                             android.graphics.Color.blue(c) / 255f, 1f
                         )
                     } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
+                }
+                val palette = if (colorMapping != null) {
+                    // Multi-color: remap mesh indices → slot colors
+                    colorMapping.map { slot -> toRgba(extruderColors.getOrElse(slot) { "" }) }
+                } else {
+                    // Single-color: palette[0] = first non-blank color
+                    listOf(toRgba(extruderColors.firstOrNull { it.isNotBlank() } ?: ""))
                 }
                 v.recolorMesh(palette)
             }
