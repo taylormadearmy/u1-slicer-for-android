@@ -13,109 +13,48 @@ App ID: `com.u1.slicer.orca`
 
 Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
-**Native .so rebuild is always allowed** — do not ask for permission to rebuild the native library. Follow the rebuild instructions in the "Profile Key Pipeline" section when needed.
-
-**WSL environment**: `./gradlew` fails in WSL (CRLF line endings + Windows-only SDK). Always run Gradle via:
-```bash
-/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command "cd 'C:\Users\kevin\projects\u1-slicer-orca'; .\gradlew <task> --no-daemon"
-```
-
-**Git worktree**: `.git` is a file (worktree), not a directory. Plain `git` fails in WSL. Use:
-```bash
-GIT_DIR="/mnt/c/Users/kevin/projects/u1-slicer-for-android/.git/worktrees/u1-slicer-orca" git --work-tree="$(pwd)" <cmd>
-```
-Add `--ignore-cr-at-eol` to `git diff` to skip CRLF-only noise and see real changes.
-
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                                                    # 279 JVM unit tests
-ANDROID_SERIAL=43211JEKB16931 ./gradlew connectedDebugAndroidTest             # 100 instrumented tests (uses Orchestrator)
+./gradlew testDebugUnitTest                        # 365 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 103 instrumented tests (uses Orchestrator)
 ```
 
-### MANDATORY: End-to-end testing before a feature is "done"
-
-**Every new feature MUST be tested on the physical test device (43211JEKB16931) before being marked complete.**
-
-End-to-end test checklist:
-1. `ANDROID_SERIAL=43211JEKB16931 ./gradlew installDebug --no-daemon`
-2. Launch the app and navigate to the relevant screen
-3. Exercise the happy path
-4. Exercise at least one error/edge case
-5. `adb -s 43211JEKB16931 logcat -s "SlicerVM" -d` — check for exceptions
-6. Only then mark the feature complete
-
-**Never test on NE12442001324 (model: NF22E1, Android 13) — that is the user's personal device.**
-User also has a Pixel 9a (serial: 5A101JEBF24790) — this is a personal device, do not run automated tests on it.
-
-## ADB helpers
-
-```bash
-adb -s 43211JEKB16931 exec-out screencap -p > /tmp/screen.png        # screenshot → Read /tmp/screen.png
-adb -s 43211JEKB16931 shell "run-as com.u1.slicer.orca ls -lh files/"  # inspect app's internal files
-adb -s 43211JEKB16931 shell "run-as com.u1.slicer.orca sh -c 'rm files/plate1_embedded_*.3mf'"  # clear stale plate cache
-adb -s 43211JEKB16931 logcat -b main -d | grep "11079" | tail -30     # filter logcat by app PID
-```
-
-Both test device and personal device are always connected. `connectedDebugAndroidTest` runs on ALL connected devices. **Disconnect NF22E1 (NE12442001324) before running instrumented tests** — it lacks the native .so and all tests fail on it. File-lock errors can also occur when both are present; clean with:
-```bash
-rm -rf app/build/outputs/androidTest-results/
-```
-
-### Running from Windows (Windows agent / PowerShell)
-
-All Gradle commands must be run from **Windows PowerShell**, not WSL:
-
-```powershell
-# Unit tests (318)
-cd C:\Users\kevin\projects\u1-slicer-orca
-.\gradlew testDebugUnitTest --no-daemon
-
-# Instrumented tests (98) — test device must be connected, uses Orchestrator
-Remove-Item -Recurse -Force app\build\outputs\androidTest-results -ErrorAction SilentlyContinue
-.\gradlew connectedDebugAndroidTest --no-daemon
-
-# Build + install on test device only
-.\gradlew installDebug --no-daemon
-adb -s 43211JEKB16931 shell am start -n com.u1.slicer.orca/com.u1.slicer.MainActivity
-```
-
-Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and `app\build\reports\androidTests\connected\debug\index.html` (instrumented).
-
-**If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
-
-### Unit tests (`app/src/test/`) — 346 tests across 18 classes
-- `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
+### Unit tests (`app/src/test/`) — 365 tests across 21 classes
+- `gcode/GcodeParserTest.kt` (18) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
-- `viewer/StlParserTest.kt` (9) — Binary/ASCII STL parsing, bounding box, vertex data
+- `viewer/StlParserTest.kt` (10) — Binary/ASCII STL parsing, bounding box, vertex data, 10-float vertex format
+- `viewer/MeshDataTest.kt` (7) — MeshData 10-float vertex format, extruderIndices, recolor(), RGBA values
+- `viewer/ThreeMfMeshParserTest.kt` (18) — 3MF mesh parsing, per-triangle color extraction, extruderMap, MeshWithContext, SEMM paint_color parsing
 - `network/MakerWorldUtilsTest.kt` (36) — URL parsing, design→instance ID resolution, download response parsing, error classification, cookie sanitization
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
-- `data/SlicingOverridesTest.kt` (33) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path, buildProfileOverrides support preservation, skirt_height emission
-- `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution, MakerWorld cookie round-trip
+- `data/SlicingOverridesTest.kt` (38) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower
+- `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
-- `bambu/BambuSanitizerTest.kt` (22) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard, config-based plate filtering
+- `bambu/BambuSanitizerTest.kt` (22) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard
 - `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
 - `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
 - `model/CopyArrangeCalculatorTest.kt` (18) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
-- `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns, pipeline output coverage
+- `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
+- `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 
 ### Instrumented tests (`app/src/androidTest/`) — 103 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
-- `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression: shorter-over-longer file, ContentResolver "wt" mode
+- `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (25) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` (27) — Multi-plate, dual/4-colour, Shashibo sanitization, Benchy printable=0 strip, coaster position-based plate extraction, G-code T1 tool change assertions, detectPaintData component-file regression, restructurePlateFile multi-extruder config guard
-- `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder T1 assertion + 4-extruder T0-T3 assertion
-- `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
+- `slicing/BambuPipelineIntegrationTest.kt` (27) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction
+- `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions
+- `slicing/ProfileEmbedderIntegrationTest.kt` (12) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
-- `viewer/ThreeMfMeshParserTest.kt` (3) — 3MF mesh parsing, transform resolution, old.3mf bounds validation
+- `viewer/ThreeMfMeshParserTest.kt` (3) — 3MF mesh parsing, transform resolution, per-triangle color extraction
 
 ## Architecture
 
@@ -126,121 +65,49 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - **Native**: Snapmaker Orca C++ via JNI (`app/src/main/cpp/`) — pre-built `.so` in `jniLibs/`
 - **3D**: OpenGL ES 3.0 via GLSurfaceView (`viewer/` package)
 
-## Key conventions
+## Key Conventions
 
 - Kotlin 1.9.22, compileSdk 34, minSdk 26, JVM 17
-- Use `Icons.AutoMirrored.Filled.ArrowBack` (not deprecated `Icons.Default.ArrowBack`)
 - Do NOT add fields to ModelInfo/SliceConfig without rebuilding the native `.so` — JNI signatures must match
 - OrcaSlicer config key names differ from PrusaSlicer: `wall_loops`, `sparse_infill_density`, `enable_prime_tower`, `initial_layer_print_height`, etc.
-- `wipe_tower_x` / `wipe_tower_y` are `ConfigOptionFloats` arrays in OrcaSlicer
 - Add unit tests for every new parsing/logic function
 - `org.json` is Android API — add `testImplementation 'org.json:json:20231013'` for JVM tests that use it
-- `SlicingOverrides.resolveInto(SliceConfig)` is the canonical way to apply override modes before slicing — always call it in `startSlicing()`, never pass `_config.value` directly to `native.slice()`
-- `BambuSanitizer.filterModelToPlate` only rewrites `<build>` — never remove objects from `<resources>` (breaks OrcaSlicer via dangling refs in model_settings.config)
-- `BambuSanitizer.filterModelToPlate` position-based fallback (no `p:object_id`) runs when `hasPlateJsons=true` OR any item has virtual TX/TY >270 or <0 — covers new format (foldy+coaster) and old format (Dragon Scale, Shashibo); picks N-th item by XML order and re-centres to (135,135)
-- `BambuSanitizer.extractPlate()` accepts `hasPlateJsons` param — pass `sourceModelInfo.hasPlateJsons` from SlicerViewModel since process() strips plate_N.json files; also strips `<assemble>` section to avoid OrcaSlicer load failure
-- `ThreeMfInfo.hasPlateJsons` — true when original Bambu ZIP has Metadata/plate_N.json files; persisted through the pipeline
-- `BambuSanitizer.process()` skips `restructureForMultiColor` when total component file size > 50MB (OOM guard) — raised from 15MB because OrcaSlicer's `_generate_volumes_new` does NOT support firstid/lastid volume splitting; multi-color models MUST be restructured for per-volume extruder assignments to work
-- `ThreeMfParser.isMultiPlate`: uses plate JSON count (new format) OR virtual-plate item positions (TX>270 or TY<0 on printable items) for old format detection
-- Do NOT call `clearModel()+loadModel()` before `setModelInstances()` in `startSlicing()` — `setModelInstances()` clears instances internally; the extra reload causes "Coordinate outside allowed range" Clipper errors
-- `BambuSanitizer.extractPlate()` copies ALL ZIP entries including PNG previews (unlike `process()` which strips them) — plate files therefore work with `GcodeThumbnailInjector`
-- `startSlicing()` wraps its entire body in `try/catch(Throwable)` with `finally { native.progressListener = null }` — any uncaught exception sets `SlicerState.Error` instead of leaving UI stuck at "100% Slicing"
-- Stale cache auto-cleared: `MainActivity.clearStaleCacheOnUpgrade()` deletes `embedded_*`, `sanitized_*`, `restructured_*`, and `plate*.3mf` cache files on **every cold start** (not just version upgrades) — prevents "Coordinate outside allowed range" Clipper errors from stale sanitizer output; files are regenerated on demand so no user data is lost
-- Per-load cache cleanup: `loadModel()` and `importFromSharedUrl()` call `UpgradeDetector.clearIntermediateCache()` before processing — prevents stale intermediate files from previous model loads accumulating within a session
-- Clipper error auto-recovery: `startSlicing()` detects "Coordinate outside allowed range" errors and automatically retries once — clears cache, resets native state, re-runs full embed→load→slice pipeline from `sourceModelFile`; `clipperRetryAttempted` flag prevents infinite loops (reset on each new model load)
-- Clipper1 hardening (native rebuild 2026-03-15): Three defensive layers in `clipper.cpp` guarded by `#ifdef __ANDROID__`: (1) `Round()` guards NaN/Inf before `static_cast<int64_t>` UB — ARM64 FCVTZS saturates ±Inf to INT64_MAX which exceeds hiRange; (2) `IntersectPoint()` clamps near-parallel edge division (|denom| < 1e-12) to prevent huge intersection coordinates; (3) `RangeTest()` logs failing coordinates via `diagnostics_note_clipper_point()` before throwing — captures exact values for diagnosis
-- `restartApp()` on SlicerViewModel — nuclear recovery for Clipper errors: clears cache, kills process via `Process.killProcess()`, restarts via AlarmManager (same pattern as upgrade path); exposed as "Restart App" button in `ErrorCard` when error message contains Clipper-related text
-- Release-focused Clipper diagnostics: `DiagnosticsStore` writes a bounded JSONL history plus a shareable text bundle under `files/diagnostics/`; capture points include app launch, upgrade detection, model load, first slice, Clipper failure, auto-recovery, manual restart, and diagnostics share/export
-- "Share Diagnostics" is exposed in both `ErrorCard` (for Clipper-related failures) and `SettingsScreen`; use this on release builds to retrieve field evidence when the issue cannot be reproduced on the test device
-- Native diagnostics bridge is source-wired (`configureDiagnostics()`, `getDiagnosticsState()`, native event logging in `sapil_diagnostics.cpp` / `sapil_print.cpp` / `TreeSupport3D.cpp`), but the app still packages the pre-built `.so` from `jniLibs`; Kotlin diagnostics work immediately, native diagnostics only become active after rebuilding and copying the updated `.so` into `app/src/main/jniLibs/arm64-v8a/`
-- `ensureMultiSlotMapping(rawMapping, colorCount)` in `MultiColorDialog.kt` — detects all-same-slot collapse for multi-color models and distributes 0,1,0,1,… to guarantee multi-extruder initial mapping
-- `resolveInto()` and `resolvePrimeTower()` in `SlicingOverrides` both force wipe tower true when `extruderCount > 1` unless the user explicitly set `OVERRIDE` mode to false — OrcaSlicer requires a wipe tower for T1 tool changes; `buildProfileOverrides()` uses `resolvePrimeTower()` to set `enable_prime_tower` in the embedded profile
-- `ThreeMfParser.detectPaintData()` checks ALL `.model` entries in the ZIP, not just the main `3D/3dmodel.model` — Bambu files using p:path component refs store `paint_color` on triangles in component files (e.g. `3D/Objects/*.model`)
-- `ProfileEmbedder.buildConfig()` sets `extruder_count` in the embedded `project_settings.config` — OrcaSlicer defaults to 1 without it, ignoring per-volume extruder assignments
-- `TestCommandReceiver` (debug-only): BroadcastReceiver for ADB-driven E2E testing — supports LOAD_FILE, SLICE, CHECK_GCODE, DUMP_STATE, DUMP_EMBEDDED_CONFIG, SET_COLORS, SET_PRINTER, SYNC_FILAMENTS, SELECT_PLATE, NAVIGATE, IMPORT_BACKUP
-- Default extruder colours are R/G/B/W (`ExtruderPreset.DEFAULT_COLORS`) — aids visual testing of multi-colour slicing
-- `BambuSanitizer.restructurePlateFile()` — deferred per-plate restructuring for multi-plate multi-colour files; `process()` preserves `model_settings.config` and defers restructuring, `selectPlate()` calls `extractPlate()` then `restructurePlateFile()` to inline component meshes and write OrcaSlicer-format config
-- `BambuSanitizer.process()` writes EITHER `model_settings.config` (deferred restructuring OR compound objects) OR `Slic3r_PE_model.config` (non-compound immediate restructuring), never both — duplicate entries cause ProfileEmbedder ZIP corruption
-- `restructureForMultiColor()` creates **compound objects** (parent with `<components>` referencing inlined mesh objects) — ONE build item per assembly, so `ensure_on_bed()` operates on the whole assembly as a unit (B8 fix: parts stay in relative positions)
-- `buildOrcaModelConfig()` generates `<part id="N">` entries for compound objects — maps 1:1 to `<component objectid="N">` elements for per-volume extruder assignment
-- Android Test Orchestrator (`execution 'ANDROIDX_TEST_ORCHESTRATOR'`) runs each instrumented test in its own process — prevents native memory accumulation OOM crashes across slicing test classes
-- `CopyArrangeCalculator.computeWipeTowerPosition()` — auto-positions wipe tower by evaluating 8 candidate spots (4 corners + 4 edge midpoints) with 10mm edge margin (prime tower brim + skirt clearance), picking the one with most clearance from all model bounding boxes; called in `loadNativeModel()` and `applyMultiColorAssignments()` when multi-extruder detected; user can override by dragging tower in placement viewer
-- `mergeThreeMfInfoForPlate()` filters colors by `usedExtruderIndices` only when `size > 1` (definitively multi-extruder) — when size <= 1, falls back to all source colors (index may be unpopulated before `restructurePlateFile()`)
-- `ThreeMfParser.parseModelSettingsConfig()` parses `<plate>` → `<model_instance>` → `<metadata key="object_id">` mappings into `plateObjectMap` — `plater_id` is a nested `<metadata>` child element, NOT an attribute on `<plate>`
-- `selectPlate()` passes `plateObjectIds` from `_threeMfInfo.value` (parsed from original file) to `extractPlate()` — `process()` strips `model_settings.config` for non-multi-color files, so the sanitized file no longer has plate→object mappings; must use the pre-process parse result
-- `filterModelToPlate()` priority: (1) config-based objectIds from `plateObjectIds`, (2) `p:object_id` attribute matching, (3) position-based fallback — config-based is most reliable for multi-object plates (e.g. Sydney buttons: 12 items → 3 plates of 4)
+- Android Test Orchestrator runs each instrumented test in its own process — prevents native memory OOM
+- `MeshData` vertex format: 10 floats per vertex (3 pos + 3 normal + 4 RGBA); `extruderIndices` ByteArray stores per-triangle extruder index; `recolor(extruderColors)` updates RGBA in-place from extruder index → color mapping
+- `ModelRenderer.pendingRecolor` — thread-safe recolor mechanism: UI thread sets `pendingRecolor = colors`, GL thread applies via `meshData.recolor()` + VBO re-upload in `onDrawFrame()`
+- `ThreeMfMeshParser.MeshWithContext` — data class holding parsed `MeshData` + `objectId`; `extruderMap: Map<String, Int>` parameter maps object IDs to extruder indices for per-triangle coloring; `parsePaintIndex()` extracts extruder index from `paint_color`/`mmu_segmentation` triangle attributes for SEMM models
+- `ExtruderPickerRow` composable — row of 4 extruder chips (E1-E4) with color circles for single-color model extruder selection on Prepare screen
+- `selectedExtruder` StateFlow on SlicerViewModel — tracks which extruder is selected for single-color models; triggers live recolor of 3D preview
+- `objectExtruderMap` on `ThreeMfInfo` — `Map<String, Int>` of per-object extruder assignments parsed from `model_settings.config`; used by `ThreeMfMeshParser` for per-triangle coloring of multi-extruder Bambu models
 
-- `SettingsBackup.export()` stores filament profile names (not IDs) in extruder preset backup — `parseExtruderPresetsWithNames()` resolves names to new IDs after re-inserting profiles during import
-- `clearStaleCacheOnUpgrade()` compares `PackageInfo.lastUpdateTime` (not just versionCode) — catches same-versionCode debug reinstalls that leave stale native .so memory state
-- `clearStaleCacheOnUpgrade()` uses `AlarmManager.set()` + `Process.killProcess()` for restart — `startActivity()` before `killProcess()` races (Android reuses the dying process with stale native state); the alarm fires 500ms after the kill into a guaranteed-fresh process with clean `JNI_OnLoad`
-- `DiagnosticsStore.markUpgradeRestartRequested()` persists a restart marker before both APK-change restarts and manual `restartApp()` calls; the next launch records whether the session appears fresh, giving release-safe evidence for or against the stale-process hypothesis
-- `UpgradeDetector` — extracted pure detection logic from MainActivity for testability; decides FIRST_INSTALL / SAME_APK / APK_CHANGED and which files to clear
-- `originalSourceConfig` in SlicerViewModel — stores the original Bambu file's `project_settings.config` parsed BEFORE `BambuSanitizer.process()` strips it; used by `embedProfile()` so file-level settings (enable_support, etc.) survive the sanitize→embed→extractPlate→restructure→re-embed pipeline
-- `buildProfileOverridesImpl()` — top-level testable function; omits `enable_support`/`support_threshold_angle` from overrides when mode is `USE_FILE` and `hasSourceConfig=true` (Bambu 3MF), so the file's original support settings are preserved through ProfileEmbedder's preserve path
-- `saveGcodeTo()` uses `openOutputStream(uri, "wt")` (write+truncate) — plain `"w"` mode doesn't reliably truncate on all Android DocumentsProviders, causing stale G-code data to remain when saving a shorter file over a longer one
-- Per-extruder `ConfigOption` vectors MUST be sized to match `n_ext` in `applyConfigToPrusa()` — OrcaSlicer's `get_at()` wraps safely, but `WipeTowerIntegration` copies raw `.values` vectors and indexes by tool ID without bounds checking; a size-1 default with tool index >= 1 causes OOB access (the `extruder_offset` bug: corrupt wipe tower coordinates)
-- `MakerWorldUtils` (in `network/`) — extracted testable functions for MakerWorld URL parsing, API response handling, error classification, and cookie sanitization
-- `importFromSharedUrl()` in SlicerViewModel — handles ACTION_SEND with EXTRA_TEXT (MakerWorld URLs from Bambu Handy): resolves design ID → instance ID via `/api/v1/design-service/design/{id}`, downloads 3MF from instance endpoint, runs full BambuSanitizer pipeline
-- MakerWorld design ID (URL path) ≠ instance ID (download API) — MUST resolve via design API's `defaultInstanceId` field, otherwise downloads the wrong model
-- MakerWorld API requires browser-like headers (Chrome UA, Sec-Fetch-*, X-BBL-*, Origin) and a page-view pre-fetch to avoid CAPTCHA/bot detection — see `withBrowserHeaders()` in importFromSharedUrl()
-- Cookie strings from user input must be sanitized (strip CR/LF) before passing to OkHttp headers — `MakerWorldUtils.sanitizeCookies()`
-- `importFromSharedUrl()` sets `_state.value = Loading` BEFORE launching the IO coroutine — ensures spinner shows immediately when share intent arrives (prevents empty-screen flash with singleTask)
-- `BambuSanitizer.process()` accepts optional `isBambu` param to skip redundant `ThreeMfParser.parse()` — pass `origInfo.isBambu` from the caller when the file was already parsed
-- `BambuSanitizer.rawCopyZipEntry()` — streams ZIP entries without XML processing or CRC recomputation; used for multi-plate deferred restructuring (component files cleaned later by `restructurePlateFile()`)
-- `ThreeMfParser.parse(skipPaintDetection=true)` — skips the expensive component-file scan for paint_color/mmu_segmentation; safe to use on processed files when `origInfo.hasPaintData` is preserved via `mergeThreeMfInfo()`
-- `ThreeMfParser.streamDetectPaintData()` — streaming paint detection using overlapping 8KB chunks; avoids loading 15MB+ component .model files entirely into memory
-- **SEMM (paint-based multi-color) ENABLED on Android ARM64**: `paint_color=` and `mmu_segmentation=` attributes are preserved through the pipeline. Three fixes enable this:
-  1. **TBB serial shims** (`extern/tbb_serial/`): Replace parallel execution algorithms (parallel_for, parallel_reduce, parallel_sort, parallel_for_each, parallel_invoke) with serial implementations via include-path priority. Non-shimmed TBB features (containers, mutexes, allocators, parallel_pipeline, task_group) pass through to real TBB.
-  2. **parallel_for grain splitting**: Serial shim uses `serial_for_each_grain()` which recursively splits ranges via `Range(r, tbb::split())` until `!is_divisible()`, then calls body on each grain-sized chunk — critical because some bodies (Thread.cpp barrier) expect per-element invocations, not full-range.
-  3. **Thread.cpp Android guard**: `name_tbb_thread_pool_threads_set_locale()` uses a condition_variable barrier that deadlocks with serial execution — `#ifdef __ANDROID__` skips the barrier and just sets locale for the current thread.
-  - Do NOT use `tbb::task_arena(1)` — it deadlocks because libtbb.a's scheduler cannot schedule child tasks when the arena is limited to 1 thread.
-  2. **`filament_colour` sizing**: `applyConfigToPrusa()` sets `filament_colour` to `n_ext` entries. `multi_material_segmentation_by_painting()` uses `filament_colour.size()+1` as `num_facets_states` to dimension per-layer arrays — the default size-1 caused OOB array access (SIGSEGV at address 0x12) when paint data referenced the second extruder.
-- `ProfileEmbedder.rawCopyEntry()` — raw-copies STORED ZIP entries without decompress/recompress; when `hasPaintData=true`, component files go through `cleanModelXmlForOrcaSlicer()` or `streamCleanEntry()` but paint_color/mmu_segmentation attributes are preserved
-- `ThreeMfParser.parseForPlateSelection()` — lightweight parse that only reads `model_settings.config` for `usedExtruderIndices`; skips the 15MB+ main model XML entirely; used in `selectPlate()` since full structural info is already available from the initial parse
-- `restructurePlateFile()` cleans main model XML with `cleanModelXmlPreserveComponentRefs` BEFORE inlining meshes (not after) — cleaning after inlining runs 7 regex passes over 15MB+ for no benefit (mesh data contains no Bambu attributes); MUST use PreserveComponentRefs variant because `restructureForMultiColor()` needs `p:path` attributes
-- `importBackup()` accepts `onImported: (hasPrinterUrl: Boolean) -> Unit` callback — used by SettingsScreen to auto-connect printer (F10)
-- `BambuSanitizer.copyZipEntry()` fast-path: checks `String.contains()` for target patterns before applying regex — 99.9%+ of mesh data lines (`<vertex>`/`<triangle>`) contain no Bambu attributes, so regex is skipped entirely; reduces 146MB component cleaning from ~60s to ~10s
-- `ThreeMfMeshParser` OOM guard: skips component `.model` files >80MB (`entry.size`) — prevents 268MB Java heap OOM from `readText()` on oversized meshes; model still loads and slices via native OrcaSlicer (graceful degradation, no 3D preview for that component)
-- `ProfileEmbedder.streamCleanEntry()` — streaming fallback for large (>50MB) DEFLATED component files; mirrors `BambuSanitizer.copyZipEntry()` with fast-path optimization; prevents OOM when embed() encounters un-STORED entries
-- AndroidManifest: `BROWSABLE` category + `pathPattern` filters for `.3mf`/`.stl` — separate intent-filters for `application/octet-stream` and `*/*` MIME types ensure the app appears in Android's "Open with" picker from file managers
-- `buildProfileOverridesImpl()` emits `skirt_height=0` when `skirt_loops=0` — OrcaSlicer defaults both to 1; without explicit skirt_height=0, the skirt could appear even though loops=0 via some config paths (B17 fix)
-- `parseModelSettingsConfig()` accepts `allExtruderValues: MutableSet<Int>?` — collects ALL per-part extruder values (not just max-per-object); fixes B16 where multi-part objects with different extruders only reported the max, causing plate colour filtering to show wrong subset
-- `parseForPlateSelection()` falls back to `Slic3r_PE_model.config` when `model_settings.config` is absent — restructurePlateFile() writes the former for compound objects (B16 fix)
-- `support_filament` and `support_interface_filament` added to `profile_keys[]` in `sapil_print.cpp` — enables F8 support extruder selection to actually take effect (requires native rebuild)
-- `SlicingService` (F13) — foreground service for background slicing; already integrated: `start()` before `native.slice()`, `updateProgress()` during, `stop()` in finally block
-- `DiagnosticsStore` — JSONL event logging for Clipper error investigation; tracks app launches, upgrade detection, native library loading, model loads, slice attempts, Clipper failures, and restart observations; accessible via "Share Diagnostics" button in Settings and ErrorCard
-- `sapil_diagnostics.cpp` — Native-side diagnostics; records `native_jni_onload`, `slice_pre_process` (world bounds, support config, extruder count, wipe tower, profile keys applied), `slice_exception` events; configured via `NativeLibrary.configureDiagnostics(path)`
-- `GcodeThumbnailInjector` — uses `rawInputFile` (original 3MF before sanitization) for preview image extraction, NOT `sourceModelFile` (post-sanitized, images stripped); STL files have no 3MF preview
-- `ModelRenderer.modelScale` — visual scale applied in `drawModel()` (single-instance) and `drawModelAt()` (placement); `drawModelAt()` uses center→scale→translate so position = scaled model's min corner on bed; `ModelViewerView.hitTest()` uses scaled bounds for drag detection; bed-bounds clamping in `onObjectMoved` uses scaled size; `setModelScale()` resets custom positions (auto re-center); `getPlacementPositions()` uses scaled size for centering
-- `CopyArrangeCalculator.calculate()` centers the grid on the bed — single copy at `((bed-size)/2, (bed-size)/2)`, multiple copies in a centered grid with equal margins on all sides
-- `SlicingOverridesUI.kt` — shared composables for slicing override accordions (5 sections: Layer & Infill, Support, Prime Tower, Temperature, Other); used by both SettingsScreen and PrepareScreen's ConfigCard
-- `SettingsBackup` includes `makerWorldCookies` and `makerWorldCookiesEnabled` fields — nullable for backwards compatibility with older backup files
-- `SliceCompleteCard` accepts `extruderColors` parameter — pass `.filter { it.isNotBlank() }` from `activeExtruderColors` to get compact-indexed colours matching `perExtruderFilamentMm` indices
-- `GcodeRenderer` tube vertex format: 10 floats per vertex (3 pos + 4 color + 3 normal); `toolpath.vert` uses Gouraud shading with two directional lights matching model viewer; GL_LINES fallback uses 7 floats (no normals, shader detects zero-length normal and skips lighting)
-
-## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
+## Profile Key Pipeline
 
 Settings reach OrcaSlicer's native engine through **two paths** — a setting that's only in one path will silently fall back to OrcaSlicer's compiled default (often wrong for Snapmaker U1):
 
 ### Path 1: `applyConfigToPrusa()` in `sapil_print.cpp`
 - Hardcoded fallback values, always applied (even for raw STL files without embedded profiles)
-- `applyConfigToPrusa()` runs AFTER `profile_keys[]`, so these are the lowest-priority defaults
-- Accepts `has_embedded_profile` flag — support settings (`enable_support`, `support_threshold_angle`) are guarded by `!has_embedded_profile` to avoid stomping embedded file values (B10 fix)
 - **Add new settings here** when you need a sensible fallback for files with no embedded profile
 
 ### Path 2: `profile_keys[]` whitelist in `sapil_print.cpp`
 - Keys in this array are read from the embedded `project_settings.config` JSON in the 3MF
 - Only applied when `is_snapmaker_profile = true` (start gcode contains "PRINT_START")
-- **Add new settings here** when they come from the Snapmaker profiles (pla.json, standard_0.20mm.json, snapmaker_u1.json)
-
-### What does NOT work
-- Adding a key to `orca_profiles/*.json` or `ProfileEmbedder.buildConfig()` alone — the key goes into the 3MF JSON but the native side ignores it unless it's in `profile_keys[]`
-- Adding a key to `buildProfileOverrides()` alone — same problem, it's only in the embedded JSON
+- **Add new settings here** when they come from the Snapmaker profiles
 
 ### Checklist for adding a new slicer setting
 1. Check the OrcaSlicer default in `PrintConfig.cpp` (`set_default_value` call) — is it acceptable?
-2. If not, add a fallback in `applyConfigToPrusa()` with the correct `ConfigOption` type (check `PrintConfig.cpp` for `coFloat` vs `coFloats` vs `coInts` etc.)
+2. If not, add a fallback in `applyConfigToPrusa()` with the correct `ConfigOption` type
 3. **For per-extruder options**: size the vector to `n_ext`, not 1 — `WipeTowerIntegration` copies raw vectors without bounds checking
 4. Add the key name to `profile_keys[]` so the embedded profile can override the fallback
-5. If the setting should be user-controllable, also add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
-6. **Rebuild the native `.so`** (use `ninja -j1` in `.cxx/Debug/` build dir to avoid OOM, strip with llvm-strip, copy to jniLibs)
+5. If the setting should be user-controllable, add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
+6. **Rebuild the native `.so`** (use `ninja -j1` to avoid OOM, strip with `llvm-strip`, copy to `jniLibs/`)
+
+## Native Rebuild
+
+The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
+
+1. Enable CMake in `build.gradle` (uncomment `externalNativeBuild` blocks)
+2. Run `./gradlew assembleDebug` to configure
+3. Disable CMake, then run `ninja -j1` in `app/.cxx/Debug/<hash>/arm64-v8a/` (OOMs at `-j2`+)
+4. Strip with NDK `llvm-strip --strip-unneeded`
+5. Copy `.so` to `app/src/main/jniLibs/arm64-v8a/`
+6. `./gradlew clean installDebug` — incremental builds may cache old APK

@@ -1,6 +1,23 @@
 # U1 Slicer for Android
 
-Native Android 3D model slicer powered by **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for the Snapmaker U1 printer (270×270×270mm, 4 extruders).
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
+Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders), powered by [Snapmaker Orca 2.2.4](https://github.com/Snapmaker/OrcaSlicer) (OrcaSlicer fork).
+
+Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
+
+## Features
+
+- **STL and 3MF slicing** — single-color, multi-color (up to 4 extruders), and paint-based (SEMM)
+- **Bambu 3MF support** — multi-plate extraction, profile embedding, sanitization pipeline
+- **3D model viewer** — OpenGL ES 3.0, drag-to-place models on bed, scale, copies
+- **3D G-code viewer** — per-layer toolpath rendering with Gouraud shading
+- **Wipe tower auto-positioning** — evaluates 8 candidates, picks spot with most clearance
+- **Moonraker connectivity** — send G-code directly to your printer
+- **MakerWorld integration** — share models from Bambu Handy to slice locally
+- **Filament library** — manage profiles with temps, speeds, retraction settings
+- **Settings backup/restore** — export and import all app settings as JSON
+- **Background slicing** — foreground service keeps slicing alive when app is backgrounded
 
 ## Architecture
 
@@ -23,6 +40,13 @@ Native Android 3D model slicer powered by **Snapmaker Orca 2.2.4** (OrcaSlicer f
 └──────────────────────────────────────────┘
 ```
 
+- **MVVM**: SlicerViewModel (StateFlow) + Compose UI
+- **DI**: Manual via AppContainer
+- **Persistence**: Room DB (filaments, jobs) + DataStore (settings)
+- **Network**: OkHttp (Moonraker printer API)
+- **Native**: Snapmaker Orca C++ via JNI — pre-built `.so` in `jniLibs/`
+- **3D**: OpenGL ES 3.0 via GLSurfaceView
+
 ## Building
 
 The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`. Normal builds do not require the NDK.
@@ -32,43 +56,51 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ./gradlew assembleDebug   # Build APK only
 ```
 
-Gradle daemon may OOM — use `--no-daemon` if builds fail.
+**Requirements**: Android SDK 34, JDK 17, Kotlin 1.9.22. Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest           # 152 JVM unit tests (no device needed)
-ANDROID_SERIAL=43211JEKB00954 ./gradlew connectedDebugAndroidTest  # 59 instrumented tests
+./gradlew testDebugUnitTest              # 346 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 103 instrumented tests (ARM64 device required)
 ```
 
-See `CLAUDE.md` for full testing policy.
+**449 total tests** covering G-code parsing/validation, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, and more.
+
+Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 
 ## Project Structure
 
 | Directory | Description |
 |-----------|-------------|
-| `app/src/main/cpp/` | Native C++ (SAPIL + OrcaSlicer submodule) |
-| `app/src/main/java/` | Kotlin source (UI + JNI bridge) |
+| `app/src/main/java/` | Kotlin source — UI, ViewModel, data, network, viewers |
+| `app/src/main/cpp/` | Native C++ — SAPIL JNI layer + OrcaSlicer submodule |
+| `app/src/main/cpp/extern/tbb_serial/` | TBB serial shims for ARM64 (fixes SEMM data races) |
 | `app/src/main/assets/orca_profiles/` | Snapmaker U1 printer/filament/process profiles |
-| `app/src/androidTest/assets/` | Test 3MF/STL files from u1-slicer-bridge |
-| `.maestro/` | Maestro E2E UI automation flows |
-| `scripts/` | Native build scripts |
-| `docs/` | Technical documentation |
+| `app/src/main/jniLibs/` | Pre-built native `.so` (ARM64) |
+| `app/src/test/` | JVM unit tests |
+| `app/src/androidTest/` | On-device instrumented tests + test 3MF/STL assets |
 
-## Features
+## Native Rebuild
 
-- STL and 3MF file slicing (single and multi-colour)
-- Bambu 3MF support: multi-plate extraction, profile embedding, sanitization
-- 4-extruder / wipe tower support
-- 3D model viewer (OpenGL ES 3.0)
-- 3D G-code viewer with per-layer rendering
-- Pre-slice placement viewer (drag objects on bed)
-- Moonraker printer connectivity
-- Filament library (Room DB, 7 default profiles)
-- MakerWorld 3MF download
-- Job history
+To rebuild the native library from source (requires NDK 26.1):
+
+1. Uncomment `externalNativeBuild` blocks in `app/build.gradle`
+2. Run `./gradlew assembleDebug` to configure CMake
+3. Re-comment CMake blocks, then `ninja -j1` in `app/.cxx/Debug/<hash>/arm64-v8a/`
+4. Strip: `llvm-strip --strip-unneeded libprusaslicer-jni.so`
+5. Copy to `app/src/main/jniLibs/arm64-v8a/`
+6. `./gradlew clean installDebug`
+
+Use `-j1` — higher parallelism OOMs on most machines.
 
 ## Credits
 
-- [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) — Core slicing engine
-- [u1-slicer-bridge](https://github.com/taylormadearmy/u1-slicer-bridge) — Original server-side slicer and test data
+- [Snapmaker Orca / OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) — Core slicing engine (AGPL-3.0)
+- [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) — Upstream slicer (AGPL-3.0)
+
+## License
+
+This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-or-later).
+
+See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for third-party dependency licenses.
