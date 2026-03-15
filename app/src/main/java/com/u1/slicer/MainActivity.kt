@@ -334,6 +334,10 @@ class MainActivity : ComponentActivity() {
                                 printerViewModel.sendAndPrint(gcodePath)
                                 navigateTab(Routes.PRINTER)
                             },
+                            onUploadOnly = { gcodePath ->
+                                printerViewModel.sendUploadOnly(gcodePath)
+                                navigateTab(Routes.PRINTER)
+                            },
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
                             onShareGcode = { viewModel.shareGcode() },
@@ -804,6 +808,7 @@ fun PreviewScreen(
     onNavigateSettings: () -> Unit,
     onNavigatePrinter: () -> Unit,
     onSendToPrinter: (gcodePath: String) -> Unit = {},
+    onUploadOnly: (gcodePath: String) -> Unit = {},
     onNavigateJobs: () -> Unit,
     onNavigateGcodeViewer3D: () -> Unit,
     onShareGcode: () -> Unit,
@@ -813,6 +818,7 @@ fun PreviewScreen(
     val coreVersion by viewModel.coreVersion.collectAsState()
     val parsedGcode by viewModel.parsedGcode.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
+    val config by viewModel.config.collectAsState()
 
     Scaffold(
         topBar = {
@@ -864,7 +870,9 @@ fun PreviewScreen(
                         onShare = onShareGcode,
                         onSave = onSaveGcode,
                         onSendToPrinter = { onSendToPrinter(s.result.gcodePath) },
-                        perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList()
+                        onUploadOnly = { onUploadOnly(s.result.gcodePath) },
+                        perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
+                        bedTemp = config.bedTemp
                     )
                     // Inline 3D G-code preview (auto-downsampled for large models)
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
@@ -1389,7 +1397,9 @@ fun SliceCompleteCard(
     onShare: () -> Unit,
     onSave: () -> Unit,
     onSendToPrinter: () -> Unit = {},
-    perExtruderFilamentMm: List<Float> = emptyList()
+    onUploadOnly: () -> Unit = {},
+    perExtruderFilamentMm: List<Float> = emptyList(),
+    bedTemp: Int = 0
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1412,6 +1422,9 @@ fun SliceCompleteCard(
             InfoRow("Layers", result.totalLayers.toString())
             InfoRow("Est. Time", result.estimatedTimeFormatted)
             InfoRow("Filament", result.estimatedFilamentFormatted)
+            if (bedTemp > 0) {
+                InfoRow("Bed Temp", "${bedTemp}\u00B0C")
+            }
             if (perExtruderFilamentMm.size > 1) {
                 perExtruderFilamentMm.forEachIndexed { i, mm ->
                     InfoRow("  E${i + 1}", "%.0f mm (%.1f g)".format(mm, mm * 0.00125f * 1.24f))
@@ -1445,17 +1458,29 @@ fun SliceCompleteCard(
                 }
             }
 
-            Button(
-                onClick = onSendToPrinter,
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(Icons.Default.Print, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Send to Printer", fontWeight = FontWeight.Bold)
+                Button(
+                    onClick = onSendToPrinter,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Icon(Icons.Default.Print, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Print", fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = onUploadOnly,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Upload")
+                }
             }
         }
     }

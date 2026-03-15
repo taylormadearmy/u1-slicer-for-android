@@ -62,6 +62,10 @@ class PrinterRepository(
         return client.startPrint(filename)
     }
 
+    suspend fun uploadOnly(gcodeFile: java.io.File, filename: String): Boolean {
+        return client.uploadGcode(gcodeFile, filename)
+    }
+
     suspend fun queryWebcamSnapshotCandidates(): List<String> = client.queryWebcamSnapshotCandidates()
 
     suspend fun queryFilamentSlots(): List<FilamentSlot>? = client.queryFilamentSlots()

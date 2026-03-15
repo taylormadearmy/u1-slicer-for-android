@@ -203,6 +203,19 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun sendUploadOnly(gcodePath: String) {
+        _sendingState.value = SendingState.Uploading
+        viewModelScope.launch(Dispatchers.IO) {
+            val file = File(gcodePath)
+            if (!file.exists()) {
+                _sendingState.value = SendingState.Error("G-code file not found")
+                return@launch
+            }
+            val ok = printerRepo.uploadOnly(file, file.name)
+            _sendingState.value = if (ok) SendingState.Success else SendingState.Error("Upload failed")
+        }
+    }
+
     fun pausePrint() {
         viewModelScope.launch(Dispatchers.IO) { printerRepo.pausePrint() }
     }
