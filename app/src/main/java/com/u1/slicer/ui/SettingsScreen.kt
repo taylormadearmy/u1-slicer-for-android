@@ -22,13 +22,20 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material.icons.filled.Architecture
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Thermostat
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import com.u1.slicer.BuildConfig
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.data.OverrideMode
@@ -334,335 +341,363 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
 
-                OverrideRow(
-                    label = "Layer Height",
-                    override = overrides.layerHeight,
-                    defaultHint = "0.2 mm",
-                    onModeChange = { mode -> overrides = overrides.copy(layerHeight = overrides.layerHeight.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideFloatField(
-                            value = overrides.layerHeight.value ?: 0.2f,
-                            suffix = "mm",
-                            onValueChange = { overrides = overrides.copy(layerHeight = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
+                var expandedSection by remember { mutableStateOf<String?>(null) }
 
-                OverrideRow(
-                    label = "Infill Density",
-                    override = overrides.infillDensity,
-                    defaultHint = "15%",
-                    onModeChange = { mode -> overrides = overrides.copy(infillDensity = overrides.infillDensity.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideFloatField(
-                            value = (overrides.infillDensity.value ?: 0.15f) * 100f,
-                            suffix = "%",
-                            onValueChange = { overrides = overrides.copy(infillDensity = OverrideValue(OverrideMode.OVERRIDE, it / 100f)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Wall Count",
-                    override = overrides.wallCount,
-                    defaultHint = "2",
-                    onModeChange = { mode -> overrides = overrides.copy(wallCount = overrides.wallCount.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideIntField(
-                            value = overrides.wallCount.value ?: 2,
-                            onValueChange = { overrides = overrides.copy(wallCount = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Infill Pattern",
-                    override = overrides.infillPattern,
-                    defaultHint = "gyroid",
-                    onModeChange = { mode -> overrides = overrides.copy(infillPattern = overrides.infillPattern.copy(mode = mode)) },
-                    valueContent = {
-                        val patterns = listOf("gyroid", "grid", "lines", "honeycomb", "cubic", "triangles", "rectilinear")
-                        OverrideDropdown(
-                            value = overrides.infillPattern.value ?: "gyroid",
-                            options = patterns,
-                            onValueChange = { overrides = overrides.copy(infillPattern = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Supports",
-                    override = overrides.supports,
-                    defaultHint = "Off",
-                    onModeChange = { mode -> overrides = overrides.copy(supports = overrides.supports.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideToggle(
-                            value = overrides.supports.value ?: false,
-                            onValueChange = { overrides = overrides.copy(supports = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                // Expanded support settings (only show when supports are overridden to enabled)
-                if (overrides.supports.mode == OverrideMode.OVERRIDE && overrides.supports.value == true) {
+                ExpandableOverrideSection(
+                    title = "Layer & Infill",
+                    icon = Icons.Default.Layers,
+                    expanded = expandedSection == "layer",
+                    onToggle = { expandedSection = if (expandedSection == "layer") null else "layer" }
+                ) {
                     OverrideRow(
-                        label = "  Support Type",
-                        override = overrides.supportType,
-                        defaultHint = "Normal (Auto)",
-                        onModeChange = { mode -> overrides = overrides.copy(supportType = overrides.supportType.copy(mode = mode)) },
-                        valueContent = {
-                            val types = listOf("normal(auto)" to "Normal", "tree(auto)" to "Tree")
-                            OverrideDropdown(
-                                value = overrides.supportType.value ?: "normal(auto)",
-                                options = types.map { it.first },
-                                labels = types.map { it.second },
-                                onValueChange = { overrides = overrides.copy(supportType = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                            )
-                        }
-                    )
-
-                    OverrideRow(
-                        label = "  Threshold Angle",
-                        override = overrides.supportAngle,
-                        defaultHint = "30\u00B0",
-                        onModeChange = { mode -> overrides = overrides.copy(supportAngle = overrides.supportAngle.copy(mode = mode)) },
-                        valueContent = {
-                            OverrideIntField(
-                                value = overrides.supportAngle.value ?: 30,
-                                suffix = "\u00B0",
-                                onValueChange = { overrides = overrides.copy(supportAngle = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 90))) }
-                            )
-                        }
-                    )
-
-                    OverrideRow(
-                        label = "  Build Plate Only",
-                        override = overrides.supportBuildPlateOnly,
-                        defaultHint = "Off",
-                        onModeChange = { mode -> overrides = overrides.copy(supportBuildPlateOnly = overrides.supportBuildPlateOnly.copy(mode = mode)) },
-                        valueContent = {
-                            OverrideToggle(
-                                value = overrides.supportBuildPlateOnly.value ?: false,
-                                onValueChange = { overrides = overrides.copy(supportBuildPlateOnly = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                            )
-                        }
-                    )
-
-                    OverrideRow(
-                        label = "  Support Pattern",
-                        override = overrides.supportPattern,
-                        defaultHint = "Default",
-                        onModeChange = { mode -> overrides = overrides.copy(supportPattern = overrides.supportPattern.copy(mode = mode)) },
-                        valueContent = {
-                            val patterns = listOf("default", "rectilinear", "rectilinear_grid", "honeycomb", "lightning")
-                            OverrideDropdown(
-                                value = overrides.supportPattern.value ?: "default",
-                                options = patterns,
-                                onValueChange = { overrides = overrides.copy(supportPattern = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                            )
-                        }
-                    )
-
-                    OverrideRow(
-                        label = "  Pattern Spacing",
-                        override = overrides.supportPatternSpacing,
-                        defaultHint = "2.5 mm",
-                        onModeChange = { mode -> overrides = overrides.copy(supportPatternSpacing = overrides.supportPatternSpacing.copy(mode = mode)) },
+                        label = "Layer Height",
+                        override = overrides.layerHeight,
+                        defaultHint = "0.2 mm",
+                        onModeChange = { mode -> overrides = overrides.copy(layerHeight = overrides.layerHeight.copy(mode = mode)) },
                         valueContent = {
                             OverrideFloatField(
-                                value = overrides.supportPatternSpacing.value ?: 2.5f,
+                                value = overrides.layerHeight.value ?: 0.2f,
                                 suffix = "mm",
-                                onValueChange = { overrides = overrides.copy(supportPatternSpacing = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                                onValueChange = { overrides = overrides.copy(layerHeight = OverrideValue(OverrideMode.OVERRIDE, it)) }
                             )
                         }
                     )
 
                     OverrideRow(
-                        label = "  Interface Top Layers",
-                        override = overrides.supportInterfaceTopLayers,
-                        defaultHint = "3",
-                        onModeChange = { mode -> overrides = overrides.copy(supportInterfaceTopLayers = overrides.supportInterfaceTopLayers.copy(mode = mode)) },
+                        label = "Infill Density",
+                        override = overrides.infillDensity,
+                        defaultHint = "15%",
+                        onModeChange = { mode -> overrides = overrides.copy(infillDensity = overrides.infillDensity.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideFloatField(
+                                value = (overrides.infillDensity.value ?: 0.15f) * 100f,
+                                suffix = "%",
+                                onValueChange = { overrides = overrides.copy(infillDensity = OverrideValue(OverrideMode.OVERRIDE, it / 100f)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "Wall Count",
+                        override = overrides.wallCount,
+                        defaultHint = "2",
+                        onModeChange = { mode -> overrides = overrides.copy(wallCount = overrides.wallCount.copy(mode = mode)) },
                         valueContent = {
                             OverrideIntField(
-                                value = overrides.supportInterfaceTopLayers.value ?: 3,
-                                onValueChange = { overrides = overrides.copy(supportInterfaceTopLayers = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 10))) }
+                                value = overrides.wallCount.value ?: 2,
+                                onValueChange = { overrides = overrides.copy(wallCount = OverrideValue(OverrideMode.OVERRIDE, it)) }
                             )
                         }
                     )
 
                     OverrideRow(
-                        label = "  Interface Bottom Layers",
-                        override = overrides.supportInterfaceBottomLayers,
-                        defaultHint = "0",
-                        onModeChange = { mode -> overrides = overrides.copy(supportInterfaceBottomLayers = overrides.supportInterfaceBottomLayers.copy(mode = mode)) },
+                        label = "Infill Pattern",
+                        override = overrides.infillPattern,
+                        defaultHint = "gyroid",
+                        onModeChange = { mode -> overrides = overrides.copy(infillPattern = overrides.infillPattern.copy(mode = mode)) },
                         valueContent = {
-                            OverrideIntField(
-                                value = overrides.supportInterfaceBottomLayers.value ?: 0,
-                                onValueChange = { overrides = overrides.copy(supportInterfaceBottomLayers = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 10))) }
-                            )
-                        }
-                    )
-
-                    OverrideRow(
-                        label = "  Support Extruder",
-                        override = overrides.supportFilament,
-                        defaultHint = "Default",
-                        onModeChange = { mode -> overrides = overrides.copy(supportFilament = overrides.supportFilament.copy(mode = mode)) },
-                        valueContent = {
-                            val options = listOf(0 to "Default") + (1..4).map { it to "Extruder $it" }
+                            val patterns = listOf("gyroid", "grid", "lines", "honeycomb", "cubic", "triangles", "rectilinear")
                             OverrideDropdown(
-                                value = (overrides.supportFilament.value ?: 0).toString(),
-                                options = options.map { it.first.toString() },
-                                labels = options.map { it.second },
-                                onValueChange = { overrides = overrides.copy(supportFilament = OverrideValue(OverrideMode.OVERRIDE, it.toIntOrNull() ?: 0)) }
-                            )
-                        }
-                    )
-
-                    OverrideRow(
-                        label = "  Interface Extruder",
-                        override = overrides.supportInterfaceFilament,
-                        defaultHint = "Default",
-                        onModeChange = { mode -> overrides = overrides.copy(supportInterfaceFilament = overrides.supportInterfaceFilament.copy(mode = mode)) },
-                        valueContent = {
-                            val options = listOf(0 to "Default") + (1..4).map { it to "Extruder $it" }
-                            OverrideDropdown(
-                                value = (overrides.supportInterfaceFilament.value ?: 0).toString(),
-                                options = options.map { it.first.toString() },
-                                labels = options.map { it.second },
-                                onValueChange = { overrides = overrides.copy(supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, it.toIntOrNull() ?: 0)) }
+                                value = overrides.infillPattern.value ?: "gyroid",
+                                options = patterns,
+                                onValueChange = { overrides = overrides.copy(infillPattern = OverrideValue(OverrideMode.OVERRIDE, it)) }
                             )
                         }
                     )
                 }
 
-                OverrideRow(
-                    label = "Brim Width",
-                    override = overrides.brimWidth,
-                    defaultHint = "0 mm",
-                    onModeChange = { mode -> overrides = overrides.copy(brimWidth = overrides.brimWidth.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideFloatField(
-                            value = overrides.brimWidth.value ?: 0f,
-                            suffix = "mm",
-                            onValueChange = { overrides = overrides.copy(brimWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Skirt Loops",
-                    override = overrides.skirtLoops,
-                    defaultHint = "0",
-                    onModeChange = { mode -> overrides = overrides.copy(skirtLoops = overrides.skirtLoops.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideIntField(
-                            value = overrides.skirtLoops.value ?: 0,
-                            onValueChange = { overrides = overrides.copy(skirtLoops = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Bed Temp",
-                    override = overrides.bedTemp,
-                    defaultHint = "60\u00B0C",
-                    onModeChange = { mode -> overrides = overrides.copy(bedTemp = overrides.bedTemp.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideIntField(
-                            value = overrides.bedTemp.value ?: 60,
-                            suffix = "\u00B0C",
-                            onValueChange = { overrides = overrides.copy(bedTemp = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Prime Tower",
-                    override = overrides.primeTower,
-                    defaultHint = "Off",
-                    onModeChange = { mode -> overrides = overrides.copy(primeTower = overrides.primeTower.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideToggle(
-                            value = overrides.primeTower.value ?: false,
-                            onValueChange = { overrides = overrides.copy(primeTower = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                // Prime Tower Detail Overrides
-                Text("Prime Tower Settings",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary)
-
-                OverrideRow(
-                    label = "Prime Volume",
-                    override = overrides.primeVolume,
-                    defaultHint = "45",
-                    onModeChange = { mode -> overrides = overrides.copy(primeVolume = overrides.primeVolume.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideIntField(
-                            value = overrides.primeVolume.value ?: 45,
-                            onValueChange = { overrides = overrides.copy(primeVolume = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Tower Brim Width",
-                    override = overrides.primeTowerBrimWidth,
-                    defaultHint = "3 mm",
-                    onModeChange = { mode -> overrides = overrides.copy(primeTowerBrimWidth = overrides.primeTowerBrimWidth.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideFloatField(
-                            value = overrides.primeTowerBrimWidth.value ?: 3f,
-                            suffix = "mm",
-                            onValueChange = { overrides = overrides.copy(primeTowerBrimWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Brim Chamfer",
-                    override = overrides.primeTowerBrimChamfer,
-                    defaultHint = "On",
-                    onModeChange = { mode -> overrides = overrides.copy(primeTowerBrimChamfer = overrides.primeTowerBrimChamfer.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideToggle(
-                            value = overrides.primeTowerBrimChamfer.value ?: true,
-                            onValueChange = { overrides = overrides.copy(primeTowerBrimChamfer = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                OverrideRow(
-                    label = "Chamfer Max Width",
-                    override = overrides.primeTowerChamferMaxWidth,
-                    defaultHint = "5 mm",
-                    onModeChange = { mode -> overrides = overrides.copy(primeTowerChamferMaxWidth = overrides.primeTowerChamferMaxWidth.copy(mode = mode)) },
-                    valueContent = {
-                        OverrideFloatField(
-                            value = overrides.primeTowerChamferMaxWidth.value ?: 5f,
-                            suffix = "mm",
-                            onValueChange = { overrides = overrides.copy(primeTowerChamferMaxWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
-                        )
-                    }
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                ExpandableOverrideSection(
+                    title = "Support",
+                    icon = Icons.Default.Architecture,
+                    expanded = expandedSection == "support",
+                    onToggle = { expandedSection = if (expandedSection == "support") null else "support" }
                 ) {
-                    Text("Flow Calibration", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = overrides.flowCalibration,
-                        onCheckedChange = { overrides = overrides.copy(flowCalibration = it) }
+                    OverrideRow(
+                        label = "Supports",
+                        override = overrides.supports,
+                        defaultHint = "Off",
+                        onModeChange = { mode -> overrides = overrides.copy(supports = overrides.supports.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideToggle(
+                                value = overrides.supports.value ?: false,
+                                onValueChange = { overrides = overrides.copy(supports = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
                     )
+
+                    // Expanded support settings (only show when supports are overridden to enabled)
+                    if (overrides.supports.mode == OverrideMode.OVERRIDE && overrides.supports.value == true) {
+                        OverrideRow(
+                            label = "  Support Type",
+                            override = overrides.supportType,
+                            defaultHint = "Normal (Auto)",
+                            onModeChange = { mode -> overrides = overrides.copy(supportType = overrides.supportType.copy(mode = mode)) },
+                            valueContent = {
+                                val types = listOf("normal(auto)" to "Normal", "tree(auto)" to "Tree")
+                                OverrideDropdown(
+                                    value = overrides.supportType.value ?: "normal(auto)",
+                                    options = types.map { it.first },
+                                    labels = types.map { it.second },
+                                    onValueChange = { overrides = overrides.copy(supportType = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                                )
+                            }
+                        )
+
+                        OverrideRow(
+                            label = "  Threshold Angle",
+                            override = overrides.supportAngle,
+                            defaultHint = "30\u00B0",
+                            onModeChange = { mode -> overrides = overrides.copy(supportAngle = overrides.supportAngle.copy(mode = mode)) },
+                            valueContent = {
+                                OverrideIntField(
+                                    value = overrides.supportAngle.value ?: 30,
+                                    suffix = "\u00B0",
+                                    onValueChange = { overrides = overrides.copy(supportAngle = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 90))) }
+                                )
+                            }
+                        )
+
+                        OverrideRow(
+                            label = "  Build Plate Only",
+                            override = overrides.supportBuildPlateOnly,
+                            defaultHint = "Off",
+                            onModeChange = { mode -> overrides = overrides.copy(supportBuildPlateOnly = overrides.supportBuildPlateOnly.copy(mode = mode)) },
+                            valueContent = {
+                                OverrideToggle(
+                                    value = overrides.supportBuildPlateOnly.value ?: false,
+                                    onValueChange = { overrides = overrides.copy(supportBuildPlateOnly = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                                )
+                            }
+                        )
+
+                        OverrideRow(
+                            label = "  Support Pattern",
+                            override = overrides.supportPattern,
+                            defaultHint = "Default",
+                            onModeChange = { mode -> overrides = overrides.copy(supportPattern = overrides.supportPattern.copy(mode = mode)) },
+                            valueContent = {
+                                val patterns = listOf("default", "rectilinear", "rectilinear_grid", "honeycomb", "lightning")
+                                OverrideDropdown(
+                                    value = overrides.supportPattern.value ?: "default",
+                                    options = patterns,
+                                    onValueChange = { overrides = overrides.copy(supportPattern = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                                )
+                            }
+                        )
+
+                        OverrideRow(
+                            label = "  Pattern Spacing",
+                            override = overrides.supportPatternSpacing,
+                            defaultHint = "2.5 mm",
+                            onModeChange = { mode -> overrides = overrides.copy(supportPatternSpacing = overrides.supportPatternSpacing.copy(mode = mode)) },
+                            valueContent = {
+                                OverrideFloatField(
+                                    value = overrides.supportPatternSpacing.value ?: 2.5f,
+                                    suffix = "mm",
+                                    onValueChange = { overrides = overrides.copy(supportPatternSpacing = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                                )
+                            }
+                        )
+
+                        OverrideRow(
+                            label = "  Interface Top Layers",
+                            override = overrides.supportInterfaceTopLayers,
+                            defaultHint = "3",
+                            onModeChange = { mode -> overrides = overrides.copy(supportInterfaceTopLayers = overrides.supportInterfaceTopLayers.copy(mode = mode)) },
+                            valueContent = {
+                                OverrideIntField(
+                                    value = overrides.supportInterfaceTopLayers.value ?: 3,
+                                    onValueChange = { overrides = overrides.copy(supportInterfaceTopLayers = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 10))) }
+                                )
+                            }
+                        )
+
+                        OverrideRow(
+                            label = "  Interface Bottom Layers",
+                            override = overrides.supportInterfaceBottomLayers,
+                            defaultHint = "0",
+                            onModeChange = { mode -> overrides = overrides.copy(supportInterfaceBottomLayers = overrides.supportInterfaceBottomLayers.copy(mode = mode)) },
+                            valueContent = {
+                                OverrideIntField(
+                                    value = overrides.supportInterfaceBottomLayers.value ?: 0,
+                                    onValueChange = { overrides = overrides.copy(supportInterfaceBottomLayers = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 10))) }
+                                )
+                            }
+                        )
+
+                        OverrideRow(
+                            label = "  Support Extruder",
+                            override = overrides.supportFilament,
+                            defaultHint = "Default",
+                            onModeChange = { mode -> overrides = overrides.copy(supportFilament = overrides.supportFilament.copy(mode = mode)) },
+                            valueContent = {
+                                val options = listOf(0 to "Default") + (1..4).map { it to "Extruder $it" }
+                                OverrideDropdown(
+                                    value = (overrides.supportFilament.value ?: 0).toString(),
+                                    options = options.map { it.first.toString() },
+                                    labels = options.map { it.second },
+                                    onValueChange = { overrides = overrides.copy(supportFilament = OverrideValue(OverrideMode.OVERRIDE, it.toIntOrNull() ?: 0)) }
+                                )
+                            }
+                        )
+
+                        OverrideRow(
+                            label = "  Interface Extruder",
+                            override = overrides.supportInterfaceFilament,
+                            defaultHint = "Default",
+                            onModeChange = { mode -> overrides = overrides.copy(supportInterfaceFilament = overrides.supportInterfaceFilament.copy(mode = mode)) },
+                            valueContent = {
+                                val options = listOf(0 to "Default") + (1..4).map { it to "Extruder $it" }
+                                OverrideDropdown(
+                                    value = (overrides.supportInterfaceFilament.value ?: 0).toString(),
+                                    options = options.map { it.first.toString() },
+                                    labels = options.map { it.second },
+                                    onValueChange = { overrides = overrides.copy(supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, it.toIntOrNull() ?: 0)) }
+                                )
+                            }
+                        )
+                    }
+                }
+
+                ExpandableOverrideSection(
+                    title = "Prime Tower",
+                    icon = Icons.Default.ViewInAr,
+                    expanded = expandedSection == "tower",
+                    onToggle = { expandedSection = if (expandedSection == "tower") null else "tower" }
+                ) {
+                    OverrideRow(
+                        label = "Prime Tower",
+                        override = overrides.primeTower,
+                        defaultHint = "Off",
+                        onModeChange = { mode -> overrides = overrides.copy(primeTower = overrides.primeTower.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideToggle(
+                                value = overrides.primeTower.value ?: false,
+                                onValueChange = { overrides = overrides.copy(primeTower = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "Prime Volume",
+                        override = overrides.primeVolume,
+                        defaultHint = "45",
+                        onModeChange = { mode -> overrides = overrides.copy(primeVolume = overrides.primeVolume.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideIntField(
+                                value = overrides.primeVolume.value ?: 45,
+                                onValueChange = { overrides = overrides.copy(primeVolume = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "Tower Brim Width",
+                        override = overrides.primeTowerBrimWidth,
+                        defaultHint = "3 mm",
+                        onModeChange = { mode -> overrides = overrides.copy(primeTowerBrimWidth = overrides.primeTowerBrimWidth.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideFloatField(
+                                value = overrides.primeTowerBrimWidth.value ?: 3f,
+                                suffix = "mm",
+                                onValueChange = { overrides = overrides.copy(primeTowerBrimWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "Brim Chamfer",
+                        override = overrides.primeTowerBrimChamfer,
+                        defaultHint = "On",
+                        onModeChange = { mode -> overrides = overrides.copy(primeTowerBrimChamfer = overrides.primeTowerBrimChamfer.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideToggle(
+                                value = overrides.primeTowerBrimChamfer.value ?: true,
+                                onValueChange = { overrides = overrides.copy(primeTowerBrimChamfer = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "Chamfer Max Width",
+                        override = overrides.primeTowerChamferMaxWidth,
+                        defaultHint = "5 mm",
+                        onModeChange = { mode -> overrides = overrides.copy(primeTowerChamferMaxWidth = overrides.primeTowerChamferMaxWidth.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideFloatField(
+                                value = overrides.primeTowerChamferMaxWidth.value ?: 5f,
+                                suffix = "mm",
+                                onValueChange = { overrides = overrides.copy(primeTowerChamferMaxWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+                }
+
+                ExpandableOverrideSection(
+                    title = "Temperature",
+                    icon = Icons.Default.Thermostat,
+                    expanded = expandedSection == "temp",
+                    onToggle = { expandedSection = if (expandedSection == "temp") null else "temp" }
+                ) {
+                    OverrideRow(
+                        label = "Bed Temp",
+                        override = overrides.bedTemp,
+                        defaultHint = "60\u00B0C",
+                        onModeChange = { mode -> overrides = overrides.copy(bedTemp = overrides.bedTemp.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideIntField(
+                                value = overrides.bedTemp.value ?: 60,
+                                suffix = "\u00B0C",
+                                onValueChange = { overrides = overrides.copy(bedTemp = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+                }
+
+                ExpandableOverrideSection(
+                    title = "Other",
+                    icon = Icons.Default.Tune,
+                    expanded = expandedSection == "other",
+                    onToggle = { expandedSection = if (expandedSection == "other") null else "other" }
+                ) {
+                    OverrideRow(
+                        label = "Brim Width",
+                        override = overrides.brimWidth,
+                        defaultHint = "0 mm",
+                        onModeChange = { mode -> overrides = overrides.copy(brimWidth = overrides.brimWidth.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideFloatField(
+                                value = overrides.brimWidth.value ?: 0f,
+                                suffix = "mm",
+                                onValueChange = { overrides = overrides.copy(brimWidth = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "Skirt Loops",
+                        override = overrides.skirtLoops,
+                        defaultHint = "0",
+                        onModeChange = { mode -> overrides = overrides.copy(skirtLoops = overrides.skirtLoops.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideIntField(
+                                value = overrides.skirtLoops.value ?: 0,
+                                onValueChange = { overrides = overrides.copy(skirtLoops = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Flow Calibration", style = MaterialTheme.typography.bodyMedium)
+                        Switch(
+                            checked = overrides.flowCalibration,
+                            onCheckedChange = { overrides = overrides.copy(flowCalibration = it) }
+                        )
+                    }
                 }
             }
 
@@ -744,6 +779,46 @@ fun SettingsScreen(
                     "Deletes cached 3MF and G-code files. Use if slicing fails after an update.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExpandableOverrideSection(
+    title: String,
+    icon: ImageVector,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onToggle() }
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(12.dp))
+                Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    "Toggle"
+                )
+            }
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    content = content
                 )
             }
         }
