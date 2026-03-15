@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
@@ -2149,17 +2150,19 @@ fun InlineGcodePreview(
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .width(40.dp)
+                        .width(52.dp)
                         .padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("${maxLayer + 1}", fontSize = 9.sp,
+                    Text("${maxLayer + 1}", fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.primary,
-                        textAlign = TextAlign.Center)
-                    Box(
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth())
+                    BoxWithConstraints(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
+                        val sliderLength = maxHeight
                         Slider(
                             value = maxLayer.toFloat(),
                             onValueChange = { v ->
@@ -2168,13 +2171,14 @@ fun InlineGcodePreview(
                             },
                             valueRange = 0f..(totalLayers - 1).toFloat(),
                             modifier = Modifier
-                                .width(240.dp)
+                                .requiredWidth(sliderLength)
                                 .graphicsLayer { rotationZ = -90f }
                         )
                     }
-                    Text("1", fontSize = 9.sp,
+                    Text("1", fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center)
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth())
                 }
             }
         }

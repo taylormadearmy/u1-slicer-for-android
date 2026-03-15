@@ -101,7 +101,42 @@ fun GcodeViewer3DScreen(
         Row(
             modifier = Modifier.fillMaxSize().padding(padding)
         ) {
-            // Vertical layer range slider on the left
+            // GL view + loading overlay
+            Box(modifier = Modifier.fillMaxHeight().weight(1f)) {
+                AndroidView(
+                    factory = { ctx ->
+                        GcodeViewerView(ctx).also { view ->
+                            viewerView = view
+                            // Don't upload gcode here — the LaunchedEffect handles both
+                            // colors and gcode atomically to avoid a race where VBOs are
+                            // built with default colors before the real colors are set.
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator()
+                            Text(
+                                "Building preview…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Vertical layer range slider on the right
             if (totalLayers > 1) {
                 Column(
                     modifier = Modifier
@@ -147,41 +182,6 @@ fun GcodeViewer3DScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
-                }
-            }
-
-            // GL view + loading overlay
-            Box(modifier = Modifier.fillMaxHeight().weight(1f)) {
-                AndroidView(
-                    factory = { ctx ->
-                        GcodeViewerView(ctx).also { view ->
-                            viewerView = view
-                            // Don't upload gcode here — the LaunchedEffect handles both
-                            // colors and gcode atomically to avoid a race where VBOs are
-                            // built with default colors before the real colors are set.
-                        }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-                if (isLoading) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CircularProgressIndicator()
-                            Text(
-                                "Building preview…",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
                 }
             }
         }
