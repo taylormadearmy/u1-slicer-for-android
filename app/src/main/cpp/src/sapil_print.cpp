@@ -356,6 +356,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // or template macros that conflict with our minimal Print pipeline.
         auto& model_config = getModelConfig();
         bool is_snapmaker_profile = false;
+        int applied = 0;
         if (!model_config.empty()) {
             // Only apply G-code templates that were embedded by our ProfileEmbedder
             // (Snapmaker profile).  Raw Bambu 3MFs contain Bambu-specific template
@@ -511,6 +512,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "enable_prime_tower",
                     "prime_tower_width",
                     "prime_volume",
+                    "prime_tower_brim_width",
                     "wipe_tower_x",
                     "wipe_tower_y",
                     // Extruder offsets (per-extruder, must match extruder count)
@@ -533,7 +535,6 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "filament_colour",
                     nullptr
                 };
-                int applied = 0;
                 for (const char** k = profile_keys; *k; ++k) {
                     auto* opt = model_config.option(*k);
                     if (opt) {
@@ -641,6 +642,12 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             << "\"zMin\":" << finalWorldBB.min.z() << ","
             << "\"zMax\":" << finalWorldBB.max.z()
             << "}"
+            << ",\"extruderCount\":" << config.extruder_count
+            << ",\"wipeTowerEnabled\":" << (config.wipe_tower_enabled ? "true" : "false")
+            << ",\"wipeTowerX\":" << config.wipe_tower_x
+            << ",\"wipeTowerY\":" << config.wipe_tower_y
+            << ",\"isSnapmakerProfile\":" << (is_snapmaker_profile ? "true" : "false")
+            << ",\"profileKeysApplied\":" << applied
             << "}";
         diagnostics_record_native_event("slice_pre_process", slice_context.str());
 

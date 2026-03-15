@@ -1088,7 +1088,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         Log.i("SlicerVM", "Post-processed G-code: remapped tools to physical slots $slots")
                     }
                     // Inject preview thumbnails into G-code for Klipper/Moonraker
-                    val sourcePath = sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
+                    val sourcePath = rawInputFile?.absolutePath ?: sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
                     if (sourcePath != null) {
                         try {
                             val injected = GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
