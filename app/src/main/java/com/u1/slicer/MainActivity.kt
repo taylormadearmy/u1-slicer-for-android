@@ -695,6 +695,15 @@ fun PrepareScreen(
                             copyCount = copyCount,
                             onSetCopyCount = viewModel::setCopyCount
                         )
+                        // Single-color extruder picker (hidden for multi-color models)
+                        if (colorMapping == null && state is SlicerViewModel.SlicerState.ModelLoaded) {
+                            val selectedExtruder by viewModel.selectedExtruder.collectAsState()
+                            ExtruderPickerRow(
+                                selectedExtruder = selectedExtruder,
+                                extruderPresets = extruderPresets,
+                                onSelect = { viewModel.setSelectedExtruder(it) }
+                            )
+                        }
                         ConfigCard(
                             config, viewModel::updateConfig,
                             slicingOverrides = slicingOverrides,
@@ -2098,6 +2107,45 @@ fun ScaleSection(
                     Text("Reset to 100%", style = MaterialTheme.typography.labelSmall)
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ExtruderPickerRow(
+    selectedExtruder: Int,
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    onSelect: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Extruder:", style = MaterialTheme.typography.bodyMedium)
+        for (i in 0 until 4) {
+            val preset = extruderPresets.firstOrNull { it.index == i }
+            val color = preset?.color?.takeIf { it.isNotBlank() && it != "#FFFFFF" }
+                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
+            val parsedColor = try {
+                Color(android.graphics.Color.parseColor(color))
+            } catch (_: Exception) { Color.Gray }
+
+            FilterChip(
+                selected = selectedExtruder == i,
+                onClick = { onSelect(i) },
+                label = { Text("E${i + 1}") },
+                leadingIcon = {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .background(parsedColor, androidx.compose.foundation.shape.CircleShape)
+                    )
+                }
+            )
         }
     }
 }

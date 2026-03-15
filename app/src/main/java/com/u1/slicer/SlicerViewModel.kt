@@ -104,6 +104,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _activeExtruderColors = MutableStateFlow<List<String>>(emptyList())
     val activeExtruderColors: StateFlow<List<String>> = _activeExtruderColors.asStateFlow()
 
+    // Selected extruder for single-color models (0-based: E1=0, E2=1, E3=2, E4=3)
+    private val _selectedExtruder = MutableStateFlow(0)
+    val selectedExtruder: StateFlow<Int> = _selectedExtruder.asStateFlow()
+
     /**
      * Build a map of objectId (Int) → 0-based extruder index (Byte) for mesh preview coloring.
      * Uses objectExtruderMap from ThreeMfInfo (1-based) converted to 0-based.
@@ -687,6 +691,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.i("SlicerVM", "Auto-applied color mapping: $extCount extruders, mapping=$initialMapping")
                 } else {
                     _colorMapping.value = null
+                    _selectedExtruder.value = 0
                     // Single-color model: set E1's color from current printer slot config so
                     // the 3D model preview shows the correct filament color instead of default orange.
                     val presets = extruderPresets.value
@@ -783,6 +788,50 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun dismissMultiColorDialog() {
         _showMultiColorDialog.value = false
+    }
+
+    /**
+     * Set the selected extruder for single-color models.
+     * Updates the 3D preview color and configures tool remapping so the slicer
+     * emits the correct T-command for the chosen physical extruder slot.
+     */
+    fun setSelectedExtruder(index: Int) {
+        _selectedExtruder.value = index
+        updateSingleColorExtruder(index)
+    }
+
+    /**
+     * For single-color models, all triangles have extruder index 0 in the mesh.
+     * The recolor palette is indexed by extruder index in the mesh, so the selected
+     * extruder's color must go at palette index 0. Also sets up tool remapping
+     * so that the native slicer's T0 gets remapped to the physical slot.
+     */
+    private fun updateSingleColorExtruder(index: Int) {
+        val presets = extruderPresets.value
+        val color = presets.firstOrNull { it.index == index }?.color ?: ""
+        val resolvedColor = color.ifBlank { ExtruderPreset.DEFAULT_COLORS[index] }
+        val colors = MutableList(4) { "" }
+        colors[0] = resolvedColor  // Put at index 0 since all mesh triangles have extruder index 0
+        _activeExtruderColors.value = colors
+
+        // Configure tool remapping: single-color model uses T0 in native slicer,
+        // but we want it printed on the selected physical extruder slot.
+        if (index == 0) {
+            // E1 selected — identity mapping, no remap needed
+            toolRemapSlots = null
+            _config.value = _config.value.copy(
+                extruderCount = 1,
+                wipeTowerEnabled = false
+            )
+        } else {
+            // E2/E3/E4 — remap T0 → physical slot
+            toolRemapSlots = listOf(index)
+            _config.value = _config.value.copy(
+                extruderCount = 1,
+                wipeTowerEnabled = false
+            )
+        }
+        Log.i("SlicerVM", "Single-color extruder set to E${index + 1}, remap=$toolRemapSlots")
     }
 
     /**
@@ -1515,6 +1564,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _gcodePreview.value = ""
         _parsedGcode.value = null
         _activeExtruderColors.value = emptyList()
+        _selectedExtruder.value = 0
         _threeMfInfo.value = null
         _showPlateSelector.value = false
         _showMultiColorDialog.value = false
