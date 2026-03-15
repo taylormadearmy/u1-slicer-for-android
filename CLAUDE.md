@@ -13,6 +13,8 @@ App ID: `com.u1.slicer.orca`
 
 Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
+**Native .so rebuild is always allowed** — do not ask for permission to rebuild the native library. Follow the rebuild instructions in the "Profile Key Pipeline" section when needed.
+
 **WSL environment**: `./gradlew` fails in WSL (CRLF line endings + Windows-only SDK). Always run Gradle via:
 ```bash
 /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command "cd 'C:\Users\kevin\projects\u1-slicer-orca'; .\gradlew <task> --no-daemon"
@@ -82,7 +84,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 319 tests across 18 classes
+### Unit tests (`app/src/test/`) — 322 tests across 18 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -91,7 +93,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
-- `data/SlicingOverridesTest.kt` (30) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path, buildProfileOverrides support preservation
+- `data/SlicingOverridesTest.kt` (33) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path, buildProfileOverrides support preservation, skirt_height emission
 - `data/SettingsBackupTest.kt` (13) — Export/import round-trip, version validation, partial restore, filament profile name resolution
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
 - `bambu/BambuSanitizerTest.kt` (22) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard, config-based plate filtering
@@ -102,7 +104,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns, pipeline output coverage
 
-### Instrumented tests (`app/src/androidTest/`) — 102 tests across 11 classes
+### Instrumented tests (`app/src/androidTest/`) — 103 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression: shorter-over-longer file, ContentResolver "wt" mode
@@ -113,7 +115,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder T1 assertion + 4-extruder T0-T3 assertion
 - `slicing/ProfileEmbedderIntegrationTest.kt` (11) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
-- `viewer/ThreeMfMeshParserTest.kt` (2) — 3MF mesh parsing and transform resolution
+- `viewer/ThreeMfMeshParserTest.kt` (3) — 3MF mesh parsing, transform resolution, old.3mf bounds validation
 
 ## Architecture
 
@@ -196,6 +198,11 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `ThreeMfMeshParser` OOM guard: skips component `.model` files >80MB (`entry.size`) — prevents 268MB Java heap OOM from `readText()` on oversized meshes; model still loads and slices via native OrcaSlicer (graceful degradation, no 3D preview for that component)
 - `ProfileEmbedder.streamCleanEntry()` — streaming fallback for large (>50MB) DEFLATED component files; mirrors `BambuSanitizer.copyZipEntry()` with fast-path optimization; prevents OOM when embed() encounters un-STORED entries
 - AndroidManifest: `BROWSABLE` category + `pathPattern` filters for `.3mf`/`.stl` — separate intent-filters for `application/octet-stream` and `*/*` MIME types ensure the app appears in Android's "Open with" picker from file managers
+- `buildProfileOverridesImpl()` emits `skirt_height=0` when `skirt_loops=0` — OrcaSlicer defaults both to 1; without explicit skirt_height=0, the skirt could appear even though loops=0 via some config paths (B17 fix)
+- `parseModelSettingsConfig()` accepts `allExtruderValues: MutableSet<Int>?` — collects ALL per-part extruder values (not just max-per-object); fixes B16 where multi-part objects with different extruders only reported the max, causing plate colour filtering to show wrong subset
+- `parseForPlateSelection()` falls back to `Slic3r_PE_model.config` when `model_settings.config` is absent — restructurePlateFile() writes the former for compound objects (B16 fix)
+- `support_filament` and `support_interface_filament` added to `profile_keys[]` in `sapil_print.cpp` — enables F8 support extruder selection to actually take effect (requires native rebuild)
+- `SlicingService` (F13) — foreground service for background slicing; already integrated: `start()` before `native.slice()`, `updateProgress()` during, `stop()` in finally block
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 

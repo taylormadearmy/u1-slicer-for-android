@@ -336,10 +336,18 @@ object ThreeMfMeshParser {
         val parts = str.trim().split(Regex("\\s+"))
         if (parts.size != 12) return null
         val v = parts.map { it.toFloatOrNull() ?: return null }
+        // 3MF spec: 12 values are m00 m01 m02 m10 m11 m12 m20 m21 m22 tx ty tz
+        // representing a row-vector transform: [x' y' z' 1] = [x y z 1] × M
+        // where M = | m00 m01 m02 0 |
+        //           | m10 m11 m12 0 |
+        //           | m20 m21 m22 0 |
+        //           | tx  ty  tz  1 |
+        // Store as row-major blocks so buildMeshData's t[0]*x+t[4]*y+t[8]*z+t[12]
+        // correctly computes x' = m00*x + m10*y + m20*z + tx
         return floatArrayOf(
-            v[0], v[3], v[6], 0f,
-            v[1], v[4], v[7], 0f,
-            v[2], v[5], v[8], 0f,
+            v[0], v[1], v[2], 0f,
+            v[3], v[4], v[5], 0f,
+            v[6], v[7], v[8], 0f,
             v[9], v[10], v[11], 1f
         )
     }

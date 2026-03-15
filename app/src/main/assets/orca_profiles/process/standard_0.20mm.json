@@ -22,7 +22,7 @@
     "brim_type": "auto_brim",
     "skirt_distance": "3",
     "skirt_height": "1",
-    "skirt_loops": "2",
+    "skirt_loops": "0",
     "slow_down_layer_time": "4",
     "slow_down_min_speed": "20",
     "default_acceleration": "10000",

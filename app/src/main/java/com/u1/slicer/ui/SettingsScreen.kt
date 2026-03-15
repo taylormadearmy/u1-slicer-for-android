@@ -402,6 +402,139 @@ fun SettingsScreen(
                     }
                 )
 
+                // Expanded support settings (only show when supports are overridden to enabled)
+                if (overrides.supports.mode == OverrideMode.OVERRIDE && overrides.supports.value == true) {
+                    OverrideRow(
+                        label = "  Support Type",
+                        override = overrides.supportType,
+                        defaultHint = "Normal (Auto)",
+                        onModeChange = { mode -> overrides = overrides.copy(supportType = overrides.supportType.copy(mode = mode)) },
+                        valueContent = {
+                            val types = listOf("normal(auto)" to "Normal", "tree(auto)" to "Tree")
+                            OverrideDropdown(
+                                value = overrides.supportType.value ?: "normal(auto)",
+                                options = types.map { it.first },
+                                labels = types.map { it.second },
+                                onValueChange = { overrides = overrides.copy(supportType = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "  Threshold Angle",
+                        override = overrides.supportAngle,
+                        defaultHint = "30\u00B0",
+                        onModeChange = { mode -> overrides = overrides.copy(supportAngle = overrides.supportAngle.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideIntField(
+                                value = overrides.supportAngle.value ?: 30,
+                                suffix = "\u00B0",
+                                onValueChange = { overrides = overrides.copy(supportAngle = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 90))) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "  Build Plate Only",
+                        override = overrides.supportBuildPlateOnly,
+                        defaultHint = "Off",
+                        onModeChange = { mode -> overrides = overrides.copy(supportBuildPlateOnly = overrides.supportBuildPlateOnly.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideToggle(
+                                value = overrides.supportBuildPlateOnly.value ?: false,
+                                onValueChange = { overrides = overrides.copy(supportBuildPlateOnly = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "  Support Pattern",
+                        override = overrides.supportPattern,
+                        defaultHint = "Default",
+                        onModeChange = { mode -> overrides = overrides.copy(supportPattern = overrides.supportPattern.copy(mode = mode)) },
+                        valueContent = {
+                            val patterns = listOf("default", "rectilinear", "rectilinear_grid", "honeycomb", "lightning")
+                            OverrideDropdown(
+                                value = overrides.supportPattern.value ?: "default",
+                                options = patterns,
+                                onValueChange = { overrides = overrides.copy(supportPattern = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "  Pattern Spacing",
+                        override = overrides.supportPatternSpacing,
+                        defaultHint = "2.5 mm",
+                        onModeChange = { mode -> overrides = overrides.copy(supportPatternSpacing = overrides.supportPatternSpacing.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideFloatField(
+                                value = overrides.supportPatternSpacing.value ?: 2.5f,
+                                suffix = "mm",
+                                onValueChange = { overrides = overrides.copy(supportPatternSpacing = OverrideValue(OverrideMode.OVERRIDE, it)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "  Interface Top Layers",
+                        override = overrides.supportInterfaceTopLayers,
+                        defaultHint = "3",
+                        onModeChange = { mode -> overrides = overrides.copy(supportInterfaceTopLayers = overrides.supportInterfaceTopLayers.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideIntField(
+                                value = overrides.supportInterfaceTopLayers.value ?: 3,
+                                onValueChange = { overrides = overrides.copy(supportInterfaceTopLayers = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 10))) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "  Interface Bottom Layers",
+                        override = overrides.supportInterfaceBottomLayers,
+                        defaultHint = "0",
+                        onModeChange = { mode -> overrides = overrides.copy(supportInterfaceBottomLayers = overrides.supportInterfaceBottomLayers.copy(mode = mode)) },
+                        valueContent = {
+                            OverrideIntField(
+                                value = overrides.supportInterfaceBottomLayers.value ?: 0,
+                                onValueChange = { overrides = overrides.copy(supportInterfaceBottomLayers = OverrideValue(OverrideMode.OVERRIDE, it.coerceIn(0, 10))) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "  Support Extruder",
+                        override = overrides.supportFilament,
+                        defaultHint = "Default",
+                        onModeChange = { mode -> overrides = overrides.copy(supportFilament = overrides.supportFilament.copy(mode = mode)) },
+                        valueContent = {
+                            val options = listOf(0 to "Default") + (1..4).map { it to "Extruder $it" }
+                            OverrideDropdown(
+                                value = (overrides.supportFilament.value ?: 0).toString(),
+                                options = options.map { it.first.toString() },
+                                labels = options.map { it.second },
+                                onValueChange = { overrides = overrides.copy(supportFilament = OverrideValue(OverrideMode.OVERRIDE, it.toIntOrNull() ?: 0)) }
+                            )
+                        }
+                    )
+
+                    OverrideRow(
+                        label = "  Interface Extruder",
+                        override = overrides.supportInterfaceFilament,
+                        defaultHint = "Default",
+                        onModeChange = { mode -> overrides = overrides.copy(supportInterfaceFilament = overrides.supportInterfaceFilament.copy(mode = mode)) },
+                        valueContent = {
+                            val options = listOf(0 to "Default") + (1..4).map { it to "Extruder $it" }
+                            OverrideDropdown(
+                                value = (overrides.supportInterfaceFilament.value ?: 0).toString(),
+                                options = options.map { it.first.toString() },
+                                labels = options.map { it.second },
+                                onValueChange = { overrides = overrides.copy(supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, it.toIntOrNull() ?: 0)) }
+                            )
+                        }
+                    )
+                }
+
                 OverrideRow(
                     label = "Brim Width",
                     override = overrides.brimWidth,
@@ -700,21 +833,23 @@ private fun OverrideIntField(
 private fun OverrideDropdown(
     value: String,
     options: List<String>,
+    labels: List<String> = options,
     onValueChange: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val displayValue = labels.getOrElse(options.indexOf(value)) { value }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
-            value = value,
+            value = displayValue,
             onValueChange = {},
             readOnly = true,
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
             modifier = Modifier.fillMaxWidth().menuAnchor()
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option ->
+            options.forEachIndexed { idx, option ->
                 DropdownMenuItem(
-                    text = { Text(option) },
+                    text = { Text(labels.getOrElse(idx) { option }) },
                     onClick = {
                         onValueChange(option)
                         expanded = false

@@ -27,6 +27,15 @@ data class SlicingOverrides(
     val wallCount: OverrideValue<Int> = OverrideValue(),
     val infillPattern: OverrideValue<String> = OverrideValue(),
     val supports: OverrideValue<Boolean> = OverrideValue(),
+    val supportType: OverrideValue<String> = OverrideValue(),
+    val supportAngle: OverrideValue<Int> = OverrideValue(),
+    val supportBuildPlateOnly: OverrideValue<Boolean> = OverrideValue(),
+    val supportPattern: OverrideValue<String> = OverrideValue(),
+    val supportPatternSpacing: OverrideValue<Float> = OverrideValue(),
+    val supportInterfaceTopLayers: OverrideValue<Int> = OverrideValue(),
+    val supportInterfaceBottomLayers: OverrideValue<Int> = OverrideValue(),
+    val supportFilament: OverrideValue<Int> = OverrideValue(),
+    val supportInterfaceFilament: OverrideValue<Int> = OverrideValue(),
     val brimWidth: OverrideValue<Float> = OverrideValue(),
     val skirtLoops: OverrideValue<Int> = OverrideValue(),
     val bedTemp: OverrideValue<Int> = OverrideValue(),
@@ -106,6 +115,15 @@ data class SlicingOverrides(
         putOverride("wallCount", wallCount)
         putOverride("infillPattern", infillPattern)
         putOverride("supports", supports)
+        putOverride("supportType", supportType)
+        putOverride("supportAngle", supportAngle)
+        putOverride("supportBuildPlateOnly", supportBuildPlateOnly)
+        putOverride("supportPattern", supportPattern)
+        putOverride("supportPatternSpacing", supportPatternSpacing)
+        putOverride("supportInterfaceTopLayers", supportInterfaceTopLayers)
+        putOverride("supportInterfaceBottomLayers", supportInterfaceBottomLayers)
+        putOverride("supportFilament", supportFilament)
+        putOverride("supportInterfaceFilament", supportInterfaceFilament)
         putOverride("brimWidth", brimWidth)
         putOverride("skirtLoops", skirtLoops)
         putOverride("bedTemp", bedTemp)
@@ -126,6 +144,15 @@ data class SlicingOverrides(
             "wallCount" to 2,
             "infillPattern" to "gyroid",
             "supports" to false,
+            "supportType" to "normal(auto)",
+            "supportAngle" to 30,
+            "supportBuildPlateOnly" to false,
+            "supportPattern" to "default",
+            "supportPatternSpacing" to 2.5f,
+            "supportInterfaceTopLayers" to 3,
+            "supportInterfaceBottomLayers" to 0,
+            "supportFilament" to 0,
+            "supportInterfaceFilament" to 0,
             "brimWidth" to 0f,
             "skirtLoops" to 0,
             "bedTemp" to 60,
@@ -153,6 +180,15 @@ data class SlicingOverrides(
                     wallCount = parseOverride("wallCount") { (it as Number).toInt() },
                     infillPattern = parseOverride("infillPattern") { it.toString() },
                     supports = parseOverride("supports") { it as Boolean },
+                    supportType = parseOverride("supportType") { it.toString() },
+                    supportAngle = parseOverride("supportAngle") { (it as Number).toInt() },
+                    supportBuildPlateOnly = parseOverride("supportBuildPlateOnly") { it as Boolean },
+                    supportPattern = parseOverride("supportPattern") { it.toString() },
+                    supportPatternSpacing = parseOverride("supportPatternSpacing") { (it as Number).toFloat() },
+                    supportInterfaceTopLayers = parseOverride("supportInterfaceTopLayers") { (it as Number).toInt() },
+                    supportInterfaceBottomLayers = parseOverride("supportInterfaceBottomLayers") { (it as Number).toInt() },
+                    supportFilament = parseOverride("supportFilament") { (it as Number).toInt() },
+                    supportInterfaceFilament = parseOverride("supportInterfaceFilament") { (it as Number).toInt() },
                     brimWidth = parseOverride("brimWidth") { (it as Number).toFloat() },
                     skirtLoops = parseOverride("skirtLoops") { (it as Number).toInt() },
                     bedTemp = parseOverride("bedTemp") { (it as Number).toInt() },

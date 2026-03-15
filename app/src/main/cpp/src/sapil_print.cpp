@@ -424,6 +424,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "support_interface_spacing",
                     "support_speed",
                     "support_interface_speed",
+                    // Support material extruder selection (F8: soluble support on dedicated extruder)
+                    "support_filament",
+                    "support_interface_filament",
                     // Tree support parameters
                     "tree_support_branch_angle",
                     "tree_support_branch_distance",

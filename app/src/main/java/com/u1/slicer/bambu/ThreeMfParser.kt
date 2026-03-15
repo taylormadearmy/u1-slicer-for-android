@@ -81,13 +81,14 @@ object ThreeMfParser {
                 val extruderAssignments = mutableMapOf<String, Int>()
                 val plateObjectMap = mutableMapOf<Int, MutableList<String>>()
 
+                val allExtruderValuesMain = mutableSetOf<Int>()
                 if (isBambu) {
                     val msEntry = zip.getEntry("Metadata/model_settings.config")
                     if (msEntry != null) {
                         parseModelSettingsConfig(
                             zip.getInputStream(msEntry),
                             plateNames, objectNames, extruderAssignments,
-                            plateObjectMap
+                            plateObjectMap, allExtruderValues = allExtruderValuesMain
                         )
                         if (plateObjectMap.isNotEmpty()) {
                             Log.i(TAG, "Plate→object mapping: ${plateObjectMap.size} plates — $plateObjectMap")
@@ -209,8 +210,11 @@ object ThreeMfParser {
                     }
                 }
 
-                // Count unique extruders
-                val uniqueExtruders = extruderAssignments.values.toSet()
+                // Count unique extruders — use allExtruderValuesMain (collects ALL per-part
+                // extruder values) so multi-part objects with different extruders are counted
+                // correctly (B16 fix: max-per-object missed multi-part colour indices).
+                val uniqueExtruders = if (allExtruderValuesMain.isNotEmpty())
+                    allExtruderValuesMain else extruderAssignments.values.toSet()
                 val hasMultiExtruderAssignments = uniqueExtruders.size > 1
                 val extruderCount = maxOf(
                     1,
@@ -260,15 +264,24 @@ object ThreeMfParser {
                 val objectNames = mutableMapOf<String, String>()
                 val extruderAssignments = mutableMapOf<String, Int>()
 
+                // Check model_settings.config first, then Slic3r_PE_model.config
+                // (restructurePlateFile writes the latter for compound objects)
                 val msEntry = zip.getEntry("Metadata/model_settings.config")
+                    ?: zip.getEntry("Metadata/Slic3r_PE_model.config")
+                val allExtruderValues = mutableSetOf<Int>()
                 if (msEntry != null) {
                     parseModelSettingsConfig(
                         zip.getInputStream(msEntry),
-                        plateNames, objectNames, extruderAssignments
+                        plateNames, objectNames, extruderAssignments,
+                        allExtruderValues = allExtruderValues
                     )
                 }
 
-                val uniqueExtruders = extruderAssignments.values.toSet()
+                // Use allExtruderValues (collects ALL extruder indices from every
+                // <part>/<metadata> entry) rather than extruderAssignments.values
+                // which only tracks max-per-object and misses multi-part colours.
+                val uniqueExtruders = if (allExtruderValues.isNotEmpty())
+                    allExtruderValues else extruderAssignments.values.toSet()
                 ThreeMfInfo(
                     objects = emptyList(),
                     plates = emptyList(),
@@ -543,7 +556,8 @@ object ThreeMfParser {
         plateNames: MutableMap<Int, String>,
         objectNames: MutableMap<String, String>,
         extruderAssignments: MutableMap<String, Int>,
-        plateObjectMap: MutableMap<Int, MutableList<String>> = mutableMapOf()
+        plateObjectMap: MutableMap<Int, MutableList<String>> = mutableMapOf(),
+        allExtruderValues: MutableSet<Int>? = null
     ) {
         try {
             val parser = createParser(inputStream)
@@ -595,6 +609,8 @@ object ThreeMfParser {
                                             // Track max extruder seen for this object (covers part-level assignments)
                                             val current = extruderAssignments[currentObjectId!!] ?: 0
                                             if (ext > current) extruderAssignments[currentObjectId!!] = ext
+                                            // Also collect ALL extruder values for plate colour filtering (B16)
+                                            allExtruderValues?.add(ext)
                                         }
                                     }
                                 }

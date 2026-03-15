@@ -844,11 +844,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startSlicing() {
         viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
             try {
+                SlicingService.start(context)
                 var maxPct = 0
                 native.progressListener = { pct, stage ->
                     if (pct > maxPct) maxPct = pct
                     _state.value = SlicerState.Slicing(maxPct, stage)
+                    SlicingService.updateProgress(context, maxPct, stage)
                 }
 
                 _state.value = SlicerState.Slicing(0, "Preparing...")
@@ -1013,6 +1016,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 _state.value = SlicerState.Error("Slicing error: $errorMsg")
             } finally {
                 native.progressListener = null
+                SlicingService.stop(context)
             }
         }
     }
@@ -1418,11 +1422,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         ): com.u1.slicer.bambu.ThreeMfInfo {
             // Filter colors to only those extruder indices used on this plate.
             // usedExtruderIndices are 1-based; detectedColors is 0-indexed.
-            // Only filter when the plate definitively uses multiple extruders
-            // (size > 1). When size <= 1, the info may be unpopulated (e.g. plate
-            // not yet restructured) — fall back to all source colors.
+            // Filter whenever usedExtruderIndices is populated (size >= 1) AND
+            // there are multiple source colors to filter from. This correctly
+            // handles single-extruder plates (showing only 1 color instead of all).
             val usedIndices = plateInfo.usedExtruderIndices
-            val filteredColors = if (usedIndices.size > 1 && sourceInfo.detectedColors.size > 1) {
+            val filteredColors = if (usedIndices.isNotEmpty() && sourceInfo.detectedColors.size > 1) {
                 usedIndices.sorted().mapNotNull { idx ->
                     sourceInfo.detectedColors.getOrNull(idx - 1) // 1-based → 0-indexed
                 }
@@ -1480,6 +1484,15 @@ internal fun buildProfileOverridesImpl(
     val wallCount = resolve(ov.wallCount, cfg.perimeters, "wallCount")
     val infillPattern = resolve(ov.infillPattern, cfg.fillPattern, "infillPattern")
     val supportEnabled = resolve(ov.supports, cfg.supportEnabled, "supports")
+    val supportType = resolve(ov.supportType, cfg.supportType, "supportType")
+    val supportAngle = resolve(ov.supportAngle, cfg.supportAngle.toInt(), "supportAngle")
+    val supportBuildPlateOnly = resolve(ov.supportBuildPlateOnly, false, "supportBuildPlateOnly")
+    val supportPattern = resolve(ov.supportPattern, "default", "supportPattern")
+    val supportPatternSpacing = resolve(ov.supportPatternSpacing, 2.5f, "supportPatternSpacing")
+    val supportInterfaceTopLayers = resolve(ov.supportInterfaceTopLayers, 3, "supportInterfaceTopLayers")
+    val supportInterfaceBottomLayers = resolve(ov.supportInterfaceBottomLayers, 0, "supportInterfaceBottomLayers")
+    val supportFilament = resolve(ov.supportFilament, 0, "supportFilament")
+    val supportInterfaceFilament = resolve(ov.supportInterfaceFilament, 0, "supportInterfaceFilament")
     val brimWidth = resolve(ov.brimWidth, cfg.brimWidth, "brimWidth")
     val skirtLoops = resolve(ov.skirtLoops, cfg.skirtLoops, "skirtLoops")
     val bedTemp = resolve(ov.bedTemp, cfg.bedTemp, "bedTemp")
@@ -1505,6 +1518,9 @@ internal fun buildProfileOverridesImpl(
         "bed_temperature_initial_layer" to mutableListOf(bedTemp.toString()),
         "brim_width" to brimWidth.toString(),
         "skirt_loops" to skirtLoops.toString(),
+        // OrcaSlicer defaults skirt_height=1; explicitly set to 0 when no skirt
+        // to prevent skirt generation even if some other config path sets loops>0
+        "skirt_height" to if (skirtLoops > 0) "1" else "0",
         "enable_prime_tower" to if (primeTower) "1" else "0",
         "prime_tower_width" to cfg.wipeTowerWidth.toString(),
         "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
@@ -1523,7 +1539,19 @@ internal fun buildProfileOverridesImpl(
     // the user's intent and there's no file value to preserve.
     if (ov.supports.mode != OverrideMode.USE_FILE || !hasSourceConfig) {
         result["enable_support"] = if (supportEnabled) "1" else "0"
-        result["support_threshold_angle"] = cfg.supportAngle.toInt().toString()
+        result["support_threshold_angle"] = supportAngle.toString()
+        result["support_type"] = supportType
+        result["support_on_build_plate_only"] = if (supportBuildPlateOnly) "1" else "0"
+        result["support_base_pattern"] = supportPattern
+        result["support_base_pattern_spacing"] = supportPatternSpacing.toString()
+        result["support_interface_top_layers"] = supportInterfaceTopLayers.toString()
+        result["support_interface_bottom_layers"] = supportInterfaceBottomLayers.toString()
+        if (supportFilament > 0) {
+            result["support_filament"] = supportFilament.toString()
+        }
+        if (supportInterfaceFilament > 0) {
+            result["support_interface_filament"] = supportInterfaceFilament.toString()
+        }
     }
 
     return result

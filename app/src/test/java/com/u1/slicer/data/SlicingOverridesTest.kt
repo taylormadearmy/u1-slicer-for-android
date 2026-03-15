@@ -406,4 +406,87 @@ class SlicingOverridesTest {
         assertEquals("0", result["enable_support"])
         assertEquals("30", result["support_threshold_angle"])
     }
+
+    // --- F8: Support extruder override tests ---
+
+    @Test
+    fun `default supportFilament and supportInterfaceFilament are USE_FILE`() {
+        val overrides = SlicingOverrides()
+        assertEquals(OverrideMode.USE_FILE, overrides.supportFilament.mode)
+        assertEquals(OverrideMode.USE_FILE, overrides.supportInterfaceFilament.mode)
+    }
+
+    @Test
+    fun `serialization round-trip preserves support extruder overrides`() {
+        val original = SlicingOverrides(
+            supportFilament = OverrideValue(OverrideMode.OVERRIDE, 2),
+            supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, 3)
+        )
+        val json = original.toJson()
+        val restored = SlicingOverrides.fromJson(json)
+        assertEquals(OverrideMode.OVERRIDE, restored.supportFilament.mode)
+        assertEquals(2, restored.supportFilament.value)
+        assertEquals(OverrideMode.OVERRIDE, restored.supportInterfaceFilament.mode)
+        assertEquals(3, restored.supportInterfaceFilament.value)
+    }
+
+    @Test
+    fun `ORCA_DEFAULTS contains support extruder keys`() {
+        val defaults = SlicingOverrides.ORCA_DEFAULTS
+        assertEquals(0, defaults["supportFilament"])
+        assertEquals(0, defaults["supportInterfaceFilament"])
+    }
+
+    @Test
+    fun `buildProfileOverrides includes support_filament when overridden to non-zero`() {
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.OVERRIDE, true),
+            supportFilament = OverrideValue(OverrideMode.OVERRIDE, 2),
+            supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, 3)
+        )
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 4, hasSourceConfig = false)
+        assertEquals("2", result["support_filament"])
+        assertEquals("3", result["support_interface_filament"])
+    }
+
+    @Test
+    fun `buildProfileOverrides omits support_filament when default (0)`() {
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.OVERRIDE, true),
+            supportFilament = OverrideValue(OverrideMode.OVERRIDE, 0)
+        )
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        assertFalse("support_filament should be omitted when 0 (default)", result.containsKey("support_filament"))
+    }
+
+    // --- B17: skirt_height in profile overrides ---
+
+    @Test
+    fun `buildProfileOverrides sets skirt_height 0 when skirt_loops is 0`() {
+        val cfg = SliceConfig(skirtLoops = 0)
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        assertEquals("0", result["skirt_loops"])
+        assertEquals("0", result["skirt_height"])
+    }
+
+    @Test
+    fun `buildProfileOverrides sets skirt_height 1 when skirt_loops greater than 0`() {
+        val cfg = SliceConfig(skirtLoops = 0)
+        val ov = SlicingOverrides(skirtLoops = OverrideValue(OverrideMode.OVERRIDE, 3))
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        assertEquals("3", result["skirt_loops"])
+        assertEquals("1", result["skirt_height"])
+    }
+
+    @Test
+    fun `buildProfileOverrides skirt_height 0 when ORCA_DEFAULT skirt_loops resolves to 0`() {
+        val cfg = SliceConfig(skirtLoops = 2)
+        val ov = SlicingOverrides(skirtLoops = OverrideValue(OverrideMode.ORCA_DEFAULT))
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        assertEquals("0", result["skirt_loops"])
+        assertEquals("0", result["skirt_height"])
+    }
 }

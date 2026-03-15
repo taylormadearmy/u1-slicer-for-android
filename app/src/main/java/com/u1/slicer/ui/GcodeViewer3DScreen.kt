@@ -30,6 +30,7 @@ fun GcodeViewer3DScreen(
 ) {
     val totalLayers = parsedGcode.layers.size
     var viewerView by remember { mutableStateOf<GcodeViewerView?>(null) }
+    var minLayer by remember { mutableIntStateOf(0) }
     var maxLayer by remember { mutableIntStateOf(totalLayers - 1) }
     var isLoading by remember { mutableStateOf(true) }
 
@@ -59,8 +60,12 @@ fun GcodeViewer3DScreen(
                 title = {
                     Column {
                         Text("3D G-code View", fontWeight = FontWeight.Bold)
+                        val layerRange = if (minLayer > 0) "Layers ${minLayer + 1}–${maxLayer + 1}" else "Layer ${maxLayer + 1}"
+                        val minZ = parsedGcode.layers.getOrNull(minLayer)?.z ?: 0f
+                        val maxZ = parsedGcode.layers.getOrNull(maxLayer)?.z ?: 0f
+                        val zInfo = if (minLayer > 0) "%.1f–%.1fmm".format(minZ, maxZ) else "%.1fmm".format(maxZ)
                         Text(
-                            "$totalLayers layers  Layer ${maxLayer + 1}",
+                            "$totalLayers layers  $layerRange  $zInfo",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -96,7 +101,7 @@ fun GcodeViewer3DScreen(
         Row(
             modifier = Modifier.fillMaxSize().padding(padding)
         ) {
-            // Vertical layer slider on the left
+            // Vertical layer range slider on the left
             if (totalLayers > 1) {
                 Column(
                     modifier = Modifier
@@ -114,17 +119,18 @@ fun GcodeViewer3DScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    // Vertical slider (rotated horizontal slider)
+                    // Vertical range slider (rotated horizontal RangeSlider)
                     BoxWithConstraints(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
                         val sliderLength = maxHeight
-                        Slider(
-                            value = maxLayer.toFloat(),
-                            onValueChange = {
-                                maxLayer = it.roundToInt()
-                                viewerView?.setLayerRange(0, maxLayer)
+                        RangeSlider(
+                            value = minLayer.toFloat()..maxLayer.toFloat(),
+                            onValueChange = { range ->
+                                minLayer = range.start.roundToInt()
+                                maxLayer = range.endInclusive.roundToInt()
+                                viewerView?.setLayerRange(minLayer, maxLayer)
                             },
                             valueRange = 0f..(totalLayers - 1).toFloat(),
                             modifier = Modifier
@@ -132,20 +138,12 @@ fun GcodeViewer3DScreen(
                                 .graphicsLayer { rotationZ = -90f }
                         )
                     }
-                    // Bottom label: layer 1
+                    // Bottom label: min layer (or 1 if at bottom)
                     Text(
-                        "1",
+                        if (minLayer > 0) "${minLayer + 1}" else "1",
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    // Z height below bottom label
-                    val currentZ = parsedGcode.layers.getOrNull(maxLayer)?.z ?: 0f
-                    Text(
-                        "%.1fmm".format(currentZ),
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        color = if (minLayer > 0) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )

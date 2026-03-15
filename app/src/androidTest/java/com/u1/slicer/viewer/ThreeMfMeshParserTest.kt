@@ -37,6 +37,21 @@ class ThreeMfMeshParserTest {
     }
 
     @Test
+    fun old3mf_parsesMeshWithCorrectBounds() {
+        val file = asset("old.3mf")
+        Log.d("ThreeMfMeshTest", "File: ${file.name} (${file.length()/1024}KB)")
+        val mesh = ThreeMfMeshParser.parse(file)
+        assertNotNull("Expected non-null MeshData for old.3mf", mesh)
+        assertTrue("Expected > 0 vertices", mesh!!.vertexCount > 0)
+        Log.d("ThreeMfMeshTest", "old.3mf bounds: x=${mesh.minX}..${mesh.maxX}, y=${mesh.minY}..${mesh.maxY}, z=${mesh.minZ}..${mesh.maxZ}")
+        // Model should be roughly centered around (165, 161, 63) based on the build item transform
+        // and should fit within 270x270x270 bed
+        assertTrue("maxX should be within bed bounds", mesh.maxX <= 270f)
+        assertTrue("maxY should be within bed bounds", mesh.maxY <= 270f)
+        assertTrue("minZ should be >= 0 (on bed)", mesh.minZ >= -1f)
+    }
+
+    @Test
     fun dragonScale_multiPlate_parsesMesh() {
         val file = asset("Dragon Scale infinity.3mf")
         val mesh = try {
