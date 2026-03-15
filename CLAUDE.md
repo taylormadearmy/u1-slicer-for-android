@@ -84,7 +84,7 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 
 **If instrumented tests fail with "file locked"**: a previous Gradle run left file handles open. Kill the Gradle daemon (`.\gradlew --stop`), rerun `Remove-Item` above, then retry.
 
-### Unit tests (`app/src/test/`) — 322 tests across 18 classes
+### Unit tests (`app/src/test/`) — 346 tests across 18 classes
 - `gcode/GcodeParserTest.kt` (16) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -94,14 +94,14 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
 - `data/SlicingOverridesTest.kt` (33) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, resolvePrimeTower() profile-embed path, buildProfileOverrides support preservation, skirt_height emission
-- `data/SettingsBackupTest.kt` (13) — Export/import round-trip, version validation, partial restore, filament profile name resolution
+- `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution, MakerWorld cookie round-trip
 - `bambu/ThreeMfParserTest.kt` (7) — 3MF data model construction, isMultiPlate detection
 - `bambu/BambuSanitizerTest.kt` (22) — INI config parsing, nil replacement, array normalization, filterModelToPlate, stripNonPrintableBuildItems, stripAssembleSection, component size guard, config-based plate filtering
 - `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
 - `ui/MultiColorMappingTest.kt` (7) — ensureMultiSlotMapping collapse detection and sequential distribution
-- `model/CopyArrangeCalculatorTest.kt` (15) — Grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
+- `model/CopyArrangeCalculatorTest.kt` (18) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns, pipeline output coverage
 
 ### Instrumented tests (`app/src/androidTest/`) — 103 tests across 11 classes
@@ -211,7 +211,12 @@ Check results: `app\build\reports\tests\testDebugUnitTest\index.html` (unit) and
 - `DiagnosticsStore` — JSONL event logging for Clipper error investigation; tracks app launches, upgrade detection, native library loading, model loads, slice attempts, Clipper failures, and restart observations; accessible via "Share Diagnostics" button in Settings and ErrorCard
 - `sapil_diagnostics.cpp` — Native-side diagnostics; records `native_jni_onload`, `slice_pre_process` (world bounds, support config, extruder count, wipe tower, profile keys applied), `slice_exception` events; configured via `NativeLibrary.configureDiagnostics(path)`
 - `GcodeThumbnailInjector` — uses `rawInputFile` (original 3MF before sanitization) for preview image extraction, NOT `sourceModelFile` (post-sanitized, images stripped); STL files have no 3MF preview
-- `ModelRenderer.modelScale` — visual scale applied in `drawModel()` (single-instance) and `drawModelAt()` (placement); scale is about mesh center so model stays visually centered; `ModelViewerView.hitTest()` uses scaled bounds for drag detection; bed-bounds clamping in `onObjectMoved` uses scaled size
+- `ModelRenderer.modelScale` — visual scale applied in `drawModel()` (single-instance) and `drawModelAt()` (placement); `drawModelAt()` uses center→scale→translate so position = scaled model's min corner on bed; `ModelViewerView.hitTest()` uses scaled bounds for drag detection; bed-bounds clamping in `onObjectMoved` uses scaled size; `setModelScale()` resets custom positions (auto re-center); `getPlacementPositions()` uses scaled size for centering
+- `CopyArrangeCalculator.calculate()` centers the grid on the bed — single copy at `((bed-size)/2, (bed-size)/2)`, multiple copies in a centered grid with equal margins on all sides
+- `SlicingOverridesUI.kt` — shared composables for slicing override accordions (5 sections: Layer & Infill, Support, Prime Tower, Temperature, Other); used by both SettingsScreen and PrepareScreen's ConfigCard
+- `SettingsBackup` includes `makerWorldCookies` and `makerWorldCookiesEnabled` fields — nullable for backwards compatibility with older backup files
+- `SliceCompleteCard` accepts `extruderColors` parameter — pass `.filter { it.isNotBlank() }` from `activeExtruderColors` to get compact-indexed colours matching `perExtruderFilamentMm` indices
+- `GcodeRenderer` tube vertex format: 10 floats per vertex (3 pos + 4 color + 3 normal); `toolpath.vert` uses Gouraud shading with two directional lights matching model viewer; GL_LINES fallback uses 7 floats (no normals, shader detects zero-length normal and skips lighting)
 
 ## Profile Key Pipeline (IMPORTANT: read before adding slicer settings)
 
