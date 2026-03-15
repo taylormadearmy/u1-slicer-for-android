@@ -1743,6 +1743,13 @@ fun InlineModelPreview(
         if (extruderColors.isNotEmpty()) v.setExtruderColors(extruderColors)
     }
 
+    // Update renderer with model scale
+    LaunchedEffect(viewerView, modelScale) {
+        val v = viewerView ?: return@LaunchedEffect
+        v.renderer.modelScale = floatArrayOf(modelScale.x, modelScale.y, modelScale.z)
+        v.requestRender()
+    }
+
     // Update renderer with placement data
     LaunchedEffect(viewerView, placementEnabled, objPositions, towerX, towerY) {
         val v = viewerView ?: return@LaunchedEffect
@@ -1762,10 +1769,12 @@ fun InlineModelPreview(
             v.onObjectMoved = { index, dx, dy ->
                 val count = objPositions.size / 2
                 if (index < count) {
-                    // Move object
+                    // Move object — use scaled size for bed bounds
                     val i = index
-                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - modelSizeX))
-                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - modelSizeY))
+                    val scaledSizeX = modelSizeX * modelScale.x
+                    val scaledSizeY = modelSizeY * modelScale.y
+                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - scaledSizeX))
+                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - scaledSizeY))
                     v.renderer.instancePositions = objPositions.copyOf()
                     onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY))
                 } else {

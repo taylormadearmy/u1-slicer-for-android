@@ -109,12 +109,16 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         val positions = renderer.instancePositions ?: return -1
 
         val count = positions.size / 2
-        val sizeX = mesh.sizeX
-        val sizeY = mesh.sizeY
+        val s = renderer.modelScale
+        val sizeX = mesh.sizeX * s[0]
+        val sizeY = mesh.sizeY * s[1]
+        // Scale expands from center, so the origin shifts by half the size delta
+        val offsetX = (mesh.sizeX - sizeX) / 2f
+        val offsetY = (mesh.sizeY - sizeY) / 2f
 
         for (i in (0 until count).reversed()) {
-            val ox = positions[i * 2]
-            val oy = positions[i * 2 + 1]
+            val ox = positions[i * 2] + offsetX
+            val oy = positions[i * 2 + 1] + offsetY
             if (bx >= ox && bx <= ox + sizeX && by >= oy && by <= oy + sizeY) return i
         }
 

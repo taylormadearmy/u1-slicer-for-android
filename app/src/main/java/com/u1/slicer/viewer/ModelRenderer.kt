@@ -55,6 +55,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     // Index of the instance/tower currently being dragged (-1=none, N=object index, instances.size=tower)
     @Volatile var highlightIndex: Int = -1
 
+    // Model scale (from SlicerViewModel.ModelScale) — applied visually in draw calls
+    // AND used by ModelViewerView.hitTest() for scale-aware hit detection
+    @Volatile var modelScale = floatArrayOf(1f, 1f, 1f)
+
     private var viewportWidth = 1
     private var viewportHeight = 1
 
@@ -190,7 +194,21 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private fun drawModel(mesh: MeshData, color: FloatArray = modelColorDefault) {
         val shader = modelShader ?: return
         shader.use()
-        camera.computeMVP()
+
+        val s = modelScale
+        if (s[0] != 1f || s[1] != 1f || s[2] != 1f) {
+            val modelMatrix = FloatArray(16)
+            Matrix.setIdentityM(modelMatrix, 0)
+            val cx = (mesh.minX + mesh.maxX) / 2f
+            val cy = (mesh.minY + mesh.maxY) / 2f
+            val cz = (mesh.minZ + mesh.maxZ) / 2f
+            Matrix.translateM(modelMatrix, 0, cx, cy, cz)
+            Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
+            Matrix.translateM(modelMatrix, 0, -cx, -cy, -cz)
+            camera.computeMVP(modelMatrix)
+        } else {
+            camera.computeMVP()
+        }
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
@@ -208,6 +226,17 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         Matrix.setIdentityM(modelMatrix, 0)
         // Offset by -minX/-minY so the model's bottom-left corner lands at (x, y) on the bed
         Matrix.translateM(modelMatrix, 0, x - mesh.minX, y - mesh.minY, -mesh.minZ)
+
+        // Apply visual scale about the positioned mesh center
+        val s = modelScale
+        if (s[0] != 1f || s[1] != 1f || s[2] != 1f) {
+            val cx = (mesh.maxX - mesh.minX) / 2f
+            val cy = (mesh.maxY - mesh.minY) / 2f
+            val cz = (mesh.maxZ - mesh.minZ) / 2f
+            Matrix.translateM(modelMatrix, 0, cx, cy, cz)
+            Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
+            Matrix.translateM(modelMatrix, 0, -cx, -cy, -cz)
+        }
 
         camera.computeMVP(modelMatrix)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
