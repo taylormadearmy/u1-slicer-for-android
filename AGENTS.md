@@ -65,3 +65,5 @@ app/src/main/java/com/u1/slicer/
 4. **Stale 3MF cache**: After changing sanitizer/embedder logic, cached files on device produce wrong results. The app auto-clears on version upgrade, but during dev use: `adb -s 43211JEKB16931 shell "run-as com.u1.slicer.orca sh -c 'rm files/embedded_* files/sanitized_* files/plate*.3mf'"`
 5. **`resolveInto()` before slicing**: Always call `SlicingOverrides.resolveInto(SliceConfig)` — never pass raw config to native.
 6. **Don't reload model before `setModelInstances()`**: It clears instances internally; extra reload causes Clipper errors.
+7. **Release diagnostics for field-only Clipper failures**: Use "Share Diagnostics" from Settings or the Clipper error card to export `files/diagnostics/clipper_investigation_bundle.txt`. This is now the primary evidence path when the bug only appears on release builds or production devices.
+8. **Pre-built native caveat**: Kotlin-side diagnostics are active immediately, but native JNI/TreeSupport diagnostics only land in the APK after rebuilding and copying `libprusaslicer-jni.so` into `app/src/main/jniLibs/arm64-v8a/`.

@@ -1,5 +1,6 @@
 #include "../include/sapil.h"
 #include "sapil_internal.h"
+#include "sapil_diagnostics.h"
 #include <thread>
 #include <chrono>
 #include <fstream>
@@ -26,6 +27,32 @@ namespace sapil {
 }
 
 namespace sapil {
+
+static std::string jsonEscape(const std::string& input) {
+    std::string out;
+    out.reserve(input.size() + 16);
+    for (char c : input) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out += c; break;
+        }
+    }
+    return out;
+}
+
+static const char* supportTypeName(Slic3r::SupportType type) {
+    switch (type) {
+        case Slic3r::stNormalAuto: return "normal(auto)";
+        case Slic3r::stTreeAuto: return "tree(auto)";
+        case Slic3r::stNormal: return "normal";
+        case Slic3r::stTree: return "tree";
+        default: return "unknown";
+    }
+}
 
 SlicerEngine::SlicerEngine() : pImpl(new Impl()) {
     SAPIL_LOGI("SlicerEngine created");
@@ -584,6 +611,39 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Apply the config to the print
         print.apply(model, dpc);
 
+        Slic3r::BoundingBoxf3 finalWorldBB;
+        for (auto* obj : model.objects) {
+            finalWorldBB.merge(obj->bounding_box_exact());
+        }
+
+        std::string support_type_name = "unknown";
+        if (auto* support_type_opt = dpc.option<Slic3r::ConfigOptionEnum<Slic3r::SupportType>>("support_type")) {
+            support_type_name = supportTypeName(support_type_opt->value);
+        }
+        bool support_enabled = false;
+        if (auto* support_enabled_opt = dpc.option<Slic3r::ConfigOptionBool>("enable_support")) {
+            support_enabled = support_enabled_opt->value;
+        }
+        double support_angle = config.support_angle;
+        if (auto* support_angle_opt = dpc.option<Slic3r::ConfigOptionFloat>("support_threshold_angle")) {
+            support_angle = support_angle_opt->value;
+        }
+        std::ostringstream slice_context;
+        slice_context << "{"
+            << "\"supportEnabled\":" << (support_enabled ? "true" : "false") << ","
+            << "\"supportType\":\"" << support_type_name << "\","
+            << "\"supportAngle\":" << support_angle << ","
+            << "\"worldBounds\":{"
+            << "\"xMin\":" << finalWorldBB.min.x() << ","
+            << "\"xMax\":" << finalWorldBB.max.x() << ","
+            << "\"yMin\":" << finalWorldBB.min.y() << ","
+            << "\"yMax\":" << finalWorldBB.max.y() << ","
+            << "\"zMin\":" << finalWorldBB.min.z() << ","
+            << "\"zMax\":" << finalWorldBB.max.z()
+            << "}"
+            << "}";
+        diagnostics_record_native_event("slice_pre_process", slice_context.str());
+
         // Validate the print configuration before processing
         {
             auto validation = print.validate();
@@ -697,14 +757,29 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         }
         result.error_message = msg;
         SAPIL_LOGE("Total slicing errors: %d", (int)e.errors_.size());
+        diagnostics_record_native_event(
+            "slice_exception",
+            std::string("{\"category\":\"slicing_errors\",\"message\":\"") +
+                jsonEscape(msg) + "\"}"
+        );
     } catch (const Slic3r::SlicingError& e) {
         result.success = false;
         result.error_message = std::string("Slicing error: ") + e.what();
         SAPIL_LOGE("Slicing error: %s", e.what());
+        diagnostics_record_native_event(
+            "slice_exception",
+            std::string("{\"category\":\"slicing_error\",\"message\":\"") +
+                jsonEscape(e.what()) + "\"}"
+        );
     } catch (const std::exception& e) {
         result.success = false;
         result.error_message = std::string("Error: ") + e.what();
         SAPIL_LOGE("Error during slicing: %s", e.what());
+        diagnostics_record_native_event(
+            "slice_exception",
+            std::string("{\"category\":\"exception\",\"message\":\"") +
+                jsonEscape(e.what()) + "\"}"
+        );
     }
 
     return result;

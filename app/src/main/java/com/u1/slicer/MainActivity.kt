@@ -48,6 +48,7 @@ import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
 
 class MainActivity : ComponentActivity() {
+    private val diagnostics by lazy { DiagnosticsStore(this) }
     private val viewModel: SlicerViewModel by viewModels()
     private val printerViewModel: PrinterViewModel by viewModels()
     private var testReceiver: TestCommandReceiver? = null
@@ -133,10 +134,23 @@ class MainActivity : ComponentActivity() {
                 val reason = if (saved.lastVersionCode != currentVersion)
                     "version ${saved.lastVersionCode}→$currentVersion" else "APK reinstalled"
                 Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files, restarting process")
+                diagnostics.recordEvent(
+                    "upgrade_check",
+                    mapOf(
+                        "result" to "APK_CHANGED",
+                        "reason" to reason,
+                        "clearedFiles" to count,
+                        "savedVersionCode" to saved.lastVersionCode,
+                        "savedApkUpdateTime" to saved.savedApkUpdateTime,
+                        "currentVersionCode" to currentVersion,
+                        "currentApkUpdateTime" to apkLastUpdate
+                    )
+                )
                 prefs.edit()
                     .putInt("lastVersionCode", currentVersion)
                     .putLong("lastApkUpdateTime", apkLastUpdate)
                     .commit()  // sync — must flush before kill
+                diagnostics.markUpgradeRestartRequested("apk_changed", null)
 
                 // Force-restart: kill this process so Android launches a fresh one with
                 // a new native .so (clean g_model, g_engine, Clipper state).
@@ -158,12 +172,31 @@ class MainActivity : ComponentActivity() {
             UpgradeDetector.Result.SAME_APK -> {
                 // Same APK — still clear known transient cache patterns as a safety net.
                 val count = detector.filesToClearOnStartup(filesDir).onEach { it.delete() }.size
+                diagnostics.recordEvent(
+                    "upgrade_check",
+                    mapOf(
+                        "result" to "SAME_APK",
+                        "clearedFiles" to count,
+                        "savedVersionCode" to saved.lastVersionCode,
+                        "savedApkUpdateTime" to saved.savedApkUpdateTime,
+                        "currentVersionCode" to currentVersion,
+                        "currentApkUpdateTime" to apkLastUpdate
+                    )
+                )
                 if (count > 0) {
                     Log.i("SlicerVM", "Cleared $count cached 3MF files on startup")
                 }
             }
             UpgradeDetector.Result.FIRST_INSTALL -> {
                 // Nothing to clear on first install.
+                diagnostics.recordEvent(
+                    "upgrade_check",
+                    mapOf(
+                        "result" to "FIRST_INSTALL",
+                        "currentVersionCode" to currentVersion,
+                        "currentApkUpdateTime" to apkLastUpdate
+                    )
+                )
             }
         }
         prefs.edit()
@@ -182,6 +215,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        diagnostics.recordEvent(
+            "app_launch",
+            mapOf(
+                "savedInstanceState" to (savedInstanceState != null),
+                "intentAction" to intent?.action,
+                "sessionStartedWithPendingRestart" to diagnostics.sessionStartedAfterPendingRestart()
+            )
+        )
 
         // Request notification permission for Android 13+ (required for SlicingService
         // foreground notification to be visible)
@@ -329,6 +370,7 @@ class MainActivity : ComponentActivity() {
                         SettingsScreen(
                             viewModel = viewModel,
                             printerViewModel = printerViewModel,
+                            onShareDiagnostics = { viewModel.shareDiagnostics() },
                             onNavigateFilaments = { navController.navigate(Routes.FILAMENTS) },
                             onNavigatePrepare = { navigateTab(Routes.PREPARE) },
                             onNavigatePreview = { navigateTab(Routes.PREVIEW) },
@@ -569,7 +611,8 @@ fun PrepareScreen(
                         ErrorCard(
                             (state as SlicerViewModel.SlicerState.Error).message,
                             onPickFile,
-                            onRestart = { viewModel.restartApp() }
+                            onRestart = { viewModel.restartApp() },
+                            onShareDiagnostics = { viewModel.shareDiagnostics() }
                         )
                     }
                     modelLoaded -> {
@@ -833,7 +876,12 @@ fun PreviewScreen(
                     }
                 }
                 is SlicerViewModel.SlicerState.Error -> {
-                    ErrorCard(s.message, onRetry = { onNavigatePrepare() }, onRestart = { viewModel.restartApp() })
+                    ErrorCard(
+                        s.message,
+                        onRetry = { onNavigatePrepare() },
+                        onRestart = { viewModel.restartApp() },
+                        onShareDiagnostics = { viewModel.shareDiagnostics() }
+                    )
                 }
                 else -> {
                     // Empty state — no slice results yet, show empty bed
@@ -1553,7 +1601,12 @@ fun MultiColorInfoCard(
 }
 
 @Composable
-fun ErrorCard(message: String, onRetry: () -> Unit, onRestart: (() -> Unit)? = null) {
+fun ErrorCard(
+    message: String,
+    onRetry: () -> Unit,
+    onRestart: (() -> Unit)? = null,
+    onShareDiagnostics: (() -> Unit)? = null
+) {
     val isClipperError = message.contains("Coordinate outside allowed range", ignoreCase = true) ||
         message.contains("clipper", ignoreCase = true)
     Card(
@@ -1592,6 +1645,11 @@ fun ErrorCard(message: String, onRetry: () -> Unit, onRestart: (() -> Unit)? = n
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)
                     ) {
                         Text("Restart App")
+                    }
+                }
+                if (isClipperError && onShareDiagnostics != null) {
+                    OutlinedButton(onClick = onShareDiagnostics) {
+                        Text("Share Diagnostics")
                     }
                 }
             }

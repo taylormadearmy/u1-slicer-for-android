@@ -1,4 +1,5 @@
 #include "../include/sapil.h"
+#include "sapil_diagnostics.h"
 // =============================================================================
 // slicer_wrapper.cpp — Main JNI entry points
 // =============================================================================
@@ -9,6 +10,7 @@ extern "C" {
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     SAPIL_LOGI("SAPIL JNI_OnLoad — initializing engine");
+    sapil::diagnostics_record_native_event("native_library_loaded", "{}");
     g_engine = new sapil::SlicerEngine();
     return JNI_VERSION_1_6;
 }
@@ -27,6 +29,19 @@ Java_com_u1_slicer_NativeLibrary_getCoreVersion(JNIEnv* env, jobject /* this */)
     }
     std::string version = g_engine->getCoreVersion();
     return env->NewStringUTF(version.c_str());
+}
+
+JNIEXPORT void JNICALL
+Java_com_u1_slicer_NativeLibrary_configureDiagnostics(JNIEnv* env, jobject, jstring jpath) {
+    if (!jpath) return;
+    const char* path = env->GetStringUTFChars(jpath, nullptr);
+    sapil::diagnostics_set_output_path(std::string(path));
+    env->ReleaseStringUTFChars(jpath, path);
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_u1_slicer_NativeLibrary_getDiagnosticsState(JNIEnv* env, jobject) {
+    return env->NewStringUTF(sapil::diagnostics_get_state_json().c_str());
 }
 
 // ---- Model Loading ----

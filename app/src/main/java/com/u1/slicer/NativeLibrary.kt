@@ -25,6 +25,8 @@ class NativeLibrary {
 
     // ---- Core ----
     external fun getCoreVersion(): String
+    external fun configureDiagnostics(path: String)
+    external fun getDiagnosticsState(): String
 
     // ---- Model ----
     external fun loadModel(path: String): Boolean

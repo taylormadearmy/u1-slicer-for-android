@@ -41,6 +41,7 @@ import com.u1.slicer.printer.PrinterViewModel
 fun SettingsScreen(
     viewModel: SlicerViewModel,
     printerViewModel: PrinterViewModel? = null,
+    onShareDiagnostics: () -> Unit = {},
     onNavigateFilaments: (() -> Unit)? = null,
     onNavigatePrepare: () -> Unit = {},
     onNavigatePreview: () -> Unit = {},
@@ -720,6 +721,12 @@ fun SettingsScreen(
                 }
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+
+                OutlinedButton(
+                    onClick = onShareDiagnostics,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Share Diagnostics") }
 
                 OutlinedButton(
                     onClick = {

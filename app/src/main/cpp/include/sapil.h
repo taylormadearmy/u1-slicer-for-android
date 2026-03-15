@@ -18,6 +18,12 @@
 
 namespace sapil {
 
+// ---- Diagnostics ----
+void diagnostics_set_output_path(const std::string& path);
+std::string diagnostics_get_state_json();
+void diagnostics_record_native_event(const std::string& event, const std::string& payload_json = "{}");
+void diagnostics_note_clipper_point(long long x, long long y, const char* source);
+
 // ---- Progress Callback ----
 using ProgressCallback = std::function<void(int percentage, const std::string& stage)>;
 
@@ -144,5 +150,3 @@ jobject modelInfoToJava(JNIEnv* env, const ModelInfo& info);
 jobject sliceResultToJava(JNIEnv* env, const SliceResult& result);
 
 } // namespace sapil
-
-// Method added below — but we'll edit the file properly

@@ -1093,6 +1093,7 @@ endif()
 add_library(prusaslicer-jni SHARED
     src/slicer_wrapper.cpp
     src/sapil_config.cpp
+    src/sapil_diagnostics.cpp
     src/sapil_model.cpp
     src/sapil_print.cpp
     src/sapil_gcode.cpp

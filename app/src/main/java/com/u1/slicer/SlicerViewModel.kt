@@ -43,6 +43,7 @@ import java.io.File
 class SlicerViewModel(application: Application) : AndroidViewModel(application) {
 
     private val native = NativeLibrary()
+    private val diagnostics = DiagnosticsStore(application)
     private val container = (application as U1SlicerApplication).container
     private val settingsRepo = container.settingsRepository
     private val filamentDao = container.filamentDao
@@ -191,6 +192,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             "Native library not available"
         }
+        configureNativeDiagnosticsIfAvailable()
 
         viewModelScope.launch {
             val saved = settingsRepo.sliceConfig.first()
@@ -207,6 +209,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
         }
+        diagnostics.recordEvent("shared_url_import_started", mapOf("url" to url))
         // Extract MakerWorld design ID
         val designId = com.u1.slicer.network.MakerWorldUtils.extractDesignId(url)
         if (designId == null) {
@@ -378,6 +381,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 Log.i("SlicerVM", "Downloaded MakerWorld #$designId: ${outputFile.length()} bytes")
                 currentModelName = "makerworld_${designId}.3mf"
+                diagnostics.recordEvent(
+                    "shared_url_import_downloaded",
+                    mapOf(
+                        "designId" to designId,
+                        "instanceId" to instanceId,
+                        "outputFile" to outputFile.absolutePath,
+                        "sizeBytes" to outputFile.length()
+                    )
+                )
                 rawInputFile = outputFile   // Track for Clipper recovery
                 recoveryPlateId = -1
                 _state.value = SlicerState.Loading("Preparing model…")
@@ -451,6 +463,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // so clearIntermediateCache() won't delete it — safe to use after a cache clear).
                 rawInputFile = file
                 recoveryPlateId = -1
+                diagnostics.recordEvent(
+                    "model_imported",
+                    mapOf(
+                        "filename" to filename,
+                        "copiedTo" to file.absolutePath,
+                        "sizeBytes" to file.length()
+                    )
+                )
 
                 // For 3MF files: parse metadata and sanitize if Bambu
                 val fileToLoad = if (filename.endsWith(".3mf", ignoreCase = true)) {
@@ -541,6 +561,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val file = currentModelFile ?: return
         recoveryPlateId = plateId          // Track for Clipper recovery
         clipperRetryAttempted = false      // New plate = fresh retry allowance
+        diagnostics.recordEvent(
+            "plate_selected",
+            mapOf(
+                "plateId" to plateId,
+                "currentModelPath" to file.absolutePath
+            )
+        )
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -596,6 +623,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun loadNativeModel(file: File) {
         val success = native.loadModel(file.absolutePath)
+        diagnostics.recordEvent(
+            "native_model_load",
+            mapOf(
+                "success" to success,
+                "path" to file.absolutePath,
+                "firstModelLoadThisLaunch" to diagnostics.markFirstModelLoad()
+            )
+        )
         if (success) {
             val info = native.getModelInfo()
             if (info != null) {
@@ -842,6 +877,77 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, usedSlots, hasSourceConfig)
     }
 
+    private fun configureNativeDiagnosticsIfAvailable() {
+        if (!NativeLibrary.isLoaded) return
+        try {
+            native.configureDiagnostics(diagnostics.diagnosticsPath())
+            diagnostics.recordNativeConfigured(native.getDiagnosticsState())
+        } catch (_: UnsatisfiedLinkError) {
+            diagnostics.recordEvent("native_diagnostics_unavailable")
+        }
+    }
+
+    private fun safeNativeDiagnosticsState(): String? {
+        if (!NativeLibrary.isLoaded) return null
+        return try {
+            native.getDiagnosticsState()
+        } catch (_: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    private fun sliceDiagnosticsMap(
+        sliceConfig: SliceConfig,
+        profileOverrides: Map<String, Any>,
+        firstSliceThisLaunch: Boolean,
+        firstSliceAfterUpgrade: Boolean
+    ): Map<String, Any?> {
+        val currentInfo = lastModelInfo
+        return mapOf(
+            "firstSliceThisLaunch" to firstSliceThisLaunch,
+            "firstSliceAfterUpgrade" to firstSliceAfterUpgrade,
+            "modelName" to currentModelName,
+            "currentModelPath" to currentModelFile?.absolutePath,
+            "sourceModelPath" to sourceModelFile?.absolutePath,
+            "rawInputPath" to rawInputFile?.absolutePath,
+            "selectedPlateId" to recoveryPlateId.takeIf { it >= 0 },
+            "copyCount" to _copyCount.value,
+            "hasCustomPlacement" to (customObjectPositions != null),
+            "toolRemapSlots" to toolRemapSlots,
+            "extruderCount" to sliceConfig.extruderCount,
+            "wipeTowerEnabled" to sliceConfig.wipeTowerEnabled,
+            "wipeTowerX" to sliceConfig.wipeTowerX,
+            "wipeTowerY" to sliceConfig.wipeTowerY,
+            "supportEnabled" to sliceConfig.supportEnabled,
+            "supportOverrideMode" to slicingOverrides.value.supports.mode.name,
+            "supportTypeOverrideMode" to slicingOverrides.value.supportType.mode.name,
+            "supportTypeOverrideValue" to slicingOverrides.value.supportType.value,
+            "resolvedSupportTypeForProfile" to profileOverrides["support_type"],
+            "resolvedSupportEnabledForProfile" to profileOverrides["enable_support"],
+            "resolvedSupportAngleForProfile" to profileOverrides["support_threshold_angle"],
+            "modelBounds" to if (currentInfo != null) mapOf(
+                "sizeX" to currentInfo.sizeX,
+                "sizeY" to currentInfo.sizeY,
+                "sizeZ" to currentInfo.sizeZ
+            ) else null
+        )
+    }
+
+    private fun recordClipperFailure(source: String, message: String, autoRecoveryAttempted: Boolean) {
+        diagnostics.recordEvent(
+            "clipper_failure",
+            mapOf(
+                "source" to source,
+                "message" to message,
+                "autoRecoveryAttempted" to autoRecoveryAttempted,
+                "currentModelPath" to currentModelFile?.absolutePath,
+                "sourceModelPath" to sourceModelFile?.absolutePath,
+                "rawInputPath" to rawInputFile?.absolutePath,
+                "selectedPlateId" to recoveryPlateId.takeIf { it >= 0 }
+            )
+        )
+    }
+
     fun startSlicing() {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
@@ -940,6 +1046,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
                 val sliceConfig = ov.resolveInto(_config.value)
+                val (firstSliceThisLaunch, firstSliceAfterUpgrade) = diagnostics.markSliceStart()
+                val profileOverrides = buildProfileOverrides(
+                    sliceConfig,
+                    sliceConfig.extruderCount,
+                    toolRemapSlots,
+                    hasSourceConfig = originalSourceConfig != null
+                )
+                diagnostics.recordEvent(
+                    "slice_started",
+                    sliceDiagnosticsMap(
+                        sliceConfig = sliceConfig,
+                        profileOverrides = profileOverrides,
+                        firstSliceThisLaunch = firstSliceThisLaunch,
+                        firstSliceAfterUpgrade = firstSliceAfterUpgrade
+                    )
+                )
                 Log.i("SlicerVM", "Resolved slice config: layer=${sliceConfig.layerHeight} " +
                     "infill=${sliceConfig.fillDensity} walls=${sliceConfig.perimeters} " +
                     "support=${sliceConfig.supportEnabled} speed=${sliceConfig.printSpeed} " +
@@ -949,6 +1071,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val result = native.slice(sliceConfig)
 
                 if (result != null && result.success) {
+                    diagnostics.recordEvent(
+                        "slice_succeeded",
+                        mapOf(
+                            "gcodePath" to result.gcodePath,
+                            "totalLayers" to result.totalLayers,
+                            "estimatedTimeSeconds" to result.estimatedTimeSeconds
+                        )
+                    )
                     // Post-process G-code to remap compact tool indices to physical slots.
                     // OrcaSlicer sliced in compact mode (T0,T1,…) — remap to actual printer
                     // slots (e.g. T2,T3 for E3+E4) and fix SM_ command EXTRUDER/INDEX params.
@@ -996,6 +1126,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 } else {
                     val errorMsg = result?.errorMessage ?: "Slicing failed"
+                    if (isClipperError(errorMsg)) {
+                        recordClipperFailure(
+                            source = "slice_result",
+                            message = errorMsg,
+                            autoRecoveryAttempted = clipperRetryAttempted
+                        )
+                    }
                     if (isClipperError(errorMsg) && !clipperRetryAttempted) {
                         Log.w("SlicerVM", "Clipper error detected in slice result, attempting auto-recovery")
                         clipperRetryAttempted = true
@@ -1007,6 +1144,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Throwable) {
                 Log.e("SlicerVM", "Unexpected error during slicing", e)
                 val errorMsg = e.message ?: e.javaClass.simpleName
+                if (isClipperError(errorMsg)) {
+                    recordClipperFailure(
+                        source = "slice_exception",
+                        message = errorMsg,
+                        autoRecoveryAttempted = clipperRetryAttempted
+                    )
+                }
                 if (isClipperError(errorMsg) && !clipperRetryAttempted) {
                     Log.w("SlicerVM", "Clipper error detected in exception, attempting auto-recovery")
                     clipperRetryAttempted = true
@@ -1046,6 +1190,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val rawFile = rawInputFile
                 val origInfo = recoveryOrigInfo
                 val plateId = recoveryPlateId
+                diagnostics.recordEvent(
+                    "clipper_recovery_started",
+                    mapOf(
+                        "rawFile" to rawFile?.absolutePath,
+                        "plateId" to plateId,
+                        "currentModelPath" to currentModelFile?.absolutePath
+                    )
+                )
 
                 // Step 1: Nuke all intermediate cache files (rawInputFile is NOT affected)
                 val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
@@ -1057,6 +1209,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 if (rawFile == null || !rawFile.exists()) {
                     Log.e("SlicerVM", "Clipper recovery: raw input file unavailable")
+                    diagnostics.recordEvent(
+                        "clipper_recovery_failed",
+                        mapOf("reason" to "raw_input_missing")
+                    )
                     _state.value = SlicerState.Error(
                         "Slicing failed (Clipper error). Auto-recovery could not retry — try restarting the app."
                     )
@@ -1110,9 +1266,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 // Step 4: Re-slice (clipperRetryAttempted=true prevents another loop)
                 Log.i("SlicerVM", "Clipper recovery: model reloaded, retrying slice")
+                diagnostics.recordEvent(
+                    "clipper_recovery_reloaded",
+                    mapOf(
+                        "currentModelPath" to currentModelFile?.absolutePath,
+                        "plateId" to recoveryPlateId
+                    )
+                )
                 startSlicing()
             } catch (e: Throwable) {
                 Log.e("SlicerVM", "Clipper recovery failed", e)
+                diagnostics.recordEvent(
+                    "clipper_recovery_failed",
+                    mapOf("reason" to (e.message ?: e.javaClass.simpleName))
+                )
                 _state.value = SlicerState.Error(
                     "Slicing failed after auto-recovery. Try restarting the app.\n(${e.message})"
                 )
@@ -1128,6 +1295,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun restartApp() {
         val app = getApplication<Application>()
+        diagnostics.markUpgradeRestartRequested("manual_restart", safeNativeDiagnosticsState())
         UpgradeDetector.clearIntermediateCache(app.filesDir)
         native.clearModel()
         val intent = app.packageManager.getLaunchIntentForPackage(app.packageName)
@@ -1217,6 +1385,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    fun shareDiagnostics() {
+        val context = getApplication<Application>()
+        val latestError = (_state.value as? SlicerState.Error)?.message
+        val bundle = diagnostics.buildBundle(latestError)
+        if (!bundle.exists()) return
+        diagnostics.recordEvent(
+            "diagnostics_shared",
+            mapOf(
+                "bundlePath" to bundle.absolutePath,
+                "latestError" to latestError
+            )
+        )
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            bundle
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(
+            Intent.createChooser(intent, "Share Diagnostics")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 
     fun exportBackupAsync(onResult: (String) -> Unit) {
