@@ -1743,13 +1743,6 @@ fun InlineModelPreview(
         if (extruderColors.isNotEmpty()) v.setExtruderColors(extruderColors)
     }
 
-    // Update renderer with model scale
-    LaunchedEffect(viewerView, modelScale) {
-        val v = viewerView ?: return@LaunchedEffect
-        v.renderer.modelScale = floatArrayOf(modelScale.x, modelScale.y, modelScale.z)
-        v.requestRender()
-    }
-
     // Update renderer with placement data
     LaunchedEffect(viewerView, placementEnabled, objPositions, towerX, towerY) {
         val v = viewerView ?: return@LaunchedEffect
