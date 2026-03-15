@@ -15,23 +15,27 @@ class CopyArrangeCalculatorTest {
     }
 
     @Test
-    fun `two copies are in the same row`() {
+    fun `two copies are centered in the same row`() {
         val positions = CopyArrangeCalculator.calculate(20f, 20f, 2)
         assertEquals(4, positions.size)
-        assertEquals(5f, positions[0], 0.01f)
-        assertEquals(5f, positions[1], 0.01f)
-        assertEquals(30f, positions[2], 0.01f)
-        assertEquals(5f, positions[3], 0.01f)
+        // gridWidth = 2*20 + 1*5 = 45, offsetX = (270-45)/2 = 112.5
+        assertEquals(112.5f, positions[0], 0.01f)
+        assertEquals(125f, positions[1], 0.01f)
+        assertEquals(137.5f, positions[2], 0.01f)
+        assertEquals(125f, positions[3], 0.01f)
     }
 
     @Test
-    fun `grid wraps to next row`() {
+    fun `grid wraps to next row centered`() {
         // 270mm bed, 20mm object, 5mm margin -> cols = floor(275/25) = 11
+        // 12 copies: 11 in row 0, 1 in row 1 (2 rows)
+        // gridWidth = 11*20 + 10*5 = 270, offsetX = 0
+        // gridHeight = 2*20 + 1*5 = 45, offsetY = (270-45)/2 = 112.5
         val positions = CopyArrangeCalculator.calculate(20f, 20f, 12)
         val x = positions[11 * 2]
         val y = positions[11 * 2 + 1]
-        assertEquals(5f, x, 0.01f)
-        assertEquals(30f, y, 0.01f)
+        assertEquals(0f, x, 0.01f)
+        assertEquals(137.5f, y, 0.01f)
     }
 
     @Test
@@ -123,6 +127,41 @@ class CopyArrangeCalculatorTest {
             val overlapsY = ty < oy + 50f && ty + 60f > oy
             assertFalse("Tower at ($tx,$ty) overlaps copy $i at ($ox,$oy)", overlapsX && overlapsY)
         }
+    }
+
+    @Test
+    fun `grid is centered on bed for small objects`() {
+        // 4 copies of 50mm objects with 5mm margin
+        // cols = floor(275/55) = 5, 4 copies fit in 1 row
+        // gridWidth = 4*50 + 3*5 = 215, offsetX = (270-215)/2 = 27.5
+        // gridHeight = 1*50 = 50, offsetY = (270-50)/2 = 110
+        val positions = CopyArrangeCalculator.calculate(50f, 50f, 4)
+        assertEquals(8, positions.size)
+        assertEquals(27.5f, positions[0], 0.01f) // first copy X
+        assertEquals(110f, positions[1], 0.01f) // first copy Y
+        assertEquals(82.5f, positions[2], 0.01f) // second copy X
+        assertEquals(110f, positions[3], 0.01f) // second copy Y
+    }
+
+    @Test
+    fun `grid copies all within bed bounds`() {
+        val positions = CopyArrangeCalculator.calculate(50f, 50f, 9)
+        for (i in positions.indices step 2) {
+            assertTrue("x=${positions[i]} < 0", positions[i] >= 0f)
+            assertTrue("y=${positions[i+1]} < 0", positions[i+1] >= 0f)
+            assertTrue("x+size=${positions[i]+50f} > 270", positions[i] + 50f <= 270f)
+            assertTrue("y+size=${positions[i+1]+50f} > 270", positions[i+1] + 50f <= 270f)
+        }
+    }
+
+    @Test
+    fun `three copies in a row are centered`() {
+        // 3 copies of 80mm with 5mm margin → 1 row
+        // gridWidth = 3*80 + 2*5 = 250, offsetX = (270-250)/2 = 10
+        val positions = CopyArrangeCalculator.calculate(80f, 80f, 3)
+        assertEquals(6, positions.size)
+        assertEquals(10f, positions[0], 0.01f)
+        assertEquals(95f, positions[1], 0.01f) // (270-80)/2 = 95
     }
 
     @Test

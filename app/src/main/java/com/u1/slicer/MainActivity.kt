@@ -874,7 +874,7 @@ fun PreviewScreen(
                         onUploadOnly = { onUploadOnly(s.result.gcodePath) },
                         perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
                         bedTemp = config.bedTemp,
-                        extruderColors = extruderColors
+                        extruderColors = extruderColors.filter { it.isNotBlank() }
                     )
                     // Inline 3D G-code preview (auto-downsampled for large models)
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {

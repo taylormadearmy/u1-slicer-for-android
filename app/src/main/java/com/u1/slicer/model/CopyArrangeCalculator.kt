@@ -35,17 +35,25 @@ object CopyArrangeCalculator {
             )
         }
 
-        // Multiple copies: arrange in a grid starting at (margin, margin)
+        // Multiple copies: arrange in a centered grid
         val colCount = maxOf(1, ((bedSizeX + margin) / (objectSizeX + margin)).toInt())
         val rowCount = maxOf(1, ((bedSizeY + margin) / (objectSizeY + margin)).toInt())
         val actualCount = minOf(copyCount, colCount * rowCount)
+        val usedRows = minOf(rowCount, (actualCount + colCount - 1) / colCount)
+        val usedCols = if (actualCount <= colCount) actualCount else colCount
+
+        // Center the grid on the bed
+        val gridWidth = usedCols * objectSizeX + (usedCols - 1) * margin
+        val gridHeight = usedRows * objectSizeY + (usedRows - 1) * margin
+        val offsetX = maxOf(0f, (bedSizeX - gridWidth) / 2f)
+        val offsetY = maxOf(0f, (bedSizeY - gridHeight) / 2f)
 
         val positions = FloatArray(actualCount * 2)
         for (i in 0 until actualCount) {
             val col = i % colCount
             val row = i / colCount
-            positions[i * 2]     = margin + col * (objectSizeX + margin)
-            positions[i * 2 + 1] = margin + row * (objectSizeY + margin)
+            positions[i * 2]     = offsetX + col * (objectSizeX + margin)
+            positions[i * 2 + 1] = offsetY + row * (objectSizeY + margin)
         }
         return positions
     }
