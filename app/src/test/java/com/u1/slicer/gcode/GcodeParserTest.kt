@@ -269,6 +269,35 @@ class GcodeParserTest {
         assertEquals(listOf(0, 1, 2, 3), indices)
     }
 
+    @Test
+    fun `parse filament used comment multi-extruder`() {
+        val file = writeGcode("""
+            ;LAYER_CHANGE
+            G1 Z0.3
+            G1 X10 Y10 E1.0
+            ; filament used [mm] = 1234.56,789.01
+        """.trimIndent())
+        val result = GcodeParser.parse(file)
+
+        assertEquals(2, result.perExtruderFilamentMm.size)
+        assertEquals(1234.56f, result.perExtruderFilamentMm[0], 0.01f)
+        assertEquals(789.01f, result.perExtruderFilamentMm[1], 0.01f)
+    }
+
+    @Test
+    fun `parse filament used comment single-extruder`() {
+        val file = writeGcode("""
+            ;LAYER_CHANGE
+            G1 Z0.3
+            G1 X10 Y10 E1.0
+            ; filament used [mm] = 5678.90
+        """.trimIndent())
+        val result = GcodeParser.parse(file)
+
+        assertEquals(1, result.perExtruderFilamentMm.size)
+        assertEquals(5678.9f, result.perExtruderFilamentMm[0], 0.01f)
+    }
+
     // Helper extension
     private fun ParsedGcode.moves(layerIndex: Int) = layers[layerIndex].moves
 }

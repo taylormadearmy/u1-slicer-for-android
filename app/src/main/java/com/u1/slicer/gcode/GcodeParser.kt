@@ -17,6 +17,7 @@ object GcodeParser {
         var currentExtruder = 0
         var lastE = 0f
         var absoluteE = true
+        var perExtruderMm = emptyList<Float>()
 
         BufferedReader(FileReader(file)).use { reader ->
             var line: String?
@@ -35,6 +36,13 @@ object GcodeParser {
                         if (currentMoves.isNotEmpty()) {
                             layers.add(GcodeLayer(layerIndex++, currentZ, currentMoves.toList()))
                             currentMoves.clear()
+                        }
+                    }
+                    if (perExtruderMm.isEmpty() && startsWithAt(l, start, "; filament used [mm]")) {
+                        val eqIdx = l.indexOf('=', start)
+                        if (eqIdx >= 0) {
+                            val valStr = l.substring(eqIdx + 1).trim()
+                            perExtruderMm = valStr.split(',').mapNotNull { it.trim().toFloatOrNull() }
                         }
                     }
                     continue
@@ -131,7 +139,7 @@ object GcodeParser {
             layers.add(GcodeLayer(layerIndex, currentZ, currentMoves.toList()))
         }
 
-        return ParsedGcode(layers = layers)
+        return ParsedGcode(layers = layers, perExtruderFilamentMm = perExtruderMm)
     }
 
     private fun startsWithAt(s: String, offset: Int, prefix: String): Boolean {

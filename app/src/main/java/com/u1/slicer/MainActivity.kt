@@ -863,7 +863,8 @@ fun PreviewScreen(
                         result = s.result,
                         onShare = onShareGcode,
                         onSave = onSaveGcode,
-                        onSendToPrinter = { onSendToPrinter(s.result.gcodePath) }
+                        onSendToPrinter = { onSendToPrinter(s.result.gcodePath) },
+                        perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList()
                     )
                     // Inline 3D G-code preview (auto-downsampled for large models)
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
@@ -1387,7 +1388,8 @@ fun SliceCompleteCard(
     result: SliceResult,
     onShare: () -> Unit,
     onSave: () -> Unit,
-    onSendToPrinter: () -> Unit = {}
+    onSendToPrinter: () -> Unit = {},
+    perExtruderFilamentMm: List<Float> = emptyList()
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1410,6 +1412,11 @@ fun SliceCompleteCard(
             InfoRow("Layers", result.totalLayers.toString())
             InfoRow("Est. Time", result.estimatedTimeFormatted)
             InfoRow("Filament", result.estimatedFilamentFormatted)
+            if (perExtruderFilamentMm.size > 1) {
+                perExtruderFilamentMm.forEachIndexed { i, mm ->
+                    InfoRow("  E${i + 1}", "%.0f mm (%.1f g)".format(mm, mm * 0.00125f * 1.24f))
+                }
+            }
 
             Spacer(Modifier.height(4.dp))
 
