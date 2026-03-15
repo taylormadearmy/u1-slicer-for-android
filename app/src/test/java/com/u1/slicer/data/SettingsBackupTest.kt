@@ -98,8 +98,9 @@ class SettingsBackupTest {
             ExtruderPreset(3, "#FFFF00", "TPU")
         )
         val json = SettingsBackup.export(
-            SliceConfig(), SlicingOverrides(), "", presets, emptyList()
-        ) { id -> profiles[id] }
+            SliceConfig(), SlicingOverrides(), "", presets, emptyList(),
+            filamentNameResolver = { id -> profiles[id] }
+        )
 
         // Verify filamentProfileName is in the JSON
         val root = JSONObject(json)
@@ -176,8 +177,9 @@ class SettingsBackupTest {
             ExtruderPreset(3, "#FFFF00", "TPU")
         )
         val json = SettingsBackup.export(
-            SliceConfig(), SlicingOverrides(), "", presets, emptyList()
-        ) { id -> oldProfiles[id] }
+            SliceConfig(), SlicingOverrides(), "", presets, emptyList(),
+            filamentNameResolver = { id -> oldProfiles[id] }
+        )
 
         // Simulate what importBackup() does: parse names, then resolve to new IDs
         val root = JSONObject(json)
@@ -220,5 +222,26 @@ class SettingsBackupTest {
         val obj = JSONObject(json)
         val arr = obj.getJSONArray("extruderPresets")
         assertEquals(1, arr.getJSONObject(0).getInt("slot"))
+    }
+
+    @Test
+    fun `round-trip preserves MakerWorld cookies`() {
+        val json = SettingsBackup.export(
+            SliceConfig(), SlicingOverrides(), "", emptyList(), emptyList(),
+            makerWorldCookies = "session_id=abc123; token=xyz",
+            makerWorldCookiesEnabled = true
+        )
+        val data = SettingsBackup.import(json)
+        assertEquals("session_id=abc123; token=xyz", data.makerWorldCookies)
+        assertEquals(true, data.makerWorldCookiesEnabled)
+    }
+
+    @Test
+    fun `import without MakerWorld cookies returns null`() {
+        val json = SettingsBackup.export(SliceConfig(), SlicingOverrides(), "", emptyList(), emptyList())
+        val data = SettingsBackup.import(json)
+        assertNull(data.makerWorldCookies)
+        // cookiesEnabled should still be present (defaults to false)
+        assertEquals(false, data.makerWorldCookiesEnabled)
     }
 }

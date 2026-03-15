@@ -16,7 +16,9 @@ object SettingsBackup {
         val slicingOverrides: SlicingOverrides?,
         val printerUrl: String?,
         val extruderPresets: List<ExtruderPreset>?,
-        val filamentProfiles: List<FilamentProfile>?
+        val filamentProfiles: List<FilamentProfile>?,
+        val makerWorldCookies: String? = null,
+        val makerWorldCookiesEnabled: Boolean? = null
     )
 
     fun import(json: String): BackupData {
@@ -29,7 +31,9 @@ object SettingsBackup {
             slicingOverrides = root.optJSONObject("slicingOverrides")?.let { SlicingOverrides.fromJson(it.toString()) },
             printerUrl = if (root.has("printerUrl")) root.getString("printerUrl") else null,
             extruderPresets = root.optJSONArray("extruderPresets")?.let { parseExtruderPresetsArray(it) },
-            filamentProfiles = root.optJSONArray("filamentProfiles")?.let { parseFilamentProfilesArray(it) }
+            filamentProfiles = root.optJSONArray("filamentProfiles")?.let { parseFilamentProfilesArray(it) },
+            makerWorldCookies = if (root.has("makerWorldCookies")) root.getString("makerWorldCookies") else null,
+            makerWorldCookiesEnabled = if (root.has("makerWorldCookiesEnabled")) root.getBoolean("makerWorldCookiesEnabled") else null
         )
     }
 
@@ -99,7 +103,9 @@ object SettingsBackup {
         printerUrl: String,
         extruderPresets: List<ExtruderPreset>,
         filamentProfiles: List<FilamentProfile>,
-        filamentNameResolver: (Long) -> String? = { null }
+        filamentNameResolver: (Long) -> String? = { null },
+        makerWorldCookies: String = "",
+        makerWorldCookiesEnabled: Boolean = false
     ): String {
         val root = JSONObject()
         root.put("version", VERSION)
@@ -108,6 +114,10 @@ object SettingsBackup {
         root.put("printerUrl", printerUrl)
         root.put("extruderPresets", exportExtruderPresets(extruderPresets, filamentNameResolver))
         root.put("filamentProfiles", exportFilamentProfiles(filamentProfiles))
+        if (makerWorldCookies.isNotEmpty()) {
+            root.put("makerWorldCookies", makerWorldCookies)
+        }
+        root.put("makerWorldCookiesEnabled", makerWorldCookiesEnabled)
         return root.toString(2)
     }
 

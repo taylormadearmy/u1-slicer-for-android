@@ -1032,7 +1032,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     // Auto-arrange: single copy → centered, multiple copies → grid
                     if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
-                        val positions = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, copies)
+                        val s = _modelScale.value
+                        val positions = CopyArrangeCalculator.calculate(mi.sizeX * s.x, mi.sizeY * s.y, copies)
                         Log.i("SlicerVM", "setModelInstances: model=${mi.sizeX}×${mi.sizeY}mm " +
                             "pos=[${positions.toList().take(4)}]")
                         val ok = native.setModelInstances(positions)
@@ -1427,9 +1428,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val printerUrl = settingsRepo.printerUrl.first()
             val profiles = filamentDao.getAll().first()
             val profileMap = profiles.associateBy { it.id }
-            val json = SettingsBackup.export(cfg, overrides, printerUrl, presets, profiles) { id ->
-                profileMap[id]?.name
-            }
+            val cookies = settingsRepo.makerWorldCookies.first()
+            val cookiesEnabled = settingsRepo.makerWorldCookiesEnabled.first()
+            val json = SettingsBackup.export(cfg, overrides, printerUrl, presets, profiles,
+                filamentNameResolver = { id -> profileMap[id]?.name },
+                makerWorldCookies = cookies,
+                makerWorldCookiesEnabled = cookiesEnabled
+            )
             onResult(json)
         }
     }
@@ -1448,6 +1453,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val hasPrinterUrl = !data.printerUrl.isNullOrBlank()
                 data.printerUrl?.let {
                     settingsRepo.savePrinterUrl(it)
+                }
+                data.makerWorldCookies?.let {
+                    settingsRepo.saveMakerWorldCookies(it)
+                }
+                data.makerWorldCookiesEnabled?.let {
+                    settingsRepo.saveMakerWorldCookiesEnabled(it)
                 }
                 // Insert filament profiles first so we can resolve names → IDs
                 val nameToId = mutableMapOf<String, Long>()

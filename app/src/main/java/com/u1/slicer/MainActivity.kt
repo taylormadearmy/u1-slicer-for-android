@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -872,7 +873,8 @@ fun PreviewScreen(
                         onSendToPrinter = { onSendToPrinter(s.result.gcodePath) },
                         onUploadOnly = { onUploadOnly(s.result.gcodePath) },
                         perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
-                        bedTemp = config.bedTemp
+                        bedTemp = config.bedTemp,
+                        extruderColors = extruderColors
                     )
                     // Inline 3D G-code preview (auto-downsampled for large models)
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
@@ -1053,172 +1055,16 @@ fun ConfigCard(
             AnimatedVisibility(visible = expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Spacer(Modifier.height(8.dp))
-                    Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
 
-                    Text("Layer Height (mm)", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = config.layerHeight,
-                        onValueChange = { v -> onUpdate { it.copy(layerHeight = v) } },
-                        valueRange = 0.05f..0.6f,
-                        steps = 10
-                    )
-
-                    Text("Infill Density (%)", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = config.fillDensity,
-                        onValueChange = { v -> onUpdate { it.copy(fillDensity = v) } },
-                        valueRange = 0f..1f,
-                        steps = 19
-                    )
-
-                    // Infill pattern dropdown
-                    InfillPatternDropdown(
-                        selected = config.fillPattern,
-                        onSelect = { v -> onUpdate { it.copy(fillPattern = v) } }
-                    )
-
-                    Text("Perimeters", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = config.perimeters.toFloat(),
-                        onValueChange = { v -> onUpdate { it.copy(perimeters = v.toInt()) } },
-                        valueRange = 1f..6f,
-                        steps = 4
-                    )
-
-                    Text("Top Solid Layers: ${config.topSolidLayers}", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = config.topSolidLayers.toFloat(),
-                        onValueChange = { v -> onUpdate { it.copy(topSolidLayers = v.toInt()) } },
-                        valueRange = 0f..10f,
-                        steps = 9
-                    )
-
-                    Text("Bottom Solid Layers: ${config.bottomSolidLayers}", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = config.bottomSolidLayers.toFloat(),
-                        onValueChange = { v -> onUpdate { it.copy(bottomSolidLayers = v.toInt()) } },
-                        valueRange = 0f..10f,
-                        steps = 9
-                    )
-
-                    // Temperature fields
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ConfigTextField(
-                            label = "Nozzle \u00B0C",
-                            value = config.nozzleTemp.toString(),
-                            onValueChange = { v ->
-                                v.toIntOrNull()?.let { temp -> onUpdate { it.copy(nozzleTemp = temp) } }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        ConfigTextField(
-                            label = "Bed \u00B0C",
-                            value = config.bedTemp.toString(),
-                            onValueChange = { v ->
-                                v.toIntOrNull()?.let { temp -> onUpdate { it.copy(bedTemp = temp) } }
-                            },
-                            modifier = Modifier.weight(1f)
+                    if (onOverridesChange != null) {
+                        com.u1.slicer.ui.SlicingOverridesAccordion(
+                            overrides = slicingOverrides,
+                            onOverridesChange = onOverridesChange
                         )
                     }
 
-                    // Speed field
-                    ConfigTextField(
-                        label = "Print Speed (mm/s)",
-                        value = config.printSpeed.toInt().toString(),
-                        onValueChange = { v ->
-                            v.toFloatOrNull()?.let { spd -> onUpdate { it.copy(printSpeed = spd) } }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Brim width
-                    Text("Brim Width: ${"%.1f".format(config.brimWidth)} mm", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = config.brimWidth,
-                        onValueChange = { v -> onUpdate { it.copy(brimWidth = v) } },
-                        valueRange = 0f..20f,
-                        steps = 19
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Support Enabled")
-                        Switch(
-                            checked = config.supportEnabled,
-                            onCheckedChange = { v -> onUpdate { it.copy(supportEnabled = v) } }
-                        )
-                    }
-
-                    // Prime tower settings (only when wipe tower enabled)
-                    if (config.wipeTowerEnabled && onOverridesChange != null) {
-                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                        Text("Prime Tower Settings", fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelLarge)
-
-                        Text("Prime Volume: ${slicingOverrides.primeVolume.value ?: 45}", style = MaterialTheme.typography.labelMedium)
-                        Slider(
-                            value = (slicingOverrides.primeVolume.value ?: 45).toFloat(),
-                            onValueChange = { v ->
-                                onOverridesChange(slicingOverrides.copy(
-                                    primeVolume = com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, v.toInt())
-                                ))
-                            },
-                            valueRange = 10f..200f,
-                            steps = 18
-                        )
-
-                        Text("Tower Width: ${"%.1f".format(config.wipeTowerWidth)} mm", style = MaterialTheme.typography.labelMedium)
-                        Slider(
-                            value = config.wipeTowerWidth,
-                            onValueChange = { v -> onUpdate { it.copy(wipeTowerWidth = v) } },
-                            valueRange = 20f..100f,
-                            steps = 15
-                        )
-
-                        Text("Brim Width: ${"%.1f".format(slicingOverrides.primeTowerBrimWidth.value ?: 3f)} mm", style = MaterialTheme.typography.labelMedium)
-                        Slider(
-                            value = slicingOverrides.primeTowerBrimWidth.value ?: 3f,
-                            onValueChange = { v ->
-                                onOverridesChange(slicingOverrides.copy(
-                                    primeTowerBrimWidth = com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, v)
-                                ))
-                            },
-                            valueRange = 0f..10f,
-                            steps = 19
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Brim Chamfer")
-                            Switch(
-                                checked = slicingOverrides.primeTowerBrimChamfer.value ?: true,
-                                onCheckedChange = { v ->
-                                    onOverridesChange(slicingOverrides.copy(
-                                        primeTowerBrimChamfer = com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, v)
-                                    ))
-                                }
-                            )
-                        }
-
-                        Text("Chamfer Max Width: ${"%.1f".format(slicingOverrides.primeTowerChamferMaxWidth.value ?: 5f)} mm", style = MaterialTheme.typography.labelMedium)
-                        Slider(
-                            value = slicingOverrides.primeTowerChamferMaxWidth.value ?: 5f,
-                            onValueChange = { v ->
-                                onOverridesChange(slicingOverrides.copy(
-                                    primeTowerChamferMaxWidth = com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, v)
-                                ))
-                            },
-                            valueRange = 0f..20f,
-                            steps = 19
-                        )
-                    }
-
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     InfoRow("Nozzle Diameter", "${config.nozzleDiameter} mm")
                     InfoRow("Filament", config.filamentType)
                     InfoRow("Build Volume", "270 x 270 x 270 mm")
@@ -1399,7 +1245,8 @@ fun SliceCompleteCard(
     onSendToPrinter: () -> Unit = {},
     onUploadOnly: () -> Unit = {},
     perExtruderFilamentMm: List<Float> = emptyList(),
-    bedTemp: Int = 0
+    bedTemp: Int = 0,
+    extruderColors: List<String> = emptyList()
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1427,7 +1274,33 @@ fun SliceCompleteCard(
             }
             if (perExtruderFilamentMm.size > 1) {
                 perExtruderFilamentMm.forEachIndexed { i, mm ->
-                    InfoRow("  E${i + 1}", "%.0f mm (%.1f g)".format(mm, mm * 0.00125f * 1.24f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Colour swatch
+                        val colorHex = extruderColors.getOrNull(i) ?: "#808080"
+                        val color = try {
+                            Color(android.graphics.Color.parseColor(colorHex))
+                        } catch (_: Exception) {
+                            Color.Gray
+                        }
+                        Canvas(modifier = Modifier.size(12.dp)) {
+                            drawCircle(color = color)
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "E${i + 1}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.width(28.dp)
+                        )
+                        Text(
+                            "%.0f mm (%.1f g)".format(mm, mm * 0.00125f * 1.24f),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                    }
                 }
             }
 

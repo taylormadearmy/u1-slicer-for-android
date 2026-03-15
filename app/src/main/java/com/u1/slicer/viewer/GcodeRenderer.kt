@@ -165,11 +165,12 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         // Each move = 2 vertices, each vertex = 3 pos + 4 color = 7 floats
         val floatsPerVertex = 7
+        val tubeFloatsPerVertex = 10  // 3 pos + 4 color + 3 normal
         val maxBufferBytes = 80_000_000L  // 80MB limit per GPU buffer
 
         // Decide whether to use ribbon quads for extrusions
-        // 6 vertices per move (2 triangles) * 7 floats * 4 bytes = 168 bytes per move
-        val tubeBytes = totalExtrudeMoves.toLong() * 6 * floatsPerVertex * 4
+        // 6 vertices per move (2 triangles) * 10 floats * 4 bytes = 240 bytes per move
+        val tubeBytes = totalExtrudeMoves.toLong() * 6 * tubeFloatsPerVertex * 4
         useTubes = totalExtrudeMoves < 500_000 && tubeBytes <= maxBufferBytes
 
         // --- Build line VBO (travels, and extrusion fallback when !useTubes) ---
@@ -193,14 +194,14 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         var lineOffset = 0
 
         // Allocate tube buffer: 6 vertices per extrusion move
-        val tubeData = if (useTubes) FloatArray(totalExtrudeMoves * 6 * floatsPerVertex) else FloatArray(0)
+        val tubeData = if (useTubes) FloatArray(totalExtrudeMoves * 6 * tubeFloatsPerVertex) else FloatArray(0)
         var tubeOffset = 0
         val halfWidth = 0.2f  // 0.4mm extrusion width / 2
 
         for (layer in gcode.layers) {
             // --- Extrusion pass ---
             val extrudeFirst = lineOffset / floatsPerVertex
-            val tubeFirst = tubeOffset / floatsPerVertex
+            val tubeFirst = tubeOffset / tubeFloatsPerVertex
             var moveIdx = 0
 
             for (move in layer.moves) {
@@ -221,27 +222,38 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     // v0: x0-px, y0-py   v1: x0+px, y0+py
                     // v3: x1-px, y1-py   v2: x1+px, y1+py
                     // Tri1: v0, v1, v2   Tri2: v0, v2, v3
-                    if (tubeOffset + 6 * floatsPerVertex > tubeData.size) break
+                    if (tubeOffset + 6 * tubeFloatsPerVertex > tubeData.size) break
+
+                    // Normal: perpendicular to move direction with slight outward tilt
+                    val nx = px / halfWidth * 0.3f
+                    val ny = py / halfWidth * 0.3f
+                    val nz = 0.95f
 
                     // v0
                     tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = z
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    tubeData[tubeOffset++] = -nx; tubeData[tubeOffset++] = -ny; tubeData[tubeOffset++] = nz
                     // v1
                     tubeData[tubeOffset++] = move.x0 + px; tubeData[tubeOffset++] = move.y0 + py; tubeData[tubeOffset++] = z
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    tubeData[tubeOffset++] = nx; tubeData[tubeOffset++] = ny; tubeData[tubeOffset++] = nz
                     // v2
                     tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = z
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    tubeData[tubeOffset++] = nx; tubeData[tubeOffset++] = ny; tubeData[tubeOffset++] = nz
                     // Tri2
                     // v0 again
                     tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = z
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    tubeData[tubeOffset++] = -nx; tubeData[tubeOffset++] = -ny; tubeData[tubeOffset++] = nz
                     // v2 again
                     tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = z
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    tubeData[tubeOffset++] = nx; tubeData[tubeOffset++] = ny; tubeData[tubeOffset++] = nz
                     // v3
                     tubeData[tubeOffset++] = move.x1 - px; tubeData[tubeOffset++] = move.y1 - py; tubeData[tubeOffset++] = z
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    tubeData[tubeOffset++] = -nx; tubeData[tubeOffset++] = -ny; tubeData[tubeOffset++] = nz
                 } else {
                     // Fallback: GL_LINES
                     if (sampleRate > 1 && moveIdx++ % sampleRate != 0) continue
@@ -253,7 +265,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 }
             }
             val extrudeCount = lineOffset / floatsPerVertex - extrudeFirst
-            val tubeVertexCount = tubeOffset / floatsPerVertex - tubeFirst
+            val tubeVertexCount = tubeOffset / tubeFloatsPerVertex - tubeFirst
 
             // --- Travel pass (skipped entirely when downsampling) ---
             val travelFirst = lineOffset / floatsPerVertex
@@ -311,11 +323,13 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, tubeVBO)
             GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, tubeOffset * 4, tubeBuf, GLES30.GL_STATIC_DRAW)
 
-            val stride = floatsPerVertex * 4 // 28 bytes
-            GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, stride, 0)
+            val tubeStride = tubeFloatsPerVertex * 4 // 40 bytes
+            GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, tubeStride, 0)   // position
             GLES30.glEnableVertexAttribArray(0)
-            GLES30.glVertexAttribPointer(1, 4, GLES30.GL_FLOAT, false, stride, 12)
+            GLES30.glVertexAttribPointer(1, 4, GLES30.GL_FLOAT, false, tubeStride, 12)  // color
             GLES30.glEnableVertexAttribArray(1)
+            GLES30.glVertexAttribPointer(2, 3, GLES30.GL_FLOAT, false, tubeStride, 28)  // normal
+            GLES30.glEnableVertexAttribArray(2)
             GLES30.glBindVertexArray(0)
         }
     }
@@ -327,6 +341,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         shader.use()
         camera.computeMVP()
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
 
         val layerCount = maxOf(layerRanges.size, tubeLayerRanges.size)
         val min = minLayer.coerceIn(0, layerCount - 1)
