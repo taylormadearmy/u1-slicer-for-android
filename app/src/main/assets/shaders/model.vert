@@ -3,10 +3,14 @@ precision mediump float;
 
 uniform mat4 u_MVPMatrix;
 uniform mat4 u_NormalMatrix;
+uniform vec4 u_Color;
+uniform int u_UseVertexColor;
 
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec3 a_Normal;
+layout(location = 2) in vec4 a_Color;
 
+out vec4 v_Color;
 out vec3 v_Intensity;
 
 // Two directional lights (similar to SliceBeam/PrusaSlicer)
@@ -32,4 +36,6 @@ void main() {
 
     float intensity = AMBIENT + DIFFUSE_TOP * NdotL_top + DIFFUSE_FRONT * NdotL_front + specular;
     v_Intensity = vec3(intensity);
+
+    v_Color = (u_UseVertexColor == 1) ? a_Color : u_Color;
 }

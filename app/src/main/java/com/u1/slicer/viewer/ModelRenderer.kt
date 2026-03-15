@@ -25,6 +25,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var gridShader: ShaderProgram? = null
     private var textureShader: ShaderProgram? = null
     private var modelVAO = 0
+    private var modelVBO = 0
+    private var useVertexColorLoc = -1
     private var gridVAO = 0
     private var gridVertexCount = 0
     private var majorGridVAO = 0
@@ -82,6 +84,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         gridShader = ShaderProgram(context, "shaders/grid.vert", "shaders/grid.frag")
         textureShader = ShaderProgram(context, "shaders/texture.vert", "shaders/texture.frag")
 
+        useVertexColorLoc = modelShader!!.getUniformLocation("u_UseVertexColor")
+
         setupBedMesh()
         setupGrid()
         setupLogoTexture()
@@ -107,12 +111,33 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         camera.updateProjectionMatrix(width, height)
     }
 
+    // Pending recolor: set from main thread, consumed on GL thread
+    @Volatile
+    var pendingRecolor: List<FloatArray>? = null
+
     override fun onDrawFrame(gl: GL10?) {
         pendingMesh?.let { mesh ->
             uploadMesh(mesh)
+            // Apply any pending recolor immediately to the freshly uploaded mesh
+            pendingRecolor?.let { palette ->
+                mesh.recolor(palette)
+                updateColorData(mesh)
+                pendingRecolor = null
+            }
             meshData = mesh
             pendingMesh = null
             pendingCameraReset = true  // camera will be set up below (after instancePositions may be set)
+        }
+
+        // Process pending recolor for existing mesh (no new mesh upload)
+        if (pendingRecolor != null) {
+            meshData?.let { mesh ->
+                pendingRecolor?.let { palette ->
+                    mesh.recolor(palette)
+                    updateColorData(mesh)
+                    pendingRecolor = null
+                }
+            }
         }
 
         if (pendingCameraReset) {
@@ -164,6 +189,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val vaos = intArrayOf(modelVAO)
             GLES30.glDeleteVertexArrays(1, vaos, 0)
         }
+        if (modelVBO != 0) {
+            val vbos = intArrayOf(modelVBO)
+            GLES30.glDeleteBuffers(1, vbos, 0)
+        }
 
         val vaos = IntArray(1)
         GLES30.glGenVertexArrays(1, vaos, 0)
@@ -171,24 +200,43 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         val vbos = IntArray(1)
         GLES30.glGenBuffers(1, vbos, 0)
+        modelVBO = vbos[0]
 
         GLES30.glBindVertexArray(modelVAO)
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbos[0])
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, modelVBO)
 
         mesh.vertices.position(0)
         GLES30.glBufferData(
             GLES30.GL_ARRAY_BUFFER,
             mesh.vertexCount * MeshData.BYTES_PER_VERTEX,
             mesh.vertices,
-            GLES30.GL_STATIC_DRAW
+            GLES30.GL_DYNAMIC_DRAW
         )
 
+        // Position: 3 floats at offset 0
         GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 0)
         GLES30.glEnableVertexAttribArray(0)
+        // Normal: 3 floats at offset 12
         GLES30.glVertexAttribPointer(1, 3, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 12)
         GLES30.glEnableVertexAttribArray(1)
+        // Color: 4 floats at offset 24
+        GLES30.glVertexAttribPointer(2, 4, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 24)
+        GLES30.glEnableVertexAttribArray(2)
 
         GLES30.glBindVertexArray(0)
+    }
+
+    private fun updateColorData(mesh: MeshData) {
+        if (modelVBO == 0) return
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, modelVBO)
+        mesh.vertices.position(0)
+        GLES30.glBufferSubData(
+            GLES30.GL_ARRAY_BUFFER,
+            0,
+            mesh.vertexCount * MeshData.BYTES_PER_VERTEX,
+            mesh.vertices
+        )
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
     }
 
     private fun drawModel(mesh: MeshData, color: FloatArray = modelColorDefault) {
@@ -212,6 +260,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
+        GLES30.glUniform1i(useVertexColorLoc, if (mesh.hasPerVertexColor) 1 else 0)
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
         GLES30.glBindVertexArray(0)
@@ -243,6 +292,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         val color = if (highlighted) floatArrayOf(1f, 0.6f, 0.2f, 1f) else baseColor
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
+        GLES30.glUniform1i(useVertexColorLoc, if (mesh.hasPerVertexColor) 1 else 0)
 
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
@@ -264,6 +314,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         val color = if (highlighted) floatArrayOf(1f, 0.85f, 0.2f, 1f) else wipeTowerColor
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
+        GLES30.glUniform1i(useVertexColorLoc, 0)
+        GLES30.glVertexAttrib4f(2, 1f, 1f, 1f, 1f)
 
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
