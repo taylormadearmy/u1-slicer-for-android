@@ -641,6 +641,8 @@ fun PrepareScreen(
                                 onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
                                     onNavigateModelViewer else ({}),
                                 extruderColors = extruderColors,
+                                extruderMap = viewModel.buildExtruderMap(),
+                                colorMapping = colorMapping,
                                 objectPositions = positions,
                                 modelSizeX = loadedInfo?.sizeX ?: 0f,
                                 modelSizeY = loadedInfo?.sizeY ?: 0f,
@@ -1567,6 +1569,8 @@ fun InlineModelPreview(
     modelFilePath: String,
     onFullScreen: () -> Unit,
     extruderColors: List<String> = emptyList(),
+    extruderMap: Map<Int, Byte>? = null,
+    colorMapping: List<Int>? = null,
     // Placement mode
     objectPositions: FloatArray? = null,
     modelSizeX: Float = 0f,
@@ -1591,7 +1595,7 @@ fun InlineModelPreview(
     var towerX by remember(wipeTowerX) { mutableFloatStateOf(wipeTowerX) }
     var towerY by remember(wipeTowerY) { mutableFloatStateOf(wipeTowerY) }
 
-    LaunchedEffect(modelFilePath) {
+    LaunchedEffect(modelFilePath, extruderMap) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val file = java.io.File(modelFilePath)
@@ -1599,7 +1603,7 @@ fun InlineModelPreview(
                     modelFilePath.endsWith(".stl", ignoreCase = true) ->
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
-                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(file)
+                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(file, extruderMap = extruderMap)
                     else -> null
                 }
             } catch (_: Throwable) { }
@@ -1608,12 +1612,46 @@ fun InlineModelPreview(
 
     LaunchedEffect(mesh, viewerView) {
         val m = mesh; val v = viewerView
-        if (m != null && v != null) v.setMesh(m)
+        if (m != null && v != null) {
+            v.setMesh(m)
+            // Apply recolor on initial mesh load if we have colors
+            if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
+                val palette = extruderColors.map { hex ->
+                    if (hex.isBlank()) floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
+                    else try {
+                        val c = android.graphics.Color.parseColor(hex)
+                        floatArrayOf(
+                            android.graphics.Color.red(c) / 255f,
+                            android.graphics.Color.green(c) / 255f,
+                            android.graphics.Color.blue(c) / 255f, 1f
+                        )
+                    } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
+                }
+                v.recolorMesh(palette)
+            }
+        }
     }
 
     LaunchedEffect(viewerView, extruderColors) {
         val v = viewerView ?: return@LaunchedEffect
-        if (extruderColors.isNotEmpty()) v.setExtruderColors(extruderColors)
+        if (extruderColors.isNotEmpty()) {
+            v.setExtruderColors(extruderColors)
+            // Recolor per-vertex mesh when extruder colors change
+            if (mesh?.hasPerVertexColor == true) {
+                val palette = extruderColors.map { hex ->
+                    if (hex.isBlank()) floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
+                    else try {
+                        val c = android.graphics.Color.parseColor(hex)
+                        floatArrayOf(
+                            android.graphics.Color.red(c) / 255f,
+                            android.graphics.Color.green(c) / 255f,
+                            android.graphics.Color.blue(c) / 255f, 1f
+                        )
+                    } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
+                }
+                v.recolorMesh(palette)
+            }
+        }
     }
 
     // Update renderer with model scale

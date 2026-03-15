@@ -23,7 +23,9 @@ object ThreeMfMeshParser {
         val verts: FloatArray,
         val tris: IntArray,
         val vertexCount: Int,
-        val triCount: Int
+        val triCount: Int,
+        /** Per-triangle paint extruder index, or null if no paint data. 0xFF = unpainted. */
+        val paintIndices: ByteArray? = null
     )
 
     private data class BuildItem(val objectId: String, val transform: FloatArray?)
@@ -111,6 +113,8 @@ object ThreeMfMeshParser {
         var currentComponents = mutableListOf<ComponentRef>()
         var vertList: GrowableFloatArray? = null
         var triList: GrowableIntArray? = null
+        var paintList: GrowableByteArray? = null
+        var hasPaintData = false
         var inVertices = false
         var inTriangles = false
         var inBuild = false
@@ -131,6 +135,36 @@ object ThreeMfMeshParser {
             if (inTriangles) {
                 if (line.contains("<triangle")) {
                     parseTriangleLine(line, triList!!)
+                    // Fast-path paint_color / mmu_segmentation extraction:
+                    // only check if the line contains the attribute (99.9%+ lines won't)
+                    if (line.contains("paint_color")) {
+                        val idx = parsePaintIndex(line, "paint_color")
+                        if (idx >= 0) {
+                            if (paintList == null) {
+                                // Back-fill previously parsed triangles with 0xFF (unpainted)
+                                paintList = GrowableByteArray(triList!!.size / 3)
+                                repeat(triList!!.size / 3 - 1) { paintList!!.add(0xFF.toByte()) }
+                            }
+                            hasPaintData = true
+                            paintList!!.add(idx.toByte())
+                        } else {
+                            paintList?.add(0xFF.toByte())
+                        }
+                    } else if (line.contains("mmu_segmentation")) {
+                        val idx = parsePaintIndex(line, "mmu_segmentation")
+                        if (idx >= 0) {
+                            if (paintList == null) {
+                                paintList = GrowableByteArray(triList!!.size / 3)
+                                repeat(triList!!.size / 3 - 1) { paintList!!.add(0xFF.toByte()) }
+                            }
+                            hasPaintData = true
+                            paintList!!.add(idx.toByte())
+                        } else {
+                            paintList?.add(0xFF.toByte())
+                        }
+                    } else {
+                        paintList?.add(0xFF.toByte())
+                    }
                     return@forEachLine
                 }
                 if (line.contains("</triangles>")) {
@@ -152,11 +186,14 @@ object ThreeMfMeshParser {
                         vertList!!.size >= 3 && triList!!.size >= 3) {
                         val vArr = vertList!!.toArray()
                         val tArr = triList!!.toArray()
-                        RawMesh(vArr, tArr, vArr.size / 3, tArr.size / 3)
+                        val pArr = if (hasPaintData && paintList != null) paintList!!.toArray() else null
+                        RawMesh(vArr, tArr, vArr.size / 3, tArr.size / 3, pArr)
                     } else null
                     objects[id] = ObjectInfo(id, mesh, currentComponents.toList())
                     vertList = null
                     triList = null
+                    paintList = null
+                    hasPaintData = false
                 }
                 currentObjId = null
             } else if (line.contains("<vertices>")) {
@@ -217,6 +254,25 @@ object ThreeMfMeshParser {
         val v2 = extractIntAttr(line, "v2=\"") ?: return
         val v3 = extractIntAttr(line, "v3=\"") ?: return
         tris.add(v1); tris.add(v2); tris.add(v3)
+    }
+
+    /**
+     * Extract the dominant extruder index from a paint_color or mmu_segmentation attribute value.
+     * Format: The value is a base-5 encoded triangle subdivision tree. Simple whole-triangle
+     * assignments are "NC" where N is the 0-based extruder index. For complex subdivisions,
+     * we use the first digit as a reasonable approximation of the dominant color.
+     * Returns -1 if no valid index found.
+     */
+    internal fun parsePaintIndex(line: String, attrName: String): Int {
+        val prefix = "$attrName=\""
+        val start = line.indexOf(prefix)
+        if (start < 0) return -1
+        val valStart = start + prefix.length
+        val valEnd = line.indexOf('"', valStart)
+        if (valEnd <= valStart) return -1
+        // The first character of the value is the dominant extruder index (0-based digit)
+        val firstChar = line[valStart]
+        return if (firstChar in '0'..'9') (firstChar - '0') else -1
     }
 
     /** Parse a float attribute value inline without creating a substring. */
@@ -388,12 +444,18 @@ object ThreeMfMeshParser {
         for (meshCtx in meshes) {
             val mesh = meshCtx.mesh
             val t = meshCtx.transform
-            val extruderIdx = extruderIndexMap?.get(meshCtx.objectId) ?: 0
+            val volumeExtruderIdx: Byte = extruderIndexMap?.get(meshCtx.objectId) ?: 0
+            val paintIndices = mesh.paintIndices
             val verts = mesh.verts
             val tris = mesh.tris
             val nTris = mesh.triCount
 
             for (i in 0 until nTris) {
+                // Paint data wins over volume-level extruder index
+                val extruderIdx: Byte = if (paintIndices != null && i < paintIndices.size) {
+                    val paintVal = paintIndices[i].toInt() and 0xFF
+                    if (paintVal != 0xFF) paintVal.toByte() else volumeExtruderIdx
+                } else volumeExtruderIdx
                 val a = tris[i * 3] * 3
                 val b = tris[i * 3 + 1] * 3
                 val c = tris[i * 3 + 2] * 3

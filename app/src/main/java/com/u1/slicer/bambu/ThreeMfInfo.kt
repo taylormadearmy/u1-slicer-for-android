@@ -41,7 +41,10 @@ data class ThreeMfInfo(
     val hasPlateJsons: Boolean = false,
     /** 1-based extruder indices actually assigned to objects/volumes in model config.
      *  Empty when no assignments found. Used to filter colors per-plate. */
-    val usedExtruderIndices: Set<Int> = emptySet()
+    val usedExtruderIndices: Set<Int> = emptySet(),
+    /** Per-object extruder assignments: objectId (String) → 1-based extruder index.
+     *  Used by mesh preview to color per-volume. */
+    val objectExtruderMap: Map<String, Int> = emptyMap()
 ) {
     /** Whether the original Bambu structure must be preserved (not rebuilt with trimesh) */
     val needsPreserve: Boolean get() = isBambu && (

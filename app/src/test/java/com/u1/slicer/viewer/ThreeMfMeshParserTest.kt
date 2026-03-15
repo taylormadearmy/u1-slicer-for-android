@@ -298,6 +298,136 @@ class ThreeMfMeshParserTest {
         assertEquals(1.toByte(), mesh.extruderIndices!![1]) // object 11 -> extruder 1
     }
 
+    // ── Paint color / mmu_segmentation tests ──
+
+    @Test
+    fun `parsePaintIndex extracts simple paint_color value`() {
+        val line = """<triangle v1="0" v2="1" v3="2" paint_color="2C"/>"""
+        assertEquals(2, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
+    }
+
+    @Test
+    fun `parsePaintIndex extracts mmu_segmentation value`() {
+        val line = """<triangle v1="0" v2="1" v3="2" slic3rpe:mmu_segmentation="4"/>"""
+        assertEquals(4, ThreeMfMeshParser.parsePaintIndex(line, "mmu_segmentation"))
+    }
+
+    @Test
+    fun `parsePaintIndex returns first digit for complex subdivision`() {
+        val line = """<triangle v1="0" v2="1" v3="2" paint_color="3C43C13CA"/>"""
+        assertEquals(3, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
+    }
+
+    @Test
+    fun `parsePaintIndex returns -1 when attribute missing`() {
+        val line = """<triangle v1="0" v2="1" v3="2"/>"""
+        assertEquals(-1, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
+    }
+
+    @Test
+    fun `parsePaintIndex returns -1 for empty value`() {
+        val line = """<triangle v1="0" v2="1" v3="2" paint_color=""/>"""
+        assertEquals(-1, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
+    }
+
+    @Test
+    fun `parse 3mf with paint_color assigns per-triangle extruder indices`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                            <vertex x="5" y="5" z="10" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" paint_color="0C"/>
+                            <triangle v1="0" v2="1" v3="3" paint_color="1C"/>
+                            <triangle v1="1" v2="2" v3="3" paint_color="2C"/>
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        val mesh = ThreeMfMeshParser.parse(file)
+        assertNotNull(mesh)
+        assertNotNull(mesh!!.extruderIndices)
+        assertEquals(3, mesh.extruderIndices!!.size) // 3 triangles
+        assertEquals(0.toByte(), mesh.extruderIndices!![0]) // paint_color="0C"
+        assertEquals(1.toByte(), mesh.extruderIndices!![1]) // paint_color="1C"
+        assertEquals(2.toByte(), mesh.extruderIndices!![2]) // paint_color="2C"
+    }
+
+    @Test
+    fun `paint_color wins over volume extruder index`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" paint_color="3C"/>
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        // Volume extruder is 1, but paint_color says 3
+        val mesh = ThreeMfMeshParser.parse(file, extruderMap = mapOf(1 to 1.toByte()))
+        assertNotNull(mesh)
+        assertNotNull(mesh!!.extruderIndices)
+        assertEquals(3.toByte(), mesh.extruderIndices!![0]) // paint wins
+    }
+
+    @Test
+    fun `unpainted triangles use volume extruder index`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                            <vertex x="5" y="5" z="10" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" paint_color="2C"/>
+                            <triangle v1="0" v2="1" v3="3" />
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        val mesh = ThreeMfMeshParser.parse(file, extruderMap = mapOf(1 to 1.toByte()))
+        assertNotNull(mesh)
+        assertNotNull(mesh!!.extruderIndices)
+        assertEquals(2, mesh.extruderIndices!!.size)
+        assertEquals(2.toByte(), mesh.extruderIndices!![0]) // painted
+        assertEquals(1.toByte(), mesh.extruderIndices!![1]) // unpainted -> volume extruder
+    }
+
     // ── Helpers ──
 
     private fun buildModelXml(

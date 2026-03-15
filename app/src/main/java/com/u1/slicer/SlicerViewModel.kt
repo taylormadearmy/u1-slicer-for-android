@@ -104,6 +104,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _activeExtruderColors = MutableStateFlow<List<String>>(emptyList())
     val activeExtruderColors: StateFlow<List<String>> = _activeExtruderColors.asStateFlow()
 
+    /**
+     * Build a map of objectId (Int) → 0-based extruder index (Byte) for mesh preview coloring.
+     * Uses objectExtruderMap from ThreeMfInfo (1-based) converted to 0-based.
+     */
+    fun buildExtruderMap(): Map<Int, Byte>? {
+        val info = _threeMfInfo.value ?: return null
+        val objMap = info.objectExtruderMap
+        if (objMap.isEmpty()) return null
+        return objMap.mapNotNull { (objIdStr, extruder1Based) ->
+            val objId = objIdStr.toIntOrNull() ?: return@mapNotNull null
+            objId to (extruder1Based - 1).coerceAtLeast(0).toByte()
+        }.toMap().ifEmpty { null }
+    }
+
     // Multiple copies
     private val _copyCount = MutableStateFlow(1)
     val copyCount: StateFlow<Int> = _copyCount.asStateFlow()
@@ -1613,7 +1627,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             detectedExtruderCount = origInfo.detectedExtruderCount,
             hasPaintData = origInfo.hasPaintData,
             hasLayerToolChanges = origInfo.hasLayerToolChanges,
-            hasMultiExtruderAssignments = origInfo.hasMultiExtruderAssignments
+            hasMultiExtruderAssignments = origInfo.hasMultiExtruderAssignments,
+            objectExtruderMap = origInfo.objectExtruderMap
         )
 
         /**
@@ -1650,7 +1665,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 detectedExtruderCount = if (filteredColors.isNotEmpty()) filteredColors.size else sourceInfo.detectedExtruderCount,
                 hasPaintData = sourceInfo.hasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
-                hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments
+                hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments,
+                objectExtruderMap = sourceInfo.objectExtruderMap
             )
         }
     }

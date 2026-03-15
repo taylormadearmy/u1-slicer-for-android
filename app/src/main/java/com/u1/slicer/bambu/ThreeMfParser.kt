@@ -240,7 +240,8 @@ object ThreeMfParser {
                     detectedColors = detectedColors,
                     detectedExtruderCount = extruderCount,
                     hasPlateJsons = plateJsonCount > 1,
-                    usedExtruderIndices = uniqueExtruders
+                    usedExtruderIndices = uniqueExtruders,
+                    objectExtruderMap = extruderAssignments.toMap()
                 )
             }
         } catch (e: Exception) {
