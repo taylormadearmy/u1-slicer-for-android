@@ -22,9 +22,14 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private val bed = BedDrawable(context)
 
     // Single VAO/VBO for all toolpath layers
+    // Extrusion and travel vertices are stored in separate contiguous ranges per layer
+    // so they can be drawn independently.
     private var masterVAO = 0
     private var masterVBO = 0
-    private data class LayerRange(val firstVertex: Int, val vertexCount: Int)
+    private data class LayerRange(
+        val extrudeFirst: Int, val extrudeCount: Int,
+        val travelFirst: Int, val travelCount: Int
+    )
     private val layerRanges = mutableListOf<LayerRange>()
 
     private var totalLayers = 0
@@ -136,43 +141,51 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val maxBufferBytes = 80_000_000L  // 80MB limit for GPU buffer
         val fullBytes = totalMoves.toLong() * 2 * floatsPerVertex * 4
 
-        // Downsample if needed: keep every Nth extrusion move, skip travel moves
+        // Downsample if needed: keep every Nth extrusion move, skip travel moves when downsampling
         val sampleRate = if (fullBytes > maxBufferBytes) {
             val rate = ((fullBytes + maxBufferBytes - 1) / maxBufferBytes).toInt()
             android.util.Log.i("GcodeRenderer", "Downsampling G-code preview: keeping 1/$rate of $totalMoves moves (${fullBytes / 1_000_000}MB → ~${fullBytes / rate / 1_000_000}MB)")
             rate
         } else 1
 
-        // Allocate for the downsampled size
+        // Allocate for the downsampled size.
+        // Two passes per layer: extrusions first, then travels (travels skipped when downsampling).
         val estimatedMoves = if (sampleRate > 1) totalMoves / sampleRate + totalLayers else totalMoves
         val data = FloatArray(estimatedMoves * 2 * floatsPerVertex)
         var offset = 0
 
         for (layer in gcode.layers) {
-            val layerStart = offset / floatsPerVertex
+            // --- Pass 1: extrusion moves ---
+            val extrudeFirst = offset / floatsPerVertex
             var moveIdx = 0
             for (move in layer.moves) {
-                // When downsampling, skip travel moves and sample extrusions
-                if (sampleRate > 1) {
-                    if (move.type != MoveType.EXTRUDE) continue
-                    if (moveIdx++ % sampleRate != 0) continue
-                }
-                val color = if (move.type == MoveType.EXTRUDE) {
-                    extruderColors[move.extruder.coerceIn(0, 3)]
-                } else {
-                    travelColor
-                }
+                if (move.type != MoveType.EXTRUDE) continue
+                if (sampleRate > 1 && moveIdx++ % sampleRate != 0) continue
+                val color = extruderColors[move.extruder.coerceIn(0, 3)]
                 // Bounds check — downsampling estimate may be slightly off
                 if (offset + floatsPerVertex * 2 > data.size) break
-                // Start vertex
                 data[offset++] = move.x0; data[offset++] = move.y0; data[offset++] = layer.z
                 data[offset++] = color[0]; data[offset++] = color[1]; data[offset++] = color[2]; data[offset++] = color[3]
-                // End vertex
                 data[offset++] = move.x1; data[offset++] = move.y1; data[offset++] = layer.z
                 data[offset++] = color[0]; data[offset++] = color[1]; data[offset++] = color[2]; data[offset++] = color[3]
             }
-            val layerVertexCount = offset / floatsPerVertex - layerStart
-            layerRanges.add(LayerRange(layerStart, layerVertexCount))
+            val extrudeCount = offset / floatsPerVertex - extrudeFirst
+
+            // --- Pass 2: travel moves (skipped entirely when downsampling) ---
+            val travelFirst = offset / floatsPerVertex
+            if (sampleRate == 1) {
+                for (move in layer.moves) {
+                    if (move.type == MoveType.EXTRUDE) continue
+                    if (offset + floatsPerVertex * 2 > data.size) break
+                    data[offset++] = move.x0; data[offset++] = move.y0; data[offset++] = layer.z
+                    data[offset++] = travelColor[0]; data[offset++] = travelColor[1]; data[offset++] = travelColor[2]; data[offset++] = travelColor[3]
+                    data[offset++] = move.x1; data[offset++] = move.y1; data[offset++] = layer.z
+                    data[offset++] = travelColor[0]; data[offset++] = travelColor[1]; data[offset++] = travelColor[2]; data[offset++] = travelColor[3]
+                }
+            }
+            val travelCount = offset / floatsPerVertex - travelFirst
+
+            layerRanges.add(LayerRange(extrudeFirst, extrudeCount, travelFirst, travelCount))
         }
 
         // Single GPU upload for all layers
@@ -208,13 +221,17 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val min = minLayer.coerceIn(0, layerRanges.size - 1)
         val max = maxLayer.coerceIn(0, layerRanges.size - 1)
 
+        // Extrusion and travel ranges are NOT contiguous across layers (each layer has
+        // extrude block then travel block), so we must draw per-layer.
         GLES30.glBindVertexArray(masterVAO)
-        // Layers are packed consecutively — draw the full min..max range in one call
-        val firstVertex = layerRanges[min].firstVertex
-        val lastRange = layerRanges[max]
-        val totalVertices = lastRange.firstVertex + lastRange.vertexCount - firstVertex
-        if (totalVertices > 0) {
-            GLES30.glDrawArrays(GLES30.GL_LINES, firstVertex, totalVertices)
+        for (i in min..max) {
+            val r = layerRanges[i]
+            if (r.extrudeCount > 0) {
+                GLES30.glDrawArrays(GLES30.GL_LINES, r.extrudeFirst, r.extrudeCount)
+            }
+            if (showTravel && r.travelCount > 0) {
+                GLES30.glDrawArrays(GLES30.GL_LINES, r.travelFirst, r.travelCount)
+            }
         }
         GLES30.glBindVertexArray(0)
     }

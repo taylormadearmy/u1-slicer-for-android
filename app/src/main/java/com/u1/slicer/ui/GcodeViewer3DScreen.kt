@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -35,6 +37,7 @@ fun GcodeViewer3DScreen(
     var minLayer by remember { mutableIntStateOf(0) }
     var maxLayer by remember { mutableIntStateOf(gcodeLayerCount - 1) }
     var isLoading by remember { mutableStateOf(true) }
+    var showTravel by remember { mutableStateOf(false) }
 
     // Set colors + upload gcode atomically on the GL thread.
     // suspendCancellableCoroutine waits for the GL work to finish before
@@ -78,6 +81,17 @@ fun GcodeViewer3DScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        showTravel = !showTravel
+                        viewerView?.setShowTravel(showTravel)
+                    }) {
+                        Icon(
+                            if (showTravel) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            "Toggle travel moves",
+                            tint = if (showTravel) MaterialTheme.colorScheme.primary
+                                   else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(onClick = {
                         val v = viewerView ?: return@IconButton
                         v.renderer.camera.apply {

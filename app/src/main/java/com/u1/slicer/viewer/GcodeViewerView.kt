@@ -30,4 +30,9 @@ class GcodeViewerView(context: Context) : BaseGLViewerView(context) {
         renderer.maxLayer = max
         requestRender()
     }
+
+    fun setShowTravel(show: Boolean) {
+        renderer.showTravel = show
+        requestRender()
+    }
 }
