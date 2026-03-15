@@ -224,19 +224,18 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         val modelMatrix = FloatArray(16)
         Matrix.setIdentityM(modelMatrix, 0)
-        // Offset by -minX/-minY so the model's bottom-left corner lands at (x, y) on the bed
-        Matrix.translateM(modelMatrix, 0, x - mesh.minX, y - mesh.minY, -mesh.minZ)
-
-        // Apply visual scale about the positioned mesh center
+        // Position (x, y) is the scaled model's min corner on the bed.
+        // Transform order (applied right-to-left):
+        //   1. Center mesh at origin (-minX - halfW, -minY - halfH, -minZ)
+        //   2. Scale about origin
+        //   3. Translate so scaled min corner lands at (x, y, 0)
         val s = modelScale
-        if (s[0] != 1f || s[1] != 1f || s[2] != 1f) {
-            val cx = (mesh.maxX - mesh.minX) / 2f
-            val cy = (mesh.maxY - mesh.minY) / 2f
-            val cz = (mesh.maxZ - mesh.minZ) / 2f
-            Matrix.translateM(modelMatrix, 0, cx, cy, cz)
-            Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
-            Matrix.translateM(modelMatrix, 0, -cx, -cy, -cz)
-        }
+        val halfW = (mesh.maxX - mesh.minX) / 2f
+        val halfH = (mesh.maxY - mesh.minY) / 2f
+        val halfD = (mesh.maxZ - mesh.minZ) / 2f
+        Matrix.translateM(modelMatrix, 0, x + halfW * s[0], y + halfH * s[1], halfD * s[2])
+        Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
+        Matrix.translateM(modelMatrix, 0, -mesh.minX - halfW, -mesh.minY - halfH, -mesh.minZ - halfD)
 
         camera.computeMVP(modelMatrix)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)

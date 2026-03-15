@@ -48,8 +48,8 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     override fun handleActionDown(event: MotionEvent) {
         draggingIndex = -1
         if (placementMode) {
-            // Use Z=sizeZ/2 for hit detection so tap lands on visible model face, not Z=0 shadow.
-            val halfZ = renderer.meshData?.sizeZ?.div(2f) ?: 0f
+            // Use Z=scaledSizeZ/2 for hit detection so tap lands on visible model face, not Z=0 shadow.
+            val halfZ = (renderer.meshData?.sizeZ ?: 0f) * renderer.modelScale[2] / 2f
             val bedHit = renderer.screenToBed(event.x, event.y, halfZ)
             val bed0  = renderer.screenToBed(event.x, event.y)
             if (bedHit != null && bed0 != null) {
@@ -112,13 +112,10 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         val s = renderer.modelScale
         val sizeX = mesh.sizeX * s[0]
         val sizeY = mesh.sizeY * s[1]
-        // Scale expands from center, so the origin shifts by half the size delta
-        val offsetX = (mesh.sizeX - sizeX) / 2f
-        val offsetY = (mesh.sizeY - sizeY) / 2f
 
         for (i in (0 until count).reversed()) {
-            val ox = positions[i * 2] + offsetX
-            val oy = positions[i * 2 + 1] + offsetY
+            val ox = positions[i * 2]
+            val oy = positions[i * 2 + 1]
             if (bx >= ox && bx <= ox + sizeX && by >= oy && by <= oy + sizeY) return i
         }
 

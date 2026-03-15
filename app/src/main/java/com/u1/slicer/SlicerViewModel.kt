@@ -795,6 +795,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setModelScale(scale: ModelScale) {
         _modelScale.value = scale
+        customObjectPositions = null // reset positions — re-center for new scaled size
     }
 
     fun setCopyCount(count: Int) {
@@ -818,11 +819,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         Log.i("SlicerVM", "Custom placement applied: ${positions.size / 2} objects, tower=(${wipeTowerPos.first},${wipeTowerPos.second})")
     }
 
-    /** Returns initial positions for inline 3D placement (custom or auto-calculated). */
+    /** Returns initial positions for inline 3D placement (custom or auto-calculated).
+     *  Uses scaled model size so the preview positions match the visual footprint on the bed. */
     fun getPlacementPositions(): FloatArray {
         customObjectPositions?.let { return it }
         val mi = lastModelInfo ?: return floatArrayOf(135f, 135f)
-        return CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, _copyCount.value)
+        val s = _modelScale.value
+        return CopyArrangeCalculator.calculate(mi.sizeX * s.x, mi.sizeY * s.y, _copyCount.value)
     }
 
     fun updateConfig(updater: (SliceConfig) -> SliceConfig) {
