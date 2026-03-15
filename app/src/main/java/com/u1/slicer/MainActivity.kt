@@ -25,11 +25,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -178,6 +181,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Request notification permission for Android 13+ (required for SlicingService
+        // foreground notification to be visible)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
+            }
+        }
 
         // Clear stale cached 3MF files on version upgrade.
         // The sanitizer/embedder output format changes between versions — stale files
@@ -2085,9 +2097,12 @@ fun InlineGcodePreview(
     onExpand: () -> Unit
 ) {
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
+    val totalLayers = parsedGcode.layers.size
+    var maxLayer by remember { mutableIntStateOf(totalLayers - 1) }
 
     LaunchedEffect(parsedGcode, extruderColors, viewerView) {
         val v = viewerView ?: return@LaunchedEffect
+        maxLayer = totalLayers - 1
         v.queueEvent {
             if (extruderColors.isNotEmpty()) {
                 v.renderer.setExtruderColors(extruderColors)
@@ -2102,22 +2117,65 @@ fun InlineGcodePreview(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Box(modifier = Modifier.fillMaxWidth().height(280.dp)) {
-            androidx.compose.ui.viewinterop.AndroidView(
-                factory = { ctx ->
-                    com.u1.slicer.viewer.GcodeViewerView(ctx).also { view ->
-                        viewerView = view
+        Row(modifier = Modifier.fillMaxWidth().height(280.dp)) {
+            // GL view
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                androidx.compose.ui.viewinterop.AndroidView(
+                    factory = { ctx ->
+                        com.u1.slicer.viewer.GcodeViewerView(ctx).also { view ->
+                            viewerView = view
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                // Expand button overlay
+                IconButton(
+                    onClick = onExpand,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+                ) {
+                    Icon(Icons.Default.Fullscreen, "Full screen",
+                        tint = Color.White.copy(alpha = 0.8f))
+                }
+                // Layer label overlay
+                Text(
+                    "Layer ${maxLayer + 1}/$totalLayers",
+                    fontSize = 10.sp,
+                    color = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
+                )
+            }
+            // Vertical layer slider on the right
+            if (totalLayers > 1) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(40.dp)
+                        .padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("${maxLayer + 1}", fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center)
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Slider(
+                            value = maxLayer.toFloat(),
+                            onValueChange = { v ->
+                                maxLayer = v.roundToInt()
+                                viewerView?.setLayerRange(0, maxLayer)
+                            },
+                            valueRange = 0f..(totalLayers - 1).toFloat(),
+                            modifier = Modifier
+                                .width(240.dp)
+                                .graphicsLayer { rotationZ = -90f }
+                        )
                     }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-            // Expand button overlay
-            IconButton(
-                onClick = onExpand,
-                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
-            ) {
-                Icon(Icons.Default.Fullscreen, "Full screen",
-                    tint = Color.White.copy(alpha = 0.8f))
+                    Text("1", fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center)
+                }
             }
         }
     }
