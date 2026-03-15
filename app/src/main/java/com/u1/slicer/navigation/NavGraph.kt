@@ -71,10 +71,13 @@ fun U1NavGraph(
         composable(Routes.GCODE_VIEWER_3D) {
             val parsedGcode by viewModel.parsedGcode.collectAsState()
             val extruderColors by viewModel.activeExtruderColors.collectAsState()
+            val slicerState by viewModel.state.collectAsState()
+            val slicerLayerCount = (slicerState as? com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete)?.result?.totalLayers ?: 0
             if (parsedGcode != null) {
                 GcodeViewer3DScreen(
                     parsedGcode = parsedGcode!!,
                     extruderColors = extruderColors,
+                    slicerLayerCount = slicerLayerCount,
                     onBack = { navController.popBackStack() }
                 )
             }

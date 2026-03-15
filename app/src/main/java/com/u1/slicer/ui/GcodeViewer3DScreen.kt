@@ -26,12 +26,14 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 fun GcodeViewer3DScreen(
     parsedGcode: ParsedGcode,
     extruderColors: List<String> = emptyList(),
+    slicerLayerCount: Int = 0,
     onBack: () -> Unit
 ) {
-    val totalLayers = parsedGcode.layers.size
+    val gcodeLayerCount = parsedGcode.layers.size
+    val displayLayerCount = if (slicerLayerCount > 0) slicerLayerCount else gcodeLayerCount
     var viewerView by remember { mutableStateOf<GcodeViewerView?>(null) }
     var minLayer by remember { mutableIntStateOf(0) }
-    var maxLayer by remember { mutableIntStateOf(totalLayers - 1) }
+    var maxLayer by remember { mutableIntStateOf(gcodeLayerCount - 1) }
     var isLoading by remember { mutableStateOf(true) }
 
     // Set colors + upload gcode atomically on the GL thread.
@@ -60,12 +62,11 @@ fun GcodeViewer3DScreen(
                 title = {
                     Column {
                         Text("3D G-code View", fontWeight = FontWeight.Bold)
-                        val layerRange = if (minLayer > 0) "Layers ${minLayer + 1}–${maxLayer + 1}" else "Layer ${maxLayer + 1}"
                         val minZ = parsedGcode.layers.getOrNull(minLayer)?.z ?: 0f
                         val maxZ = parsedGcode.layers.getOrNull(maxLayer)?.z ?: 0f
                         val zInfo = if (minLayer > 0) "%.1f–%.1fmm".format(minZ, maxZ) else "%.1fmm".format(maxZ)
                         Text(
-                            "$totalLayers layers  $layerRange  $zInfo",
+                            "$displayLayerCount layers  $zInfo",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -137,7 +138,7 @@ fun GcodeViewer3DScreen(
             }
 
             // Vertical layer range slider on the right
-            if (totalLayers > 1) {
+            if (gcodeLayerCount > 1) {
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
@@ -146,9 +147,9 @@ fun GcodeViewer3DScreen(
                         .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Top label: current max layer
+                    // Top label: display layer count
                     Text(
-                        "${maxLayer + 1}",
+                        "$displayLayerCount",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.primary,
                         textAlign = TextAlign.Center,
@@ -167,18 +168,17 @@ fun GcodeViewer3DScreen(
                                 maxLayer = range.endInclusive.roundToInt()
                                 viewerView?.setLayerRange(minLayer, maxLayer)
                             },
-                            valueRange = 0f..(totalLayers - 1).toFloat(),
+                            valueRange = 0f..(gcodeLayerCount - 1).toFloat(),
                             modifier = Modifier
                                 .requiredWidth(sliderLength)
                                 .graphicsLayer { rotationZ = -90f }
                         )
                     }
-                    // Bottom label: min layer (or 1 if at bottom)
+                    // Bottom label
                     Text(
-                        if (minLayer > 0) "${minLayer + 1}" else "1",
+                        "1",
                         fontSize = 11.sp,
-                        color = if (minLayer > 0) MaterialTheme.colorScheme.primary
-                               else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )

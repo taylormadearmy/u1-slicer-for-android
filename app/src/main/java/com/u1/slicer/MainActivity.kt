@@ -827,6 +827,7 @@ fun PreviewScreen(
                         InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
+                            slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D
                         )
                     }
@@ -2095,15 +2096,18 @@ fun ScaleSection(
 fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
+    slicerLayerCount: Int = 0,
     onExpand: () -> Unit
 ) {
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
-    val totalLayers = parsedGcode.layers.size
-    var maxLayer by remember { mutableIntStateOf(totalLayers - 1) }
+    val gcodeLayerCount = parsedGcode.layers.size
+    // Use slicer's totalLayers for display (correct print layers), fall back to parsed count
+    val displayLayerCount = if (slicerLayerCount > 0) slicerLayerCount else gcodeLayerCount
+    var maxLayer by remember { mutableIntStateOf(gcodeLayerCount - 1) }
 
     LaunchedEffect(parsedGcode, extruderColors, viewerView) {
         val v = viewerView ?: return@LaunchedEffect
-        maxLayer = totalLayers - 1
+        maxLayer = gcodeLayerCount - 1
         v.queueEvent {
             if (extruderColors.isNotEmpty()) {
                 v.renderer.setExtruderColors(extruderColors)
@@ -2137,16 +2141,19 @@ fun InlineGcodePreview(
                     Icon(Icons.Default.Fullscreen, "Full screen",
                         tint = Color.White.copy(alpha = 0.8f))
                 }
-                // Layer label overlay
+                // Layer label overlay — map gcode layer index to display layer
+                val displayLayer = if (gcodeLayerCount > 0)
+                    ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
+                else 1
                 Text(
-                    "Layer ${maxLayer + 1}/$totalLayers",
+                    "Layer $displayLayer/$displayLayerCount",
                     fontSize = 10.sp,
                     color = Color.White.copy(alpha = 0.7f),
                     modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
                 )
             }
             // Vertical layer slider on the right
-            if (totalLayers > 1) {
+            if (gcodeLayerCount > 1) {
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
@@ -2154,7 +2161,7 @@ fun InlineGcodePreview(
                         .padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("${maxLayer + 1}", fontSize = 10.sp,
+                    Text("$displayLayerCount", fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.primary,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth())
@@ -2169,7 +2176,7 @@ fun InlineGcodePreview(
                                 maxLayer = v.roundToInt()
                                 viewerView?.setLayerRange(0, maxLayer)
                             },
-                            valueRange = 0f..(totalLayers - 1).toFloat(),
+                            valueRange = 0f..(gcodeLayerCount - 1).toFloat(),
                             modifier = Modifier
                                 .requiredWidth(sliderLength)
                                 .graphicsLayer { rotationZ = -90f }
