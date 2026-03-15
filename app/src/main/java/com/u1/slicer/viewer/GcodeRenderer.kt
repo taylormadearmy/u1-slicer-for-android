@@ -9,10 +9,12 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.sqrt
 
 /**
- * Renders G-code toolpaths as 3D colored lines.
- * Extrusion moves are colored by extruder; travel moves are dim gray.
+ * Renders G-code toolpaths as 3D colored lines/ribbon quads.
+ * Extrusion moves are rendered as flat ribbon quads (GL_TRIANGLES) when move count < 500K;
+ * falls back to GL_LINES for very large files. Travel moves are always GL_LINES.
  * All layers share a single VBO; each layer is a (firstVertex, count) range within it.
  */
 class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
@@ -21,7 +23,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var toolpathShader: ShaderProgram? = null
     private val bed = BedDrawable(context)
 
-    // Single VAO/VBO for all toolpath layers
+    // Single VAO/VBO for travel moves (and extrusion fallback when useTubes=false)
     // Extrusion and travel vertices are stored in separate contiguous ranges per layer
     // so they can be drawn independently.
     private var masterVAO = 0
@@ -31,6 +33,13 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val travelFirst: Int, val travelCount: Int
     )
     private val layerRanges = mutableListOf<LayerRange>()
+
+    // Separate VAO/VBO for extrusion ribbon quads (GL_TRIANGLES)
+    private var tubeVAO = 0
+    private var tubeVBO = 0
+    private data class TubeLayerRange(val firstVertex: Int, val vertexCount: Int)
+    private val tubeLayerRanges = mutableListOf<TubeLayerRange>()
+    private var useTubes = false
 
     private var totalLayers = 0
     var minLayer = 0
@@ -128,6 +137,15 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
         layerRanges.clear()
 
+        // Delete previous tube VBO/VAO
+        if (tubeVAO != 0) {
+            GLES30.glDeleteVertexArrays(1, intArrayOf(tubeVAO), 0)
+            GLES30.glDeleteBuffers(1, intArrayOf(tubeVBO), 0)
+            tubeVAO = 0; tubeVBO = 0
+        }
+        tubeLayerRanges.clear()
+        useTubes = false
+
         totalLayers = gcode.layers.size
         maxLayer = totalLayers - 1
         if (totalLayers == 0) return
@@ -136,104 +154,214 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val totalMoves = gcode.layers.sumOf { it.moves.size }
         if (totalMoves == 0) return
 
+        // Count extrusion vs travel moves
+        var totalExtrudeMoves = 0
+        var totalTravelMoves = 0
+        for (layer in gcode.layers) {
+            for (move in layer.moves) {
+                if (move.type == MoveType.EXTRUDE) totalExtrudeMoves++ else totalTravelMoves++
+            }
+        }
+
         // Each move = 2 vertices, each vertex = 3 pos + 4 color = 7 floats
         val floatsPerVertex = 7
-        val maxBufferBytes = 80_000_000L  // 80MB limit for GPU buffer
-        val fullBytes = totalMoves.toLong() * 2 * floatsPerVertex * 4
+        val maxBufferBytes = 80_000_000L  // 80MB limit per GPU buffer
 
-        // Downsample if needed: keep every Nth extrusion move, skip travel moves when downsampling
-        val sampleRate = if (fullBytes > maxBufferBytes) {
-            val rate = ((fullBytes + maxBufferBytes - 1) / maxBufferBytes).toInt()
-            android.util.Log.i("GcodeRenderer", "Downsampling G-code preview: keeping 1/$rate of $totalMoves moves (${fullBytes / 1_000_000}MB → ~${fullBytes / rate / 1_000_000}MB)")
+        // Decide whether to use ribbon quads for extrusions
+        // 6 vertices per move (2 triangles) * 7 floats * 4 bytes = 168 bytes per move
+        val tubeBytes = totalExtrudeMoves.toLong() * 6 * floatsPerVertex * 4
+        useTubes = totalExtrudeMoves < 500_000 && tubeBytes <= maxBufferBytes
+
+        // --- Build line VBO (travels, and extrusion fallback when !useTubes) ---
+        // Downsample extrusions if needed (only relevant in fallback path)
+        val extrudeBytesAsLines = totalExtrudeMoves.toLong() * 2 * floatsPerVertex * 4
+        val travelBytesAsLines = totalTravelMoves.toLong() * 2 * floatsPerVertex * 4
+        val lineBytesNeeded = (if (useTubes) 0L else extrudeBytesAsLines) + travelBytesAsLines
+
+        val sampleRate = if (!useTubes && lineBytesNeeded > maxBufferBytes) {
+            val rate = ((lineBytesNeeded + maxBufferBytes - 1) / maxBufferBytes).toInt()
+            android.util.Log.i("GcodeRenderer", "Downsampling G-code preview: keeping 1/$rate of $totalExtrudeMoves extrusion moves (${lineBytesNeeded / 1_000_000}MB → ~${lineBytesNeeded / rate / 1_000_000}MB)")
             rate
         } else 1
 
-        // Allocate for the downsampled size.
-        // Two passes per layer: extrusions first, then travels (travels skipped when downsampling).
-        val estimatedMoves = if (sampleRate > 1) totalMoves / sampleRate + totalLayers else totalMoves
-        val data = FloatArray(estimatedMoves * 2 * floatsPerVertex)
-        var offset = 0
+        // Allocate line buffer: extrusions (fallback) + travels
+        val estimatedLineMoves = if (!useTubes) {
+            if (sampleRate > 1) totalExtrudeMoves / sampleRate + totalLayers else totalExtrudeMoves
+        } else 0
+        val estimatedTravelMoves = if (sampleRate == 1) totalTravelMoves else 0
+        val lineData = FloatArray((estimatedLineMoves + estimatedTravelMoves) * 2 * floatsPerVertex + floatsPerVertex)
+        var lineOffset = 0
+
+        // Allocate tube buffer: 6 vertices per extrusion move
+        val tubeData = if (useTubes) FloatArray(totalExtrudeMoves * 6 * floatsPerVertex) else FloatArray(0)
+        var tubeOffset = 0
+        val halfWidth = 0.2f  // 0.4mm extrusion width / 2
 
         for (layer in gcode.layers) {
-            // --- Pass 1: extrusion moves ---
-            val extrudeFirst = offset / floatsPerVertex
+            // --- Extrusion pass ---
+            val extrudeFirst = lineOffset / floatsPerVertex
+            val tubeFirst = tubeOffset / floatsPerVertex
             var moveIdx = 0
+
             for (move in layer.moves) {
                 if (move.type != MoveType.EXTRUDE) continue
-                if (sampleRate > 1 && moveIdx++ % sampleRate != 0) continue
                 val color = extruderColors[move.extruder.coerceIn(0, 3)]
-                // Bounds check — downsampling estimate may be slightly off
-                if (offset + floatsPerVertex * 2 > data.size) break
-                data[offset++] = move.x0; data[offset++] = move.y0; data[offset++] = layer.z
-                data[offset++] = color[0]; data[offset++] = color[1]; data[offset++] = color[2]; data[offset++] = color[3]
-                data[offset++] = move.x1; data[offset++] = move.y1; data[offset++] = layer.z
-                data[offset++] = color[0]; data[offset++] = color[1]; data[offset++] = color[2]; data[offset++] = color[3]
-            }
-            val extrudeCount = offset / floatsPerVertex - extrudeFirst
 
-            // --- Pass 2: travel moves (skipped entirely when downsampling) ---
-            val travelFirst = offset / floatsPerVertex
+                if (useTubes) {
+                    // Ribbon quad: 6 vertices (2 triangles)
+                    val dx = move.x1 - move.x0
+                    val dy = move.y1 - move.y0
+                    val len = sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+                    if (len < 0.001f) continue  // skip zero-length moves
+
+                    val px = -dy / len * halfWidth
+                    val py = dx / len * halfWidth
+                    val z = layer.z
+
+                    // v0: x0-px, y0-py   v1: x0+px, y0+py
+                    // v3: x1-px, y1-py   v2: x1+px, y1+py
+                    // Tri1: v0, v1, v2   Tri2: v0, v2, v3
+                    if (tubeOffset + 6 * floatsPerVertex > tubeData.size) break
+
+                    // v0
+                    tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = z
+                    tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    // v1
+                    tubeData[tubeOffset++] = move.x0 + px; tubeData[tubeOffset++] = move.y0 + py; tubeData[tubeOffset++] = z
+                    tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    // v2
+                    tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = z
+                    tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    // Tri2
+                    // v0 again
+                    tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = z
+                    tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    // v2 again
+                    tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = z
+                    tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                    // v3
+                    tubeData[tubeOffset++] = move.x1 - px; tubeData[tubeOffset++] = move.y1 - py; tubeData[tubeOffset++] = z
+                    tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
+                } else {
+                    // Fallback: GL_LINES
+                    if (sampleRate > 1 && moveIdx++ % sampleRate != 0) continue
+                    if (lineOffset + floatsPerVertex * 2 > lineData.size) break
+                    lineData[lineOffset++] = move.x0; lineData[lineOffset++] = move.y0; lineData[lineOffset++] = layer.z
+                    lineData[lineOffset++] = color[0]; lineData[lineOffset++] = color[1]; lineData[lineOffset++] = color[2]; lineData[lineOffset++] = color[3]
+                    lineData[lineOffset++] = move.x1; lineData[lineOffset++] = move.y1; lineData[lineOffset++] = layer.z
+                    lineData[lineOffset++] = color[0]; lineData[lineOffset++] = color[1]; lineData[lineOffset++] = color[2]; lineData[lineOffset++] = color[3]
+                }
+            }
+            val extrudeCount = lineOffset / floatsPerVertex - extrudeFirst
+            val tubeVertexCount = tubeOffset / floatsPerVertex - tubeFirst
+
+            // --- Travel pass (skipped entirely when downsampling) ---
+            val travelFirst = lineOffset / floatsPerVertex
             if (sampleRate == 1) {
                 for (move in layer.moves) {
                     if (move.type == MoveType.EXTRUDE) continue
-                    if (offset + floatsPerVertex * 2 > data.size) break
-                    data[offset++] = move.x0; data[offset++] = move.y0; data[offset++] = layer.z
-                    data[offset++] = travelColor[0]; data[offset++] = travelColor[1]; data[offset++] = travelColor[2]; data[offset++] = travelColor[3]
-                    data[offset++] = move.x1; data[offset++] = move.y1; data[offset++] = layer.z
-                    data[offset++] = travelColor[0]; data[offset++] = travelColor[1]; data[offset++] = travelColor[2]; data[offset++] = travelColor[3]
+                    if (lineOffset + floatsPerVertex * 2 > lineData.size) break
+                    lineData[lineOffset++] = move.x0; lineData[lineOffset++] = move.y0; lineData[lineOffset++] = layer.z
+                    lineData[lineOffset++] = travelColor[0]; lineData[lineOffset++] = travelColor[1]; lineData[lineOffset++] = travelColor[2]; lineData[lineOffset++] = travelColor[3]
+                    lineData[lineOffset++] = move.x1; lineData[lineOffset++] = move.y1; lineData[lineOffset++] = layer.z
+                    lineData[lineOffset++] = travelColor[0]; lineData[lineOffset++] = travelColor[1]; lineData[lineOffset++] = travelColor[2]; lineData[lineOffset++] = travelColor[3]
                 }
             }
-            val travelCount = offset / floatsPerVertex - travelFirst
+            val travelCount = lineOffset / floatsPerVertex - travelFirst
 
             layerRanges.add(LayerRange(extrudeFirst, extrudeCount, travelFirst, travelCount))
+            tubeLayerRanges.add(TubeLayerRange(tubeFirst, tubeVertexCount))
         }
 
-        // Single GPU upload for all layers
-        val buf = ByteBuffer.allocateDirect(offset * 4)
-            .order(ByteOrder.nativeOrder())
-            .asFloatBuffer()
-        buf.put(data, 0, offset)
-        buf.flip()
+        // Upload line VBO (travel + optional extrusion fallback)
+        if (lineOffset > 0) {
+            val buf = ByteBuffer.allocateDirect(lineOffset * 4)
+                .order(ByteOrder.nativeOrder())
+                .asFloatBuffer()
+            buf.put(lineData, 0, lineOffset)
+            buf.flip()
 
-        val vaos = IntArray(1); GLES30.glGenVertexArrays(1, vaos, 0); masterVAO = vaos[0]
-        val vbos = IntArray(1); GLES30.glGenBuffers(1, vbos, 0); masterVBO = vbos[0]
+            val vaos = IntArray(1); GLES30.glGenVertexArrays(1, vaos, 0); masterVAO = vaos[0]
+            val vbos = IntArray(1); GLES30.glGenBuffers(1, vbos, 0); masterVBO = vbos[0]
 
-        GLES30.glBindVertexArray(masterVAO)
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, masterVBO)
-        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, offset * 4, buf, GLES30.GL_STATIC_DRAW)
+            GLES30.glBindVertexArray(masterVAO)
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, masterVBO)
+            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, lineOffset * 4, buf, GLES30.GL_STATIC_DRAW)
 
-        val stride = floatsPerVertex * 4 // 28 bytes
-        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, stride, 0)
-        GLES30.glEnableVertexAttribArray(0)
-        GLES30.glVertexAttribPointer(1, 4, GLES30.GL_FLOAT, false, stride, 12)
-        GLES30.glEnableVertexAttribArray(1)
-        GLES30.glBindVertexArray(0)
+            val stride = floatsPerVertex * 4 // 28 bytes
+            GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, stride, 0)
+            GLES30.glEnableVertexAttribArray(0)
+            GLES30.glVertexAttribPointer(1, 4, GLES30.GL_FLOAT, false, stride, 12)
+            GLES30.glEnableVertexAttribArray(1)
+            GLES30.glBindVertexArray(0)
+        }
+
+        // Upload tube VBO (extrusion ribbon quads)
+        if (useTubes && tubeOffset > 0) {
+            val tubeBuf = ByteBuffer.allocateDirect(tubeOffset * 4)
+                .order(ByteOrder.nativeOrder())
+                .asFloatBuffer()
+            tubeBuf.put(tubeData, 0, tubeOffset)
+            tubeBuf.flip()
+
+            val vaos = IntArray(1); GLES30.glGenVertexArrays(1, vaos, 0); tubeVAO = vaos[0]
+            val vbos = IntArray(1); GLES30.glGenBuffers(1, vbos, 0); tubeVBO = vbos[0]
+
+            GLES30.glBindVertexArray(tubeVAO)
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, tubeVBO)
+            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, tubeOffset * 4, tubeBuf, GLES30.GL_STATIC_DRAW)
+
+            val stride = floatsPerVertex * 4 // 28 bytes
+            GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, stride, 0)
+            GLES30.glEnableVertexAttribArray(0)
+            GLES30.glVertexAttribPointer(1, 4, GLES30.GL_FLOAT, false, stride, 12)
+            GLES30.glEnableVertexAttribArray(1)
+            GLES30.glBindVertexArray(0)
+        }
     }
 
     private fun drawToolpaths() {
         val shader = toolpathShader ?: return
-        if (layerRanges.isEmpty()) return
+        if (layerRanges.isEmpty() && tubeLayerRanges.isEmpty()) return
 
         shader.use()
         camera.computeMVP()
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
 
-        val min = minLayer.coerceIn(0, layerRanges.size - 1)
-        val max = maxLayer.coerceIn(0, layerRanges.size - 1)
+        val layerCount = maxOf(layerRanges.size, tubeLayerRanges.size)
+        val min = minLayer.coerceIn(0, layerCount - 1)
+        val max = maxLayer.coerceIn(0, layerCount - 1)
 
-        // Extrusion and travel ranges are NOT contiguous across layers (each layer has
-        // extrude block then travel block), so we must draw per-layer.
-        GLES30.glBindVertexArray(masterVAO)
-        for (i in min..max) {
-            val r = layerRanges[i]
-            if (r.extrudeCount > 0) {
-                GLES30.glDrawArrays(GLES30.GL_LINES, r.extrudeFirst, r.extrudeCount)
+        // Draw extrusion: tubes (GL_TRIANGLES) when available, lines (GL_LINES) as fallback
+        if (useTubes && tubeLayerRanges.isNotEmpty()) {
+            GLES30.glBindVertexArray(tubeVAO)
+            for (i in min..max) {
+                if (i >= tubeLayerRanges.size) break
+                val r = tubeLayerRanges[i]
+                if (r.vertexCount > 0) GLES30.glDrawArrays(GLES30.GL_TRIANGLES, r.firstVertex, r.vertexCount)
             }
-            if (showTravel && r.travelCount > 0) {
-                GLES30.glDrawArrays(GLES30.GL_LINES, r.travelFirst, r.travelCount)
+            GLES30.glBindVertexArray(0)
+        } else if (layerRanges.isNotEmpty()) {
+            // Fallback: draw extrusion as lines
+            GLES30.glBindVertexArray(masterVAO)
+            for (i in min..max) {
+                if (i >= layerRanges.size) break
+                val r = layerRanges[i]
+                if (r.extrudeCount > 0) GLES30.glDrawArrays(GLES30.GL_LINES, r.extrudeFirst, r.extrudeCount)
             }
+            GLES30.glBindVertexArray(0)
         }
-        GLES30.glBindVertexArray(0)
+
+        // Draw travel moves (always GL_LINES)
+        if (showTravel && layerRanges.isNotEmpty() && masterVAO != 0) {
+            GLES30.glBindVertexArray(masterVAO)
+            for (i in min..max) {
+                if (i >= layerRanges.size) break
+                val r = layerRanges[i]
+                if (r.travelCount > 0) GLES30.glDrawArrays(GLES30.GL_LINES, r.travelFirst, r.travelCount)
+            }
+            GLES30.glBindVertexArray(0)
+        }
     }
 
 }
