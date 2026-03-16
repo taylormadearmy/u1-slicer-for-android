@@ -1278,110 +1278,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * and survives the cache clear.
      */
     private fun attemptClipperRecovery() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val context = getApplication<Application>()
-                // Capture recovery inputs BEFORE clearing (rawInputFile is safe — not intermediate)
-                val rawFile = rawInputFile
-                val origInfo = recoveryOrigInfo
-                val plateId = recoveryPlateId
-                diagnostics.recordEvent(
-                    "clipper_recovery_started",
-                    mapOf(
-                        "rawFile" to rawFile?.absolutePath,
-                        "plateId" to plateId,
-                        "currentModelPath" to currentModelFile?.absolutePath
-                    )
-                )
-
-                // Step 1: Nuke all intermediate cache files (rawInputFile is NOT affected)
-                val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
-                Log.i("SlicerVM", "Clipper recovery: cleared $cleared intermediate files, " +
-                    "rawFile=${rawFile?.name}, plateId=$plateId")
-
-                // Step 2: Reset native state completely
-                native.clearModel()
-
-                if (rawFile == null || !rawFile.exists()) {
-                    Log.e("SlicerVM", "Clipper recovery: raw input file unavailable")
-                    diagnostics.recordEvent(
-                        "clipper_recovery_failed",
-                        mapOf("reason" to "raw_input_missing")
-                    )
-                    _state.value = SlicerState.Error(
-                        "Slicing failed (Clipper error). Auto-recovery could not retry — try restarting the app."
-                    )
-                    return@launch
-                }
-
-                _state.value = SlicerState.Slicing(0, "Recovering…")
-
-                // Step 3: Re-run the full pipeline from the raw input
-                if (rawFile.name.endsWith(".3mf", ignoreCase = true) && origInfo != null) {
-                    // Re-parse original config (before process() strips it)
-                    originalSourceConfig = if (origInfo.isBambu) {
-                        java.util.zip.ZipFile(rawFile).use { profileEmbedder.parseSourceConfig(it) }
-                    } else null
-
-                    // Re-sanitize from raw input (generates new sanitized_* + restructured_* files)
-                    val processed = BambuSanitizer.process(rawFile, context.filesDir, isBambu = origInfo.isBambu)
-                    val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
-                    _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
-                    sourceModelFile = processed
-                    sourceModelInfo = processedInfo
-                    toolRemapSlots = null
-
-                    val mergedInfo = _threeMfInfo.value!!
-                    val embedded = embedProfile(processed, mergedInfo, context)
-                    currentModelFile = embedded
-
-                    if (plateId >= 0) {
-                        // Re-extract the originally selected plate from freshly sanitized file
-                        val hasPlateJsons = origInfo.hasPlateJsons
-                        val plateObjectIds = origInfo.plates.find { it.plateId == plateId }?.objectIds?.toSet()
-                        val rawPlateFile = BambuSanitizer.extractPlate(
-                            embedded, plateId, context.filesDir,
-                            hasPlateJsons = hasPlateJsons, plateObjectIds = plateObjectIds
-                        )
-                        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, context.filesDir)
-                        val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
-                        sourceModelFile = plateFile
-                        sourceModelInfo = plateInfo
-                        _threeMfInfo.value = mergeThreeMfInfoForPlate(plateInfo, mergedInfo)
-                        currentModelFile = plateFile
-                        loadNativeModel(plateFile)
-                    } else {
-                        loadNativeModel(embedded)
-                    }
-                } else {
-                    // STL: reload directly (no 3MF pipeline)
-                    currentModelFile = rawFile
-                    loadNativeModel(rawFile)
-                }
-
-                // Step 4: Re-slice (clipperRetryAttempted=true prevents another loop)
-                Log.i("SlicerVM", "Clipper recovery: model reloaded, retrying slice")
-                diagnostics.recordEvent(
-                    "clipper_recovery_reloaded",
-                    mapOf(
-                        "currentModelPath" to currentModelFile?.absolutePath,
-                        "plateId" to recoveryPlateId
-                    )
-                )
-                startSlicing()
-            } catch (e: Throwable) {
-                Log.e("SlicerVM", "Clipper recovery failed", e)
-                diagnostics.recordEvent(
-                    "clipper_recovery_failed",
-                    mapOf("reason" to (e.message ?: e.javaClass.simpleName))
-                )
-                _state.value = SlicerState.Error(
-                    "Slicing failed after auto-recovery. Try restarting the app.\n(${e.message})"
-                )
-            } finally {
-                native.progressListener = null
-            }
-        }
+        // Clipper coordinate overflow is caused by stale native static state that
+        // accumulates across model loads within the same process. In-process recovery
+        // (clearModel + re-pipeline + re-slice) doesn't work — same native statics
+        // produce identical failures. A process restart (SIGKILL + AlarmManager relaunch)
+        // gives fresh JNI_OnLoad with clean state, which fixes the issue.
+        Log.w("SlicerVM", "Clipper error: restarting app for fresh native state")
+        diagnostics.recordEvent(
+            "clipper_recovery_restart",
+            mapOf(
+                "rawFile" to rawInputFile?.absolutePath,
+                "plateId" to recoveryPlateId,
+                "currentModelPath" to currentModelFile?.absolutePath
+            )
+        )
+        _state.value = SlicerState.Slicing(0, "Restarting for clean state…")
+        restartApp()
     }
 
     /**
