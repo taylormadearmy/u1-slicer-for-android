@@ -40,7 +40,12 @@ fun ModelViewerScreen(
     colorMapping: List<Int>? = null,
     onBack: () -> Unit
 ) {
-    val colorPalette = remember(extruderColors) { extruderColors.map { hexToRgba(it) } }
+    val colorPalette = remember(extruderColors, colorMapping) {
+        if (colorMapping != null)
+            colorMapping.map { slot -> hexToRgba(extruderColors.getOrElse(slot) { "" }) }
+        else
+            extruderColors.map { hexToRgba(it) }
+    }
     var mesh by remember { mutableStateOf<MeshData?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }

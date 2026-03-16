@@ -1652,9 +1652,10 @@ fun InlineModelPreview(
                     } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
                 }
                 val palette = if (colorMapping != null) {
-                    // Multi-color: palette indexed by physical slot (parsePaintIndex now returns
-                    // physical slot indices via colorMapping[(state-1)%min(4,size)]).
-                    extruderColors.map { toRgba(it) }
+                    // Multi-color: palette[compactIndex] = color for that detected colour.
+                    // extruderIndices stores compact detected-colour indices (0-based), and
+                    // parsePaintIndex returns (state-1) % min(mapping.size, 4) — same scheme.
+                    colorMapping.map { slot -> toRgba(extruderColors.getOrElse(slot) { "" }) }
                 } else {
                     // Single-color: palette[0] = first non-blank color
                     listOf(toRgba(extruderColors.firstOrNull { it.isNotBlank() } ?: ""))
