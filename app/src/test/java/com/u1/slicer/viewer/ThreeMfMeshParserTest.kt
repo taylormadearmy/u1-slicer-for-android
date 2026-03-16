@@ -377,8 +377,8 @@ class ThreeMfMeshParserTest {
         assertNotNull(mesh)
         assertNotNull(mesh!!.extruderIndices)
         assertEquals(3, mesh.extruderIndices!!.size) // 3 triangles
-        // "0C" = state 0 (NONE) → unpainted in SEMM context → 0xFF (renders as gray)
-        assertEquals(0xFF.toByte(), mesh.extruderIndices!![0]) // paint_color="0C"
+        // "0C" = state 0 (NONE) → unpainted → falls back to volumeExtruderIdx (0)
+        assertEquals(0.toByte(), mesh.extruderIndices!![0]) // paint_color="0C"
         // "1C" = state 1 (Extruder1) → index 0
         assertEquals(0.toByte(), mesh.extruderIndices!![1]) // paint_color="1C"
         // "2C" = state 2 (Extruder2) → index 1
@@ -416,7 +416,7 @@ class ThreeMfMeshParserTest {
     }
 
     @Test
-    fun `unpainted triangles in SEMM context store 0xFF for gray rendering`() {
+    fun `unpainted triangles use volume extruder index`() {
         val xml = """<?xml version="1.0" encoding="UTF-8"?>
             <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
             <resources>
@@ -445,7 +445,7 @@ class ThreeMfMeshParserTest {
         assertNotNull(mesh!!.extruderIndices)
         assertEquals(2, mesh.extruderIndices!!.size)
         assertEquals(1.toByte(), mesh.extruderIndices!![0]) // "2C" = state 2 → index 1
-        assertEquals(0xFF.toByte(), mesh.extruderIndices!![1]) // unpainted in SEMM → 0xFF (gray)
+        assertEquals(1.toByte(), mesh.extruderIndices!![1]) // unpainted → volume extruder (1)
     }
 
     // ── B23: Multi-object extruder map tests ──

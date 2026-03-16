@@ -41,9 +41,7 @@ data class MeshData(
         val buf = vertices
 
         for (tri in indices.indices) {
-            val raw = indices[tri].toInt() and 0xFF
-            if (raw == 0xFF) continue  // NONE/unpainted in SEMM context — leave at default gray
-            val extruder = raw.coerceAtMost(lastIndex)
+            val extruder = (indices[tri].toInt() and 0xFF).coerceAtMost(lastIndex)
             val color = colorPalette[extruder]
             val r = color[0]; val g = color[1]; val b = color[2]; val a = color[3]
 
