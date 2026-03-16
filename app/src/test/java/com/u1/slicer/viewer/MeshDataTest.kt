@@ -187,8 +187,8 @@ class MeshDataTest {
     }
 
     @Test
-    fun `recolor handles unsigned byte index 255`() {
-        // Byte value -1 in signed = 255 unsigned
+    fun `recolor skips index 255 leaving default gray`() {
+        // 0xFF = NONE/unpainted in SEMM context — should not be recolored
         val indices = byteArrayOf(-1) // 0xFF = 255
         val mesh = makeMesh(1, indices)
         val palette = listOf(
@@ -198,10 +198,12 @@ class MeshDataTest {
 
         mesh.recolor(palette)
 
-        // 255 > palette size, should clamp to last entry (green)
+        // 0xFF is skipped — vertex retains the pre-existing buffer value (0 in unit test context;
+        // would be 0.7,0.7,0.7 in the real pipeline where buildMeshData pre-fills with gray)
         val buf = mesh.vertices
         val base = 6
         assertEquals(0f, buf.get(base), 0.001f)
-        assertEquals(1f, buf.get(base + 1), 0.001f)
+        assertEquals(0f, buf.get(base + 1), 0.001f)
+        assertEquals(0f, buf.get(base + 2), 0.001f)
     }
 }

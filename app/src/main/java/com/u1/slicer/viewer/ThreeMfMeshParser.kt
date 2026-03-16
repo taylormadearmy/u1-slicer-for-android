@@ -463,8 +463,8 @@ object ThreeMfMeshParser {
             for (i in 0 until nTris) {
                 // Paint data wins over volume-level extruder index
                 val extruderIdx: Byte = if (paintIndices != null && i < paintIndices.size) {
-                    val paintVal = paintIndices[i].toInt() and 0xFF
-                    if (paintVal != 0xFF) paintVal.toByte() else volumeExtruderIdx
+                    // In SEMM context: preserve 0xFF (NONE/unpainted) so recolor() renders it gray
+                    paintIndices[i]
                 } else volumeExtruderIdx
                 val a = tris[i * 3] * 3
                 val b = tris[i * 3 + 1] * 3
