@@ -30,6 +30,13 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
+    /** Load mesh and fit camera to it (for standalone 3D preview, not bed-placement view). */
+    fun setMeshFit(mesh: MeshData) {
+        renderer.pendingFitToMesh = true
+        renderer.pendingMesh = mesh
+        requestRender()
+    }
+
     /** Recolor the mesh using the given palette. Thread-safe: queues work on GL thread. */
     fun recolorMesh(colorPalette: List<FloatArray>) {
         renderer.pendingRecolor = colorPalette

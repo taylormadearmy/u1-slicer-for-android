@@ -204,11 +204,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val currentModelPath: String? get() = currentModelFile?.absolutePath
 
     /**
-     * Path to use for the inline 3D preview. Uses the original source file when available
-     * (before sanitization/embedding) because the sanitized file may have component files
-     * stripped out, leaving no geometry for the preview parser.
+     * Path to use for the inline 3D preview.
+     *
+     * Prefers rawInputFile (pre-sanitization) so that H2C (Hybrid 2-Color) models have both
+     * their printable and non-printable meshes available to ThreeMfMeshParser.mergeH2cPairs().
+     * BambuSanitizer.process() strips printable="0" build items, making mergeH2cPairs a no-op
+     * on the sanitized file, causing large paint-patch artifacts in the preview.
+     *
+     * When a specific plate has been selected, rawInputFile is the full multi-plate 3MF which
+     * could show the wrong plate — fall back to sourceModelFile (the extracted plate file).
      */
-    val previewModelPath: String? get() = (sourceModelFile ?: currentModelFile)?.absolutePath
+    val previewModelPath: String? get() = when {
+        recoveryPlateId >= 0 -> sourceModelFile ?: currentModelFile  // plate selected → use plate file
+        else -> rawInputFile ?: sourceModelFile ?: currentModelFile   // original file so H2C merge works
+    }?.absolutePath
 
     init {
         _coreVersion.value = if (NativeLibrary.isLoaded) {

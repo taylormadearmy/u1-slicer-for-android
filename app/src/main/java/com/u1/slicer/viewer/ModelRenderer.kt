@@ -72,6 +72,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingCameraReset = false
 
+    /** When true, reset to fit the mesh bounds instead of the bed-centred default view. */
+    @Volatile
+    var pendingFitToMesh = false
+
     data class WipeTowerInfo(val x: Float, val y: Float, val width: Float, val depth: Float)
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -144,7 +148,15 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val mesh = meshData
             if (mesh != null) {
                 pendingCameraReset = false
-                resetCameraToDefaultView()
+                if (pendingFitToMesh) {
+                    pendingFitToMesh = false
+                    camera.setTarget(mesh.centerX, mesh.centerY, mesh.centerZ)
+                    camera.distance = mesh.maxDimension * 2f
+                    camera.elevation = 25f
+                    camera.azimuth = -45f
+                } else {
+                    resetCameraToDefaultView()
+                }
                 camera.panX = 0f
                 camera.panY = 0f
                 camera.updateProjectionMatrix(viewportWidth, viewportHeight)
