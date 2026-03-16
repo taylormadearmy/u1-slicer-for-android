@@ -85,10 +85,12 @@ fun U1NavGraph(
         composable(Routes.MODEL_VIEWER) {
             val modelPath = viewModel.previewModelPath
             val extruderColors by viewModel.activeExtruderColors.collectAsState()
+            val colorMapping by viewModel.colorMapping.collectAsState()
             if (modelPath != null) {
                 ModelViewerScreen(
                     modelFilePath = modelPath,
                     extruderColors = extruderColors,
+                    colorMapping = colorMapping,
                     onBack = { navController.popBackStack() }
                 )
             }

@@ -51,7 +51,7 @@ object ThreeMfMeshParser {
         val objects: Map<String, ObjectInfo>
     )
 
-    fun parse(file: File, extruderMap: Map<Int, Byte>? = null): MeshData? {
+    fun parse(file: File, extruderMap: Map<Int, Byte>? = null, paintStateToExtruder: IntArray? = null): MeshData? {
         Log.d("ThreeMfMesh", "Parsing ${file.name} (${file.length() / 1024}KB)")
         ZipFile(file).use { zip ->
             val modelEntry = zip.getEntry("3D/3dmodel.model") ?: run {
@@ -59,7 +59,7 @@ object ThreeMfMeshParser {
                 return null
             }
 
-            val result = zip.getInputStream(modelEntry).use { streamParseModel(it) }
+            val result = zip.getInputStream(modelEntry).use { streamParseModel(it, paintStateToExtruder) }
             val buildItems = filterBuildItems(result.buildItems)
             val mainObjects = result.objects
             Log.d("ThreeMfMesh", "Build items: ${buildItems.size}, main objects: ${mainObjects.size}")
@@ -72,7 +72,7 @@ object ThreeMfMeshParser {
                 Log.d("ThreeMfMesh", "Build item objectId=${item.objectId} -> obj=${obj != null}, hasMesh=${obj?.mesh != null}, components=${obj?.components?.size}")
                 if (obj != null) {
                     try {
-                        collectMeshes(obj, item.transform, item.objectId.toIntOrNull() ?: 0, mainObjects, zip, meshList, componentCache, item.printable)
+                        collectMeshes(obj, item.transform, item.objectId.toIntOrNull() ?: 0, mainObjects, zip, meshList, componentCache, item.printable, paintStateToExtruder)
                     } catch (t: Throwable) {
                         Log.e("ThreeMfMesh", "collectMeshes failed: ${t.javaClass.simpleName}: ${t.message}")
                     }
@@ -87,7 +87,7 @@ object ThreeMfMeshParser {
                 if (firstCompPath != null) {
                     val compEntry = zip.getEntry(firstCompPath) ?: return null
                     Log.d("ThreeMfMesh", "Legacy fallback: streaming ${firstCompPath} (${compEntry.size / 1_000_000}MB)")
-                    val compResult = zip.getInputStream(compEntry).use { streamParseModel(it) }
+                    val compResult = zip.getInputStream(compEntry).use { streamParseModel(it, paintStateToExtruder) }
                     val compMesh = compResult.objects.values.firstOrNull()?.mesh
                     if (compMesh != null) {
                         return buildMeshData(listOf(MeshWithContext(compMesh, null, 0)), extruderMap)
@@ -105,7 +105,7 @@ object ThreeMfMeshParser {
      * 3MF XML has one tag per line for vertex/triangle data, so this is both
      * memory-efficient (one line in memory at a time) and fast (no XML parser overhead).
      */
-    private fun streamParseModel(input: InputStream): ModelParseResult {
+    private fun streamParseModel(input: InputStream, paintStateToExtruder: IntArray? = null): ModelParseResult {
         val reader = input.bufferedReader()
         val objects = mutableMapOf<String, ObjectInfo>()
         val buildItems = mutableListOf<BuildItem>()
@@ -139,7 +139,7 @@ object ThreeMfMeshParser {
                     // Fast-path paint_color / mmu_segmentation extraction:
                     // only check if the line contains the attribute (99.9%+ lines won't)
                     if (line.contains("paint_color")) {
-                        val idx = parsePaintIndex(line, "paint_color")
+                        val idx = parsePaintIndex(line, "paint_color", paintStateToExtruder)
                         if (idx >= 0) {
                             if (paintList == null) {
                                 // Back-fill previously parsed triangles with 0xFF (unpainted)
@@ -152,7 +152,7 @@ object ThreeMfMeshParser {
                             paintList?.add(0xFF.toByte())
                         }
                     } else if (line.contains("mmu_segmentation")) {
-                        val idx = parsePaintIndex(line, "mmu_segmentation")
+                        val idx = parsePaintIndex(line, "mmu_segmentation", paintStateToExtruder)
                         if (idx >= 0) {
                             if (paintList == null) {
                                 paintList = GrowableByteArray(triList!!.size / 3)
@@ -265,7 +265,7 @@ object ThreeMfMeshParser {
      * Returns the 0-based extruder index (state - 1), or -1 if the triangle is unpainted
      * (state == 0 / NONE) or the attribute is absent.
      */
-    internal fun parsePaintIndex(line: String, attrName: String): Int {
+    internal fun parsePaintIndex(line: String, attrName: String, paintStateToExtruder: IntArray? = null): Int {
         val prefix = "$attrName=\""
         val start = line.indexOf(prefix)
         if (start < 0) return -1
@@ -280,10 +280,16 @@ object ThreeMfMeshParser {
         }
         // State 0 = NONE (unpainted) → fall back to volume-level extruder assignment
         if (state == 0) return -1
-        // H2C models use two AMS trays (states 1–4 = AMS1, states 5–8 = AMS2) where slot N
-        // on each tray holds the same physical filament. Fold AMS2 states back to AMS1 range
-        // so state 5 → index 0 (same as state 1), state 6 → 1, etc.
-        // For standard ≤4-extruder models this is a no-op (states never exceed 4).
+        // If a color→extruder mapping was provided (from the slicer's auto-mapping), use it
+        // so the 3D preview reflects the actual physical slot assignment. Without this, paint
+        // states cycle through slots 0–3 sequentially, which is wrong when the mapping is
+        // non-trivial (e.g. only E3+E4 configured, or H2C with 7 colours mapped to 2 slots).
+        if (paintStateToExtruder != null) {
+            return paintStateToExtruder.getOrElse(state - 1) { (state - 1) % paintStateToExtruder.size.coerceAtLeast(1) }
+        }
+        // Fallback (no mapping provided): fold state into 0–3 range.
+        // H2C models have states 1–8 (two AMS trays); fold AMS2 states back to AMS1 so
+        // state 5 → 0, state 6 → 1, etc. For ≤4-extruder models this is a no-op.
         return (state - 1) % 4
     }
 
@@ -372,7 +378,8 @@ object ThreeMfMeshParser {
         zip: ZipFile,
         meshList: MutableList<MeshWithContext>,
         componentCache: MutableMap<String, Map<String, ObjectInfo>>,
-        printable: Boolean = true
+        printable: Boolean = true,
+        paintStateToExtruder: IntArray? = null
     ) {
         if (obj.mesh != null) {
             meshList.add(MeshWithContext(obj.mesh, parentTransform, objectId, printable))
@@ -389,19 +396,19 @@ object ThreeMfMeshParser {
                         return@getOrPut emptyMap()
                     }
                     Log.d("ThreeMfMesh", "  Stream-parsing ${comp.path} (${entry.size / 1_000_000}MB uncompressed)")
-                    val compResult = zip.getInputStream(entry).use { streamParseModel(it) }
+                    val compResult = zip.getInputStream(entry).use { streamParseModel(it, paintStateToExtruder) }
                     compResult.objects
                 }
                 val extObj = extObjects[comp.objectId]
                 if (extObj != null) {
-                    collectMeshes(extObj, combinedTransform, compObjectId, extObjects, zip, meshList, componentCache, printable)
+                    collectMeshes(extObj, combinedTransform, compObjectId, extObjects, zip, meshList, componentCache, printable, paintStateToExtruder)
                 } else {
                     Log.w("ThreeMfMesh", "  Object ${comp.objectId} not found in component (have: ${extObjects.keys})")
                 }
             } else {
                 val refObj = mainObjects[comp.objectId]
                 if (refObj != null) {
-                    collectMeshes(refObj, combinedTransform, compObjectId, mainObjects, zip, meshList, componentCache, printable)
+                    collectMeshes(refObj, combinedTransform, compObjectId, mainObjects, zip, meshList, componentCache, printable, paintStateToExtruder)
                 }
             }
         }

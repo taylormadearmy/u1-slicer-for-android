@@ -37,6 +37,7 @@ private fun hexToRgba(hex: String): FloatArray {
 fun ModelViewerScreen(
     modelFilePath: String,
     extruderColors: List<String> = emptyList(),
+    colorMapping: List<Int>? = null,
     onBack: () -> Unit
 ) {
     val colorPalette = remember(extruderColors) { extruderColors.map { hexToRgba(it) } }
@@ -53,7 +54,7 @@ fun ModelViewerScreen(
                 mesh = when {
                     file.name.endsWith(".stl", ignoreCase = true) -> StlParser.parse(file)
                     file.name.endsWith(".3mf", ignoreCase = true) ->
-                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(file)
+                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(file, paintStateToExtruder = colorMapping?.toIntArray())
                     else -> null
                 }
                 if (mesh == null) error = "Unsupported file format for 3D preview"
