@@ -194,6 +194,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private var recoveryOrigInfo: ThreeMfInfo? = null
     private var recoveryPlateId: Int = -1
 
+    // B24 RC2: Track whether profile needs re-embedding before next slice.
+    // Set to true when config/overrides are saved while a model is loaded.
+    // Reset to false after each successful embed (initial load or re-embed).
+    // Enables single-extruder re-embed without clearModel() to avoid Clipper state corruption.
+    private var profileNeedsReEmbed = false
+
     /** Exposed for 3D viewer navigation */
     val currentModelPath: String? get() = currentModelFile?.absolutePath
 
@@ -650,6 +656,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             )
         )
         if (success) {
+            profileNeedsReEmbed = false  // Profile is current — just embedded
             val info = native.getModelInfo()
             if (info != null) {
                 lastModelInfo = info
@@ -907,12 +914,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun saveConfig() {
+        if (lastModelInfo != null) profileNeedsReEmbed = true
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.saveSliceConfig(_config.value)
         }
     }
 
     fun saveSlicingOverrides(overrides: SlicingOverrides) {
+        if (lastModelInfo != null) profileNeedsReEmbed = true
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.saveSlicingOverrides(overrides)
         }
@@ -1039,13 +1048,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 _state.value = SlicerState.Slicing(0, "Preparing...")
 
-                // ALWAYS re-embed before slicing: settings changes between slices
+                // Re-embed before slicing when needed: settings changes between slices
                 // (overrides, extruder count, prime tower toggle) must reach the native
                 // slicer via the embedded profile. 40+ profile_keys[] settings have no
                 // applyConfigToPrusa() fallback — without re-embed they silently use stale
                 // values from the initial loadModel() embed (B24 fix RC2).
                 val remap = toolRemapSlots
-                if (remap != null || _config.value.extruderCount > 1) {
+                val needsReEmbed = remap != null || _config.value.extruderCount > 1 || profileNeedsReEmbed
+                if (needsReEmbed) {
                     val src = sourceModelFile
                     // Use merged ThreeMfInfo (colours + extruder count from original file) so the
                     // re-embedded profile carries the correct extruder_count.  sourceModelInfo for
@@ -1053,15 +1063,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val srcInfo = _threeMfInfo.value ?: sourceModelInfo
                     val context = getApplication<Application>()
                     if (src != null && srcInfo != null) {
-                        val reason = if (remap != null) "extruder remap $remap" else "${_config.value.extruderCount}-extruder embed"
+                        val reason = when {
+                            remap != null -> "extruder remap $remap"
+                            _config.value.extruderCount > 1 -> "${_config.value.extruderCount}-extruder embed"
+                            else -> "settings changed since last slice (B24)"
+                        }
                         Log.i("SlicerVM", "Re-embedding 3MF ($reason) before slicing")
-                        // Free the old model from native memory before loading the new one.
-                        // loadModel does g_model = read_from_file(...) which holds both old and
-                        // new models in memory simultaneously — enough to OOM on a large 3MF.
-                        native.clearModel()
+                        val isSingleExtruderRefresh = profileNeedsReEmbed && remap == null && _config.value.extruderCount <= 1
+                        if (!isSingleExtruderRefresh) {
+                            // Multi-extruder/remap path: clear first to avoid OOM from holding
+                            // two large model instances in native memory during re-load.
+                            native.clearModel()
+                        }
+                        // Single-extruder settings refresh: skip clearModel() — files are small
+                        // (no OOM risk) and clearModel()+loadModel() can corrupt native statics,
+                        // causing "Coordinate outside allowed range" Clipper errors (I2).
                         val reembedded = embedProfile(src, srcInfo, context)
                         currentModelFile = reembedded
                         native.loadModel(reembedded.absolutePath)
+                        profileNeedsReEmbed = false
                     }
                 }
 
