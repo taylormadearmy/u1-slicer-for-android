@@ -565,6 +565,8 @@ object ThreeMfParser {
             val parser = createParser(inputStream)
             var currentPlateId: String? = null
             var currentObjectId: String? = null
+            var currentPartId: String? = null
+            var currentObjectExtruder: Int? = null  // object-level default extruder
             var inPlate = false
             var inModelInstance = false
 
@@ -583,6 +585,13 @@ object ThreeMfParser {
                             }
                             "object" -> {
                                 currentObjectId = parser.getAttributeValue(null, "id")
+                                currentObjectExtruder = null
+                            }
+                            "part" -> {
+                                // <part id="N"> inside <object> — compound object component.
+                                // The part id matches the inlined mesh object ID in restructured
+                                // files, so we track it for per-part extruder assignment.
+                                currentPartId = parser.getAttributeValue(null, "id")
                             }
                             "metadata" -> {
                                 val key = parser.getAttributeValue(null, "key") ?: ""
@@ -603,15 +612,24 @@ object ThreeMfParser {
                                             plateObjectMap.getOrPut(plateId) { mutableListOf() }.add(value)
                                         }
                                     }
-                                    key == "name" && currentObjectId != null -> {
+                                    key == "name" && currentObjectId != null && currentPartId == null -> {
                                         objectNames[currentObjectId!!] = value
                                     }
                                     key == "extruder" && currentObjectId != null -> {
                                         value.toIntOrNull()?.let { ext ->
-                                            // Track max extruder seen for this object (covers part-level assignments)
-                                            val current = extruderAssignments[currentObjectId!!] ?: 0
-                                            if (ext > current) extruderAssignments[currentObjectId!!] = ext
-                                            // Also collect ALL extruder values for plate colour filtering (B16)
+                                            if (currentPartId != null) {
+                                                // Per-part extruder: map part ID → extruder.
+                                                // Part IDs match component mesh object IDs in
+                                                // restructured files, enabling per-component
+                                                // coloring in ThreeMfMeshParser.
+                                                extruderAssignments[currentPartId!!] = ext
+                                            } else {
+                                                // Object-level extruder: track as default for
+                                                // this object and as max for the object entry.
+                                                currentObjectExtruder = ext
+                                                val current = extruderAssignments[currentObjectId!!] ?: 0
+                                                if (ext > current) extruderAssignments[currentObjectId!!] = ext
+                                            }
                                             allExtruderValues?.add(ext)
                                         }
                                     }
@@ -623,7 +641,8 @@ object ThreeMfParser {
                         when (parser.name) {
                             "plate" -> { currentPlateId = null; inPlate = false }
                             "model_instance" -> inModelInstance = false
-                            "object" -> currentObjectId = null
+                            "object" -> { currentObjectId = null; currentObjectExtruder = null }
+                            "part" -> currentPartId = null
                         }
                     }
                 }

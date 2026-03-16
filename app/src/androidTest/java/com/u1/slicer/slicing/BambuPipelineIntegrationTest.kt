@@ -1032,4 +1032,34 @@ class BambuPipelineIntegrationTest {
         )
     }
 
+    @Test
+    fun dragonScale_restructuredPlate_hasPerPartExtruderAssignments() {
+        // Dragon Scale compound objects have per-part extruder assignments.
+        // After restructuring, each part becomes a separate <object> with its own mesh,
+        // and model_settings.config has <part id> entries matching these mesh object IDs.
+        // parseModelSettingsConfig must extract per-PART extruder values (not just per-object).
+        val file = asset("Dragon Scale infinity.3mf")
+        val origInfo = ThreeMfParser.parse(file)
+        val processed = BambuSanitizer.process(file, outDir, isBambu = origInfo.isBambu)
+        val rawPlateFile = BambuSanitizer.extractPlate(processed, 1, outDir,
+            hasPlateJsons = origInfo.hasPlateJsons)
+        val restructured = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
+
+        val plateInfo = ThreeMfParser.parseForPlateSelection(restructured)
+        val map = plateInfo.objectExtruderMap
+        android.util.Log.i("PartTest", "Per-part objectExtruderMap: $map")
+
+        // Should have entries for individual mesh object IDs (1, 2, 3),
+        // not just the parent compound object ID
+        assertTrue("Should have >=3 entries (per-part + parent)", map.size >= 3)
+
+        // At least 2 distinct extruder values among the per-part entries
+        val distinctExtruders = map.values.toSet()
+        android.util.Log.i("PartTest", "Distinct extruders: $distinctExtruders")
+        assertTrue(
+            "Per-part extruders should have >=2 distinct values, got $distinctExtruders",
+            distinctExtruders.size >= 2
+        )
+    }
+
 }
