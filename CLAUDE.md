@@ -25,11 +25,11 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```
 4. **Build the release APK**:
    ```bash
-   ./gradlew assembleDebug --no-daemon
+   ./gradlew assembleRelease --no-daemon
    ```
 5. **Rename the APK** with the version number:
    ```bash
-   cp app/build/outputs/apk/debug/app-debug.apk u1-slicer-v1.3.44.apk
+   cp app/build/outputs/apk/release/app-release.apk u1-slicer-v1.3.44.apk
    ```
 6. **Create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
    ```bash
