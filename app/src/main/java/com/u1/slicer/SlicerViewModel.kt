@@ -1045,7 +1045,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // applyConfigToPrusa() fallback — without re-embed they silently use stale
                 // values from the initial loadModel() embed (B24 fix RC2).
                 val remap = toolRemapSlots
-                if (true) {  // Was: remap != null || extruderCount > 1
+                if (remap != null || _config.value.extruderCount > 1) {
                     val src = sourceModelFile
                     // Use merged ThreeMfInfo (colours + extruder count from original file) so the
                     // re-embedded profile carries the correct extruder_count.  sourceModelInfo for
