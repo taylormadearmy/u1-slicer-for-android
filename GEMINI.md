@@ -1,4 +1,4 @@
-# u1-slicer-orca — Agent Instructions
+# u1-slicer-orca — Gemini Instructions
 
 **Read `CLAUDE.md` for full project context.** This file contains architecture, conventions, build commands, test suite breakdown, and the native rebuild procedure.
 

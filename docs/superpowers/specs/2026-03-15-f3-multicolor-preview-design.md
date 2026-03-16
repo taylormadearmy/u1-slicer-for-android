@@ -1,7 +1,7 @@
 # F3: Per-Vertex Multi-Color 3D Model Preview + F25: Single-Color Extruder Picker
 
 **Date**: 2026-03-15
-**Status**: Design approved, pending implementation
+**Status**: ARCHIVED — Implemented in v1.3.36
 
 ## Summary
 

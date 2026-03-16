@@ -1,3 +1,5 @@
+# ARCHIVED — Implemented in v1.3.36
+
 # F3 + F25: Per-Vertex Multi-Color Preview + Single-Color Extruder Picker
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.

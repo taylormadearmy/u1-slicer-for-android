@@ -31,7 +31,7 @@
 | Dragon Scale infinity.3mf | 3MF | Yes (old fmt) | 2 | ✓ | ✓ | NOT TESTED |
 | Dragon Scale infinity-1-plate-2-colours.3mf | 3MF | No | 2 | ✓ | ✓ | NOT TESTED |
 | Dragon Scale infinity-1-plate-2-colours-new-plate.3mf | 3MF | No | 2 | ✓ | ✓ | NOT TESTED |
-| Shashibo-h2s-textured.3mf | 3MF | Yes (old fmt) | 2 | ✓ | ✓ | NOT TESTED |
+| Shashibo-h2s-textured.3mf | 3MF | Yes (old fmt) | 2 | ✓ | ✓ | PASS (user confirmed) |
 | PrusaSlicer-printables-Korok_mask_4colour.3mf | 3MF | No | 4 | ✓ | ✓ | NOT TESTED |
 | colored_3DBenchy (1).3mf | 3MF | No? | 1+ | ✓ | ✓ | NOT TESTED |
 | foldy+coaster (1).3mf | 3MF | Yes (new fmt) | 1+ | ✓ | ✓ | NOT TESTED |
@@ -49,8 +49,8 @@
 
 ## Unit Test Status
 
-- JVM unit tests: 235 / 235 passing (as of last run)
-- Instrumented tests: pending run on device
+- JVM unit tests: 375 / 375 passing
+- Instrumented tests: 109 / 109 passing (see Run 2 below)
 
 ## Automated Test Results
 
