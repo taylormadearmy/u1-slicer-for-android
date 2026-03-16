@@ -28,7 +28,7 @@ object ThreeMfMeshParser {
         val paintIndices: ByteArray? = null
     )
 
-    private data class BuildItem(val objectId: String, val transform: FloatArray?)
+    private data class BuildItem(val objectId: String, val transform: FloatArray?, val printable: Boolean = true)
     private data class ObjectInfo(
         val id: String,
         val mesh: RawMesh?,
@@ -42,7 +42,8 @@ object ThreeMfMeshParser {
     private data class MeshWithContext(
         val mesh: RawMesh,
         val transform: FloatArray?,
-        val objectId: Int
+        val objectId: Int,
+        val printable: Boolean = true
     )
 
     private data class ModelParseResult(
@@ -71,7 +72,7 @@ object ThreeMfMeshParser {
                 Log.d("ThreeMfMesh", "Build item objectId=${item.objectId} -> obj=${obj != null}, hasMesh=${obj?.mesh != null}, components=${obj?.components?.size}")
                 if (obj != null) {
                     try {
-                        collectMeshes(obj, item.transform, item.objectId.toIntOrNull() ?: 0, mainObjects, zip, meshList, componentCache)
+                        collectMeshes(obj, item.transform, item.objectId.toIntOrNull() ?: 0, mainObjects, zip, meshList, componentCache, item.printable)
                     } catch (t: Throwable) {
                         Log.e("ThreeMfMesh", "collectMeshes failed: ${t.javaClass.simpleName}: ${t.message}")
                     }
@@ -217,11 +218,9 @@ object ThreeMfMeshParser {
             } else if (inBuild && line.contains("<item")) {
                 val objId = extractAttr(line, "objectid")
                 if (objId != null) {
-                    val printable = extractAttr(line, "printable")
-                    if (printable != "0") {
-                        val transform = extractAttr(line, "transform")
-                        buildItems.add(BuildItem(objId, parseTransform(transform)))
-                    }
+                    val isPrintable = extractAttr(line, "printable") != "0"
+                    val transform = extractAttr(line, "transform")
+                    buildItems.add(BuildItem(objId, parseTransform(transform), isPrintable))
                 }
             }
         }
@@ -369,10 +368,11 @@ object ThreeMfMeshParser {
         mainObjects: Map<String, ObjectInfo>,
         zip: ZipFile,
         meshList: MutableList<MeshWithContext>,
-        componentCache: MutableMap<String, Map<String, ObjectInfo>>
+        componentCache: MutableMap<String, Map<String, ObjectInfo>>,
+        printable: Boolean = true
     ) {
         if (obj.mesh != null) {
-            meshList.add(MeshWithContext(obj.mesh, parentTransform, objectId))
+            meshList.add(MeshWithContext(obj.mesh, parentTransform, objectId, printable))
         }
         for (comp in obj.components) {
             val combinedTransform = multiplyTransforms(parentTransform, comp.transform)
@@ -391,14 +391,14 @@ object ThreeMfMeshParser {
                 }
                 val extObj = extObjects[comp.objectId]
                 if (extObj != null) {
-                    collectMeshes(extObj, combinedTransform, compObjectId, extObjects, zip, meshList, componentCache)
+                    collectMeshes(extObj, combinedTransform, compObjectId, extObjects, zip, meshList, componentCache, printable)
                 } else {
                     Log.w("ThreeMfMesh", "  Object ${comp.objectId} not found in component (have: ${extObjects.keys})")
                 }
             } else {
                 val refObj = mainObjects[comp.objectId]
                 if (refObj != null) {
-                    collectMeshes(refObj, combinedTransform, compObjectId, mainObjects, zip, meshList, componentCache)
+                    collectMeshes(refObj, combinedTransform, compObjectId, mainObjects, zip, meshList, componentCache, printable)
                 }
             }
         }
@@ -439,10 +439,53 @@ object ThreeMfMeshParser {
         return r
     }
 
+    /**
+     * Merges paint data for H2C (Hybrid 2-Color) model pairs.
+     *
+     * H2C models have two identical meshes: one printable (AMS2 states) and one non-printable
+     * (AMS1 states) with complementary NONE regions. We merge their paint indices so the single
+     * rendered mesh shows complete coverage: non-NONE paint from either object wins for each triangle.
+     *
+     * Matching criterion: one printable + one non-printable with the same triCount, both having
+     * paint data. Non-printable meshes without paint data are dropped (support structures etc.).
+     */
+    private fun mergeH2cPairs(meshes: List<MeshWithContext>): List<MeshWithContext> {
+        val printables = meshes.filter { it.printable }
+        val nonPrintables = meshes.filter { !it.printable && it.mesh.paintIndices != null }
+        if (nonPrintables.isEmpty()) return printables  // nothing to merge
+
+        // Index non-printable meshes by triCount for O(1) lookup
+        val nonPrintableByCount = nonPrintables.groupBy { it.mesh.triCount }
+        val result = mutableListOf<MeshWithContext>()
+        val mergedCounts = mutableSetOf<Int>()
+
+        for (pm in printables) {
+            val npm = nonPrintableByCount[pm.mesh.triCount]
+                ?.takeIf { pm.mesh.paintIndices != null }
+                ?.firstOrNull()
+            if (npm != null && !mergedCounts.contains(pm.mesh.triCount)) {
+                mergedCounts.add(pm.mesh.triCount)
+                val pi1 = pm.mesh.paintIndices!!
+                val pi2 = npm.mesh.paintIndices!!
+                val merged = ByteArray(pi1.size) { i ->
+                    val v1 = pi1[i].toInt() and 0xFF
+                    val v2 = if (i < pi2.size) pi2[i].toInt() and 0xFF else 0xFF
+                    if (v1 != 0xFF) pi1[i] else pi2[i]
+                }
+                Log.d("ThreeMfMesh", "H2C merge: ${pm.mesh.triCount} tris, merged printable+non-printable paint data")
+                result.add(pm.copy(mesh = pm.mesh.copy(paintIndices = merged)))
+            } else {
+                result.add(pm)
+            }
+        }
+        return result
+    }
+
     private fun buildMeshData(
         meshes: List<MeshWithContext>,
         extruderIndexMap: Map<Int, Byte>? = null
     ): MeshData? {
+        val meshes = mergeH2cPairs(meshes)
         val totalTris = meshes.sumOf { it.mesh.triCount }
         if (totalTris == 0) return null
 
