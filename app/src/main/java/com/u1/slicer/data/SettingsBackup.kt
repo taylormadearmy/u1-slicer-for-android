@@ -85,7 +85,7 @@ object SettingsBackup {
             retractSpeed = obj.optDouble("retractSpeed", 45.0).toFloat(),
             supportEnabled = obj.optBoolean("supportEnabled", false),
             supportAngle = obj.optDouble("supportAngle", 45.0).toFloat(),
-            skirtLoops = obj.optInt("skirtLoops", 1),
+            skirtLoops = obj.optInt("skirtLoops", 0),
             brimWidth = obj.optDouble("brimWidth", 0.0).toFloat(),
             nozzleDiameter = obj.optDouble("nozzleDiameter", 0.4).toFloat(),
             filamentDiameter = obj.optDouble("filamentDiameter", 1.75).toFloat(),

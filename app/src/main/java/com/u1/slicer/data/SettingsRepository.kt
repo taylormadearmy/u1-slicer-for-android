@@ -62,7 +62,7 @@ class SettingsRepository(private val context: Context) {
             retractSpeed = prefs[Keys.RETRACT_SPEED] ?: 45f,
             supportEnabled = prefs[Keys.SUPPORT_ENABLED] ?: false,
             supportAngle = prefs[Keys.SUPPORT_ANGLE] ?: 45f,
-            skirtLoops = prefs[Keys.SKIRT_LOOPS] ?: 1,
+            skirtLoops = prefs[Keys.SKIRT_LOOPS] ?: 0,
             brimWidth = prefs[Keys.BRIM_WIDTH] ?: 0f,
             nozzleDiameter = prefs[Keys.NOZZLE_DIAMETER] ?: 0.4f,
             filamentDiameter = prefs[Keys.FILAMENT_DIAMETER] ?: 1.75f,

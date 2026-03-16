@@ -461,6 +461,48 @@ class SlicingOverridesTest {
         assertFalse("support_filament should be omitted when 0 (default)", result.containsKey("support_filament"))
     }
 
+    // --- B24: stale extruderCount forces prime tower on single-color models ---
+
+    @Test
+    fun `resolveInto with extruderCount 1 and wipeTowerEnabled false stays false`() {
+        // After B24 Fix 1 resets wipeTowerEnabled=false + extruderCount=1,
+        // resolveInto must not re-enable the tower for single-extruder models.
+        val base = SliceConfig(extruderCount = 1, wipeTowerEnabled = false)
+        val overrides = SlicingOverrides() // all USE_FILE
+        val resolved = overrides.resolveInto(base)
+        assertFalse(
+            "Single-extruder model with wipeTowerEnabled=false must stay false",
+            resolved.wipeTowerEnabled
+        )
+    }
+
+    @Test
+    fun `buildProfileOverrides with stale wipeTowerEnabled produces correct prime tower flag`() {
+        // resolvePrimeTower for single-extruder with USE_FILE passes through cfgWipeTower.
+        // After B24 Fix 1 resets wipeTowerEnabled=false, the embedded profile must get 0.
+        val cfg = SliceConfig(extruderCount = 1, wipeTowerEnabled = false)
+        val ov = SlicingOverrides() // all USE_FILE
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        assertEquals(
+            "Single-extruder with wipeTowerEnabled=false should have enable_prime_tower=0",
+            "0", result["enable_prime_tower"]
+        )
+    }
+
+    @Test
+    fun `buildProfileOverrides single-extruder with stale wipeTowerEnabled true still produces 1`() {
+        // If somehow wipeTowerEnabled is still true for single-extruder (pre-B24-fix path),
+        // resolvePrimeTower USE_FILE passes through cfgWipeTower=true → enable_prime_tower=1.
+        // This documents the passthrough behavior — the ViewModel fix prevents this state.
+        val cfg = SliceConfig(extruderCount = 1, wipeTowerEnabled = true)
+        val ov = SlicingOverrides() // all USE_FILE
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        assertEquals(
+            "USE_FILE passes through cfgWipeTower value",
+            "1", result["enable_prime_tower"]
+        )
+    }
+
     // --- B17: skirt_height in profile overrides ---
 
     @Test

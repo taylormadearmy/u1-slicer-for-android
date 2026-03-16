@@ -692,12 +692,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     _colorMapping.value = null
                     _selectedExtruder.value = 0
+                    // Reset multi-extruder state: single-color model uses 1 extruder.
+                    // Without this, stale extruderCount from a previous multi-color model
+                    // forces the prime tower on and produces 2-extruder G-code (B24 fix).
+                    toolRemapSlots = null
+                    customWipeTowerPos = null
+                    _config.value = _config.value.copy(
+                        extruderCount = 1,
+                        wipeTowerEnabled = false
+                    )
                     // Single-color model: set E1's color from current printer slot config so
                     // the 3D model preview shows the correct filament color instead of default orange.
                     val presets = extruderPresets.value
                     val colors = MutableList(4) { "" }
                     presets.forEach { preset -> if (preset.index in 0..3) colors[preset.index] = preset.color }
                     _activeExtruderColors.value = colors
+                    // Persist the reset so wipeTowerEnabled=false survives across sessions (B24 fix).
+                    saveConfig()
                     Log.i("SlicerVM", "Single-color model: set preview colors from slots ${colors}")
                 }
             } else {
@@ -1028,16 +1039,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 _state.value = SlicerState.Slicing(0, "Preparing...")
 
-                // Re-embed the 3MF before slicing when:
-                // 1. Non-identity extruder remap (physical slots ≠ compact T0/T1) so G-code
-                //    post-processing can remap T-commands to the correct physical slots.
-                // 2. Multi-extruder identity mapping — the initial embedProfile() ran with
-                //    processedInfo (0 colours → extruder_count=1 in the embedded config).
-                //    OrcaSlicer reads extruder_count from the embedded profile, so without
-                //    re-embedding it treats the model as single-extruder and only produces
-                //    wipe-tower T1 purges, not real model tool changes.
+                // ALWAYS re-embed before slicing: settings changes between slices
+                // (overrides, extruder count, prime tower toggle) must reach the native
+                // slicer via the embedded profile. 40+ profile_keys[] settings have no
+                // applyConfigToPrusa() fallback — without re-embed they silently use stale
+                // values from the initial loadModel() embed (B24 fix RC2).
                 val remap = toolRemapSlots
-                if (remap != null || _config.value.extruderCount > 1) {
+                if (true) {  // Was: remap != null || extruderCount > 1
                     val src = sourceModelFile
                     // Use merged ThreeMfInfo (colours + extruder count from original file) so the
                     // re-embedded profile carries the correct extruder_count.  sourceModelInfo for
@@ -1206,7 +1214,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         attemptClipperRecovery()
                         return@launch
                     }
-                    _state.value = SlicerState.Error(errorMsg)
+                    _state.value = SlicerState.Error(clipperUserMessage(errorMsg))
                 }
             } catch (e: Throwable) {
                 Log.e("SlicerVM", "Unexpected error during slicing", e)
@@ -1224,7 +1232,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     attemptClipperRecovery()
                     return@launch
                 }
-                _state.value = SlicerState.Error("Slicing error: $errorMsg")
+                _state.value = SlicerState.Error(clipperUserMessage("Slicing error: $errorMsg"))
             } finally {
                 native.progressListener = null
                 SlicingService.stop(context)
@@ -1238,6 +1246,26 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun isClipperError(msg: String): Boolean {
         return msg.contains("Coordinate outside allowed range", ignoreCase = true) ||
             msg.contains("clipper", ignoreCase = true)
+    }
+
+    /**
+     * Produce a user-friendly error message for Clipper errors, with actionable suggestions.
+     * If copyCount > 4, automatically halve it to help avoid the overflow on retry.
+     */
+    private fun clipperUserMessage(rawMsg: String): String {
+        if (!isClipperError(rawMsg)) return rawMsg
+
+        val copies = _copyCount.value
+        val base = "Slicing failed: geometry overflow. Try reducing copies or moving the wipe tower."
+        return if (copies > 4) {
+            val reduced = (copies / 2).coerceAtLeast(1)
+            _copyCount.value = reduced
+            customObjectPositions = null
+            Log.i("SlicerVM", "Clipper error: auto-reduced copyCount from $copies to $reduced")
+            "$base\n\nCopy count was $copies — automatically reduced to $reduced. Tap Slice to retry."
+        } else {
+            base
+        }
     }
 
     /**

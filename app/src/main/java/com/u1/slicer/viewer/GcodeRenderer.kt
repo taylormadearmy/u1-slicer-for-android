@@ -198,15 +198,24 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         var tubeOffset = 0
         val halfWidth = 0.2f  // 0.4mm extrusion width / 2
 
-        for (layer in gcode.layers) {
+        for ((layerIdx, layer) in gcode.layers.withIndex()) {
             // --- Extrusion pass ---
             val extrudeFirst = lineOffset / floatsPerVertex
             val tubeFirst = tubeOffset / tubeFloatsPerVertex
             var moveIdx = 0
 
+            // Per-layer brightness: even layers slightly darker, odd layers full brightness
+            val layerBrightness = if (layerIdx % 2 == 0) 0.85f else 1.0f
+
             for (move in layer.moves) {
                 if (move.type != MoveType.EXTRUDE) continue
-                val color = extruderColors[move.extruder.coerceIn(0, 3)]
+                val baseColor = extruderColors[move.extruder.coerceIn(0, 3)]
+                val color = floatArrayOf(
+                    (baseColor[0] * layerBrightness).coerceAtMost(1.0f),
+                    (baseColor[1] * layerBrightness).coerceAtMost(1.0f),
+                    (baseColor[2] * layerBrightness).coerceAtMost(1.0f),
+                    baseColor[3]
+                )
 
                 if (useTubes) {
                     // Ribbon quad: 6 vertices (2 triangles)
