@@ -470,7 +470,11 @@ object ThreeMfMeshParser {
                 val merged = ByteArray(pi1.size) { i ->
                     val v1 = pi1[i].toInt() and 0xFF
                     val v2 = if (i < pi2.size) pi2[i].toInt() and 0xFF else 0xFF
-                    if (v1 != 0xFF) pi1[i] else pi2[i]
+                    when {
+                        v1 != 0xFF -> pi1[i]  // printable has paint → use it
+                        v2 != 0xFF -> pi2[i]  // non-printable has paint → use it
+                        else -> 0.toByte()    // both NONE (bed face etc.) → fallback to extruder 0
+                    }
                 }
                 Log.d("ThreeMfMesh", "H2C merge: ${pm.mesh.triCount} tris, merged printable+non-printable paint data")
                 result.add(pm.copy(mesh = pm.mesh.copy(paintIndices = merged)))
