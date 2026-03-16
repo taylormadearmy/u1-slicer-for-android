@@ -281,15 +281,16 @@ object ThreeMfMeshParser {
         // State 0 = NONE (unpainted) → fall back to volume-level extruder assignment
         if (state == 0) return -1
         // If a color→extruder mapping was provided (from the slicer's auto-mapping), use it
-        // so the 3D preview reflects the actual physical slot assignment. Without this, paint
-        // states cycle through slots 0–3 sequentially, which is wrong when the mapping is
-        // non-trivial (e.g. only E3+E4 configured, or H2C with 7 colours mapped to 2 slots).
+        // so the 3D preview reflects the actual physical slot assignment.
+        // Use modulo of min(4, mapping.size) so H2C models (states 1–8 across two AMS trays)
+        // fold AMS2 states back to the same colours as AMS1: state 5 folds to the same slot
+        // as state 1, state 6 to the same as state 2, etc.  For ≤4-colour models the modulo
+        // is a no-op because states never exceed the mapping size.
         if (paintStateToExtruder != null) {
-            return paintStateToExtruder.getOrElse(state - 1) { (state - 1) % paintStateToExtruder.size.coerceAtLeast(1) }
+            val modulo = paintStateToExtruder.size.coerceAtMost(4)
+            return paintStateToExtruder.getOrElse((state - 1) % modulo) { (state - 1) % 4 }
         }
         // Fallback (no mapping provided): fold state into 0–3 range.
-        // H2C models have states 1–8 (two AMS trays); fold AMS2 states back to AMS1 so
-        // state 5 → 0, state 6 → 1, etc. For ≤4-extruder models this is a no-op.
         return (state - 1) % 4
     }
 

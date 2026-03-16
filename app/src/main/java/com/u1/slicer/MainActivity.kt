@@ -1604,7 +1604,7 @@ fun InlineModelPreview(
     var towerX by remember(wipeTowerX) { mutableFloatStateOf(wipeTowerX) }
     var towerY by remember(wipeTowerY) { mutableFloatStateOf(wipeTowerY) }
 
-    LaunchedEffect(modelFilePath, extruderMap) {
+    LaunchedEffect(modelFilePath, extruderMap, colorMapping) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val file = java.io.File(modelFilePath)
