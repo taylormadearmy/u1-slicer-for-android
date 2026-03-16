@@ -17,7 +17,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ```bash
 ./gradlew testDebugUnitTest                        # 375 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 106 instrumented tests (uses Orchestrator)
+./gradlew connectedDebugAndroidTest                # 108 instrumented tests (uses Orchestrator)
 ```
 
 ### Unit tests (`app/src/test/`) — 375 tests across 22 classes
@@ -44,7 +44,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 - `MergeThreeMfInfoTest.kt` (3) — mergeThreeMfInfo/ForPlate objectExtruderMap preference
 
-### Instrumented tests (`app/src/androidTest/`) — 106 tests across 11 classes
+### Instrumented tests (`app/src/androidTest/`) — 108 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -53,7 +53,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `slicing/SlicingIntegrationTest.kt` (25) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
 - `slicing/BambuPipelineIntegrationTest.kt` (29) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure
 - `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions
-- `slicing/ProfileEmbedderIntegrationTest.kt` (12) — ZIP validity, config keys, full embed→slice pipeline
+- `slicing/ProfileEmbedderIntegrationTest.kt` (14) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/ThreeMfMeshParserTest.kt` (4) — 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
 

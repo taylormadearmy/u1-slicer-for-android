@@ -295,4 +295,66 @@ class ProfileEmbedderIntegrationTest {
             content.contains("nozzle_temperature"))
         assertTrue("JSON should be valid JSON", content.trim().startsWith("{"))
     }
+
+    // ─── Re-embed regression guard (B24/v1.3.38) ─────────────────────────────
+
+    /**
+     * Regression guard for B24: re-embedding a 3MF before slicing must not break
+     * slicing. v1.3.38 introduced "always re-embed" which caused Clipper overflow
+     * on every model. This test simulates the startSlicing() re-embed path:
+     *   embed → load → clearModel → re-embed → load → slice
+     */
+    @Test
+    fun calibCube_reEmbedBeforeSlice_doesNotBreakSlicing() {
+        val input = asset("calib-cube-10-dual-colour-merged.3mf")
+        val info = ThreeMfParser.parse(input)
+        val sanitized = BambuSanitizer.process(input, outDir, isBambu = info.isBambu)
+
+        // First embed + load (simulates initial loadModel in openModel)
+        val config1 = embedder.buildConfig(info)
+        val embedded1 = embedder.embed(sanitized, config1, outDir, info)
+        assertTrue("First loadModel must succeed", lib.loadModel(embedded1.absolutePath))
+
+        // Re-embed + load (simulates startSlicing re-embed path)
+        lib.clearModel()
+        val config2 = embedder.buildConfig(info)
+        val embedded2 = embedder.embed(sanitized, config2, outDir, info)
+        assertTrue("Second loadModel must succeed", lib.loadModel(embedded2.absolutePath))
+
+        // Slice must succeed after re-embed
+        val dualConfig = defaultSliceConfig.copy(
+            extruderCount = 2,
+            extruderTemps = intArrayOf(220, 220),
+            wipeTowerEnabled = true
+        )
+        val result = lib.slice(dualConfig)!!
+        assertTrue(
+            "Slice after re-embed must succeed (B24 regression guard): ${result.errorMessage}",
+            result.success
+        )
+        assertTrue("Layer count > 0 after re-embed slice", result.totalLayers > 0)
+    }
+
+    /**
+     * Same re-embed regression guard but for single-extruder STL files.
+     * STL files have no sourceModelFile so the re-embed path is skipped,
+     * but this verifies that a plain STL still slices after the B24 changes.
+     */
+    @Test
+    fun benchy_stl_slicesAfterClearAndReload() {
+        val input = asset("3DBenchy.stl")
+        assertTrue("First loadModel must succeed", lib.loadModel(input.absolutePath))
+
+        // Simulate clear + reload (what would happen if re-embed ran on STL)
+        lib.clearModel()
+        assertTrue("Second loadModel must succeed", lib.loadModel(input.absolutePath))
+
+        val result = lib.slice(defaultSliceConfig)!!
+        assertTrue(
+            "STL slice after clear+reload must succeed: ${result.errorMessage}",
+            result.success
+        )
+        assertTrue("Layer count > 0", result.totalLayers > 0)
+    }
+
 }
