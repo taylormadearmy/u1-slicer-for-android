@@ -336,6 +336,19 @@ class ThreeMfMeshParserTest {
     }
 
     @Test
+    fun `parsePaintIndex folds H2C AMS2 states to AMS1 range`() {
+        // H2C: AMS2 slot N (state N+4) = same physical filament as AMS1 slot N (state N)
+        // state 5 → (5-1)%4 = 0  (same as state 1)
+        // state 6 → (6-1)%4 = 1  (same as state 2)
+        // state 7 → (7-1)%4 = 2  (same as state 3)
+        // state 8 → (8-1)%4 = 3  (same as state 4)
+        assertEquals(0, ThreeMfMeshParser.parsePaintIndex("""<triangle paint_color="5C"/>""", "paint_color"))
+        assertEquals(1, ThreeMfMeshParser.parsePaintIndex("""<triangle paint_color="6C"/>""", "paint_color"))
+        assertEquals(2, ThreeMfMeshParser.parsePaintIndex("""<triangle paint_color="7C"/>""", "paint_color"))
+        assertEquals(3, ThreeMfMeshParser.parsePaintIndex("""<triangle paint_color="8C"/>""", "paint_color"))
+    }
+
+    @Test
     fun `parsePaintIndex returns -1 when attribute missing`() {
         val line = """<triangle v1="0" v2="1" v3="2"/>"""
         assertEquals(-1, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))

@@ -280,8 +280,11 @@ object ThreeMfMeshParser {
         }
         // State 0 = NONE (unpainted) → fall back to volume-level extruder assignment
         if (state == 0) return -1
-        // State 1 = Extruder1 → index 0; state 2 = Extruder2 → index 1; etc.
-        return state - 1
+        // H2C models use two AMS trays (states 1–4 = AMS1, states 5–8 = AMS2) where slot N
+        // on each tray holds the same physical filament. Fold AMS2 states back to AMS1 range
+        // so state 5 → index 0 (same as state 1), state 6 → 1, etc.
+        // For standard ≤4-extruder models this is a no-op (states never exceed 4).
+        return (state - 1) % 4
     }
 
     /** Parse a float attribute value inline without creating a substring. */
