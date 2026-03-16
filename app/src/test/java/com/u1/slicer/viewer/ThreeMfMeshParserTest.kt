@@ -302,20 +302,37 @@ class ThreeMfMeshParserTest {
 
     @Test
     fun `parsePaintIndex extracts simple paint_color value`() {
+        // state 2 = Extruder2 → 0-based index 1
         val line = """<triangle v1="0" v2="1" v3="2" paint_color="2C"/>"""
-        assertEquals(2, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
+        assertEquals(1, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
     }
 
     @Test
     fun `parsePaintIndex extracts mmu_segmentation value`() {
+        // state 4 = Extruder4 → 0-based index 3
         val line = """<triangle v1="0" v2="1" v3="2" slic3rpe:mmu_segmentation="4"/>"""
-        assertEquals(4, ThreeMfMeshParser.parsePaintIndex(line, "mmu_segmentation"))
+        assertEquals(3, ThreeMfMeshParser.parsePaintIndex(line, "mmu_segmentation"))
     }
 
     @Test
     fun `parsePaintIndex returns first digit for complex subdivision`() {
+        // state 3 = Extruder3 → 0-based index 2
         val line = """<triangle v1="0" v2="1" v3="2" paint_color="3C43C13CA"/>"""
-        assertEquals(3, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
+        assertEquals(2, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
+    }
+
+    @Test
+    fun `parsePaintIndex returns -1 for NONE state`() {
+        // state 0 = NONE → unpainted (-1), falls back to volume extruder
+        val line = """<triangle v1="0" v2="1" v3="2" paint_color="0C"/>"""
+        assertEquals(-1, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
+    }
+
+    @Test
+    fun `parsePaintIndex maps state 1 to index 0`() {
+        // state 1 = Extruder1 → 0-based index 0
+        val line = """<triangle v1="0" v2="1" v3="2" paint_color="1C"/>"""
+        assertEquals(0, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
     }
 
     @Test
@@ -360,9 +377,12 @@ class ThreeMfMeshParserTest {
         assertNotNull(mesh)
         assertNotNull(mesh!!.extruderIndices)
         assertEquals(3, mesh.extruderIndices!!.size) // 3 triangles
+        // "0C" = state 0 (NONE) → unpainted → falls back to volumeExtruderIdx (0) → index 0
         assertEquals(0.toByte(), mesh.extruderIndices!![0]) // paint_color="0C"
-        assertEquals(1.toByte(), mesh.extruderIndices!![1]) // paint_color="1C"
-        assertEquals(2.toByte(), mesh.extruderIndices!![2]) // paint_color="2C"
+        // "1C" = state 1 (Extruder1) → index 0
+        assertEquals(0.toByte(), mesh.extruderIndices!![1]) // paint_color="1C"
+        // "2C" = state 2 (Extruder2) → index 1
+        assertEquals(1.toByte(), mesh.extruderIndices!![2]) // paint_color="2C"
     }
 
     @Test
@@ -388,11 +408,11 @@ class ThreeMfMeshParserTest {
             </build>
             </model>"""
         val file = create3mfZip(xml)
-        // Volume extruder is 1, but paint_color says 3
+        // Volume extruder is 1, but paint_color "3C" (state 3 = Extruder3 → index 2) wins
         val mesh = ThreeMfMeshParser.parse(file, extruderMap = mapOf(1 to 1.toByte()))
         assertNotNull(mesh)
         assertNotNull(mesh!!.extruderIndices)
-        assertEquals(3.toByte(), mesh.extruderIndices!![0]) // paint wins
+        assertEquals(2.toByte(), mesh.extruderIndices!![0]) // paint wins (state 3 → index 2)
     }
 
     @Test
@@ -424,8 +444,8 @@ class ThreeMfMeshParserTest {
         assertNotNull(mesh)
         assertNotNull(mesh!!.extruderIndices)
         assertEquals(2, mesh.extruderIndices!!.size)
-        assertEquals(2.toByte(), mesh.extruderIndices!![0]) // painted
-        assertEquals(1.toByte(), mesh.extruderIndices!![1]) // unpainted -> volume extruder
+        assertEquals(1.toByte(), mesh.extruderIndices!![0]) // "2C" = state 2 → index 1
+        assertEquals(1.toByte(), mesh.extruderIndices!![1]) // unpainted -> volume extruder (1)
     }
 
     // ── B23: Multi-object extruder map tests ──

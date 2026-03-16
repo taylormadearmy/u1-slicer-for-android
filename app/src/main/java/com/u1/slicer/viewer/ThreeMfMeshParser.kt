@@ -258,10 +258,13 @@ object ThreeMfMeshParser {
 
     /**
      * Extract the dominant extruder index from a paint_color or mmu_segmentation attribute value.
-     * Format: The value is a base-5 encoded triangle subdivision tree. Simple whole-triangle
-     * assignments are "NC" where N is the 0-based extruder index. For complex subdivisions,
-     * we use the first digit as a reasonable approximation of the dominant color.
-     * Returns -1 if no valid index found.
+     *
+     * OrcaSlicer's TriangleSelector encodes states as: NONE=0, Extruder1=1, Extruder2=2, …
+     * Simple whole-triangle assignments are "NC" where N is the state digit and C is the leaf
+     * marker. For complex subdivisions, the first character approximates the dominant state.
+     *
+     * Returns the 0-based extruder index (state - 1), or -1 if the triangle is unpainted
+     * (state == 0 / NONE) or the attribute is absent.
      */
     internal fun parsePaintIndex(line: String, attrName: String): Int {
         val prefix = "$attrName=\""
@@ -270,9 +273,16 @@ object ThreeMfMeshParser {
         val valStart = start + prefix.length
         val valEnd = line.indexOf('"', valStart)
         if (valEnd <= valStart) return -1
-        // The first character of the value is the dominant extruder index (0-based digit)
         val firstChar = line[valStart]
-        return if (firstChar in '0'..'9') (firstChar - '0') else -1
+        val state = when {
+            firstChar in '0'..'9' -> firstChar - '0'
+            firstChar in 'A'..'Z' -> firstChar - 'A' + 10
+            else -> return -1
+        }
+        // State 0 = NONE (unpainted) → fall back to volume-level extruder assignment
+        if (state == 0) return -1
+        // State 1 = Extruder1 → index 0; state 2 = Extruder2 → index 1; etc.
+        return state - 1
     }
 
     /** Parse a float attribute value inline without creating a substring. */
