@@ -428,6 +428,101 @@ class ThreeMfMeshParserTest {
         assertEquals(1.toByte(), mesh.extruderIndices!![1]) // unpainted -> volume extruder
     }
 
+    // ── B23: Multi-object extruder map tests ──
+
+    @Test
+    fun `multi-object extruder map assigns distinct indices per object`() {
+        // Each tag must be on its own line — stream parser processes one line at a time
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="1" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="10" y="0" z="0"/>
+          <vertex x="5" y="10" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+    <object id="2" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="20" y="0" z="0"/>
+          <vertex x="30" y="0" z="0"/>
+          <vertex x="25" y="10" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+    <object id="3" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="40" y="0" z="0"/>
+          <vertex x="50" y="0" z="0"/>
+          <vertex x="45" y="10" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build>
+    <item objectid="1"/>
+    <item objectid="2"/>
+    <item objectid="3"/>
+  </build>
+</model>"""
+        val file = create3mfZip(xml)
+        val extruderMap = mapOf(1 to 0.toByte(), 2 to 1.toByte(), 3 to 2.toByte())
+        val mesh = ThreeMfMeshParser.parse(file, extruderMap = extruderMap)
+        assertNotNull(mesh)
+        assertNotNull(mesh!!.extruderIndices)
+        assertEquals(3, mesh.extruderIndices!!.size)
+        assertEquals(0.toByte(), mesh.extruderIndices!![0])  // object 1 → E1
+        assertEquals(1.toByte(), mesh.extruderIndices!![1])  // object 2 → E2
+        assertEquals(2.toByte(), mesh.extruderIndices!![2])  // object 3 → E3
+    }
+
+    @Test
+    fun `extruder map with non-matching IDs falls back to index 0`() {
+        // Object has ID 5, but extruderMap only has IDs 1,2,3 (old IDs from before restructuring)
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources>
+    <object id="5" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0"/>
+          <vertex x="10" y="0" z="0"/>
+          <vertex x="5" y="10" z="0"/>
+        </vertices>
+        <triangles>
+          <triangle v1="0" v2="1" v3="2"/>
+        </triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build>
+    <item objectid="5"/>
+  </build>
+</model>"""
+        val file = create3mfZip(xml)
+        val staleMap = mapOf(1 to 0.toByte(), 2 to 1.toByte(), 3 to 2.toByte())
+        val mesh = ThreeMfMeshParser.parse(file, extruderMap = staleMap)
+        assertNotNull(mesh)
+        assertNotNull(mesh!!.extruderIndices)
+        for (idx in mesh.extruderIndices!!) {
+            assertEquals(0.toByte(), idx)
+        }
+    }
+
     // ── Helpers ──
 
     private fun buildModelXml(

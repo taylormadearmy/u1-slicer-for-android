@@ -143,6 +143,50 @@ class MeshDataTest {
     }
 
     @Test
+    fun `recolor with 3-extruder palette applies distinct colors per object`() {
+        // 3 triangles, each assigned to a different extruder (like dragon cube plate 3)
+        val indices = byteArrayOf(0, 1, 2)
+        val mesh = makeMesh(triangleCount = 3, extruderIndices = indices)
+        val palette = listOf(
+            floatArrayOf(1f, 0f, 0f, 1f),  // E1 = red
+            floatArrayOf(0f, 1f, 0f, 1f),  // E2 = green
+            floatArrayOf(0f, 0f, 1f, 1f)   // E3 = blue
+        )
+        mesh.recolor(palette)
+        val buf = mesh.vertices
+        for (tri in 0..2) {
+            for (v in 0..2) {
+                val base = (tri * 3 + v) * MeshData.FLOATS_PER_VERTEX + 6
+                assertEquals("tri$tri v$v R", palette[tri][0], buf.get(base), 0.001f)
+                assertEquals("tri$tri v$v G", palette[tri][1], buf.get(base + 1), 0.001f)
+                assertEquals("tri$tri v$v B", palette[tri][2], buf.get(base + 2), 0.001f)
+            }
+        }
+    }
+
+    @Test
+    fun `recolor called twice applies second palette correctly`() {
+        val indices = byteArrayOf(0, 1)
+        val mesh = makeMesh(triangleCount = 2, extruderIndices = indices)
+        // First recolor: red, green
+        mesh.recolor(listOf(floatArrayOf(1f, 0f, 0f, 1f), floatArrayOf(0f, 1f, 0f, 1f)))
+        // Second recolor: blue, yellow
+        val palette2 = listOf(floatArrayOf(0f, 0f, 1f, 1f), floatArrayOf(1f, 1f, 0f, 1f))
+        mesh.recolor(palette2)
+        val buf = mesh.vertices
+        // Triangle 0, vertex 0 should be blue now
+        val base0 = 0 * MeshData.FLOATS_PER_VERTEX + 6
+        assertEquals(0f, buf.get(base0), 0.001f)
+        assertEquals(0f, buf.get(base0 + 1), 0.001f)
+        assertEquals(1f, buf.get(base0 + 2), 0.001f)
+        // Triangle 1, vertex 0 should be yellow
+        val base1 = 3 * MeshData.FLOATS_PER_VERTEX + 6
+        assertEquals(1f, buf.get(base1), 0.001f)
+        assertEquals(1f, buf.get(base1 + 1), 0.001f)
+        assertEquals(0f, buf.get(base1 + 2), 0.001f)
+    }
+
+    @Test
     fun `recolor handles unsigned byte index 255`() {
         // Byte value -1 in signed = 255 unsigned
         val indices = byteArrayOf(-1) // 0xFF = 255

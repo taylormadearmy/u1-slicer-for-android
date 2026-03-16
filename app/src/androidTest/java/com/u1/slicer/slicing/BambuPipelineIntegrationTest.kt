@@ -973,4 +973,63 @@ class BambuPipelineIntegrationTest {
         lib.clearModel()
     }
 
+    // ── B23: Per-object extruder indices survive restructure pipeline ──
+
+    @Test
+    fun dragonScale_multiPlate_restructuredPlate_parseForPlateSelectionReturnsExtruderMap() {
+        // Multi-plate Dragon Scale: extract plate → restructure → verify parseForPlateSelection
+        // returns objectExtruderMap from the restructured file (B23 fix).
+        // Dragon Scale uses compound objects (single object with per-part extruders),
+        // so objectExtruderMap has one entry per compound parent object.
+        val file = asset("Dragon Scale infinity.3mf")
+        val origInfo = ThreeMfParser.parse(file)
+        assertTrue("Dragon Scale should be multi-plate", origInfo.isMultiPlate)
+
+        val processed = BambuSanitizer.process(file, outDir, isBambu = origInfo.isBambu)
+        val rawPlateFile = BambuSanitizer.extractPlate(processed, 1, outDir,
+            hasPlateJsons = origInfo.hasPlateJsons)
+        val restructured = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
+
+        // B23 fix: parseForPlateSelection now returns objectExtruderMap
+        val plateInfo = ThreeMfParser.parseForPlateSelection(restructured)
+        android.util.Log.i("B23Test", "Multi-plate plateInfo.objectExtruderMap: ${plateInfo.objectExtruderMap}")
+        android.util.Log.i("B23Test", "Multi-plate origInfo.objectExtruderMap: ${origInfo.objectExtruderMap}")
+
+        // Verify parseForPlateSelection returns non-empty map from restructured file
+        assertTrue(
+            "parseForPlateSelection should include objectExtruderMap from restructured file",
+            plateInfo.objectExtruderMap.isNotEmpty()
+        )
+
+        // Verify the merge prefers plate's map (new IDs from restructured file)
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, origInfo)
+        // If both have entries, merged should use plate's (new IDs)
+        if (plateInfo.objectExtruderMap.isNotEmpty()) {
+            assertEquals(
+                "Merged objectExtruderMap should use plate's new IDs",
+                plateInfo.objectExtruderMap, merged.objectExtruderMap
+            )
+        }
+    }
+
+    @Test
+    fun parseForPlateSelection_includesObjectExtruderMap() {
+        // Use multi-plate Dragon Scale — restructurePlateFile actually creates new IDs
+        val file = asset("Dragon Scale infinity.3mf")
+        val origInfo = ThreeMfParser.parse(file)
+        val processed = BambuSanitizer.process(file, outDir, isBambu = origInfo.isBambu)
+        val rawPlateFile = BambuSanitizer.extractPlate(processed, 1, outDir,
+            hasPlateJsons = origInfo.hasPlateJsons)
+        val restructured = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
+
+        val plateInfo = ThreeMfParser.parseForPlateSelection(restructured)
+        android.util.Log.i("B23Test", "parseForPlateSelection objectExtruderMap: ${plateInfo.objectExtruderMap}")
+
+        // After restructuring, should have objectExtruderMap with the new IDs
+        assertTrue(
+            "parseForPlateSelection should return non-empty objectExtruderMap from restructured file",
+            plateInfo.objectExtruderMap.isNotEmpty()
+        )
+    }
+
 }

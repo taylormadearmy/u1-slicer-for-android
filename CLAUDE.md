@@ -16,17 +16,17 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 365 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 103 instrumented tests (uses Orchestrator)
+./gradlew testDebugUnitTest                        # 372 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 106 instrumented tests (uses Orchestrator)
 ```
 
-### Unit tests (`app/src/test/`) — 365 tests across 21 classes
+### Unit tests (`app/src/test/`) — 372 tests across 22 classes
 - `gcode/GcodeParserTest.kt` (18) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
 - `viewer/StlParserTest.kt` (10) — Binary/ASCII STL parsing, bounding box, vertex data, 10-float vertex format
-- `viewer/MeshDataTest.kt` (7) — MeshData 10-float vertex format, extruderIndices, recolor(), RGBA values
-- `viewer/ThreeMfMeshParserTest.kt` (18) — 3MF mesh parsing, per-triangle color extraction, extruderMap, MeshWithContext, SEMM paint_color parsing
+- `viewer/MeshDataTest.kt` (9) — MeshData 10-float vertex format, extruderIndices, recolor(), RGBA values, multi-extruder recolor
+- `viewer/ThreeMfMeshParserTest.kt` (20) — 3MF mesh parsing, per-triangle color extraction, extruderMap, MeshWithContext, SEMM paint_color parsing, multi-object extruder map
 - `network/MakerWorldUtilsTest.kt` (36) — URL parsing, design→instance ID resolution, download response parsing, error classification, cookie sanitization
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs
@@ -42,19 +42,20 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `model/CopyArrangeCalculatorTest.kt` (18) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
+- `MergeThreeMfInfoTest.kt` (3) — mergeThreeMfInfo/ForPlate objectExtruderMap preference
 
-### Instrumented tests (`app/src/androidTest/`) — 103 tests across 11 classes
+### Instrumented tests (`app/src/androidTest/`) — 106 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (25) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E
-- `slicing/BambuPipelineIntegrationTest.kt` (27) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction
+- `slicing/BambuPipelineIntegrationTest.kt` (29) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure
 - `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions
 - `slicing/ProfileEmbedderIntegrationTest.kt` (12) — ZIP validity, config keys, full embed→slice pipeline
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
-- `viewer/ThreeMfMeshParserTest.kt` (3) — 3MF mesh parsing, transform resolution, per-triangle color extraction
+- `viewer/ThreeMfMeshParserTest.kt` (4) — 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
 
 ## Architecture
 

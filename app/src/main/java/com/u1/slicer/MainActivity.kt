@@ -1619,37 +1619,27 @@ fun InlineModelPreview(
         }
     }
 
-    LaunchedEffect(mesh, viewerView) {
+    // Track whether we've already uploaded this mesh to avoid redundant VBO re-uploads
+    // when only colors/mapping change (B22 fix).
+    var lastSetMesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
+
+    // Combined effect: keys on mesh + viewer + colors + mapping so it fires when ANY changes.
+    // Fixes B22 race: previously mesh loaded on IO (slow) while colors arrived via StateFlow
+    // (fast). Separate LaunchedEffects had timing gaps — colors effect fired before mesh was
+    // ready (skip), then mesh effect read stale empty colors from closure (skip).
+    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping) {
         val m = mesh; val v = viewerView
         if (m != null && v != null) {
-            v.setMesh(m)
-            // Apply recolor on initial mesh load if we have colors
-            if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
-                val palette = extruderColors.map { hex ->
-                    if (hex.isBlank()) floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
-                    else try {
-                        val c = android.graphics.Color.parseColor(hex)
-                        floatArrayOf(
-                            android.graphics.Color.red(c) / 255f,
-                            android.graphics.Color.green(c) / 255f,
-                            android.graphics.Color.blue(c) / 255f, 1f
-                        )
-                    } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
-                }
-                v.recolorMesh(palette)
+            // Only call setMesh when the mesh instance actually changed
+            if (m !== lastSetMesh) {
+                v.setMesh(m)
+                lastSetMesh = m
             }
-        }
-    }
-
-    LaunchedEffect(viewerView, extruderColors, colorMapping) {
-        val v = viewerView ?: return@LaunchedEffect
-        if (extruderColors.isNotEmpty()) {
-            v.setExtruderColors(extruderColors)
-            // Recolor per-vertex mesh when extruder colors change
-            if (mesh?.hasPerVertexColor == true) {
-                // Build palette indexed by mesh extruder index (0-based), not by physical slot.
-                // colorMapping[meshIdx] → physical slot; extruderColors[slot] → hex color.
-                // For single-color models (colorMapping==null), extruderColors[0] has the color.
+            if (extruderColors.isNotEmpty()) {
+                v.setExtruderColors(extruderColors)
+            }
+            // Apply recolor when we have both mesh and colors
+            if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
                 fun toRgba(hex: String): FloatArray {
                     if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
                     return try {
@@ -1670,6 +1660,9 @@ fun InlineModelPreview(
                 }
                 v.recolorMesh(palette)
             }
+        } else if (v != null && extruderColors.isNotEmpty()) {
+            // Mesh not ready yet but colors changed — just update instance colors
+            v.setExtruderColors(extruderColors)
         }
     }
 

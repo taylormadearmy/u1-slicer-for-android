@@ -288,7 +288,8 @@ object ThreeMfParser {
                     plates = emptyList(),
                     isBambu = isBambu,
                     isMultiPlate = false,
-                    usedExtruderIndices = uniqueExtruders
+                    usedExtruderIndices = uniqueExtruders,
+                    objectExtruderMap = extruderAssignments.toMap()
                 )
             }
         } catch (e: Exception) {

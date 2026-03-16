@@ -52,6 +52,41 @@ class ThreeMfMeshParserTest {
     }
 
     @Test
+    fun calibCube_parsesMeshWithDistinctExtruderIndices() {
+        // Calicube uses SEMM paint_color attributes for per-triangle coloring.
+        // After sanitization, paint_color attributes are preserved in the inlined model.
+        val file = asset("calib-cube-10-dual-colour-merged.3mf")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val origInfo = com.u1.slicer.bambu.ThreeMfParser.parse(file)
+        Log.d("B22Test", "CalibCube origInfo: hasPaintData=${origInfo.hasPaintData}, " +
+            "objectExtruderMap=${origInfo.objectExtruderMap}, " +
+            "detectedExtruderCount=${origInfo.detectedExtruderCount}")
+
+        val processed = com.u1.slicer.bambu.BambuSanitizer.process(file, context.cacheDir, isBambu = origInfo.isBambu)
+
+        // Build extruder map from objectExtruderMap (per-object assignments)
+        val extruderMap = origInfo.objectExtruderMap.mapNotNull { (idStr, ext1) ->
+            val id = idStr.toIntOrNull() ?: return@mapNotNull null
+            id to (ext1 - 1).coerceAtLeast(0).toByte()
+        }.toMap()
+
+        // Parse mesh from the processed (sanitized) file directly
+        val mesh = ThreeMfMeshParser.parse(processed, extruderMap = extruderMap)
+        assertNotNull("Mesh should parse from sanitized calicube", mesh)
+        assertNotNull("Should have extruder indices", mesh!!.extruderIndices)
+        assertTrue("Should have triangles", mesh.extruderIndices!!.isNotEmpty())
+
+        val distinctIndices = mesh.extruderIndices!!.toSet()
+        Log.d("B22Test", "Calicube extruder indices: $distinctIndices " +
+            "(${mesh.extruderIndices!!.size} triangles, extruderMap=$extruderMap)")
+        // Calicube should have at least 2 distinct indices from either paint data or object assignments
+        assertTrue(
+            "Calicube should have >=2 distinct extruder indices, got $distinctIndices",
+            distinctIndices.size >= 2
+        )
+    }
+
+    @Test
     fun dragonScale_multiPlate_parsesMesh() {
         val file = asset("Dragon Scale infinity.3mf")
         val mesh = try {

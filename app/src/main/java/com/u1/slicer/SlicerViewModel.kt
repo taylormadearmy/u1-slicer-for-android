@@ -1716,7 +1716,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 hasPaintData = sourceInfo.hasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
                 hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments,
-                objectExtruderMap = sourceInfo.objectExtruderMap
+                objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap }
             )
         }
     }
