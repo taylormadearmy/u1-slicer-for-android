@@ -109,29 +109,6 @@ class ThreeMfParserTest {
     }
 
     @Test
-    fun `filterDetectedColorsByUsedPaintIndices drops unused H2C metadata rows`() {
-        val detectedColors = listOf(
-            "#0086D6",
-            "#FFFF00",
-            "#FFFFFF",
-            "#6A00D5",
-            "#FF0000",
-            "#00AE42",
-            "#FF8000"
-        )
-
-        val filtered = ThreeMfParser.filterDetectedColorsByUsedPaintIndices(
-            detectedColors,
-            setOf(0, 1, 2, 3, 6)
-        )
-
-        assertEquals(
-            listOf("#0086D6", "#FFFF00", "#FFFFFF", "#6A00D5", "#FF8000"),
-            filtered
-        )
-    }
-
-    @Test
     fun `isMultiPlate uses plate JSON count not build item count`() {
         // New-format multi-plate: detected by plateJsonCount > 1
         val plateJsonRegex = Regex("Metadata/plate_\\d+\\.json")

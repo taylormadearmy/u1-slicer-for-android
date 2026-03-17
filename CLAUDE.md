@@ -15,12 +15,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ## Release
 
-1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.3.56` -> `1.3.57`)
+1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.3.57` -> `1.3.58`)
 2. **Update docs** — update test counts in this file and `README.md` if they changed
 3. **Commit and push**:
    ```bash
    git add -p
-   git commit -m "bump: v1.3.57 - <short description>"
+   git commit -m "bump: v1.3.58 - <short description>"
    git push
    ```
 4. **Build the release APK**:
@@ -29,12 +29,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```
 5. **Rename the APK** with the version number:
    ```bash
-   cp app/build/outputs/apk/debug/app-debug.apk u1-slicer-v1.3.57.apk
+   cp app/build/outputs/apk/debug/app-debug.apk u1-slicer-v1.3.58.apk
    ```
 6. **Create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
    ```bash
-   gh release create v1.3.57 u1-slicer-v1.3.57.apk \
-     --title "v1.3.57" \
+   gh release create v1.3.58 u1-slicer-v1.3.58.apk \
+     --title "v1.3.58" \
      --notes "Brief description of what changed."
    ```
 
@@ -43,11 +43,11 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 376 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 110 instrumented tests (uses Orchestrator)
+./gradlew testDebugUnitTest                        # 375 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 109 instrumented tests (uses Orchestrator)
 ```
 
-### Unit tests (`app/src/test/`) - 376 tests across 22 classes
+### Unit tests (`app/src/test/`) - 375 tests across 22 classes
 - `gcode/GcodeParserTest.kt` (18) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -60,7 +60,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
 - `data/SlicingOverridesTest.kt` (41) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, B24 stale config
 - `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution
-- `bambu/ThreeMfParserTest.kt` (8) - 3MF data model construction, isMultiPlate detection, H2C color-row filtering
+- `bambu/ThreeMfParserTest.kt` (7) - 3MF data model construction, isMultiPlate detection
 - `bambu/BambuSanitizerTest.kt` (22) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard
 - `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
@@ -71,7 +71,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 - `MergeThreeMfInfoTest.kt` (3) — mergeThreeMfInfo/ForPlate objectExtruderMap preference
 
-### Instrumented tests (`app/src/androidTest/`) - 110 tests across 12 classes
+### Instrumented tests (`app/src/androidTest/`) - 109 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -83,7 +83,6 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `slicing/ProfileEmbedderIntegrationTest.kt` (14) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/ThreeMfMeshParserTest.kt` (4) - 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
-- `bambu/ThreeMfParserColorFilterTest.kt` (1) - H2C paint-state filtering keeps only used metadata colors
 
 ## Backlog
 

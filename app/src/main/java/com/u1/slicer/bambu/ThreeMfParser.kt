@@ -116,10 +116,6 @@ object ThreeMfParser {
 
                 // Detect colors from multiple sources (priority order)
                 val detectedColors = mutableListOf<String>()
-                val projEntry = zip.getEntry("Metadata/project_settings.config")
-                val isH2cProject = if (projEntry != null) {
-                    zip.getInputStream(projEntry).use { detectIsH2cProject(it) }
-                } else false
 
                 // 1. Bambu filament_sequence.json
                 val filamentSeqEntry = zip.getEntry("Metadata/filament_sequence.json")
@@ -130,6 +126,7 @@ object ThreeMfParser {
                 }
                 // 2. Bambu project_settings.config — JSON format
                 if (detectedColors.isEmpty()) {
+                    val projEntry = zip.getEntry("Metadata/project_settings.config")
                     if (projEntry != null) {
                         detectColorsFromJsonSettings(
                             zip.getInputStream(projEntry), detectedColors
@@ -167,32 +164,6 @@ object ThreeMfParser {
                         )
                     }
                 }
-
-                // Some H2C/SEMM files advertise more metadata colours than are actually
-                // referenced by paint_color/mmu_segmentation on the mesh. Keeping the
-                // unused rows makes the preview UI look like colours 5/6/7 are "ignored"
-                // when in reality those rows are dead metadata. Filter to the colour rows
-                // that are actually used by paint data so the UI and preview stay aligned.
-                if (isH2cProject && detectedColors.size > 4 && hasPaintData) {
-                    val usedPaintColorIndices = linkedSetOf<Int>()
-                    collectUsedPaintColorIndices(modelBytes.inputStream(), detectedColors.size, usedPaintColorIndices)
-                    zip.entries().toList().forEach { entry ->
-                        if (entry.name.endsWith(".model") && entry.name != "3D/3dmodel.model") {
-                            zip.getInputStream(entry).use { input ->
-                                collectUsedPaintColorIndices(input, detectedColors.size, usedPaintColorIndices)
-                            }
-                        }
-                    }
-                    if (usedPaintColorIndices.isNotEmpty() && usedPaintColorIndices.size < detectedColors.size) {
-                        val filtered = filterDetectedColorsByUsedPaintIndices(detectedColors, usedPaintColorIndices)
-                        if (filtered.isNotEmpty()) {
-                            Log.i(TAG, "Filtered detected colors ${detectedColors.size} -> ${filtered.size} based on paint usage: indices=$usedPaintColorIndices")
-                            detectedColors.clear()
-                            detectedColors.addAll(filtered)
-                        }
-                    }
-                }
-
                 // Build plates: use model_settings.config plate→object mappings when
                 // available (groups multiple objects per plate correctly), otherwise
                 // fall back to 1 build item = 1 plate (old behavior for non-Bambu files).
@@ -507,16 +478,6 @@ object ThreeMfParser {
         }
     }
 
-    private fun detectIsH2cProject(inputStream: InputStream): Boolean {
-        return try {
-            val content = inputStream.bufferedReader().readText().trim()
-            val json = JSONObject(content)
-            json.optString("printer_model", "").contains("H2C", ignoreCase = true)
-        } catch (_: Exception) {
-            false
-        }
-    }
-
     /**
      * PrusaSlicer Slic3r_PE.config — semicolon-delimited INI.
      * extruder_colour = #CC0000;#33AAFF
@@ -588,118 +549,6 @@ object ThreeMfParser {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse ini config: ${e.message}")
-        }
-    }
-
-    private fun collectUsedPaintColorIndices(
-        inputStream: InputStream,
-        detectedColorCount: Int,
-        indices: MutableSet<Int>
-    ) {
-        val attrRegex = Regex("""(?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)="([^"]+)"""")
-        inputStream.bufferedReader().forEachLine { line ->
-            attrRegex.findAll(line).forEach { match ->
-                collectPaintSpecIndices(match.groupValues[1], detectedColorCount, indices)
-            }
-        }
-    }
-
-    internal fun filterDetectedColorsByUsedPaintIndices(
-        detectedColors: List<String>,
-        usedPaintColorIndices: Set<Int>
-    ): List<String> {
-        if (usedPaintColorIndices.isEmpty() || usedPaintColorIndices.size >= detectedColors.size) {
-            return detectedColors
-        }
-        return usedPaintColorIndices
-            .sorted()
-            .mapNotNull { idx -> detectedColors.getOrNull(idx) }
-            .ifEmpty { detectedColors }
-    }
-
-    private fun collectPaintSpecIndices(
-        spec: String,
-        detectedColorCount: Int,
-        indices: MutableSet<Int>
-    ) {
-        if (spec.isEmpty()) return
-        if (!spec.contains('C')) {
-            val state = parseStateDigit(spec.firstOrNull()) ?: return
-            val idx = paintIndexForState(state, detectedColorCount)
-            if (idx >= 0) indices.add(idx)
-            return
-        }
-        walkTriangleSelectorStates(spec) { state ->
-            val paintState = triangleSelectorLeafStateToPaintState(state)
-            if (paintState <= 0) return@walkTriangleSelectorStates
-            val idx = paintIndexForState(paintState, detectedColorCount)
-            if (idx >= 0) indices.add(idx)
-        }
-    }
-
-    private fun paintIndexForState(state: Int, detectedColorCount: Int): Int {
-        if (state <= 0) return -1
-        if (detectedColorCount > 0) {
-            val directIndex = state - 1
-            if (directIndex < detectedColorCount) return directIndex
-            return when {
-                detectedColorCount > 4 -> directIndex.coerceAtMost(detectedColorCount - 1)
-                else -> directIndex % detectedColorCount
-            }
-        }
-        return (state - 1) % 4
-    }
-
-    private fun triangleSelectorLeafStateToPaintState(state: Int): Int =
-        if (state <= 3) -1 else state - 3
-
-    private fun parseStateDigit(ch: Char?): Int? = when (ch) {
-        null -> null
-        in '0'..'9' -> ch - '0'
-        in 'A'..'Z' -> ch - 'A' + 10
-        else -> null
-    }
-
-    private fun walkTriangleSelectorStates(spec: String, onLeaf: (Int) -> Unit) {
-        val reader = TriangleSelectorReader(spec)
-
-        fun walk() {
-            val code = reader.nextNibble() ?: return
-            val splitSides = code and 0b11
-            if (splitSides == 0) {
-                val state = if ((code and 0b1100) == 0b1100) {
-                    var next = reader.nextNibble() ?: 0
-                    var groups = 0
-                    while (next == 0b1111) {
-                        groups++
-                        next = reader.nextNibble() ?: 0
-                    }
-                    next + 15 * groups + 3
-                } else {
-                    code shr 2
-                }
-                onLeaf(state)
-                return
-            }
-            repeat(splitSides + 1) { walk() }
-        }
-
-        walk()
-    }
-
-    private class TriangleSelectorReader(spec: String) {
-        private val nibbles = IntArray(spec.length) { idx ->
-            hexDigitToInt(spec[spec.length - 1 - idx])
-        }
-        private var index = 0
-
-        fun nextNibble(): Int? = if (index < nibbles.size) nibbles[index++] else null
-
-        private fun hexDigitToInt(ch: Char): Int = when (ch) {
-            in '0'..'9' -> ch - '0'
-            in 'A'..'F' -> ch - 'A' + 10
-            in 'a'..'f' -> ch - 'a' + 10
-            else -> 0
         }
     }
 
