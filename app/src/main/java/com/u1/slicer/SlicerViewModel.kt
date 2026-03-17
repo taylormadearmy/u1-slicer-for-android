@@ -208,7 +208,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * (before sanitization/embedding) because the sanitized file may have component files
      * stripped out, leaving no geometry for the preview parser.
      */
-    val previewModelPath: String? get() = (sourceModelFile ?: currentModelFile)?.absolutePath
+    val previewModelPath: String? get() {
+        val info = _threeMfInfo.value
+        val previewFile = when {
+            // Single-plate Bambu previews need the raw source file because sanitization strips
+            // H2C metadata such as project_settings.config that the preview parser uses to
+            // interpret paint states correctly.
+            rawInputFile != null && info?.isBambu == true && !info.isMultiPlate -> rawInputFile
+            sourceModelFile != null -> sourceModelFile
+            else -> currentModelFile
+        }
+        return previewFile?.absolutePath
+    }
 
     init {
         _coreVersion.value = if (NativeLibrary.isLoaded) {
