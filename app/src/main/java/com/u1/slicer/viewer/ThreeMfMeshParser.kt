@@ -489,7 +489,6 @@ object ThreeMfMeshParser {
         detectedColorCount: Int = 0
     ): MeshData? {
         val mergedMeshes = mergeH2cPairs(meshes)
-        val compactPaintIndexMap = buildCompactPaintIndexMap(mergedMeshes, detectedColorCount)
         val totalTris = mergedMeshes.sumOf { meshCtx ->
             val specs = meshCtx.mesh.paintSpecs
             if (specs == null) {
@@ -567,13 +566,10 @@ object ThreeMfMeshParser {
                         spec,
                         volumeExtruderIdx,
                         detectedColorCount,
-                        compactPaintIndexMap,
                         ::appendTriangle
                     )
                 } else {
-                    val paintIdx = spec?.let {
-                        directPaintIndexFromSpec(it, detectedColorCount, compactPaintIndexMap)
-                    } ?: -1
+                    val paintIdx = spec?.let { directPaintIndexFromSpec(it, detectedColorCount) } ?: -1
                     appendTriangle(p0, p1, p2, if (paintIdx >= 0) paintIdx.toByte() else volumeExtruderIdx)
                 }
             }
@@ -620,22 +616,20 @@ object ThreeMfMeshParser {
 
     private fun directPaintIndexFromSpec(
         spec: String,
-        detectedColorCount: Int = 0,
-        compactPaintIndexMap: Map<Int, Int> = emptyMap()
+        detectedColorCount: Int = 0
     ): Int {
         val state = parseStateDigit(spec.firstOrNull()) ?: return -1
         if (state == 0) return -1
-        return paintIndexForState(state, detectedColorCount, compactPaintIndexMap)
+        return paintIndexForState(state, detectedColorCount)
     }
 
     private fun triangleSelectorStateToPaintIndex(
         state: Int,
-        detectedColorCount: Int = 0,
-        compactPaintIndexMap: Map<Int, Int> = emptyMap()
+        detectedColorCount: Int = 0
     ): Int {
         val paintState = triangleSelectorLeafStateToPaintState(state)
         if (paintState <= 0) return -1
-        return paintIndexForState(paintState, detectedColorCount, compactPaintIndexMap)
+        return paintIndexForState(paintState, detectedColorCount)
     }
 
     private fun emitTriangleSelectorTriangles(
@@ -643,7 +637,6 @@ object ThreeMfMeshParser {
         spec: String,
         volumeExtruderIdx: Byte,
         detectedColorCount: Int,
-        compactPaintIndexMap: Map<Int, Int>,
         appendTriangle: (FloatArray, FloatArray, FloatArray, Byte) -> Unit
     ) {
         val reader = TriangleSelectorReader(spec)
@@ -668,8 +661,7 @@ object ThreeMfMeshParser {
                 }
                 val paintIdx = triangleSelectorStateToPaintIndex(
                     state,
-                    detectedColorCount,
-                    compactPaintIndexMap
+                    detectedColorCount
                 )
                 appendTriangle(
                     tri.a,
@@ -691,44 +683,19 @@ object ThreeMfMeshParser {
 
     private fun paintIndexForState(
         state: Int,
-        detectedColorCount: Int,
-        compactPaintIndexMap: Map<Int, Int> = emptyMap()
+        detectedColorCount: Int
     ): Int {
         if (state <= 0) return -1
-        compactPaintIndexMap[state]?.let { return it }
         if (detectedColorCount > 0) {
+            if (detectedColorCount > 4) {
+                return (state - 1).coerceAtMost(detectedColorCount - 1)
+            }
             val directIndex = state - 1
             if (directIndex < detectedColorCount) return directIndex
             val foldedCount = minOf(4, detectedColorCount)
             if (foldedCount > 0) return directIndex % foldedCount
         }
         return (state - 1) % 4
-    }
-
-    private fun buildCompactPaintIndexMap(
-        meshes: List<MeshWithContext>,
-        detectedColorCount: Int
-    ): Map<Int, Int> {
-        if (detectedColorCount <= 0) return emptyMap()
-        val usedStates = linkedSetOf<Int>()
-        for (meshCtx in meshes) {
-            val specs = meshCtx.mesh.paintSpecs ?: continue
-            for (spec in specs) {
-                if (spec.isNullOrEmpty()) continue
-                if (isTriangleSelectorSpec(spec)) {
-                    walkTriangleSelectorStates(spec) { leafState ->
-                        val paintState = triangleSelectorLeafStateToPaintState(leafState)
-                        if (paintState > 0) usedStates.add(paintState)
-                    }
-                } else {
-                    val state = parseStateDigit(spec.firstOrNull()) ?: continue
-                    if (state > 0) usedStates.add(state)
-                }
-            }
-        }
-        if (usedStates.isEmpty()) return emptyMap()
-        val orderedStates = usedStates.toList().sorted()
-        return orderedStates.mapIndexed { index, state -> state to index }.toMap()
     }
 
     private fun triangleSelectorLeafStateToPaintState(state: Int): Int =

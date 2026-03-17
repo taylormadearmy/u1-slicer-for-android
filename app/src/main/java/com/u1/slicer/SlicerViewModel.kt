@@ -784,16 +784,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Store per-extruder colors for G-code viewers, indexed by physical slot.
         // After tool remapping the G-code uses physical T-indices (e.g. T2, T3),
         // so the color list must have entries at those positions.
-        // Prefer detected model colors when preset colors are default white (#FFFFFF),
-        // so the G-code preview always shows distinct colors for multi-color models.
+        // Use the configured slot color whenever present, including explicit white.
+        // Falling back from "#FFFFFF" to the detected model color made it impossible
+        // to preview a real white assignment on multi-color models.
         val detectedColors = _threeMfInfo.value?.detectedColors ?: emptyList()
         val fullColors = MutableList(4) { "" }  // 4 slots on Snapmaker U1
         usedSlots.forEachIndexed { compactIdx, slotIndex ->
             val presetColor = extruderPresets.firstOrNull { it.index == slotIndex }?.color
             val modelColor = detectedColors.getOrElse(compactIdx) { "" }
             fullColors[slotIndex] = when {
-                // Use preset color if user configured a non-default color
-                presetColor != null && presetColor != "#FFFFFF" -> presetColor
+                // Respect the user's assigned slot color, including white.
+                !presetColor.isNullOrBlank() -> presetColor
                 // Fall back to detected model color (from 3MF metadata)
                 modelColor.isNotBlank() -> modelColor
                 // Last resort: leave blank to use GcodeRenderer defaults (orange, blue, green, pink)
