@@ -54,6 +54,18 @@ class MainActivity : ComponentActivity() {
     private val printerViewModel: PrinterViewModel by viewModels()
     private var testReceiver: TestCommandReceiver? = null
 
+    private fun scheduleSelfRestartAndKill() {
+        val intent = packageManager.getLaunchIntentForPackage(packageName)
+        intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            this, 0, intent,
+            android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val am = getSystemService(android.app.AlarmManager::class.java)
+        am.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 500, pi)
+        android.os.Process.killProcess(android.os.Process.myPid())
+    }
+
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -159,15 +171,7 @@ class MainActivity : ComponentActivity() {
                 // completes — avoids race where startActivity() before killProcess()
                 // causes Android to reuse the dying process with stale native state.
                 // Use set() not setExact() — exact alarms need SCHEDULE_EXACT_ALARM on API 31+.
-                val intent = packageManager.getLaunchIntentForPackage(packageName)
-                intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                val pi = android.app.PendingIntent.getActivity(
-                    this, 0, intent,
-                    android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
-                )
-                val am = getSystemService(android.app.AlarmManager::class.java)
-                am.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 500, pi)
-                android.os.Process.killProcess(android.os.Process.myPid())
+                scheduleSelfRestartAndKill()
                 return
             }
             UpgradeDetector.Result.SAME_APK -> {

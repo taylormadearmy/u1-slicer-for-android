@@ -53,6 +53,7 @@ class DiagnosticsStore(private val context: Context) {
                 "same_process_or_unknown"
             }
         }
+
     }
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -77,6 +78,15 @@ class DiagnosticsStore(private val context: Context) {
     fun diagnosticsPath(): String = historyFile.absolutePath
 
     fun sessionStartedAfterPendingRestart(): Boolean = sessionStartedWithPendingRestart
+
+    fun pendingRestartTrigger(): String? {
+        val pendingJson = prefs.getString(KEY_PENDING_RESTART, null) ?: return null
+        return try {
+            JSONObject(pendingJson).optString("trigger").ifBlank { null }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     fun markFirstModelLoad(): Boolean {
         val first = !firstModelLoadRecorded
@@ -110,7 +120,7 @@ class DiagnosticsStore(private val context: Context) {
         trimHistory()
     }
 
-    fun markUpgradeRestartRequested(trigger: String, nativeStateJson: String?) {
+    fun markUpgradeRestartRequested(trigger: String, nativeStateJson: String?): Boolean {
         val nativeState = nativeStateJson?.let(::parseNativeState)
         val marker = JSONObject()
         marker.put("trigger", trigger)
@@ -121,14 +131,16 @@ class DiagnosticsStore(private val context: Context) {
         marker.put("versionCode", packageInfo.longVersionCode)
         marker.put("apkLastUpdateTime", packageInfo.lastUpdateTime)
         marker.put("nativeGeneration", nativeState?.optString("nativeGeneration"))
-        prefs.edit().putString(KEY_PENDING_RESTART, marker.toString()).apply()
+        val persisted = prefs.edit().putString(KEY_PENDING_RESTART, marker.toString()).commit()
         recordEvent(
             "restart_requested",
             mapOf(
                 "trigger" to trigger,
-                "nativeState" to nativeStateJson
+                "nativeState" to nativeStateJson,
+                "markerPersisted" to persisted
             )
         )
+        return persisted
     }
 
     fun recordNativeConfigured(nativeStateJson: String?): RestartObservation? {
