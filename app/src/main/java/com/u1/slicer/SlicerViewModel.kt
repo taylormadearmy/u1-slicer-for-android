@@ -1055,6 +1055,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 _state.value = SlicerState.Slicing(0, "Preparing...")
 
+                val (firstSliceThisLaunch, firstSliceAfterUpgrade) = diagnostics.markSliceStart()
+
                 // Re-embed before slicing when needed: settings changes between slices
                 // (overrides, extruder count, prime tower toggle) must reach the native
                 // slicer via the embedded profile. 40+ profile_keys[] settings have no
@@ -1087,7 +1089,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // causing "Coordinate outside allowed range" Clipper errors (I2).
                         val reembedded = embedProfile(src, srcInfo, context)
                         currentModelFile = reembedded
-                        native.loadModel(reembedded.absolutePath)
+                        val reloadOk = native.loadModel(reembedded.absolutePath)
+                        diagnostics.recordEvent(
+                            "native_model_reload_before_slice",
+                            mapOf(
+                                "success" to reloadOk,
+                                "path" to reembedded.absolutePath,
+                                "firstSliceAfterUpgrade" to firstSliceAfterUpgrade
+                            )
+                        )
+                        if (!reloadOk) {
+                            throw IllegalStateException("Failed to reload model before slicing")
+                        }
+                        native.getModelInfo()?.let { reloadedInfo ->
+                            lastModelInfo = reloadedInfo
+                        }
                         profileNeedsReEmbed = false
                     }
                 }
@@ -1148,7 +1164,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
                 val sliceConfig = ov.resolveInto(_config.value)
-                val (firstSliceThisLaunch, firstSliceAfterUpgrade) = diagnostics.markSliceStart()
                 val profileOverrides = buildProfileOverrides(
                     sliceConfig,
                     sliceConfig.extruderCount,
@@ -1173,6 +1188,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val result = native.slice(sliceConfig)
 
                 if (result != null && result.success) {
+                    diagnostics.markSliceSucceeded()
                     diagnostics.recordEvent(
                         "slice_succeeded",
                         mapOf(

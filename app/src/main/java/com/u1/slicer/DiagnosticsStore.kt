@@ -102,6 +102,12 @@ class DiagnosticsStore(private val context: Context) {
         return firstSliceThisLaunch to firstSliceAfterUpgrade
     }
 
+    fun markSliceSucceeded() {
+        if (!prefs.contains(KEY_PENDING_RESTART)) return
+        prefs.edit().remove(KEY_PENDING_RESTART).apply()
+        recordEvent("post_upgrade_slice_settled")
+    }
+
     @Synchronized
     fun recordEvent(type: String, details: Map<String, Any?> = emptyMap()) {
         diagnosticsDir.mkdirs()
@@ -179,9 +185,6 @@ class DiagnosticsStore(private val context: Context) {
                 "currentNativeGeneration" to observation.currentNativeGeneration
             )
         )
-        if (observation.status == "fresh_process") {
-            prefs.edit().remove(KEY_PENDING_RESTART).apply()
-        }
         return observation
     }
 
