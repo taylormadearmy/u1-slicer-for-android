@@ -467,7 +467,43 @@ class ThreeMfMeshParserTest {
         val file = create3mfZip(xml)
         val mesh = ThreeMfMeshParser.parse(file, detectedColorCount = 7)
         assertNotNull(mesh)
-        assertArrayEquals(byteArrayOf(4, 5, 6), mesh!!.extruderIndices)
+        assertArrayEquals(byteArrayOf(0, 1, 2), mesh!!.extruderIndices)
+    }
+
+    @Test
+    fun `parse compacts sparse H2C paint states into detected color indices`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                            <vertex x="20" y="0" z="0" />
+                            <vertex x="30" y="0" z="0" />
+                            <vertex x="25" y="10" z="0" />
+                            <vertex x="40" y="0" z="0" />
+                            <vertex x="50" y="0" z="0" />
+                            <vertex x="45" y="10" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" paint_color="1C"/>
+                            <triangle v1="3" v2="4" v3="5" paint_color="5C"/>
+                            <triangle v1="6" v2="7" v3="8" paint_color="8C"/>
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        val mesh = ThreeMfMeshParser.parse(file, detectedColorCount = 3)
+        assertNotNull(mesh)
+        assertArrayEquals(byteArrayOf(0, 1, 2), mesh!!.extruderIndices)
     }
 
     @Test

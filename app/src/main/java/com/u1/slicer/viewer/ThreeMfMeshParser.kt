@@ -489,6 +489,7 @@ object ThreeMfMeshParser {
         detectedColorCount: Int = 0
     ): MeshData? {
         val mergedMeshes = mergeH2cPairs(meshes)
+        val compactPaintIndexMap = buildCompactPaintIndexMap(mergedMeshes, detectedColorCount)
         val totalTris = mergedMeshes.sumOf { meshCtx ->
             val specs = meshCtx.mesh.paintSpecs
             if (specs == null) {
@@ -566,10 +567,13 @@ object ThreeMfMeshParser {
                         spec,
                         volumeExtruderIdx,
                         detectedColorCount,
+                        compactPaintIndexMap,
                         ::appendTriangle
                     )
                 } else {
-                    val paintIdx = spec?.let { directPaintIndexFromSpec(it, detectedColorCount) } ?: -1
+                    val paintIdx = spec?.let {
+                        directPaintIndexFromSpec(it, detectedColorCount, compactPaintIndexMap)
+                    } ?: -1
                     appendTriangle(p0, p1, p2, if (paintIdx >= 0) paintIdx.toByte() else volumeExtruderIdx)
                 }
             }
@@ -614,20 +618,24 @@ object ThreeMfMeshParser {
         return count.coerceAtLeast(1)
     }
 
-    private fun directPaintIndexFromSpec(spec: String, detectedColorCount: Int = 0): Int {
-        val firstChar = spec.firstOrNull() ?: return -1
-        val state = when {
-            firstChar in '0'..'9' -> firstChar - '0'
-            firstChar in 'A'..'Z' -> firstChar - 'A' + 10
-            else -> return -1
-        }
+    private fun directPaintIndexFromSpec(
+        spec: String,
+        detectedColorCount: Int = 0,
+        compactPaintIndexMap: Map<Int, Int> = emptyMap()
+    ): Int {
+        val state = parseStateDigit(spec.firstOrNull()) ?: return -1
         if (state == 0) return -1
-        return paintIndexForState(state, detectedColorCount)
+        return paintIndexForState(state, detectedColorCount, compactPaintIndexMap)
     }
 
-    private fun triangleSelectorStateToPaintIndex(state: Int, detectedColorCount: Int = 0): Int {
-        if (state <= 3) return -1
-        return paintIndexForState(state - 3, detectedColorCount)
+    private fun triangleSelectorStateToPaintIndex(
+        state: Int,
+        detectedColorCount: Int = 0,
+        compactPaintIndexMap: Map<Int, Int> = emptyMap()
+    ): Int {
+        val paintState = triangleSelectorLeafStateToPaintState(state)
+        if (paintState <= 0) return -1
+        return paintIndexForState(paintState, detectedColorCount, compactPaintIndexMap)
     }
 
     private fun emitTriangleSelectorTriangles(
@@ -635,6 +643,7 @@ object ThreeMfMeshParser {
         spec: String,
         volumeExtruderIdx: Byte,
         detectedColorCount: Int,
+        compactPaintIndexMap: Map<Int, Int>,
         appendTriangle: (FloatArray, FloatArray, FloatArray, Byte) -> Unit
     ) {
         val reader = TriangleSelectorReader(spec)
@@ -657,7 +666,11 @@ object ThreeMfMeshParser {
                 } else {
                     code shr 2
                 }
-                val paintIdx = triangleSelectorStateToPaintIndex(state, detectedColorCount)
+                val paintIdx = triangleSelectorStateToPaintIndex(
+                    state,
+                    detectedColorCount,
+                    compactPaintIndexMap
+                )
                 appendTriangle(
                     tri.a,
                     tri.b,
@@ -676,8 +689,13 @@ object ThreeMfMeshParser {
         walk(triangle)
     }
 
-    private fun paintIndexForState(state: Int, detectedColorCount: Int): Int {
+    private fun paintIndexForState(
+        state: Int,
+        detectedColorCount: Int,
+        compactPaintIndexMap: Map<Int, Int> = emptyMap()
+    ): Int {
         if (state <= 0) return -1
+        compactPaintIndexMap[state]?.let { return it }
         if (detectedColorCount > 0) {
             val directIndex = state - 1
             if (directIndex < detectedColorCount) return directIndex
@@ -685,6 +703,42 @@ object ThreeMfMeshParser {
             if (foldedCount > 0) return directIndex % foldedCount
         }
         return (state - 1) % 4
+    }
+
+    private fun buildCompactPaintIndexMap(
+        meshes: List<MeshWithContext>,
+        detectedColorCount: Int
+    ): Map<Int, Int> {
+        if (detectedColorCount <= 0) return emptyMap()
+        val usedStates = linkedSetOf<Int>()
+        for (meshCtx in meshes) {
+            val specs = meshCtx.mesh.paintSpecs ?: continue
+            for (spec in specs) {
+                if (spec.isNullOrEmpty()) continue
+                if (isTriangleSelectorSpec(spec)) {
+                    walkTriangleSelectorStates(spec) { leafState ->
+                        val paintState = triangleSelectorLeafStateToPaintState(leafState)
+                        if (paintState > 0) usedStates.add(paintState)
+                    }
+                } else {
+                    val state = parseStateDigit(spec.firstOrNull()) ?: continue
+                    if (state > 0) usedStates.add(state)
+                }
+            }
+        }
+        if (usedStates.isEmpty()) return emptyMap()
+        val orderedStates = usedStates.toList().sorted()
+        return orderedStates.mapIndexed { index, state -> state to index }.toMap()
+    }
+
+    private fun triangleSelectorLeafStateToPaintState(state: Int): Int =
+        if (state <= 3) -1 else state - 3
+
+    private fun parseStateDigit(ch: Char?): Int? = when (ch) {
+        null -> null
+        in '0'..'9' -> ch - '0'
+        in 'A'..'Z' -> ch - 'A' + 10
+        else -> null
     }
 
     private fun walkTriangleSelectorStates(spec: String, onLeaf: (Int) -> Unit) {
