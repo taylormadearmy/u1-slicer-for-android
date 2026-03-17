@@ -54,18 +54,6 @@ class MainActivity : ComponentActivity() {
     private val printerViewModel: PrinterViewModel by viewModels()
     private var testReceiver: TestCommandReceiver? = null
 
-    private fun scheduleSelfRestartAndKill() {
-        val intent = packageManager.getLaunchIntentForPackage(packageName)
-        intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        val pi = android.app.PendingIntent.getActivity(
-            this, 0, intent,
-            android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        val am = getSystemService(android.app.AlarmManager::class.java)
-        am.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 500, pi)
-        android.os.Process.killProcess(android.os.Process.myPid())
-    }
-
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -141,12 +129,14 @@ class MainActivity : ComponentActivity() {
 
         when (detector.detect(saved, current)) {
             UpgradeDetector.Result.APK_CHANGED -> {
-                // APK changed — aggressively delete ALL cached 3MF and G-code files,
-                // then SIGKILL the process so the native .so is loaded fresh.
+                // APK changed — aggressively delete ALL cached 3MF and G-code files.
+                // We used to force a relaunch here to try to recover stale native state,
+                // but v1.3.64 showed the real fix was the guarded first post-upgrade slice
+                // path, not the restart itself.
                 val count = detector.filesToClearOnUpgrade(filesDir).onEach { it.delete() }.size
                 val reason = if (saved.lastVersionCode != currentVersion)
                     "version ${saved.lastVersionCode}→$currentVersion" else "APK reinstalled"
-                Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files, restarting process")
+                Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files, continuing in current process")
                 diagnostics.recordEvent(
                     "upgrade_check",
                     mapOf(
@@ -162,17 +152,8 @@ class MainActivity : ComponentActivity() {
                 prefs.edit()
                     .putInt("lastVersionCode", currentVersion)
                     .putLong("lastApkUpdateTime", apkLastUpdate)
-                    .commit()  // sync — must flush before kill
-                diagnostics.markUpgradeRestartRequested("apk_changed", null)
-
-                // Force-restart: kill this process so Android launches a fresh one with
-                // a new native .so (clean g_model, g_engine, Clipper state).
-                // Use PendingIntent + AlarmManager to schedule relaunch AFTER the kill
-                // completes — avoids race where startActivity() before killProcess()
-                // causes Android to reuse the dying process with stale native state.
-                // Use set() not setExact() — exact alarms need SCHEDULE_EXACT_ALARM on API 31+.
-                scheduleSelfRestartAndKill()
-                return
+                    .apply()
+                diagnostics.markUpgradePendingForCurrentSession("apk_changed", null)
             }
             UpgradeDetector.Result.SAME_APK -> {
                 // Same APK — still clear known transient cache patterns as a safety net.

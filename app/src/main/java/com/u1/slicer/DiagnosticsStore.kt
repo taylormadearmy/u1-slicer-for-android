@@ -66,7 +66,7 @@ class DiagnosticsStore(private val context: Context) {
         sessionIdCache ?: "${System.currentTimeMillis()}-${Process.myPid()}".also { sessionIdCache = it }
     }
 
-    private val sessionStartedWithPendingRestart = prefs.contains(KEY_PENDING_RESTART)
+    private var sessionStartedWithPendingRestart = prefs.contains(KEY_PENDING_RESTART)
     private var firstModelLoadRecorded = false
     private var firstSliceRecorded = false
     private var firstSliceAfterUpgradeRecorded = false
@@ -102,9 +102,16 @@ class DiagnosticsStore(private val context: Context) {
         return firstSliceThisLaunch to firstSliceAfterUpgrade
     }
 
+    fun markUpgradePendingForCurrentSession(trigger: String, nativeStateJson: String?): Boolean {
+        val persisted = markUpgradeRestartRequested(trigger, nativeStateJson)
+        sessionStartedWithPendingRestart = sessionStartedWithPendingRestart || persisted
+        return persisted
+    }
+
     fun markSliceSucceeded() {
         if (!prefs.contains(KEY_PENDING_RESTART)) return
         prefs.edit().remove(KEY_PENDING_RESTART).apply()
+        sessionStartedWithPendingRestart = false
         recordEvent("post_upgrade_slice_settled")
     }
 
