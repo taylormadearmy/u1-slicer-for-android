@@ -154,7 +154,7 @@ class MainActivity : ComponentActivity() {
                 val count = detector.filesToClearOnUpgrade(filesDir).onEach { it.delete() }.size
                 val reason = if (saved.lastVersionCode != currentVersion)
                     "version ${saved.lastVersionCode}→$currentVersion" else "APK reinstalled"
-                Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files, continuing in current process")
+                Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files, restarting into fresh process")
                 diagnostics.recordEvent(
                     "upgrade_check",
                     mapOf(
@@ -167,10 +167,18 @@ class MainActivity : ComponentActivity() {
                         "currentApkUpdateTime" to apkLastUpdate
                     )
                 )
-                prefs.edit()
+                val persisted = prefs.edit()
                     .putInt("lastVersionCode", currentVersion)
                     .putLong("lastApkUpdateTime", apkLastUpdate)
-                    .apply()
+                    .commit()
+                diagnostics.recordEvent(
+                    "upgrade_state_persisted",
+                    mapOf(
+                        "success" to persisted,
+                        "versionCode" to currentVersion,
+                        "apkUpdateTime" to apkLastUpdate
+                    )
+                )
                 diagnostics.markUpgradeRestartRequested("apk_changed", null)
                 scheduleSelfRestartAndKill()
                 return true
