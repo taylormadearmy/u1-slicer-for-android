@@ -911,12 +911,6 @@ fun PreviewScreen(
                     SlicingProgressCard(s.progress, s.stage)
                 }
                 is SlicerViewModel.SlicerState.SliceComplete -> {
-                    SliceCompleteSummaryCard(
-                        result = s.result,
-                        perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
-                        bedTemp = config.bedTemp,
-                        extruderColors = extruderColors.filter { it.isNotBlank() }
-                    )
                     // Inline 3D G-code preview (auto-downsampled for large models)
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
                         InlineGcodePreview(
@@ -928,6 +922,12 @@ fun PreviewScreen(
                             onCameraStateChange = onSharedPreviewCameraStateChange
                         )
                     }
+                    SliceCompleteSummaryCard(
+                        result = s.result,
+                        perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
+                        bedTemp = config.bedTemp,
+                        extruderColors = extruderColors.filter { it.isNotBlank() }
+                    )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
                     ErrorCard(
@@ -1310,16 +1310,6 @@ fun SliceCompleteActionBar(
             modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4CAF50))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Slicing Complete",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp,
-                    color = Color(0xFF81C784)
-                )
-            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1723,12 +1713,13 @@ fun InlineModelPreview(
     // Fixes B22 race: previously mesh loaded on IO (slow) while colors arrived via StateFlow
     // (fast). Separate LaunchedEffects had timing gaps — colors effect fired before mesh was
     // ready (skip), then mesh effect read stale empty colors from closure (skip).
-    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping) {
+    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState) {
         val m = mesh; val v = viewerView
         if (m != null && v != null) {
             // Only call setMesh when the mesh instance actually changed
             if (m !== lastSetMesh) {
                 v.setMesh(m)
+                cameraState?.let { v.applyCameraState(it) }
                 lastSetMesh = m
             }
             if (extruderColors.isNotEmpty()) {
@@ -2274,8 +2265,11 @@ fun InlineGcodePreview(
     // Use slicer's totalLayers for display (correct print layers), fall back to parsed count
     val displayLayerCount = if (slicerLayerCount > 0) slicerLayerCount else gcodeLayerCount
     var maxLayer by remember { mutableIntStateOf(gcodeLayerCount - 1) }
+    val displayLayer = if (gcodeLayerCount > 0)
+        ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
+    else 1
 
-    LaunchedEffect(parsedGcode, extruderColors, viewerView) {
+    LaunchedEffect(parsedGcode, extruderColors, viewerView, cameraState) {
         val v = viewerView ?: return@LaunchedEffect
         maxLayer = gcodeLayerCount - 1
         v.queueEvent {
@@ -2284,6 +2278,7 @@ fun InlineGcodePreview(
             }
             v.renderer.uploadGcode(parsedGcode)
         }
+        cameraState?.let { v.applyCameraState(it) }
         v.requestRender()
     }
 
@@ -2292,9 +2287,16 @@ fun InlineGcodePreview(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Row(modifier = Modifier.fillMaxWidth().height(280.dp)) {
-            // GL view
-            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(300.dp)
+            ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
                         com.u1.slicer.viewer.GcodeViewerView(ctx).also { view ->
@@ -2314,7 +2316,6 @@ fun InlineGcodePreview(
                     },
                     modifier = Modifier.fillMaxSize()
                 )
-                // Expand button overlay
                 IconButton(
                     onClick = onExpand,
                     modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
@@ -2323,9 +2324,6 @@ fun InlineGcodePreview(
                         tint = Color.White.copy(alpha = 0.8f))
                 }
                 // Layer label overlay — map gcode layer index to display layer
-                val displayLayer = if (gcodeLayerCount > 0)
-                    ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
-                else 1
                 Text(
                     "Layer $displayLayer/$displayLayerCount",
                     fontSize = 10.sp,
@@ -2333,24 +2331,38 @@ fun InlineGcodePreview(
                     modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
                 )
             }
-            // Vertical layer slider on the right
             if (gcodeLayerCount > 1) {
                 Column(
                     modifier = Modifier
-                        .fillMaxHeight()
-                        .width(52.dp)
-                        .padding(vertical = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text("$displayLayerCount", fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth())
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Layer 1",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Layer $displayLayer/$displayLayerCount",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "Layer $displayLayerCount",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     BoxWithConstraints(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
-                        val sliderLength = maxHeight
                         Slider(
                             value = maxLayer.toFloat(),
                             onValueChange = { v ->
@@ -2358,15 +2370,9 @@ fun InlineGcodePreview(
                                 viewerView?.setLayerRange(0, maxLayer)
                             },
                             valueRange = 0f..(gcodeLayerCount - 1).toFloat(),
-                            modifier = Modifier
-                                .requiredWidth(sliderLength)
-                                .graphicsLayer { rotationZ = -90f }
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
-                    Text("1", fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth())
                 }
             }
         }
