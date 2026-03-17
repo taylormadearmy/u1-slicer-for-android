@@ -208,18 +208,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * (before sanitization/embedding) because the sanitized file may have component files
      * stripped out, leaving no geometry for the preview parser.
      */
-    val previewModelPath: String? get() {
-        val info = _threeMfInfo.value
-        val previewFile = when {
-            // Single-plate Bambu previews need the raw source file because sanitization strips
-            // H2C metadata such as project_settings.config that the preview parser uses to
-            // interpret paint states correctly.
-            rawInputFile != null && info?.isBambu == true && !info.isMultiPlate -> rawInputFile
-            sourceModelFile != null -> sourceModelFile
-            else -> currentModelFile
-        }
-        return previewFile?.absolutePath
-    }
+    val previewModelPath: String? get() = resolvePreviewModelFile(
+        rawInputFile = rawInputFile,
+        sourceModelFile = sourceModelFile,
+        currentModelFile = currentModelFile,
+        info = _threeMfInfo.value,
+        originalSourceConfig = originalSourceConfig
+    )?.absolutePath
 
     init {
         _coreVersion.value = if (NativeLibrary.isLoaded) {
@@ -1650,7 +1645,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             hasPaintData = origInfo.hasPaintData,
             hasLayerToolChanges = origInfo.hasLayerToolChanges,
             hasMultiExtruderAssignments = origInfo.hasMultiExtruderAssignments,
-            objectExtruderMap = origInfo.objectExtruderMap
+            // Prefer the processed file's map when available: BambuSanitizer can inline
+            // compound-object parts into concrete mesh object IDs, which is exactly what
+            // the preview parser needs for per-part coloring (for example calicube).
+            objectExtruderMap = processedInfo.objectExtruderMap.ifEmpty { origInfo.objectExtruderMap }
         )
 
         /**
@@ -1690,6 +1688,39 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments,
                 objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap }
             )
+        }
+
+        internal fun resolvePreviewModelFile(
+            rawInputFile: File?,
+            sourceModelFile: File?,
+            currentModelFile: File?,
+            info: com.u1.slicer.bambu.ThreeMfInfo?,
+            originalSourceConfig: Map<String, Any>?
+        ): File? = when {
+            // Only genuine H2C source files need the raw project_settings.config-driven preview
+            // path. Other Bambu models, such as calicube, rely on the sanitized/restructured
+            // mesh path to preserve per-object preview colouring.
+            rawInputFile != null && info?.isBambu == true && !info.isMultiPlate &&
+                isH2cSourceConfig(originalSourceConfig) -> rawInputFile
+            sourceModelFile != null -> sourceModelFile
+            else -> currentModelFile
+        }
+
+        internal fun isH2cSourceConfig(config: Map<String, Any>?): Boolean {
+            if (config.isNullOrEmpty()) return false
+            fun anyString(value: Any?, predicate: (String) -> Boolean): Boolean = when (value) {
+                null -> false
+                is String -> predicate(value)
+                is Iterable<*> -> value.any { anyString(it, predicate) }
+                is Array<*> -> value.any { anyString(it, predicate) }
+                else -> false
+            }
+
+            // H2C source files carry one of these explicit project markers. Generic machine
+            // compatibility strings can also mention "H2C", so we intentionally do NOT scan
+            // every config value for that substring.
+            return anyString(config["filament_settings_id"]) { it.contains("@BBL H2C") } ||
+                anyString(config["change_filament_gcode"]) { it.contains("H2C filament_change") }
         }
     }
 }

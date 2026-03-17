@@ -15,12 +15,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ## Release
 
-1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.3.59` -> `1.3.60`)
+1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.3.60` -> `1.3.61`)
 2. **Update docs** — update test counts in this file and `README.md` if they changed
 3. **Commit and push**:
    ```bash
    git add -p
-   git commit -m "bump: v1.3.60 - <short description>"
+   git commit -m "bump: v1.3.61 - <short description>"
    git push
    ```
 4. **Build the release APK**:
@@ -29,12 +29,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```
 5. **Rename the APK** with the version number:
    ```bash
-   cp app/build/outputs/apk/debug/app-debug.apk u1-slicer-v1.3.60.apk
+   cp app/build/outputs/apk/debug/app-debug.apk u1-slicer-v1.3.61.apk
    ```
 6. **Create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
    ```bash
-   gh release create v1.3.60 u1-slicer-v1.3.60.apk \
-     --title "v1.3.60" \
+   gh release create v1.3.61 u1-slicer-v1.3.61.apk \
+     --title "v1.3.61" \
      --notes "Brief description of what changed."
    ```
 
@@ -43,11 +43,11 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 376 JVM unit tests
+./gradlew testDebugUnitTest                        # 387 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 109 instrumented tests (uses Orchestrator)
 ```
 
-### Unit tests (`app/src/test/`) - 376 tests across 22 classes
+### Unit tests (`app/src/test/`) - 387 tests across 22 classes
 - `gcode/GcodeParserTest.kt` (18) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -69,7 +69,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `model/CopyArrangeCalculatorTest.kt` (18) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
-- `MergeThreeMfInfoTest.kt` (3) — mergeThreeMfInfo/ForPlate objectExtruderMap preference
+- `MergeThreeMfInfoTest.kt` (7) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection
 
 ### Instrumented tests (`app/src/androidTest/`) - 109 tests across 11 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count

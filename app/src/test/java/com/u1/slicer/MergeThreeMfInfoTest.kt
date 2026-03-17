@@ -3,6 +3,7 @@ package com.u1.slicer
 import com.u1.slicer.bambu.ThreeMfInfo
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.File
 
 class MergeThreeMfInfoTest {
 
@@ -47,11 +48,11 @@ class MergeThreeMfInfoTest {
     }
 
     @Test
-    fun `mergeThreeMfInfo preserves objectExtruderMap from origInfo`() {
+    fun `mergeThreeMfInfo prefers processed objectExtruderMap when available`() {
         val origInfo = ThreeMfInfo(
             objects = emptyList(), plates = emptyList(),
             isBambu = true, isMultiPlate = false,
-            objectExtruderMap = mapOf("1" to 1, "2" to 2, "3" to 3),
+            objectExtruderMap = mapOf("3" to 2),
             detectedColors = listOf("#FF0000", "#00FF00", "#0000FF"),
             detectedExtruderCount = 3,
             hasPaintData = true
@@ -59,9 +60,85 @@ class MergeThreeMfInfoTest {
         val processedInfo = ThreeMfInfo(
             objects = emptyList(), plates = emptyList(),
             isBambu = false, isMultiPlate = false,
-            objectExtruderMap = emptyMap()  // process() strips model_settings.config
+            objectExtruderMap = mapOf("1" to 1, "2" to 2)
         )
         val merged = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
-        assertEquals(mapOf("1" to 1, "2" to 2, "3" to 3), merged.objectExtruderMap)
+        assertEquals(mapOf("1" to 1, "2" to 2), merged.objectExtruderMap)
+    }
+
+    @Test
+    fun `mergeThreeMfInfo falls back to orig objectExtruderMap when processed is empty`() {
+        val origInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = true, isMultiPlate = false,
+            objectExtruderMap = mapOf("1" to 1, "2" to 2),
+            detectedColors = listOf("#FF0000", "#00FF00"),
+            detectedExtruderCount = 2,
+            hasPaintData = true
+        )
+        val processedInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            objectExtruderMap = emptyMap()
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+        assertEquals(mapOf("1" to 1, "2" to 2), merged.objectExtruderMap)
+    }
+
+    @Test
+    fun `resolvePreviewModelFile prefers raw file for H2C source projects`() {
+        val raw = File("raw.3mf")
+        val source = File("sanitized.3mf")
+        val info = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = true, isMultiPlate = false
+        )
+
+        val selected = SlicerViewModel.resolvePreviewModelFile(
+            rawInputFile = raw,
+            sourceModelFile = source,
+            currentModelFile = null,
+            info = info,
+            originalSourceConfig = mapOf(
+                "filament_settings_id" to listOf("Bambu PLA Basic @BBL H2C"),
+                "extruder_ams_count" to listOf("1#1|4#0", "1#0|4#2")
+            )
+        )
+
+        assertEquals(raw, selected)
+    }
+
+    @Test
+    fun `resolvePreviewModelFile keeps sanitized file for non-H2C Bambu previews`() {
+        val raw = File("raw.3mf")
+        val source = File("sanitized.3mf")
+        val info = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = true, isMultiPlate = false
+        )
+
+        val selected = SlicerViewModel.resolvePreviewModelFile(
+            rawInputFile = raw,
+            sourceModelFile = source,
+            currentModelFile = null,
+            info = info,
+            originalSourceConfig = mapOf(
+                "filament_colour" to listOf("#FF0000", "#00FF00")
+            )
+        )
+
+        assertEquals(source, selected)
+    }
+
+    @Test
+    fun `isH2cSourceConfig ignores generic machine compatibility markers`() {
+        val config = mapOf(
+            "upward_compatible_machine" to "Bambu Lab H2C 0.4 nozzle",
+            "extruder_ams_count" to listOf("1#0|4#0", ""),
+            "physical_extruder_map" to listOf("0"),
+            "filament_settings_id" to listOf("Bambu PLA Basic @BBL A1M")
+        )
+
+        assertFalse(SlicerViewModel.isH2cSourceConfig(config))
     }
 }
