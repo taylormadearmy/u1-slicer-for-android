@@ -20,6 +20,8 @@ import kotlin.math.sqrt
 class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     val camera = Camera()
+    @Volatile
+    var preserveRestoredCameraOnSurfaceInit = false
     private var toolpathShader: ShaderProgram? = null
     private val bed = BedDrawable(context)
 
@@ -93,11 +95,15 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         toolpathShader = ShaderProgram(context, "shaders/toolpath.vert", "shaders/toolpath.frag")
         bed.setup(context)
 
-        // Default camera: plate-centred top-down view matching model viewer
-        camera.setTarget(135f, 135f, 0f)
-        camera.distance = 500f
-        camera.elevation = 62f
-        camera.azimuth = -90f
+        if (preserveRestoredCameraOnSurfaceInit) {
+            preserveRestoredCameraOnSurfaceInit = false
+        } else {
+            // Default camera: plate-centred top-down view matching model viewer
+            camera.setTarget(135f, 135f, 0f)
+            camera.distance = 500f
+            camera.elevation = 62f
+            camera.azimuth = -90f
+        }
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {

@@ -2272,12 +2272,10 @@ fun InlineGcodePreview(
     LaunchedEffect(parsedGcode, extruderColors, viewerView, cameraState) {
         val v = viewerView ?: return@LaunchedEffect
         maxLayer = gcodeLayerCount - 1
-        v.queueEvent {
-            if (extruderColors.isNotEmpty()) {
-                v.renderer.setExtruderColors(extruderColors)
-            }
-            v.renderer.uploadGcode(parsedGcode)
+        if (extruderColors.isNotEmpty()) {
+            v.setExtruderColors(extruderColors)
         }
+        v.setGcode(parsedGcode)
         cameraState?.let { v.applyCameraState(it) }
         v.requestRender()
     }
