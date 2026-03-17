@@ -52,6 +52,9 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     var pendingGcode: ParsedGcode? = null
 
     @Volatile
+    var preserveCameraOnNextUpload = false
+
+    @Volatile
     var pendingExtruderColors: List<String>? = null
 
     // Extruder colors — defaults match the 2D viewer; overridden via setExtruderColors()
@@ -112,13 +115,17 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             uploadGcode(gcode)
             pendingGcode = null
 
-            // Auto-frame: plate-centred view matching model viewer
-            camera.setTarget(135f, 135f, 0f)
-            camera.distance = 500f
-            camera.elevation = 62f
-            camera.azimuth = -90f
-            camera.panX = 0f
-            camera.panY = 0f
+            if (preserveCameraOnNextUpload) {
+                preserveCameraOnNextUpload = false
+            } else {
+                // Auto-frame: plate-centred view matching model viewer
+                camera.setTarget(135f, 135f, 0f)
+                camera.distance = 500f
+                camera.elevation = 62f
+                camera.azimuth = -90f
+                camera.panX = 0f
+                camera.panY = 0f
+            }
         }
 
         camera.updateViewMatrix()

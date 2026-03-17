@@ -67,6 +67,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingMesh: MeshData? = null
 
+    @Volatile
+    var preserveCameraOnNextMeshUpload = false
+
     // Set to true to trigger a camera re-centre on the next frame (e.g. after placement
     // positions arrive on the main thread after the mesh was already uploaded).
     @Volatile
@@ -126,7 +129,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             }
             meshData = mesh
             pendingMesh = null
-            pendingCameraReset = true  // camera will be set up below (after instancePositions may be set)
+            pendingCameraReset = !preserveCameraOnNextMeshUpload
+            preserveCameraOnNextMeshUpload = false
         }
 
         // Process pending recolor for existing mesh (no new mesh upload)

@@ -52,6 +52,8 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     }
 
     fun applyCameraState(state: CameraViewState) {
+        renderer.preserveCameraOnNextMeshUpload = true
+        renderer.pendingCameraReset = false
         renderer.camera.restore(state)
         requestRender()
     }

@@ -37,6 +37,7 @@ class GcodeViewerView(context: Context) : BaseGLViewerView(context) {
     }
 
     fun applyCameraState(state: CameraViewState) {
+        renderer.preserveCameraOnNextUpload = true
         renderer.camera.restore(state)
         requestRender()
     }

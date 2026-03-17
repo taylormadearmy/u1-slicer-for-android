@@ -66,6 +66,24 @@ class MainActivity : ComponentActivity() {
         uri?.let { viewModel.saveGcodeTo(it) }
     }
 
+    private fun scheduleSelfRestartAndKill() {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            this,
+            0,
+            launchIntent,
+            android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val alarmManager = getSystemService(android.app.AlarmManager::class.java)
+        alarmManager.set(
+            android.app.AlarmManager.RTC_WAKEUP,
+            System.currentTimeMillis() + 500,
+            pendingIntent
+        )
+        android.os.Process.killProcess(android.os.Process.myPid())
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIncomingIntent(intent)
@@ -108,7 +126,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun clearStaleCacheOnUpgrade() {
+    private fun clearStaleCacheOnUpgrade(): Boolean {
         val prefs = getSharedPreferences("upgrade_state", MODE_PRIVATE)
         val currentVersion = try {
             packageManager.getPackageInfo(packageName, 0).longVersionCode.toInt()
@@ -153,7 +171,9 @@ class MainActivity : ComponentActivity() {
                     .putInt("lastVersionCode", currentVersion)
                     .putLong("lastApkUpdateTime", apkLastUpdate)
                     .apply()
-                diagnostics.markUpgradePendingForCurrentSession("apk_changed", null)
+                diagnostics.markUpgradeRestartRequested("apk_changed", null)
+                scheduleSelfRestartAndKill()
+                return true
             }
             UpgradeDetector.Result.SAME_APK -> {
                 // Same APK — still clear known transient cache patterns as a safety net.
@@ -189,6 +209,7 @@ class MainActivity : ComponentActivity() {
             .putInt("lastVersionCode", currentVersion)
             .putLong("lastApkUpdateTime", apkLastUpdate)
             .apply()
+        return false
     }
 
     override fun onDestroy() {
@@ -222,7 +243,7 @@ class MainActivity : ComponentActivity() {
         // Clear stale cached 3MF files on version upgrade.
         // The sanitizer/embedder output format changes between versions — stale files
         // cause "Coordinate outside allowed range" Clipper errors in OrcaSlicer.
-        clearStaleCacheOnUpgrade()
+        if (clearStaleCacheOnUpgrade()) return
 
         // Only handle VIEW intents on fresh launch, not on recreation
         if (savedInstanceState == null) {

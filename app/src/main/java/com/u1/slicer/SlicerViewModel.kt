@@ -1143,6 +1143,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 if (custom != null) {
                     val ok = native.setModelInstances(custom)
                     Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances (ok=$ok)")
+                    diagnostics.recordEvent(
+                        "set_model_instances_for_slice",
+                        mapOf(
+                            "success" to ok,
+                            "mode" to "custom",
+                            "instanceCount" to (custom.size / 2),
+                            "positions" to custom.toList(),
+                            "firstSliceAfterUpgrade" to firstSliceAfterUpgrade
+                        )
+                    )
                 } else {
                     // Auto-arrange: single copy → centered, multiple copies → grid
                     if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
@@ -1153,6 +1163,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         val ok = native.setModelInstances(positions)
                         if (!ok) Log.e("SlicerVM", "setModelInstances returned false — model may not be loaded")
                         Log.i("SlicerVM", "Auto-placed $copies instance(s) (ok=$ok)")
+                        diagnostics.recordEvent(
+                            "set_model_instances_for_slice",
+                            mapOf(
+                                "success" to ok,
+                                "mode" to "auto",
+                                "instanceCount" to copies,
+                                "positions" to positions.toList(),
+                                "scaledModelSizeX" to (mi.sizeX * s.x),
+                                "scaledModelSizeY" to (mi.sizeY * s.y),
+                                "firstSliceAfterUpgrade" to firstSliceAfterUpgrade
+                            )
+                        )
                     } else {
                         Log.w("SlicerVM", "Skipping setModelInstances: mi=${mi?.sizeX}×${mi?.sizeY}")
                     }
@@ -1177,6 +1199,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         profileOverrides = profileOverrides,
                         firstSliceThisLaunch = firstSliceThisLaunch,
                         firstSliceAfterUpgrade = firstSliceAfterUpgrade
+                    )
+                )
+                diagnostics.recordEvent(
+                    "pre_slice_native_state",
+                    mapOf(
+                        "firstSliceThisLaunch" to firstSliceThisLaunch,
+                        "firstSliceAfterUpgrade" to firstSliceAfterUpgrade,
+                        "nativeState" to safeNativeDiagnosticsState(),
+                        "currentModelPath" to currentModelFile?.absolutePath,
+                        "sourceModelPath" to sourceModelFile?.absolutePath,
+                        "rawInputPath" to rawInputFile?.absolutePath
                     )
                 )
                 Log.i("SlicerVM", "Resolved slice config: layer=${sliceConfig.layerHeight} " +
