@@ -64,6 +64,7 @@ object ThreeMfMeshParser {
             }
 
             val result = zip.getInputStream(modelEntry).use { streamParseModel(it) }
+            val isH2cProject = detectIsH2cProject(zip)
             val buildItems = filterBuildItems(result.buildItems)
             val mainObjects = result.objects
             Log.d("ThreeMfMesh", "Build items: ${buildItems.size}, main objects: ${mainObjects.size}")
@@ -97,15 +98,29 @@ object ThreeMfMeshParser {
                         return buildMeshData(
                             listOf(MeshWithContext(compMesh, null, 0)),
                             extruderMap,
-                            detectedColorCount
+                            detectedColorCount,
+                            isH2cProject
                         )
                     }
                 }
                 return null
             }
 
-            return buildMeshData(meshList, extruderMap, detectedColorCount)
+            return buildMeshData(meshList, extruderMap, detectedColorCount, isH2cProject)
         }
+    }
+
+    private fun detectIsH2cProject(zip: ZipFile): Boolean {
+        val projectSettings = zip.getEntry("Metadata/project_settings.config") ?: return false
+        return runCatching {
+            zip.getInputStream(projectSettings).bufferedReader().use { reader ->
+                reader.lineSequence().any { line ->
+                    line.contains("@BBL H2C") ||
+                        line.contains("\"extruder_ams_count\"") ||
+                        line.contains("\"physical_extruder_map\"")
+                }
+            }
+        }.getOrDefault(false)
     }
 
     /**
@@ -486,7 +501,8 @@ object ThreeMfMeshParser {
     private fun buildMeshData(
         meshes: List<MeshWithContext>,
         extruderIndexMap: Map<Int, Byte>? = null,
-        detectedColorCount: Int = 0
+        detectedColorCount: Int = 0,
+        isH2cProject: Boolean = false
     ): MeshData? {
         val mergedMeshes = mergeH2cPairs(meshes)
         val totalTris = mergedMeshes.sumOf { meshCtx ->
@@ -566,6 +582,7 @@ object ThreeMfMeshParser {
                         spec,
                         volumeExtruderIdx,
                         detectedColorCount,
+                        isH2cProject,
                         ::appendTriangle
                     )
                 } else {
@@ -625,9 +642,10 @@ object ThreeMfMeshParser {
 
     private fun triangleSelectorStateToPaintIndex(
         state: Int,
-        detectedColorCount: Int = 0
+        detectedColorCount: Int = 0,
+        isH2cProject: Boolean = false
     ): Int {
-        val paintState = triangleSelectorLeafStateToPaintState(state)
+        val paintState = triangleSelectorLeafStateToPaintState(state, isH2cProject)
         if (paintState <= 0) return -1
         return paintIndexForState(paintState, detectedColorCount)
     }
@@ -637,6 +655,7 @@ object ThreeMfMeshParser {
         spec: String,
         volumeExtruderIdx: Byte,
         detectedColorCount: Int,
+        isH2cProject: Boolean,
         appendTriangle: (FloatArray, FloatArray, FloatArray, Byte) -> Unit
     ) {
         val reader = TriangleSelectorReader(spec)
@@ -661,7 +680,8 @@ object ThreeMfMeshParser {
                 }
                 val paintIdx = triangleSelectorStateToPaintIndex(
                     state,
-                    detectedColorCount
+                    detectedColorCount,
+                    isH2cProject
                 )
                 appendTriangle(
                     tri.a,
@@ -698,8 +718,14 @@ object ThreeMfMeshParser {
         return (state - 1) % 4
     }
 
-    private fun triangleSelectorLeafStateToPaintState(state: Int): Int =
-        if (state <= 3) -1 else state - 3
+    private fun triangleSelectorLeafStateToPaintState(
+        state: Int,
+        isH2cProject: Boolean
+    ): Int = when {
+        isH2cProject -> if (state <= 1) -1 else state - 1
+        state <= 3 -> -1
+        else -> state - 3
+    }
 
     private fun parseStateDigit(ch: Char?): Int? = when (ch) {
         null -> null

@@ -15,12 +15,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ## Release
 
-1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.3.57` -> `1.3.58`)
+1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.3.58` -> `1.3.59`)
 2. **Update docs** — update test counts in this file and `README.md` if they changed
 3. **Commit and push**:
    ```bash
    git add -p
-   git commit -m "bump: v1.3.58 - <short description>"
+   git commit -m "bump: v1.3.59 - <short description>"
    git push
    ```
 4. **Build the release APK**:
@@ -29,12 +29,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```
 5. **Rename the APK** with the version number:
    ```bash
-   cp app/build/outputs/apk/debug/app-debug.apk u1-slicer-v1.3.58.apk
+   cp app/build/outputs/apk/debug/app-debug.apk u1-slicer-v1.3.59.apk
    ```
 6. **Create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
    ```bash
-   gh release create v1.3.58 u1-slicer-v1.3.58.apk \
-     --title "v1.3.58" \
+   gh release create v1.3.59 u1-slicer-v1.3.59.apk \
+     --title "v1.3.59" \
      --notes "Brief description of what changed."
    ```
 
@@ -43,17 +43,17 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 375 JVM unit tests
+./gradlew testDebugUnitTest                        # 376 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 109 instrumented tests (uses Orchestrator)
 ```
 
-### Unit tests (`app/src/test/`) - 375 tests across 22 classes
+### Unit tests (`app/src/test/`) - 376 tests across 22 classes
 - `gcode/GcodeParserTest.kt` (18) — G-code parsing: layers, extrusion, extruder switching
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
 - `viewer/StlParserTest.kt` (10) — Binary/ASCII STL parsing, bounding box, vertex data, 10-float vertex format
 - `viewer/MeshDataTest.kt` (9) — MeshData 10-float vertex format, extruderIndices, recolor(), RGBA values, multi-extruder recolor
-- `viewer/ThreeMfMeshParserTest.kt` (20) — 3MF mesh parsing, per-triangle color extraction, extruderMap, MeshWithContext, SEMM paint_color parsing, multi-object extruder map
+- `viewer/ThreeMfMeshParserTest.kt` (21) — 3MF mesh parsing, per-triangle color extraction, extruderMap, MeshWithContext, SEMM paint_color parsing, multi-object extruder map
 - `network/MakerWorldUtilsTest.kt` (36) — URL parsing, design→instance ID resolution, download response parsing, error classification, cookie sanitization
 - `network/MoonrakerClientTest.kt` (25) — PrinterStatus computed properties, URL normalization, LED state
 - `data/SliceConfigTest.kt` (21) — Default values match Snapmaker U1 hardware specs

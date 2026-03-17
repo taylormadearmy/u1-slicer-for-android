@@ -499,6 +499,49 @@ class ThreeMfMeshParserTest {
     }
 
     @Test
+    fun `parse keeps H2C triangle selector colors 5 and 6 distinct`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                            <vertex x="20" y="0" z="0" />
+                            <vertex x="30" y="0" z="0" />
+                            <vertex x="25" y="10" z="0" />
+                            <vertex x="40" y="0" z="0" />
+                            <vertex x="50" y="0" z="0" />
+                            <vertex x="45" y="10" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" paint_color="83C883"/>
+                            <triangle v1="3" v2="4" v3="5" paint_color="84C883"/>
+                            <triangle v1="6" v2="7" v3="8" paint_color="8C"/>
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(
+            modelXml = xml,
+            extraEntries = mapOf(
+                "Metadata/project_settings.config" to """{"filament_settings_id":["Bambu PLA Basic @BBL H2C"]}"""
+            )
+        )
+        val mesh = ThreeMfMeshParser.parse(file, detectedColorCount = 7)
+        assertNotNull(mesh)
+        assertTrue(mesh!!.extruderIndices!!.contains(4.toByte()))
+        assertTrue(mesh.extruderIndices!!.contains(5.toByte()))
+        assertTrue(mesh.extruderIndices!!.contains(6.toByte()))
+    }
+
+    @Test
     fun `paint_color wins over volume extruder index`() {
         val xml = """<?xml version="1.0" encoding="UTF-8"?>
             <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
@@ -695,12 +738,20 @@ class ThreeMfMeshParserTest {
         return ThreeMfMeshParser.parse(file)
     }
 
-    private fun create3mfZip(modelXml: String): File {
+    private fun create3mfZip(
+        modelXml: String,
+        extraEntries: Map<String, String> = emptyMap()
+    ): File {
         val file = tempFolder.newFile("test.3mf")
         ZipOutputStream(file.outputStream()).use { zos ->
             zos.putNextEntry(ZipEntry("3D/3dmodel.model"))
             zos.write(modelXml.toByteArray(Charsets.UTF_8))
             zos.closeEntry()
+            extraEntries.forEach { (path, content) ->
+                zos.putNextEntry(ZipEntry(path))
+                zos.write(content.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
         }
         return file
     }
