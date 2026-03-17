@@ -51,6 +51,11 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
+    fun applyCameraState(state: CameraViewState) {
+        renderer.camera.restore(state)
+        requestRender()
+    }
+
     override fun handleActionDown(event: MotionEvent) {
         draggingIndex = -1
         if (placementMode) {

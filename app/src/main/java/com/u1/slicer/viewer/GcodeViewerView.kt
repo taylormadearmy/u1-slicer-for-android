@@ -35,4 +35,9 @@ class GcodeViewerView(context: Context) : BaseGLViewerView(context) {
         renderer.showTravel = show
         requestRender()
     }
+
+    fun applyCameraState(state: CameraViewState) {
+        renderer.camera.restore(state)
+        requestRender()
+    }
 }

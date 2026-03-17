@@ -9,6 +9,17 @@ import kotlin.math.sin
  * Orbits around a target point with azimuth/elevation/distance.
  * Uses Z-up convention matching the 3D printer bed (XY bed plane, Z height).
  */
+data class CameraViewState(
+    val azimuth: Float,
+    val elevation: Float,
+    val distance: Float,
+    val panX: Float,
+    val panY: Float,
+    val targetX: Float,
+    val targetY: Float,
+    val targetZ: Float
+)
+
 class Camera {
     var azimuth = -45f       // horizontal rotation (degrees)
     var elevation = 45f      // vertical rotation (degrees, 0=horizon, 90=top-down)
@@ -27,6 +38,28 @@ class Camera {
 
     fun setTarget(x: Float, y: Float, z: Float) {
         targetX = x; targetY = y; targetZ = z
+    }
+
+    fun snapshot(): CameraViewState = CameraViewState(
+        azimuth = azimuth,
+        elevation = elevation,
+        distance = distance,
+        panX = panX,
+        panY = panY,
+        targetX = targetX,
+        targetY = targetY,
+        targetZ = targetZ
+    )
+
+    fun restore(state: CameraViewState) {
+        azimuth = state.azimuth
+        elevation = state.elevation
+        distance = state.distance
+        panX = state.panX
+        panY = state.panY
+        targetX = state.targetX
+        targetY = state.targetY
+        targetZ = state.targetZ
     }
 
     fun rotate(dAzimuth: Float, dElevation: Float) {

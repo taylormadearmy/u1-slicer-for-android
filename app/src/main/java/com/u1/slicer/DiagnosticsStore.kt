@@ -8,7 +8,7 @@ import org.json.JSONObject
 import java.io.File
 
 class DiagnosticsStore(private val context: Context) {
-    data class RestartObservation(
+    data class PostUpgradeObservation(
         val status: String,
         val previousSessionId: String?,
         val previousPid: Int?,
@@ -66,7 +66,7 @@ class DiagnosticsStore(private val context: Context) {
         sessionIdCache ?: "${System.currentTimeMillis()}-${Process.myPid()}".also { sessionIdCache = it }
     }
 
-    private var sessionStartedWithPendingRestart = prefs.contains(KEY_PENDING_RESTART)
+    private var sessionHasPostUpgradeGuard = prefs.contains(KEY_PENDING_RESTART)
     private var firstModelLoadRecorded = false
     private var firstSliceRecorded = false
     private var firstSliceAfterUpgradeRecorded = false
@@ -77,9 +77,9 @@ class DiagnosticsStore(private val context: Context) {
 
     fun diagnosticsPath(): String = historyFile.absolutePath
 
-    fun sessionStartedAfterPendingRestart(): Boolean = sessionStartedWithPendingRestart
+    fun sessionHasPostUpgradeGuard(): Boolean = sessionHasPostUpgradeGuard
 
-    fun pendingRestartTrigger(): String? {
+    fun pendingUpgradeTrigger(): String? {
         val pendingJson = prefs.getString(KEY_PENDING_RESTART, null) ?: return null
         return try {
             JSONObject(pendingJson).optString("trigger").ifBlank { null }
@@ -97,21 +97,30 @@ class DiagnosticsStore(private val context: Context) {
     fun markSliceStart(): Pair<Boolean, Boolean> {
         val firstSliceThisLaunch = !firstSliceRecorded
         firstSliceRecorded = true
-        val firstSliceAfterUpgrade = sessionStartedWithPendingRestart && !firstSliceAfterUpgradeRecorded
+        val firstSliceAfterUpgrade = sessionHasPostUpgradeGuard && !firstSliceAfterUpgradeRecorded
         if (firstSliceAfterUpgrade) firstSliceAfterUpgradeRecorded = true
         return firstSliceThisLaunch to firstSliceAfterUpgrade
     }
 
     fun markUpgradePendingForCurrentSession(trigger: String, nativeStateJson: String?): Boolean {
-        val persisted = markUpgradeRestartRequested(trigger, nativeStateJson)
-        sessionStartedWithPendingRestart = sessionStartedWithPendingRestart || persisted
+        val persisted = persistPendingUpgradeMarker(trigger, nativeStateJson)
+        sessionHasPostUpgradeGuard = sessionHasPostUpgradeGuard || persisted
+        recordEvent(
+            "post_upgrade_guard_armed",
+            mapOf(
+                "trigger" to trigger,
+                "nativeState" to nativeStateJson,
+                "markerPersisted" to persisted,
+                "continuingInCurrentProcess" to true
+            )
+        )
         return persisted
     }
 
     fun markSliceSucceeded() {
         if (!prefs.contains(KEY_PENDING_RESTART)) return
         prefs.edit().remove(KEY_PENDING_RESTART).apply()
-        sessionStartedWithPendingRestart = false
+        sessionHasPostUpgradeGuard = false
         recordEvent("post_upgrade_slice_settled")
     }
 
@@ -127,24 +136,14 @@ class DiagnosticsStore(private val context: Context) {
         obj.put("versionCode", packageInfo.longVersionCode)
         obj.put("apkLastUpdateTime", packageInfo.lastUpdateTime)
         obj.put("buildType", if (BuildConfig.DEBUG) "debug" else "release")
-        obj.put("sessionStartedWithPendingRestart", sessionStartedWithPendingRestart)
+        obj.put("sessionHasPostUpgradeGuard", sessionHasPostUpgradeGuard)
         details.forEach { (key, value) -> obj.put(key, toJsonValue(value)) }
         historyFile.appendText(obj.toString() + "\n")
         trimHistory()
     }
 
     fun markUpgradeRestartRequested(trigger: String, nativeStateJson: String?): Boolean {
-        val nativeState = nativeStateJson?.let(::parseNativeState)
-        val marker = JSONObject()
-        marker.put("trigger", trigger)
-        marker.put("requestedAtMs", System.currentTimeMillis())
-        marker.put("sessionId", sessionId)
-        marker.put("pid", Process.myPid())
-        marker.put("appVersion", BuildConfig.VERSION_NAME)
-        marker.put("versionCode", packageInfo.longVersionCode)
-        marker.put("apkLastUpdateTime", packageInfo.lastUpdateTime)
-        marker.put("nativeGeneration", nativeState?.optString("nativeGeneration"))
-        val persisted = prefs.edit().putString(KEY_PENDING_RESTART, marker.toString()).commit()
+        val persisted = persistPendingUpgradeMarker(trigger, nativeStateJson)
         recordEvent(
             "restart_requested",
             mapOf(
@@ -156,7 +155,21 @@ class DiagnosticsStore(private val context: Context) {
         return persisted
     }
 
-    fun recordNativeConfigured(nativeStateJson: String?): RestartObservation? {
+    private fun persistPendingUpgradeMarker(trigger: String, nativeStateJson: String?): Boolean {
+        val nativeState = nativeStateJson?.let(::parseNativeState)
+        val marker = JSONObject()
+        marker.put("trigger", trigger)
+        marker.put("requestedAtMs", System.currentTimeMillis())
+        marker.put("sessionId", sessionId)
+        marker.put("pid", Process.myPid())
+        marker.put("appVersion", BuildConfig.VERSION_NAME)
+        marker.put("versionCode", packageInfo.longVersionCode)
+        marker.put("apkLastUpdateTime", packageInfo.lastUpdateTime)
+        marker.put("nativeGeneration", nativeState?.optString("nativeGeneration"))
+        return prefs.edit().putString(KEY_PENDING_RESTART, marker.toString()).commit()
+    }
+
+    fun recordNativeConfigured(nativeStateJson: String?): PostUpgradeObservation? {
         recordEvent("native_configured", mapOf("nativeState" to nativeStateJson))
         val pendingJson = prefs.getString(KEY_PENDING_RESTART, null) ?: return null
         val pending = try {
@@ -166,7 +179,7 @@ class DiagnosticsStore(private val context: Context) {
             return null
         }
         val nativeState = nativeStateJson?.let(::parseNativeState)
-        val observation = RestartObservation(
+        val observation = PostUpgradeObservation(
             status = classifyRestartObservation(
                 previousSessionId = pending.optString("sessionId").ifBlank { null },
                 previousPid = pending.optInt("pid").takeIf { it != 0 },
@@ -183,7 +196,7 @@ class DiagnosticsStore(private val context: Context) {
             currentNativeGeneration = nativeState?.optString("nativeGeneration")
         )
         recordEvent(
-            "restart_observed",
+            "post_upgrade_guard_observed",
             mapOf(
                 "status" to observation.status,
                 "previousSessionId" to observation.previousSessionId,
@@ -207,9 +220,9 @@ class DiagnosticsStore(private val context: Context) {
             appendLine("versionCode=${packageInfo.longVersionCode}")
             appendLine("apkLastUpdateTime=${packageInfo.lastUpdateTime}")
             appendLine("buildType=${if (BuildConfig.DEBUG) "debug" else "release"}")
-            appendLine("sessionStartedWithPendingRestart=$sessionStartedWithPendingRestart")
+            appendLine("sessionHasPostUpgradeGuard=$sessionHasPostUpgradeGuard")
             if (!latestError.isNullOrBlank()) appendLine("latestError=$latestError")
-            appendLine("pendingRestartMarker=${pendingRestart ?: "<none>"}")
+            appendLine("pendingUpgradeMarker=${pendingRestart ?: "<none>"}")
             appendLine()
             appendLine("Recent events:")
             trimToMax(historyLines, MAX_HISTORY_LINES).forEach { appendLine(it) }

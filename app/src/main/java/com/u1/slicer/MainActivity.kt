@@ -206,7 +206,7 @@ class MainActivity : ComponentActivity() {
             mapOf(
                 "savedInstanceState" to (savedInstanceState != null),
                 "intentAction" to intent?.action,
-                "sessionStartedWithPendingRestart" to diagnostics.sessionStartedAfterPendingRestart()
+                "sessionHasPostUpgradeGuard" to diagnostics.sessionHasPostUpgradeGuard()
             )
         )
 
@@ -263,6 +263,9 @@ class MainActivity : ComponentActivity() {
                         restoreState = true
                     }
                 }
+                var sharedPreviewCameraState by remember {
+                    mutableStateOf<com.u1.slicer.viewer.CameraViewState?>(null)
+                }
 
                 // Wire up the test receiver's navigate callback now that we have navController
                 if (isDebug) {
@@ -306,7 +309,9 @@ class MainActivity : ComponentActivity() {
                             onNavigateSettings = { navigateTab(Routes.SETTINGS) },
                             onNavigatePrinter = { navigateTab(Routes.PRINTER) },
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
-                            onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) }
+                            onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
+                            sharedPreviewCameraState = sharedPreviewCameraState,
+                            onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it }
                         )
                     },
                     previewContent = {
@@ -327,7 +332,9 @@ class MainActivity : ComponentActivity() {
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
                             onShareGcode = { viewModel.shareGcode() },
-                            onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") }
+                            onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") },
+                            sharedPreviewCameraState = sharedPreviewCameraState,
+                            onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it }
                         )
                     },
                     printerContent = {
@@ -476,7 +483,9 @@ fun PrepareScreen(
     onNavigateSettings: () -> Unit,
     onNavigatePrinter: () -> Unit,
     onNavigateJobs: () -> Unit,
-    onNavigateModelViewer: () -> Unit
+    onNavigateModelViewer: () -> Unit,
+    sharedPreviewCameraState: com.u1.slicer.viewer.CameraViewState?,
+    onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     val config by viewModel.config.collectAsState()
@@ -640,7 +649,9 @@ fun PrepareScreen(
                                     viewModel.applyPlacementPositions(pos, towerPos)
                                 },
                                 onInfoClick = { showInfoDialog = true },
-                                modelScale = modelScale
+                                modelScale = modelScale,
+                                cameraState = sharedPreviewCameraState,
+                                onCameraStateChange = onSharedPreviewCameraStateChange
                             )
                             if (showInfoDialog && loadedInfo != null) {
                                 ModelInfoDialog(
@@ -809,7 +820,9 @@ fun PreviewScreen(
     onNavigateJobs: () -> Unit,
     onNavigateGcodeViewer3D: () -> Unit,
     onShareGcode: () -> Unit,
-    onSaveGcode: () -> Unit
+    onSaveGcode: () -> Unit,
+    sharedPreviewCameraState: com.u1.slicer.viewer.CameraViewState?,
+    onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     val coreVersion by viewModel.coreVersion.collectAsState()
@@ -849,25 +862,28 @@ fun PreviewScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Column(
+        val scrollState = rememberScrollState()
+        val hasPinnedActions = state is SlicerViewModel.SlicerState.SliceComplete
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            when (val s = state) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = 16.dp)
+                    .padding(top = if (hasPinnedActions) 104.dp else 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                when (val s = state) {
                 is SlicerViewModel.SlicerState.Slicing -> {
                     SlicingProgressCard(s.progress, s.stage)
                 }
                 is SlicerViewModel.SlicerState.SliceComplete -> {
-                    SliceCompleteCard(
+                    SliceCompleteSummaryCard(
                         result = s.result,
-                        onShare = onShareGcode,
-                        onSave = onSaveGcode,
-                        onSendToPrinter = { onSendToPrinter(s.result.gcodePath) },
-                        onUploadOnly = { onUploadOnly(s.result.gcodePath) },
                         perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
                         bedTemp = config.bedTemp,
                         extruderColors = extruderColors.filter { it.isNotBlank() }
@@ -878,7 +894,9 @@ fun PreviewScreen(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
                             slicerLayerCount = s.result.totalLayers,
-                            onExpand = onNavigateGcodeViewer3D
+                            onExpand = onNavigateGcodeViewer3D,
+                            cameraState = sharedPreviewCameraState,
+                            onCameraStateChange = onSharedPreviewCameraStateChange
                         )
                     }
                 }
@@ -894,6 +912,19 @@ fun PreviewScreen(
                     // Empty state — no slice results yet, show empty bed
                     PreviewEmptyState()
                 }
+            }
+            }
+            if (state is SlicerViewModel.SlicerState.SliceComplete) {
+                val result = (state as SlicerViewModel.SlicerState.SliceComplete).result
+                SliceCompleteActionBar(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    onShare = onShareGcode,
+                    onSave = onSaveGcode,
+                    onSendToPrinter = { onSendToPrinter(result.gcodePath) },
+                    onUploadOnly = { onUploadOnly(result.gcodePath) }
+                )
             }
         }
     }
@@ -1234,75 +1265,32 @@ fun SlicingProgressCard(progress: Int, stage: String) {
 }
 
 @Composable
-fun SliceCompleteCard(
-    result: SliceResult,
+fun SliceCompleteActionBar(
+    modifier: Modifier = Modifier,
     onShare: () -> Unit,
     onSave: () -> Unit,
     onSendToPrinter: () -> Unit = {},
-    onUploadOnly: () -> Unit = {},
-    perExtruderFilamentMm: List<Float> = emptyList(),
-    bedTemp: Int = 0,
-    extruderColors: List<String> = emptyList()
+    onUploadOnly: () -> Unit = {}
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1B3D1E)
-        ),
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF16361A)),
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4CAF50))
                 Spacer(Modifier.width(8.dp))
-                Text("Slicing Complete", fontWeight = FontWeight.Bold, fontSize = 18.sp,
-                    color = Color(0xFF81C784))
+                Text(
+                    "Slicing Complete",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    color = Color(0xFF81C784)
+                )
             }
-            Divider(color = Color.White.copy(alpha = 0.1f))
-            InfoRow("Layers", result.totalLayers.toString())
-            InfoRow("Est. Time", result.estimatedTimeFormatted)
-            InfoRow("Filament", result.estimatedFilamentFormatted)
-            if (bedTemp > 0) {
-                InfoRow("Bed Temp", "${bedTemp}\u00B0C")
-            }
-            if (perExtruderFilamentMm.size > 1) {
-                perExtruderFilamentMm.forEachIndexed { i, mm ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(start = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Colour swatch
-                        val colorHex = extruderColors.getOrNull(i) ?: "#808080"
-                        val color = try {
-                            Color(android.graphics.Color.parseColor(colorHex))
-                        } catch (_: Exception) {
-                            Color.Gray
-                        }
-                        Canvas(modifier = Modifier.size(12.dp)) {
-                            drawCircle(color = color)
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            "E${i + 1}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.7f),
-                            modifier = Modifier.width(28.dp)
-                        )
-                        Text(
-                            "%.0f mm (%.1f g)".format(mm, mm * 0.00125f * 1.24f),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(4.dp))
-
-            // Action buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1326,7 +1314,6 @@ fun SliceCompleteCard(
                     Text("Save")
                 }
             }
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1349,6 +1336,95 @@ fun SliceCompleteCard(
                     Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Upload")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SliceCompleteSummaryCard(
+    result: SliceResult,
+    perExtruderFilamentMm: List<Float> = emptyList(),
+    bedTemp: Int = 0,
+    extruderColors: List<String> = emptyList()
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF1B3D1E)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4CAF50))
+                Spacer(Modifier.width(8.dp))
+                Text("Slice Summary", fontWeight = FontWeight.Bold, fontSize = 18.sp,
+                    color = Color(0xFF81C784))
+            }
+            HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+            InfoRow("Layers", result.totalLayers.toString())
+            InfoRow("Est. Time", result.estimatedTimeFormatted)
+            InfoRow("Filament", result.estimatedFilamentFormatted)
+            if (bedTemp > 0) {
+                InfoRow("Bed Temp", "${bedTemp}\u00B0C")
+            }
+            if (perExtruderFilamentMm.size > 1) {
+                HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+                Text(
+                    "Per Extruder",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+                perExtruderFilamentMm.chunked(2).forEachIndexed { rowIndex, rowItems ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowItems.forEachIndexed { columnIndex, mm ->
+                            val i = rowIndex * 2 + columnIndex
+                            val colorHex = extruderColors.getOrNull(i) ?: "#808080"
+                            val color = try {
+                                Color(android.graphics.Color.parseColor(colorHex))
+                            } catch (_: Exception) {
+                                Color.Gray
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(
+                                        Color.White.copy(alpha = 0.04f),
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Canvas(modifier = Modifier.size(12.dp)) {
+                                    drawCircle(color = color)
+                                }
+                                Spacer(Modifier.width(6.dp))
+                                Column {
+                                    Text(
+                                        "E${i + 1}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.7f)
+                                    )
+                                    Text(
+                                        "%.0f mm (%.1f g)".format(mm, mm * 0.00125f * 1.24f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.85f)
+                                    )
+                                }
+                            }
+                        }
+                        if (rowItems.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
                 }
             }
         }
@@ -1576,7 +1652,9 @@ fun InlineModelPreview(
     wipeTowerDepth: Float = 60f,
     onPositionsChanged: ((FloatArray, Pair<Float, Float>) -> Unit)? = null,
     onInfoClick: (() -> Unit)? = null,
-    modelScale: SlicerViewModel.ModelScale = SlicerViewModel.ModelScale()
+    modelScale: SlicerViewModel.ModelScale = SlicerViewModel.ModelScale(),
+    cameraState: com.u1.slicer.viewer.CameraViewState? = null,
+    onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null
 ) {
     var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
@@ -1721,7 +1799,18 @@ fun InlineModelPreview(
                 factory = { ctx ->
                     com.u1.slicer.viewer.ModelViewerView(ctx).also { view ->
                         viewerView = view
+                        view.onCameraChanged = onCameraStateChange
                         mesh?.let { view.setMesh(it) }
+                        cameraState?.let { view.applyCameraState(it) }
+                    }
+                },
+                update = { view ->
+                    viewerView = view
+                    view.onCameraChanged = onCameraStateChange
+                    cameraState?.let {
+                        if (view.camera.snapshot() != it) {
+                            view.applyCameraState(it)
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxSize()
@@ -2147,7 +2236,9 @@ fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
     slicerLayerCount: Int = 0,
-    onExpand: () -> Unit
+    onExpand: () -> Unit,
+    cameraState: com.u1.slicer.viewer.CameraViewState? = null,
+    onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null
 ) {
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
     val gcodeLayerCount = parsedGcode.layers.size
@@ -2179,6 +2270,17 @@ fun InlineGcodePreview(
                     factory = { ctx ->
                         com.u1.slicer.viewer.GcodeViewerView(ctx).also { view ->
                             viewerView = view
+                            view.onCameraChanged = onCameraStateChange
+                            cameraState?.let { view.applyCameraState(it) }
+                        }
+                    },
+                    update = { view ->
+                        viewerView = view
+                        view.onCameraChanged = onCameraStateChange
+                        cameraState?.let {
+                            if (view.camera.snapshot() != it) {
+                                view.applyCameraState(it)
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxSize()

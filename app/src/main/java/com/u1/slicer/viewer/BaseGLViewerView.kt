@@ -24,11 +24,13 @@ import android.view.ScaleGestureDetector
 abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
 
     abstract val camera: Camera
+    var onCameraChanged: ((CameraViewState) -> Unit)? = null
 
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 camera.zoom(1f / detector.scaleFactor)
+                notifyCameraChanged()
                 requestRender()
                 return true
             }
@@ -96,6 +98,7 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
                         } else {
                             camera.rotate(-dx * 0.3f, dy * 0.3f)
                         }
+                        notifyCameraChanged()
                         requestRender()
                         previousX = event.x
                         previousY = event.y
@@ -106,6 +109,7 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
                         val dy = midY - previousMidY
                         val panScale = camera.distance * 0.002f
                         camera.pan(-dx * panScale, dy * panScale)
+                        notifyCameraChanged()
                         requestRender()
                         previousMidX = midX
                         previousMidY = midY
@@ -154,4 +158,8 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
 
     /** Called on ACTION_CANCEL. Override to reset drag state. */
     protected open fun handleActionCancel() {}
+
+    protected fun notifyCameraChanged() {
+        onCameraChanged?.invoke(camera.snapshot())
+    }
 }
