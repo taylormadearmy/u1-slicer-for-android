@@ -51,7 +51,11 @@ object ThreeMfMeshParser {
         val objects: Map<String, ObjectInfo>
     )
 
-    fun parse(file: File, extruderMap: Map<Int, Byte>? = null): MeshData? {
+    fun parse(
+        file: File,
+        extruderMap: Map<Int, Byte>? = null,
+        detectedColorCount: Int = 0
+    ): MeshData? {
         Log.d("ThreeMfMesh", "Parsing ${file.name} (${file.length() / 1024}KB)")
         ZipFile(file).use { zip ->
             val modelEntry = zip.getEntry("3D/3dmodel.model") ?: run {
@@ -90,13 +94,17 @@ object ThreeMfMeshParser {
                     val compResult = zip.getInputStream(compEntry).use { streamParseModel(it) }
                     val compMesh = compResult.objects.values.firstOrNull()?.mesh
                     if (compMesh != null) {
-                        return buildMeshData(listOf(MeshWithContext(compMesh, null, 0)), extruderMap)
+                        return buildMeshData(
+                            listOf(MeshWithContext(compMesh, null, 0)),
+                            extruderMap,
+                            detectedColorCount
+                        )
                     }
                 }
                 return null
             }
 
-            return buildMeshData(meshList, extruderMap)
+            return buildMeshData(meshList, extruderMap, detectedColorCount)
         }
     }
 
@@ -252,7 +260,7 @@ object ThreeMfMeshParser {
      * Returns the 0-based extruder index (state - 1), or -1 if the triangle is unpainted
      * (state == 0 / NONE) or the attribute is absent.
      */
-    internal fun parsePaintIndex(line: String, attrName: String): Int {
+    internal fun parsePaintIndex(line: String, attrName: String, detectedColorCount: Int = 0): Int {
         val prefix = "$attrName=\""
         val start = line.indexOf(prefix)
         if (start < 0) return -1
@@ -271,7 +279,7 @@ object ThreeMfMeshParser {
         // on each tray holds the same physical filament. Fold AMS2 states back to AMS1 range
         // so state 5 → index 0 (same as state 1), state 6 → 1, etc.
         // For standard ≤4-extruder models this is a no-op (states never exceed 4).
-        return (state - 1) % 4
+        return paintIndexForState(state, detectedColorCount)
     }
 
     /** Parse a float attribute value inline without creating a substring. */
@@ -477,7 +485,8 @@ object ThreeMfMeshParser {
 
     private fun buildMeshData(
         meshes: List<MeshWithContext>,
-        extruderIndexMap: Map<Int, Byte>? = null
+        extruderIndexMap: Map<Int, Byte>? = null,
+        detectedColorCount: Int = 0
     ): MeshData? {
         val mergedMeshes = mergeH2cPairs(meshes)
         val totalTris = mergedMeshes.sumOf { meshCtx ->
@@ -556,10 +565,11 @@ object ThreeMfMeshParser {
                         TriangleCoords(p0, p1, p2),
                         spec,
                         volumeExtruderIdx,
+                        detectedColorCount,
                         ::appendTriangle
                     )
                 } else {
-                    val paintIdx = spec?.let { directPaintIndexFromSpec(it) } ?: -1
+                    val paintIdx = spec?.let { directPaintIndexFromSpec(it, detectedColorCount) } ?: -1
                     appendTriangle(p0, p1, p2, if (paintIdx >= 0) paintIdx.toByte() else volumeExtruderIdx)
                 }
             }
@@ -604,7 +614,7 @@ object ThreeMfMeshParser {
         return count.coerceAtLeast(1)
     }
 
-    private fun directPaintIndexFromSpec(spec: String): Int {
+    private fun directPaintIndexFromSpec(spec: String, detectedColorCount: Int = 0): Int {
         val firstChar = spec.firstOrNull() ?: return -1
         val state = when {
             firstChar in '0'..'9' -> firstChar - '0'
@@ -612,18 +622,19 @@ object ThreeMfMeshParser {
             else -> return -1
         }
         if (state == 0) return -1
-        return (state - 1) % 4
+        return paintIndexForState(state, detectedColorCount)
     }
 
-    private fun triangleSelectorStateToPaintIndex(state: Int): Int {
+    private fun triangleSelectorStateToPaintIndex(state: Int, detectedColorCount: Int = 0): Int {
         if (state <= 3) return -1
-        return (state - 4) % 4
+        return paintIndexForState(state - 3, detectedColorCount)
     }
 
     private fun emitTriangleSelectorTriangles(
         triangle: TriangleCoords,
         spec: String,
         volumeExtruderIdx: Byte,
+        detectedColorCount: Int,
         appendTriangle: (FloatArray, FloatArray, FloatArray, Byte) -> Unit
     ) {
         val reader = TriangleSelectorReader(spec)
@@ -646,7 +657,7 @@ object ThreeMfMeshParser {
                 } else {
                     code shr 2
                 }
-                val paintIdx = triangleSelectorStateToPaintIndex(state)
+                val paintIdx = triangleSelectorStateToPaintIndex(state, detectedColorCount)
                 appendTriangle(
                     tri.a,
                     tri.b,
@@ -663,6 +674,17 @@ object ThreeMfMeshParser {
         }
 
         walk(triangle)
+    }
+
+    private fun paintIndexForState(state: Int, detectedColorCount: Int): Int {
+        if (state <= 0) return -1
+        if (detectedColorCount > 0) {
+            val directIndex = state - 1
+            if (directIndex < detectedColorCount) return directIndex
+            val foldedCount = minOf(4, detectedColorCount)
+            if (foldedCount > 0) return directIndex % foldedCount
+        }
+        return (state - 1) % 4
     }
 
     private fun walkTriangleSelectorStates(spec: String, onLeaf: (Int) -> Unit) {

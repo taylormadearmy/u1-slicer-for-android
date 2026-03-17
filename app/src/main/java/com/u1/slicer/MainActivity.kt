@@ -1604,7 +1604,7 @@ fun InlineModelPreview(
     var towerX by remember(wipeTowerX) { mutableFloatStateOf(wipeTowerX) }
     var towerY by remember(wipeTowerY) { mutableFloatStateOf(wipeTowerY) }
 
-    LaunchedEffect(modelFilePath, extruderMap) {
+    LaunchedEffect(modelFilePath, extruderMap, colorMapping?.size) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val file = java.io.File(modelFilePath)
@@ -1612,7 +1612,11 @@ fun InlineModelPreview(
                     modelFilePath.endsWith(".stl", ignoreCase = true) ->
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
-                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(file, extruderMap = extruderMap)
+                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(
+                            file,
+                            extruderMap = extruderMap,
+                            detectedColorCount = colorMapping?.size ?: 0
+                        )
                     else -> null
                 }
             } catch (_: Throwable) { }

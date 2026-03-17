@@ -349,6 +349,13 @@ class ThreeMfMeshParserTest {
     }
 
     @Test
+    fun `parsePaintIndex preserves distinct H2C colors when detected count exceeds four`() {
+        assertEquals(4, ThreeMfMeshParser.parsePaintIndex("""<triangle paint_color="5C"/>""", "paint_color", detectedColorCount = 7))
+        assertEquals(5, ThreeMfMeshParser.parsePaintIndex("""<triangle paint_color="6C"/>""", "paint_color", detectedColorCount = 7))
+        assertEquals(6, ThreeMfMeshParser.parsePaintIndex("""<triangle paint_color="7C"/>""", "paint_color", detectedColorCount = 7))
+    }
+
+    @Test
     fun `parsePaintIndex returns -1 when attribute missing`() {
         val line = """<triangle v1="0" v2="1" v3="2"/>"""
         assertEquals(-1, ThreeMfMeshParser.parsePaintIndex(line, "paint_color"))
@@ -425,6 +432,42 @@ class ThreeMfMeshParserTest {
         assertNotNull(mesh)
         assertEquals(9, mesh!!.vertexCount)
         assertArrayEquals(byteArrayOf(0, 1, 1), mesh.extruderIndices!!.sortedArray())
+    }
+
+    @Test
+    fun `parse keeps H2C paint states 5 to 7 distinct when detected color count is seven`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                            <vertex x="20" y="0" z="0" />
+                            <vertex x="30" y="0" z="0" />
+                            <vertex x="25" y="10" z="0" />
+                            <vertex x="40" y="0" z="0" />
+                            <vertex x="50" y="0" z="0" />
+                            <vertex x="45" y="10" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" paint_color="5C"/>
+                            <triangle v1="3" v2="4" v3="5" paint_color="6C"/>
+                            <triangle v1="6" v2="7" v3="8" paint_color="7C"/>
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        val mesh = ThreeMfMeshParser.parse(file, detectedColorCount = 7)
+        assertNotNull(mesh)
+        assertArrayEquals(byteArrayOf(4, 5, 6), mesh!!.extruderIndices)
     }
 
     @Test
