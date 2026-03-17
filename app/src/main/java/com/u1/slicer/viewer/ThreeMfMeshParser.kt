@@ -24,8 +24,8 @@ object ThreeMfMeshParser {
         val tris: IntArray,
         val vertexCount: Int,
         val triCount: Int,
-        /** Per-triangle paint extruder index, or null if no paint data. 0xFF = unpainted. */
-        val paintIndices: ByteArray? = null
+        /** Raw per-triangle paint spec string, or null if no paint data for that triangle. */
+        val paintSpecs: Array<String?>? = null
     )
 
     private data class BuildItem(val objectId: String, val transform: FloatArray?, val printable: Boolean = true)
@@ -114,7 +114,7 @@ object ThreeMfMeshParser {
         var currentComponents = mutableListOf<ComponentRef>()
         var vertList: GrowableFloatArray? = null
         var triList: GrowableIntArray? = null
-        var paintList: GrowableByteArray? = null
+        var paintList: GrowableStringArray? = null
         var hasPaintData = false
         var inVertices = false
         var inTriangles = false
@@ -136,35 +136,22 @@ object ThreeMfMeshParser {
             if (inTriangles) {
                 if (line.contains("<triangle")) {
                     parseTriangleLine(line, triList!!)
-                    // Fast-path paint_color / mmu_segmentation extraction:
-                    // only check if the line contains the attribute (99.9%+ lines won't)
-                    if (line.contains("paint_color")) {
-                        val idx = parsePaintIndex(line, "paint_color")
-                        if (idx >= 0) {
+                    if (line.contains("paint_color") || line.contains("mmu_segmentation")) {
+                        val spec = extractAttr(line, "paint_color")
+                            ?: extractAttr(line, "mmu_segmentation")
+                            ?: extractAttr(line, "slic3rpe:mmu_segmentation")
+                        if (spec != null) {
                             if (paintList == null) {
-                                // Back-fill previously parsed triangles with 0xFF (unpainted)
-                                paintList = GrowableByteArray(triList!!.size / 3)
-                                repeat(triList!!.size / 3 - 1) { paintList!!.add(0xFF.toByte()) }
+                                paintList = GrowableStringArray(triList!!.size / 3)
+                                repeat(triList!!.size / 3 - 1) { paintList!!.add(null) }
                             }
                             hasPaintData = true
-                            paintList!!.add(idx.toByte())
+                            paintList!!.add(spec)
                         } else {
-                            paintList?.add(0xFF.toByte())
-                        }
-                    } else if (line.contains("mmu_segmentation")) {
-                        val idx = parsePaintIndex(line, "mmu_segmentation")
-                        if (idx >= 0) {
-                            if (paintList == null) {
-                                paintList = GrowableByteArray(triList!!.size / 3)
-                                repeat(triList!!.size / 3 - 1) { paintList!!.add(0xFF.toByte()) }
-                            }
-                            hasPaintData = true
-                            paintList!!.add(idx.toByte())
-                        } else {
-                            paintList?.add(0xFF.toByte())
+                            paintList?.add(null)
                         }
                     } else {
-                        paintList?.add(0xFF.toByte())
+                        paintList?.add(null)
                     }
                     return@forEachLine
                 }
@@ -454,7 +441,7 @@ object ThreeMfMeshParser {
      */
     private fun mergeH2cPairs(meshes: List<MeshWithContext>): List<MeshWithContext> {
         val printables = meshes.filter { it.printable }
-        val nonPrintables = meshes.filter { !it.printable && it.mesh.paintIndices != null }
+        val nonPrintables = meshes.filter { !it.printable && it.mesh.paintSpecs != null }
         if (nonPrintables.isEmpty()) return printables  // nothing to merge
 
         // Index non-printable meshes by triCount for O(1) lookup
@@ -464,23 +451,23 @@ object ThreeMfMeshParser {
 
         for (pm in printables) {
             val npm = nonPrintableByCount[pm.mesh.triCount]
-                ?.takeIf { pm.mesh.paintIndices != null }
+                ?.takeIf { pm.mesh.paintSpecs != null }
                 ?.firstOrNull()
             if (npm != null && !mergedCounts.contains(pm.mesh.triCount)) {
                 mergedCounts.add(pm.mesh.triCount)
-                val pi1 = pm.mesh.paintIndices!!
-                val pi2 = npm.mesh.paintIndices!!
-                val merged = ByteArray(pi1.size) { i ->
-                    val v1 = pi1[i].toInt() and 0xFF
-                    val v2 = if (i < pi2.size) pi2[i].toInt() and 0xFF else 0xFF
+                val pi1 = pm.mesh.paintSpecs!!
+                val pi2 = npm.mesh.paintSpecs!!
+                val merged = Array<String?>(pi1.size) { i ->
+                    val v1 = pi1[i]
+                    val v2 = if (i < pi2.size) pi2[i] else null
                     when {
-                        v1 != 0xFF -> pi1[i]  // printable has paint → use it
-                        v2 != 0xFF -> pi2[i]  // non-printable has paint → use it
-                        else -> 0.toByte()    // both NONE (bed face etc.) → fallback to extruder 0
+                        hasPaint(v1) -> v1
+                        hasPaint(v2) -> v2
+                        else -> null
                     }
                 }
                 Log.d("ThreeMfMesh", "H2C merge: ${pm.mesh.triCount} tris, merged printable+non-printable paint data")
-                result.add(pm.copy(mesh = pm.mesh.copy(paintIndices = merged)))
+                result.add(pm.copy(mesh = pm.mesh.copy(paintSpecs = merged)))
             } else {
                 result.add(pm)
             }
@@ -492,74 +479,89 @@ object ThreeMfMeshParser {
         meshes: List<MeshWithContext>,
         extruderIndexMap: Map<Int, Byte>? = null
     ): MeshData? {
-        val meshes = mergeH2cPairs(meshes)
-        val totalTris = meshes.sumOf { it.mesh.triCount }
+        val mergedMeshes = mergeH2cPairs(meshes)
+        val totalTris = mergedMeshes.sumOf { meshCtx ->
+            val specs = meshCtx.mesh.paintSpecs
+            if (specs == null) {
+                meshCtx.mesh.triCount
+            } else {
+                (0 until meshCtx.mesh.triCount).sumOf { triIndex ->
+                    countRenderedTriangles(specs.getOrNull(triIndex))
+                }
+            }
+        }
         if (totalTris == 0) return null
 
         val buf = MeshData.allocateBuffer(totalTris)
         val extruderIdxArray = GrowableByteArray(totalTris)
-        var minX = Float.MAX_VALUE;  var minY = Float.MAX_VALUE;  var minZ = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+        var minX = Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var minZ = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        var maxZ = -Float.MAX_VALUE
 
-        for (meshCtx in meshes) {
+        fun appendTriangle(p0: FloatArray, p1: FloatArray, p2: FloatArray, extruderIdx: Byte) {
+            val ux = p1[0] - p0[0]
+            val uy = p1[1] - p0[1]
+            val uz = p1[2] - p0[2]
+            val vx = p2[0] - p0[0]
+            val vy = p2[1] - p0[1]
+            val vz = p2[2] - p0[2]
+            var nx = uy * vz - uz * vy
+            var ny = uz * vx - ux * vz
+            var nz = ux * vy - uy * vx
+            val len = sqrt(nx * nx + ny * ny + nz * nz)
+            if (len > 0f) {
+                nx /= len
+                ny /= len
+                nz /= len
+            }
+
+            for (point in arrayOf(p0, p1, p2)) {
+                buf.put(point[0]); buf.put(point[1]); buf.put(point[2]); buf.put(nx); buf.put(ny); buf.put(nz)
+                buf.put(0.7f); buf.put(0.7f); buf.put(0.7f); buf.put(1.0f)
+                if (point[0] < minX) minX = point[0]
+                if (point[1] < minY) minY = point[1]
+                if (point[2] < minZ) minZ = point[2]
+                if (point[0] > maxX) maxX = point[0]
+                if (point[1] > maxY) maxY = point[1]
+                if (point[2] > maxZ) maxZ = point[2]
+            }
+
+            extruderIdxArray.add(extruderIdx)
+        }
+
+        for (meshCtx in mergedMeshes) {
             val mesh = meshCtx.mesh
             val t = meshCtx.transform
             val volumeExtruderIdx: Byte = extruderIndexMap?.get(meshCtx.objectId) ?: 0
-            val paintIndices = mesh.paintIndices
+            val paintSpecs = mesh.paintSpecs
             val verts = mesh.verts
             val tris = mesh.tris
-            val nTris = mesh.triCount
 
-            for (i in 0 until nTris) {
-                // Paint data wins over volume-level extruder index
-                val extruderIdx: Byte = if (paintIndices != null && i < paintIndices.size) {
-                    val paintVal = paintIndices[i].toInt() and 0xFF
-                    if (paintVal != 0xFF) paintVal.toByte() else volumeExtruderIdx
-                } else volumeExtruderIdx
+            for (i in 0 until mesh.triCount) {
                 val a = tris[i * 3] * 3
                 val b = tris[i * 3 + 1] * 3
                 val c = tris[i * 3 + 2] * 3
                 if (a + 2 >= verts.size || b + 2 >= verts.size || c + 2 >= verts.size) continue
 
-                val ax: Float; val ay: Float; val az: Float
-                val bx: Float; val by: Float; val bz: Float
-                val cx: Float; val cy: Float; val cz: Float
+                val p0 = transformedPoint(verts, a, t)
+                val p1 = transformedPoint(verts, b, t)
+                val p2 = transformedPoint(verts, c, t)
+                val spec = paintSpecs?.getOrNull(i)
 
-                if (t == null) {
-                    ax = verts[a];   ay = verts[a+1]; az = verts[a+2]
-                    bx = verts[b];   by = verts[b+1]; bz = verts[b+2]
-                    cx = verts[c];   cy = verts[c+1]; cz = verts[c+2]
+                if (spec != null && isTriangleSelectorSpec(spec)) {
+                    emitTriangleSelectorTriangles(
+                        TriangleCoords(p0, p1, p2),
+                        spec,
+                        volumeExtruderIdx,
+                        ::appendTriangle
+                    )
                 } else {
-                    val va0 = verts[a]; val va1 = verts[a+1]; val va2 = verts[a+2]
-                    val vb0 = verts[b]; val vb1 = verts[b+1]; val vb2 = verts[b+2]
-                    val vc0 = verts[c]; val vc1 = verts[c+1]; val vc2 = verts[c+2]
-                    ax = t[0]*va0+t[4]*va1+t[8]*va2+t[12]; ay = t[1]*va0+t[5]*va1+t[9]*va2+t[13]; az = t[2]*va0+t[6]*va1+t[10]*va2+t[14]
-                    bx = t[0]*vb0+t[4]*vb1+t[8]*vb2+t[12]; by = t[1]*vb0+t[5]*vb1+t[9]*vb2+t[13]; bz = t[2]*vb0+t[6]*vb1+t[10]*vb2+t[14]
-                    cx = t[0]*vc0+t[4]*vc1+t[8]*vc2+t[12]; cy = t[1]*vc0+t[5]*vc1+t[9]*vc2+t[13]; cz = t[2]*vc0+t[6]*vc1+t[10]*vc2+t[14]
+                    val paintIdx = spec?.let { directPaintIndexFromSpec(it) } ?: -1
+                    appendTriangle(p0, p1, p2, if (paintIdx >= 0) paintIdx.toByte() else volumeExtruderIdx)
                 }
-
-                val ux = bx-ax; val uy = by-ay; val uz = bz-az
-                val vx = cx-ax; val vy = cy-ay; val vz = cz-az
-                var nx = uy*vz-uz*vy; var ny = uz*vx-ux*vz; var nz = ux*vy-uy*vx
-                val len = sqrt(nx*nx+ny*ny+nz*nz)
-                if (len > 0) { nx /= len; ny /= len; nz /= len }
-
-                // Position + normal + default RGBA color (10 floats per vertex)
-                buf.put(ax); buf.put(ay); buf.put(az); buf.put(nx); buf.put(ny); buf.put(nz)
-                buf.put(0.7f); buf.put(0.7f); buf.put(0.7f); buf.put(1.0f)
-                buf.put(bx); buf.put(by); buf.put(bz); buf.put(nx); buf.put(ny); buf.put(nz)
-                buf.put(0.7f); buf.put(0.7f); buf.put(0.7f); buf.put(1.0f)
-                buf.put(cx); buf.put(cy); buf.put(cz); buf.put(nx); buf.put(ny); buf.put(nz)
-                buf.put(0.7f); buf.put(0.7f); buf.put(0.7f); buf.put(1.0f)
-
-                extruderIdxArray.add(extruderIdx)
-
-                if (ax < minX) minX = ax; if (ay < minY) minY = ay; if (az < minZ) minZ = az
-                if (ax > maxX) maxX = ax; if (ay > maxY) maxY = ay; if (az > maxZ) maxZ = az
-                if (bx < minX) minX = bx; if (by < minY) minY = by; if (bz < minZ) minZ = bz
-                if (bx > maxX) maxX = bx; if (by > maxY) maxY = by; if (bz > maxZ) maxZ = bz
-                if (cx < minX) minX = cx; if (cy < minY) minY = cy; if (cz < minZ) minZ = cz
-                if (cx > maxX) maxX = cx; if (cy > maxY) maxY = cy; if (cz > maxZ) maxZ = cz
             }
         }
         buf.flip()
@@ -567,6 +569,174 @@ object ThreeMfMeshParser {
         if (vertexCount == 0) return null
         return MeshData(buf, vertexCount, minX, minY, minZ, maxX, maxY, maxZ,
             extruderIndices = extruderIdxArray.toArray())
+    }
+
+    private fun transformedPoint(verts: FloatArray, index: Int, transform: FloatArray?): FloatArray {
+        val x = verts[index]
+        val y = verts[index + 1]
+        val z = verts[index + 2]
+        if (transform == null) return floatArrayOf(x, y, z)
+        return floatArrayOf(
+            transform[0] * x + transform[4] * y + transform[8] * z + transform[12],
+            transform[1] * x + transform[5] * y + transform[9] * z + transform[13],
+            transform[2] * x + transform[6] * y + transform[10] * z + transform[14]
+        )
+    }
+
+    private data class TriangleCoords(val a: FloatArray, val b: FloatArray, val c: FloatArray)
+
+    private fun hasPaint(spec: String?): Boolean {
+        if (spec.isNullOrEmpty()) return false
+        if (!isTriangleSelectorSpec(spec)) return directPaintIndexFromSpec(spec) >= 0
+        var painted = false
+        walkTriangleSelectorStates(spec) { state ->
+            if (state > 3) painted = true
+        }
+        return painted
+    }
+
+    private fun isTriangleSelectorSpec(spec: String): Boolean = spec.contains('C')
+
+    private fun countRenderedTriangles(spec: String?): Int {
+        if (spec.isNullOrEmpty() || !isTriangleSelectorSpec(spec)) return 1
+        var count = 0
+        walkTriangleSelectorStates(spec) { count++ }
+        return count.coerceAtLeast(1)
+    }
+
+    private fun directPaintIndexFromSpec(spec: String): Int {
+        val firstChar = spec.firstOrNull() ?: return -1
+        val state = when {
+            firstChar in '0'..'9' -> firstChar - '0'
+            firstChar in 'A'..'Z' -> firstChar - 'A' + 10
+            else -> return -1
+        }
+        if (state == 0) return -1
+        return (state - 1) % 4
+    }
+
+    private fun triangleSelectorStateToPaintIndex(state: Int): Int {
+        if (state <= 3) return -1
+        return (state - 4) % 4
+    }
+
+    private fun emitTriangleSelectorTriangles(
+        triangle: TriangleCoords,
+        spec: String,
+        volumeExtruderIdx: Byte,
+        appendTriangle: (FloatArray, FloatArray, FloatArray, Byte) -> Unit
+    ) {
+        val reader = TriangleSelectorReader(spec)
+
+        fun walk(tri: TriangleCoords) {
+            val code = reader.nextNibble() ?: run {
+                appendTriangle(tri.a, tri.b, tri.c, volumeExtruderIdx)
+                return
+            }
+            val splitSides = code and 0b11
+            if (splitSides == 0) {
+                val state = if ((code and 0b1100) == 0b1100) {
+                    var next = reader.nextNibble() ?: 0
+                    var groups = 0
+                    while (next == 0b1111) {
+                        groups++
+                        next = reader.nextNibble() ?: 0
+                    }
+                    next + 15 * groups + 3
+                } else {
+                    code shr 2
+                }
+                val paintIdx = triangleSelectorStateToPaintIndex(state)
+                appendTriangle(
+                    tri.a,
+                    tri.b,
+                    tri.c,
+                    if (paintIdx >= 0) paintIdx.toByte() else volumeExtruderIdx
+                )
+                return
+            }
+
+            val children = splitTriangle(tri, splitSides, code shr 2)
+            for (idx in children.indices.reversed()) {
+                walk(children[idx])
+            }
+        }
+
+        walk(triangle)
+    }
+
+    private fun walkTriangleSelectorStates(spec: String, onLeaf: (Int) -> Unit) {
+        val reader = TriangleSelectorReader(spec)
+
+        fun walk() {
+            val code = reader.nextNibble() ?: return
+            val splitSides = code and 0b11
+            if (splitSides == 0) {
+                val state = if ((code and 0b1100) == 0b1100) {
+                    var next = reader.nextNibble() ?: 0
+                    var groups = 0
+                    while (next == 0b1111) {
+                        groups++
+                        next = reader.nextNibble() ?: 0
+                    }
+                    next + 15 * groups + 3
+                } else {
+                    code shr 2
+                }
+                onLeaf(state)
+                return
+            }
+            repeat(splitSides + 1) { walk() }
+        }
+
+        walk()
+    }
+
+    private fun splitTriangle(triangle: TriangleCoords, splitSides: Int, specialSide: Int): Array<TriangleCoords> {
+        fun midpoint(p0: FloatArray, p1: FloatArray) = floatArrayOf(
+            (p0[0] + p1[0]) * 0.5f,
+            (p0[1] + p1[1]) * 0.5f,
+            (p0[2] + p1[2]) * 0.5f
+        )
+
+        val original = arrayOf(triangle.a, triangle.b, triangle.c)
+        val ordered = ArrayList<FloatArray>(3)
+        var idx = specialSide
+        repeat(3) {
+            ordered.add(original[idx])
+            idx = (idx + 1) % 3
+        }
+
+        return when (splitSides) {
+            1 -> {
+                val mid = midpoint(ordered[2], ordered[1])
+                arrayOf(
+                    TriangleCoords(ordered[0], ordered[1], mid),
+                    TriangleCoords(mid, ordered[2], ordered[0])
+                )
+            }
+            2 -> {
+                val mid01 = midpoint(ordered[1], ordered[0])
+                val mid20 = midpoint(ordered[0], ordered[2])
+                arrayOf(
+                    TriangleCoords(ordered[0], mid01, mid20),
+                    TriangleCoords(mid01, ordered[1], mid20),
+                    TriangleCoords(ordered[1], ordered[2], mid20)
+                )
+            }
+            3 -> {
+                val mid01 = midpoint(ordered[1], ordered[0])
+                val mid12 = midpoint(ordered[2], ordered[1])
+                val mid20 = midpoint(ordered[0], ordered[2])
+                arrayOf(
+                    TriangleCoords(ordered[0], mid01, mid20),
+                    TriangleCoords(mid01, ordered[1], mid12),
+                    TriangleCoords(mid12, ordered[2], mid20),
+                    TriangleCoords(mid01, mid12, mid20)
+                )
+            }
+            else -> arrayOf(triangle)
+        }
     }
 
     // ── Growable primitive array helpers (avoid boxing overhead of ArrayList<Float/Int>) ──
@@ -605,5 +775,33 @@ object ThreeMfMeshParser {
         }
 
         fun toArray(): ByteArray = data.copyOf(size)
+    }
+
+    private class GrowableStringArray(initialCapacity: Int = 8192) {
+        private var data = arrayOfNulls<String>(initialCapacity)
+        var size = 0; private set
+
+        fun add(value: String?) {
+            if (size == data.size) data = data.copyOf(data.size * 2)
+            data[size++] = value
+        }
+
+        fun toArray(): Array<String?> = data.copyOf(size)
+    }
+
+    private class TriangleSelectorReader(spec: String) {
+        private val nibbles = IntArray(spec.length) { idx ->
+            hexDigitToInt(spec[spec.length - 1 - idx])
+        }
+        private var index = 0
+
+        fun nextNibble(): Int? = if (index < nibbles.size) nibbles[index++] else null
+
+        private fun hexDigitToInt(ch: Char): Int = when (ch) {
+            in '0'..'9' -> ch - '0'
+            in 'A'..'F' -> ch - 'A' + 10
+            in 'a'..'f' -> ch - 'a' + 10
+            else -> 0
+        }
     }
 }

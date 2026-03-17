@@ -399,6 +399,35 @@ class ThreeMfMeshParserTest {
     }
 
     @Test
+    fun `parse subdivides triangle selector paint_color into child triangles`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="0" y="10" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" paint_color="1C2C2C2"/>
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        val mesh = ThreeMfMeshParser.parse(file)
+        assertNotNull(mesh)
+        assertEquals(9, mesh!!.vertexCount)
+        assertArrayEquals(byteArrayOf(0, 1, 1), mesh.extruderIndices!!.sortedArray())
+    }
+
+    @Test
     fun `paint_color wins over volume extruder index`() {
         val xml = """<?xml version="1.0" encoding="UTF-8"?>
             <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
