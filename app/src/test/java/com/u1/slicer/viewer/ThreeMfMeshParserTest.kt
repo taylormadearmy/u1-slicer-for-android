@@ -406,6 +406,38 @@ class ThreeMfMeshParserTest {
     }
 
     @Test
+    fun `parse compacts sparse non H2C paint states into distinct preview colors`() {
+        val xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+            <resources>
+                <object id="1" type="model">
+                    <mesh>
+                        <vertices>
+                            <vertex x="0" y="0" z="0" />
+                            <vertex x="10" y="0" z="0" />
+                            <vertex x="5" y="10" z="0" />
+                            <vertex x="20" y="0" z="0" />
+                            <vertex x="30" y="0" z="0" />
+                            <vertex x="25" y="10" z="0" />
+                        </vertices>
+                        <triangles>
+                            <triangle v1="0" v2="1" v3="2" paint_color="4C"/>
+                            <triangle v1="3" v2="4" v3="5" paint_color="8C"/>
+                        </triangles>
+                    </mesh>
+                </object>
+            </resources>
+            <build>
+                <item objectid="1" />
+            </build>
+            </model>"""
+        val file = create3mfZip(xml)
+        val mesh = ThreeMfMeshParser.parse(file, detectedColorCount = 2)
+        assertNotNull(mesh)
+        assertArrayEquals(byteArrayOf(0, 1), mesh!!.extruderIndices)
+    }
+
+    @Test
     fun `parse subdivides triangle selector paint_color into child triangles`() {
         val xml = """<?xml version="1.0" encoding="UTF-8"?>
             <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
