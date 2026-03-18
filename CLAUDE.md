@@ -15,12 +15,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ## Release
 
-1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.3.69` -> `1.3.70`)
+1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.3.70` -> `1.3.71`)
 2. **Update docs** — update test counts in this file and `README.md` if they changed
 3. **Commit and push**:
    ```bash
    git add -p
-   git commit -m "bump: v1.3.70 - <short description>"
+   git commit -m "bump: v1.3.71 - <short description>"
    git push
    ```
 4. **Build the release APK**:
@@ -29,12 +29,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```
 5. **Rename the APK** with the version number:
    ```bash
-   cp app/build/outputs/apk/release/app-release.apk u1-slicer-v1.3.70.apk
+   cp app/build/outputs/apk/release/app-release.apk u1-slicer-v1.3.71.apk
    ```
 6. **Create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
    ```bash
-   gh release create v1.3.70 u1-slicer-v1.3.70.apk \
-     --title "v1.3.70" \
+   gh release create v1.3.71 u1-slicer-v1.3.71.apk \
+     --title "v1.3.71" \
      --notes "Brief description of what changed."
    ```
 
@@ -44,7 +44,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ```bash
 ./gradlew testDebugUnitTest                        # 388 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 109 instrumented tests (uses Orchestrator)
+./gradlew connectedDebugAndroidTest                # 114 instrumented tests (uses Orchestrator)
 ```
 
 ### Unit tests (`app/src/test/`) - 388 tests across 22 classes
@@ -71,7 +71,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 - `MergeThreeMfInfoTest.kt` (7) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection
 
-### Instrumented tests (`app/src/androidTest/`) - 109 tests across 11 classes
+### Instrumented tests (`app/src/androidTest/`) - 114 tests across 12 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -82,6 +82,7 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 - `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions
 - `slicing/ProfileEmbedderIntegrationTest.kt` (14) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
+- `viewer/NativePreparePreviewTest.kt` (4) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread
 - `viewer/ThreeMfMeshParserTest.kt` (4) - 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
 
 ## Backlog
