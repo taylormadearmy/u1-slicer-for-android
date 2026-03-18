@@ -3,6 +3,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cmath>
+#include <regex>
 
 // PrusaSlicer includes
 #include "libslic3r/Model.hpp"
@@ -29,9 +30,69 @@ static Slic3r::DynamicPrintConfig g_model_config;  // Config from 3MF project_se
 static ModelInfo g_model_info;
 static bool g_model_loaded = false;
 static std::string g_files_dir;  // App files directory, derived from model path
+static std::vector<std::vector<int>> g_model_preview_extruders;
+
+static int locateZipEntry(mz_zip_archive& zip, const char* exact_path)
+{
+    int idx = mz_zip_reader_locate_file(&zip, exact_path, nullptr, 0);
+    if (idx >= 0) return idx;
+
+    mz_zip_archive_file_stat stat;
+    const std::string target(exact_path);
+    for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&zip); ++i) {
+        if (!mz_zip_reader_file_stat(&zip, i, &stat)) continue;
+        std::string name(stat.m_filename);
+        std::replace(name.begin(), name.end(), '\\', '/');
+        if (name == target) return static_cast<int>(i);
+        std::string lowered_name = name;
+        std::string lowered_target = target;
+        std::transform(lowered_name.begin(), lowered_name.end(), lowered_name.begin(), ::tolower);
+        std::transform(lowered_target.begin(), lowered_target.end(), lowered_target.begin(), ::tolower);
+        if (lowered_name == lowered_target) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+static std::vector<std::vector<int>> parsePreviewExtrudersFromModelConfig(const std::string& xml)
+{
+    std::vector<std::vector<int>> object_extruders;
+    const std::regex object_regex(R"cfg(<object\b[^>]*>[\s\S]*?</object>)cfg");
+    const std::regex part_regex(R"cfg(<part\b[^>]*>[\s\S]*?</part>)cfg");
+    const std::regex extruder_regex(R"cfg(<metadata\b[^>]*key="extruder"\b[^>]*value="(\d+)")cfg");
+
+    for (std::sregex_iterator object_it(xml.begin(), xml.end(), object_regex), end; object_it != end; ++object_it) {
+        const std::string object_block = object_it->str();
+        std::vector<int> part_extruders;
+
+        for (std::sregex_iterator part_it(object_block.begin(), object_block.end(), part_regex); part_it != end; ++part_it) {
+            const std::string part_block = part_it->str();
+            std::smatch extruder_match;
+            if (std::regex_search(part_block, extruder_match, extruder_regex)) {
+                const int extruder = std::max(1, std::stoi(extruder_match[1].str()));
+                part_extruders.push_back(extruder);
+            }
+        }
+
+        if (!part_extruders.empty()) {
+            object_extruders.push_back(std::move(part_extruders));
+            continue;
+        }
+
+        std::string object_block_without_parts = std::regex_replace(object_block, part_regex, "");
+        std::smatch extruder_match;
+        if (std::regex_search(object_block_without_parts, extruder_match, extruder_regex)) {
+            object_extruders.push_back({ std::max(1, std::stoi(extruder_match[1].str())) });
+        } else {
+            object_extruders.emplace_back();
+        }
+    }
+
+    return object_extruders;
+}
 
 bool SlicerEngine::loadModel(const std::string& filepath) {
     SAPIL_LOGI("Loading model: %s", filepath.c_str());
+    g_model_preview_extruders.clear();
 
     // Determine format from extension
     std::string ext = filepath.substr(filepath.find_last_of('.') + 1);
@@ -70,7 +131,7 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
             mz_zip_archive zip;
             mz_zip_zero_struct(&zip);
             if (mz_zip_reader_init_file(&zip, filepath.c_str(), 0)) {
-                int idx = mz_zip_reader_locate_file(&zip, "Metadata/project_settings.config", nullptr, 0);
+                int idx = locateZipEntry(zip, "Metadata/project_settings.config");
                 if (idx >= 0) {
                     size_t uncomp_size = 0;
                     void* data = mz_zip_reader_extract_to_heap(&zip, idx, &uncomp_size, 0);
@@ -98,6 +159,23 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
                     }
                 } else {
                     SAPIL_LOGI("No Metadata/project_settings.config in 3MF");
+                }
+                int model_cfg_idx = locateZipEntry(zip, "Metadata/model_settings.config");
+                if (model_cfg_idx >= 0) {
+                    size_t model_cfg_size = 0;
+                    void* model_cfg_data = mz_zip_reader_extract_to_heap(&zip, model_cfg_idx, &model_cfg_size, 0);
+                    if (model_cfg_data && model_cfg_size > 0) {
+                        g_model_preview_extruders = parsePreviewExtrudersFromModelConfig(
+                            std::string(static_cast<const char*>(model_cfg_data), model_cfg_size)
+                        );
+                        SAPIL_LOGI(
+                            "Loaded preview extruder fallback for %zu object(s) from model_settings.config",
+                            g_model_preview_extruders.size()
+                        );
+                    }
+                    if (model_cfg_data) mz_free(model_cfg_data);
+                } else {
+                    SAPIL_LOGI("No Metadata/model_settings.config in 3MF");
                 }
                 mz_zip_reader_end(&zip);
             }
@@ -240,18 +318,26 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh() const {
         return out;
     }
 
+    size_t object_index = 0;
     for (const auto* object : g_model.objects) {
         if (object == nullptr || !object->printable) continue;
         if (object->instances.empty()) continue;
+        const std::vector<int>* preview_extruders =
+            object_index < g_model_preview_extruders.size() ? &g_model_preview_extruders[object_index] : nullptr;
 
         for (const auto* instance : object->instances) {
             if (instance == nullptr || !instance->printable) continue;
-            const Slic3r::Transform3d instance_matrix = instance->get_matrix_no_offset();
+            const Slic3r::Transform3d instance_matrix = instance->get_matrix();
+            size_t volume_index = 0;
 
             for (const auto* volume : object->volumes) {
                 if (volume == nullptr || !volume->is_model_part()) continue;
 
                 int fallback_extruder = volume->extruder_id();
+                if (preview_extruders != nullptr && volume_index < preview_extruders->size() &&
+                    (*preview_extruders)[volume_index] > 0) {
+                    fallback_extruder = (*preview_extruders)[volume_index];
+                }
                 if (fallback_extruder <= 0) fallback_extruder = 1;
                 const uint8_t fallback_index = static_cast<uint8_t>(std::max(0, fallback_extruder - 1));
 
@@ -274,8 +360,10 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh() const {
                     its_transform(its, instance_matrix, true);
                     appendItsPreviewMesh(out, its, fallback_index);
                 }
+                ++volume_index;
             }
         }
+        ++object_index;
     }
 
     compactPreviewIndices(out);
@@ -290,6 +378,7 @@ void SlicerEngine::clearModel() {
     g_model_config = Slic3r::DynamicPrintConfig();
     g_model_info = ModelInfo();
     g_model_loaded = false;
+    g_model_preview_extruders.clear();
     SAPIL_LOGI("Model cleared");
 }
 

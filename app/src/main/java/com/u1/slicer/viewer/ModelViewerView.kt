@@ -35,6 +35,10 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
+    fun setOnContentReady(listener: (() -> Unit)?) {
+        renderer.onContentReady = listener
+    }
+
     /** Recolor the mesh using the given palette. Thread-safe: queues work on GL thread. */
     fun recolorMesh(colorPalette: List<FloatArray>) {
         renderer.pendingRecolor = colorPalette

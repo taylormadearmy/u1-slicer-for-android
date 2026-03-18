@@ -1678,6 +1678,7 @@ fun InlineModelPreview(
     var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
     var parseRequestId by remember { mutableIntStateOf(0) }
+    var viewerLoading by remember(modelFilePath) { mutableStateOf(true) }
     // Track whether we've already uploaded this mesh to avoid redundant VBO re-uploads
     // when only colors/mapping change (B22 fix).
     var lastSetMesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
@@ -1693,6 +1694,7 @@ fun InlineModelPreview(
     LaunchedEffect(modelFilePath, extruderMap, colorMapping?.size) {
         val requestId = parseRequestId + 1
         parseRequestId = requestId
+        viewerLoading = true
         mesh = null
         lastSetMesh = null
         viewerView?.clearMesh()
@@ -1712,6 +1714,7 @@ fun InlineModelPreview(
         }
         if (parseRequestId == requestId) {
             mesh = parsedMesh
+            if (parsedMesh == null) viewerLoading = false
         }
     }
 
@@ -1832,6 +1835,7 @@ fun InlineModelPreview(
                     com.u1.slicer.viewer.ModelViewerView(ctx).also { view ->
                         viewerView = view
                         view.onCameraChanged = onCameraStateChange
+                        view.setOnContentReady { viewerLoading = false }
                         mesh?.let { view.setMesh(it) }
                         cameraState?.let { view.applyCameraState(it) }
                     }
@@ -1839,6 +1843,7 @@ fun InlineModelPreview(
                 update = { view ->
                     viewerView = view
                     view.onCameraChanged = onCameraStateChange
+                    view.setOnContentReady { viewerLoading = false }
                     cameraState?.let {
                         if (view.camera.snapshot() != it) {
                             view.applyCameraState(it)
@@ -1874,6 +1879,9 @@ fun InlineModelPreview(
                     style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.7f)
                 )
+            }
+            if (viewerLoading) {
+                ViewerLoadingOverlay("Preparing preview…")
             }
             // Scale overlay
             val isScaled = modelScale.x != 1f || modelScale.y != 1f || modelScale.z != 1f
@@ -2273,6 +2281,7 @@ fun InlineGcodePreview(
     onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null
 ) {
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
+    var viewerLoading by remember(parsedGcode) { mutableStateOf(true) }
     val gcodeLayerCount = parsedGcode.layers.size
     // Use slicer's totalLayers for display (correct print layers), fall back to parsed count
     val displayLayerCount = if (slicerLayerCount > 0) slicerLayerCount else gcodeLayerCount
@@ -2283,6 +2292,7 @@ fun InlineGcodePreview(
 
     LaunchedEffect(parsedGcode, extruderColors, viewerView, cameraState) {
         val v = viewerView ?: return@LaunchedEffect
+        viewerLoading = true
         maxLayer = gcodeLayerCount - 1
         if (extruderColors.isNotEmpty()) {
             v.setExtruderColors(extruderColors)
@@ -2312,12 +2322,14 @@ fun InlineGcodePreview(
                         com.u1.slicer.viewer.GcodeViewerView(ctx).also { view ->
                             viewerView = view
                             view.onCameraChanged = onCameraStateChange
+                            view.setOnContentReady { viewerLoading = false }
                             cameraState?.let { view.applyCameraState(it) }
                         }
                     },
                     update = { view ->
                         viewerView = view
                         view.onCameraChanged = onCameraStateChange
+                        view.setOnContentReady { viewerLoading = false }
                         cameraState?.let {
                             if (view.camera.snapshot() != it) {
                                 view.applyCameraState(it)
@@ -2340,6 +2352,9 @@ fun InlineGcodePreview(
                     color = Color.White.copy(alpha = 0.7f),
                     modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
                 )
+                if (viewerLoading) {
+                    ViewerLoadingOverlay("Preparing preview…")
+                }
             }
             if (gcodeLayerCount > 1) {
                 Column(
@@ -2384,6 +2399,38 @@ fun InlineGcodePreview(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ViewerLoadingOverlay(label: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.24f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color.Black.copy(alpha = 0.58f)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.5.dp,
+                    color = Color.White
+                )
+                Text(
+                    label,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         }
     }

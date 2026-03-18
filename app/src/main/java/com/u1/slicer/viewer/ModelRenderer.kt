@@ -9,6 +9,8 @@ import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
 import android.opengl.Matrix
+import android.os.Handler
+import android.os.Looper
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
@@ -19,6 +21,7 @@ import kotlin.math.sin
 class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     val camera = Camera()
+    private val mainHandler = Handler(Looper.getMainLooper())
     var meshData: MeshData? = null
         private set
     private var modelShader: ShaderProgram? = null
@@ -72,6 +75,12 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     @Volatile
     var preserveCameraOnNextMeshUpload = false
+
+    @Volatile
+    var onContentReady: (() -> Unit)? = null
+
+    @Volatile
+    private var pendingContentReadyDispatch = false
 
     // Set to true to trigger a camera re-centre on the next frame (e.g. after placement
     // positions arrive on the main thread after the mesh was already uploaded).
@@ -138,6 +147,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             pendingMesh = null
             pendingCameraReset = !preserveCameraOnNextMeshUpload
             preserveCameraOnNextMeshUpload = false
+            pendingContentReadyDispatch = true
         }
 
         // Process pending recolor for existing mesh (no new mesh upload)
@@ -192,6 +202,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val highlighted = instancePositions != null &&
                     highlightIndex == (instancePositions!!.size / 2)
             drawWipeTower(tower, highlighted)
+        }
+
+        if (pendingContentReadyDispatch) {
+            pendingContentReadyDispatch = false
+            onContentReady?.let { callback ->
+                mainHandler.post { callback() }
+            }
         }
     }
 
