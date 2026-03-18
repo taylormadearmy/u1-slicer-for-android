@@ -68,6 +68,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     var pendingMesh: MeshData? = null
 
     @Volatile
+    var pendingClearMesh = false
+
+    @Volatile
     var preserveCameraOnNextMeshUpload = false
 
     // Set to true to trigger a camera re-centre on the next frame (e.g. after placement
@@ -80,8 +83,6 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0.059f, 0.059f, 0.118f, 1f)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
-        GLES30.glEnable(GLES30.GL_CULL_FACE)
-        GLES30.glCullFace(GLES30.GL_BACK)
 
         modelShader = ShaderProgram(context, "shaders/model.vert", "shaders/model.frag")
         gridShader = ShaderProgram(context, "shaders/grid.vert", "shaders/grid.frag")
@@ -119,6 +120,12 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     var pendingRecolor: List<FloatArray>? = null
 
     override fun onDrawFrame(gl: GL10?) {
+        if (pendingClearMesh) {
+            pendingClearMesh = false
+            meshData = null
+            highlightIndex = -1
+        }
+
         pendingMesh?.let { mesh ->
             uploadMesh(mesh)
             // Apply any pending recolor immediately to the freshly uploaded mesh

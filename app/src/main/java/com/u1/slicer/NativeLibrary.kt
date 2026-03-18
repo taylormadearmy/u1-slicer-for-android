@@ -4,6 +4,7 @@ import android.util.Log
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.SliceResult
+import com.u1.slicer.viewer.NativePreviewMesh
 
 /**
  * JNI bridge to the SAPIL (Slicer API Layer) native library.
@@ -32,6 +33,7 @@ class NativeLibrary {
     external fun loadModel(path: String): Boolean
     external fun clearModel()
     external fun getModelInfo(): ModelInfo?
+    external fun getPreparePreviewMesh(): NativePreviewMesh?
 
     // ---- Slicing ----
     external fun slice(config: SliceConfig): SliceResult?

@@ -583,6 +583,99 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun loadModelFromFile(file: File) {
+        if (!NativeLibrary.isLoaded) {
+            _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
+                if (cleared > 0) Log.i("SlicerVM", "Cleared $cleared intermediate cache files before direct model load")
+                clipperRetryAttempted = false
+                if (!file.exists() || !file.canRead()) {
+                    _state.value = SlicerState.Error("Could not read file: ${file.absolutePath}")
+                    return@launch
+                }
+
+                val filename = file.name
+                currentModelName = filename
+                _state.value = SlicerState.Loading(filename)
+
+                rawInputFile = file
+                recoveryPlateId = -1
+                diagnostics.recordEvent(
+                    "model_imported",
+                    mapOf(
+                        "filename" to filename,
+                        "copiedTo" to file.absolutePath,
+                        "sizeBytes" to file.length(),
+                        "directFileLoad" to true
+                    )
+                )
+
+                val fileToLoad = if (filename.endsWith(".3mf", ignoreCase = true)) {
+                    try {
+                        java.util.zip.ZipFile(file).use { zip ->
+                            if (zip.entries().toList().isEmpty()) {
+                                _state.value = SlicerState.Error("3MF file is empty or invalid")
+                                return@launch
+                            }
+                        }
+                    } catch (e: java.util.zip.ZipException) {
+                        _state.value = SlicerState.Error("3MF file is corrupt: ${e.message}")
+                        return@launch
+                    }
+
+                    val origInfo = ThreeMfParser.parse(file)
+                    recoveryOrigInfo = origInfo
+
+                    Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
+                        "colors=${origInfo.detectedColors.size}, extruders=${origInfo.detectedExtruderCount}, " +
+                        "paint=${origInfo.hasPaintData}, toolChanges=${origInfo.hasLayerToolChanges}")
+
+                    originalSourceConfig = if (origInfo.isBambu) {
+                        java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
+                    } else null
+
+                    val processed = BambuSanitizer.process(file, context.filesDir, isBambu = origInfo.isBambu)
+                    val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
+                    _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
+
+                    sourceModelFile = processed
+                    sourceModelInfo = processedInfo
+                    toolRemapSlots = null
+                    val mergedInfo = _threeMfInfo.value!!
+                    val sanitized = embedProfile(processed, mergedInfo, context)
+
+                    if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
+                        Log.i("SlicerVM", "Multi-plate: ${origInfo.plates.size} plates, showing selector")
+                        currentModelFile = sanitized
+                        _showPlateSelector.value = true
+                        return@launch
+                    }
+                    Log.i("SlicerVM", "Single-plate, loading directly")
+
+                    sanitized
+                } else {
+                    _threeMfInfo.value = null
+                    recoveryOrigInfo = null
+                    sourceModelFile = null
+                    sourceModelInfo = null
+                    originalSourceConfig = null
+                    file
+                }
+
+                currentModelFile = fileToLoad
+                loadNativeModel(fileToLoad)
+            } catch (e: Throwable) {
+                native.clearModel()
+                _state.value = SlicerState.Error("Error: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Called when user selects a plate from the multi-plate dialog.
      */

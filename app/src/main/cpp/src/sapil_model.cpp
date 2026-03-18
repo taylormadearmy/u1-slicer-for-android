@@ -12,6 +12,7 @@
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/STEP.hpp"
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/TriangleSelector.hpp"
 
 // miniz for direct ZIP extraction of project_settings.config
 #include "miniz.h"
@@ -164,6 +165,123 @@ ModelInfo SlicerEngine::getModelInfo() const {
     return g_model_info;
 }
 
+static void appendItsPreviewMesh(
+    PreviewMesh& out,
+    const indexed_triangle_set& its,
+    uint8_t extruder_index
+) {
+    bool logged_invalid_index = false;
+    bool logged_invalid_vertex = false;
+    for (const auto& tri : its.indices) {
+        bool valid = true;
+        for (int i = 0; i < 3; ++i) {
+            const int vertex_index = tri[i];
+            if (vertex_index < 0 || static_cast<size_t>(vertex_index) >= its.vertices.size()) {
+                if (!logged_invalid_index) {
+                    SAPIL_LOGW(
+                        "preview triangle skipped: invalid vertex index %d (vertex count=%zu)",
+                        vertex_index,
+                        its.vertices.size()
+                    );
+                    logged_invalid_index = true;
+                }
+                valid = false;
+                break;
+            }
+        }
+        if (!valid) continue;
+
+        const size_t start_size = out.triangle_positions.size();
+        for (int i = 0; i < 3; ++i) {
+            const auto& vertex = its.vertices[tri[i]];
+            if (!std::isfinite(vertex.x()) || !std::isfinite(vertex.y()) || !std::isfinite(vertex.z())) {
+                if (!logged_invalid_vertex) {
+                    SAPIL_LOGW(
+                        "preview triangle skipped: non-finite vertex [%.3f,%.3f,%.3f]",
+                        vertex.x(), vertex.y(), vertex.z()
+                    );
+                    logged_invalid_vertex = true;
+                }
+                valid = false;
+                break;
+            }
+            out.triangle_positions.push_back(static_cast<float>(vertex.x()));
+            out.triangle_positions.push_back(static_cast<float>(vertex.y()));
+            out.triangle_positions.push_back(static_cast<float>(vertex.z()));
+        }
+        if (!valid) {
+            out.triangle_positions.resize(start_size);
+            continue;
+        }
+        out.extruder_indices.push_back(extruder_index);
+    }
+}
+
+static void compactPreviewIndices(PreviewMesh& mesh) {
+    if (mesh.extruder_indices.empty()) return;
+
+    std::vector<uint8_t> unique_indices = mesh.extruder_indices;
+    std::sort(unique_indices.begin(), unique_indices.end());
+    unique_indices.erase(std::unique(unique_indices.begin(), unique_indices.end()), unique_indices.end());
+
+    std::vector<uint8_t> lut(256, 0);
+    for (size_t i = 0; i < unique_indices.size(); ++i) {
+        lut[unique_indices[i]] = static_cast<uint8_t>(i);
+    }
+
+    for (uint8_t& idx : mesh.extruder_indices) {
+        idx = lut[idx];
+    }
+}
+
+PreviewMesh SlicerEngine::getPreparePreviewMesh() const {
+    PreviewMesh out;
+    if (!g_model_loaded) {
+        return out;
+    }
+
+    for (const auto* object : g_model.objects) {
+        if (object == nullptr || !object->printable) continue;
+        if (object->instances.empty()) continue;
+
+        for (const auto* instance : object->instances) {
+            if (instance == nullptr || !instance->printable) continue;
+            const Slic3r::Transform3d instance_matrix = instance->get_matrix_no_offset();
+
+            for (const auto* volume : object->volumes) {
+                if (volume == nullptr || !volume->is_model_part()) continue;
+
+                int fallback_extruder = volume->extruder_id();
+                if (fallback_extruder <= 0) fallback_extruder = 1;
+                const uint8_t fallback_index = static_cast<uint8_t>(std::max(0, fallback_extruder - 1));
+
+                if (!volume->mmu_segmentation_facets.empty()) {
+                    std::vector<indexed_triangle_set> facets_per_type;
+                    volume->mmu_segmentation_facets.get_facets(*volume, facets_per_type);
+                    for (size_t state_idx = 0; state_idx < facets_per_type.size(); ++state_idx) {
+                        auto its = facets_per_type[state_idx];
+                        if (its.indices.empty()) continue;
+                        its_transform(its, volume->get_matrix(), true);
+                        its_transform(its, instance_matrix, true);
+                        const uint8_t extruder_index = state_idx == 0
+                            ? fallback_index
+                            : static_cast<uint8_t>(state_idx - 1);
+                        appendItsPreviewMesh(out, its, extruder_index);
+                    }
+                } else {
+                    auto its = volume->mesh().its;
+                    its_transform(its, volume->get_matrix(), true);
+                    its_transform(its, instance_matrix, true);
+                    appendItsPreviewMesh(out, its, fallback_index);
+                }
+            }
+        }
+    }
+
+    compactPreviewIndices(out);
+    return out;
+}
+
 // Accessor for sapil_print.cpp to get the app files directory
 std::string getFilesDir() { return g_files_dir; }
 
@@ -222,6 +340,43 @@ jobject modelInfoToJava(JNIEnv* env, const ModelInfo& info) {
 
     env->DeleteLocalRef(jfilename);
     env->DeleteLocalRef(jformat);
+    env->DeleteLocalRef(cls);
+    return obj;
+}
+
+jobject previewMeshToJava(JNIEnv* env, const PreviewMesh& mesh) {
+    jclass cls = env->FindClass("com/u1/slicer/viewer/NativePreviewMesh");
+    if (!cls) {
+        SAPIL_LOGE("NativePreviewMesh class not found");
+        return nullptr;
+    }
+
+    jmethodID constructor = env->GetMethodID(cls, "<init>", "([F[B)V");
+    if (!constructor) {
+        SAPIL_LOGE("NativePreviewMesh constructor not found");
+        env->DeleteLocalRef(cls);
+        return nullptr;
+    }
+
+    jfloatArray positions = env->NewFloatArray(static_cast<jsize>(mesh.triangle_positions.size()));
+    if (!mesh.triangle_positions.empty()) {
+        env->SetFloatArrayRegion(
+            positions,
+            0,
+            static_cast<jsize>(mesh.triangle_positions.size()),
+            mesh.triangle_positions.data()
+        );
+    }
+
+    jbyteArray indices = env->NewByteArray(static_cast<jsize>(mesh.extruder_indices.size()));
+    if (!mesh.extruder_indices.empty()) {
+        std::vector<jbyte> bytes(mesh.extruder_indices.begin(), mesh.extruder_indices.end());
+        env->SetByteArrayRegion(indices, 0, static_cast<jsize>(bytes.size()), bytes.data());
+    }
+
+    jobject obj = env->NewObject(cls, constructor, positions, indices);
+    env->DeleteLocalRef(positions);
+    env->DeleteLocalRef(indices);
     env->DeleteLocalRef(cls);
     return obj;
 }

@@ -1677,6 +1677,10 @@ fun InlineModelPreview(
 ) {
     var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
+    var parseRequestId by remember { mutableIntStateOf(0) }
+    // Track whether we've already uploaded this mesh to avoid redundant VBO re-uploads
+    // when only colors/mapping change (B22 fix).
+    var lastSetMesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     val placementEnabled = objectPositions != null && onPositionsChanged != null
 
     // Mutable copies of positions for drag interaction
@@ -1687,27 +1691,29 @@ fun InlineModelPreview(
     var towerY by remember(wipeTowerY) { mutableFloatStateOf(wipeTowerY) }
 
     LaunchedEffect(modelFilePath, extruderMap, colorMapping?.size) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val requestId = parseRequestId + 1
+        parseRequestId = requestId
+        mesh = null
+        lastSetMesh = null
+        viewerView?.clearMesh()
+        val parsedMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val file = java.io.File(modelFilePath)
-                mesh = when {
+                when {
                     modelFilePath.endsWith(".stl", ignoreCase = true) ->
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
-                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(
-                            file,
-                            extruderMap = extruderMap,
-                            detectedColorCount = colorMapping?.size ?: 0
-                        )
+                        com.u1.slicer.NativeLibrary().getPreparePreviewMesh()?.toMeshData()
                     else -> null
                 }
-            } catch (_: Throwable) { }
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        if (parseRequestId == requestId) {
+            mesh = parsedMesh
         }
     }
-
-    // Track whether we've already uploaded this mesh to avoid redundant VBO re-uploads
-    // when only colors/mapping change (B22 fix).
-    var lastSetMesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
 
     // Combined effect: keys on mesh + viewer + colors + mapping so it fires when ANY changes.
     // Fixes B22 race: previously mesh loaded on IO (slow) while colors arrived via StateFlow
@@ -1745,6 +1751,12 @@ fun InlineModelPreview(
                     // Single-color: palette[0] = first non-blank color
                     listOf(toRgba(extruderColors.firstOrNull { it.isNotBlank() } ?: ""))
                 }
+                Log.i(
+                    "InlineModelPreview",
+                    "recolor mapping=$colorMapping " +
+                        "extruderColors=$extruderColors paletteSize=${palette.size} " +
+                        "hasMeshColors=${m.hasPerVertexColor}"
+                )
                 v.recolorMesh(palette)
             }
         } else if (v != null && extruderColors.isNotEmpty()) {

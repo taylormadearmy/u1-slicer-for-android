@@ -69,6 +69,13 @@ class NativeLibrarySymbolTest {
     }
 
     @Test
+    fun getPreparePreviewMesh_isLinked() {
+        lib.clearModel()
+        val preview = lib.getPreparePreviewMesh()
+        assertNull(preview)
+    }
+
+    @Test
     fun setModelInstances_isLinked() {
         // No model loaded → should return false (not throw UnsatisfiedLinkError)
         val result = lib.setModelInstances(floatArrayOf(5f, 5f))

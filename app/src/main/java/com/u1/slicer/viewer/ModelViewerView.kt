@@ -30,6 +30,11 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
+    fun clearMesh() {
+        renderer.pendingClearMesh = true
+        requestRender()
+    }
+
     /** Recolor the mesh using the given palette. Thread-safe: queues work on GL thread. */
     fun recolorMesh(colorPalette: List<FloatArray>) {
         renderer.pendingRecolor = colorPalette
