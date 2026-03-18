@@ -3,6 +3,8 @@ package com.u1.slicer.viewer
 import android.content.Context
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
+import android.os.Handler
+import android.os.Looper
 import com.u1.slicer.gcode.MoveType
 import com.u1.slicer.gcode.ParsedGcode
 import java.nio.ByteBuffer
@@ -20,8 +22,13 @@ import kotlin.math.sqrt
 class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     val camera = Camera()
+    private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile
     var preserveRestoredCameraOnSurfaceInit = false
+    @Volatile
+    var onContentReady: (() -> Unit)? = null
+    @Volatile
+    private var pendingContentReadyDispatch = false
     private var toolpathShader: ShaderProgram? = null
     private val bed = BedDrawable(context)
 
@@ -132,6 +139,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 camera.panX = 0f
                 camera.panY = 0f
             }
+            pendingContentReadyDispatch = true
         }
 
         camera.updateViewMatrix()
@@ -139,6 +147,13 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         bed.draw(camera)
         drawToolpaths()
+
+        if (pendingContentReadyDispatch) {
+            pendingContentReadyDispatch = false
+            onContentReady?.let { callback ->
+                mainHandler.post { callback() }
+            }
+        }
     }
 
     fun uploadGcode(gcode: ParsedGcode) {

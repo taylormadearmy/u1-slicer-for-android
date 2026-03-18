@@ -36,6 +36,10 @@ class GcodeViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
+    fun setOnContentReady(listener: (() -> Unit)?) {
+        renderer.onContentReady = listener
+    }
+
     fun applyCameraState(state: CameraViewState) {
         renderer.preserveRestoredCameraOnSurfaceInit = true
         renderer.preserveCameraOnNextUpload = true

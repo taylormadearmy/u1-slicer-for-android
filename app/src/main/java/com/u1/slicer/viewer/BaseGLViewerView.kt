@@ -25,12 +25,13 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
 
     abstract val camera: Camera
     var onCameraChanged: ((CameraViewState) -> Unit)? = null
+    private var pendingCameraDispatch = false
 
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 camera.zoom(1f / detector.scaleFactor)
-                notifyCameraChanged()
+                markCameraChanged()
                 requestRender()
                 return true
             }
@@ -98,7 +99,7 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
                         } else {
                             camera.rotate(-dx * 0.3f, dy * 0.3f)
                         }
-                        notifyCameraChanged()
+                        markCameraChanged()
                         requestRender()
                         previousX = event.x
                         previousY = event.y
@@ -109,7 +110,7 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
                         val dy = midY - previousMidY
                         val panScale = camera.distance * 0.002f
                         camera.pan(-dx * panScale, dy * panScale)
-                        notifyCameraChanged()
+                        markCameraChanged()
                         requestRender()
                         previousMidX = midX
                         previousMidY = midY
@@ -130,11 +131,13 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
                     previousX = event.x
                     previousY = event.y
                 }
+                dispatchCameraChangedIfNeeded()
             }
             MotionEvent.ACTION_CANCEL -> {
                 isPanMode = false
                 pointerCount = 0
                 handleActionCancel()
+                dispatchCameraChangedIfNeeded()
                 requestRender()
             }
         }
@@ -159,7 +162,13 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
     /** Called on ACTION_CANCEL. Override to reset drag state. */
     protected open fun handleActionCancel() {}
 
-    protected fun notifyCameraChanged() {
+    protected fun markCameraChanged() {
+        pendingCameraDispatch = true
+    }
+
+    protected fun dispatchCameraChangedIfNeeded() {
+        if (!pendingCameraDispatch) return
+        pendingCameraDispatch = false
         onCameraChanged?.invoke(camera.snapshot())
     }
 }

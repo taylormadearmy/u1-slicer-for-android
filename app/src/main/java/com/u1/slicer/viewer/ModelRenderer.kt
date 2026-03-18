@@ -9,6 +9,8 @@ import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
 import android.opengl.Matrix
+import android.os.Handler
+import android.os.Looper
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
@@ -19,6 +21,7 @@ import kotlin.math.sin
 class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     val camera = Camera()
+    private val mainHandler = Handler(Looper.getMainLooper())
     var meshData: MeshData? = null
         private set
     private var modelShader: ShaderProgram? = null
@@ -68,7 +71,16 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     var pendingMesh: MeshData? = null
 
     @Volatile
+    var pendingClearMesh = false
+
+    @Volatile
     var preserveCameraOnNextMeshUpload = false
+
+    @Volatile
+    var onContentReady: (() -> Unit)? = null
+
+    @Volatile
+    private var pendingContentReadyDispatch = false
 
     // Set to true to trigger a camera re-centre on the next frame (e.g. after placement
     // positions arrive on the main thread after the mesh was already uploaded).
@@ -80,8 +92,6 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0.059f, 0.059f, 0.118f, 1f)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
-        GLES30.glEnable(GLES30.GL_CULL_FACE)
-        GLES30.glCullFace(GLES30.GL_BACK)
 
         modelShader = ShaderProgram(context, "shaders/model.vert", "shaders/model.frag")
         gridShader = ShaderProgram(context, "shaders/grid.vert", "shaders/grid.frag")
@@ -119,6 +129,12 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     var pendingRecolor: List<FloatArray>? = null
 
     override fun onDrawFrame(gl: GL10?) {
+        if (pendingClearMesh) {
+            pendingClearMesh = false
+            meshData = null
+            highlightIndex = -1
+        }
+
         pendingMesh?.let { mesh ->
             uploadMesh(mesh)
             // Apply any pending recolor immediately to the freshly uploaded mesh
@@ -131,6 +147,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             pendingMesh = null
             pendingCameraReset = !preserveCameraOnNextMeshUpload
             preserveCameraOnNextMeshUpload = false
+            pendingContentReadyDispatch = true
         }
 
         // Process pending recolor for existing mesh (no new mesh upload)
@@ -185,6 +202,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val highlighted = instancePositions != null &&
                     highlightIndex == (instancePositions!!.size / 2)
             drawWipeTower(tower, highlighted)
+        }
+
+        if (pendingContentReadyDispatch) {
+            pendingContentReadyDispatch = false
+            onContentReady?.let { callback ->
+                mainHandler.post { callback() }
+            }
         }
     }
 

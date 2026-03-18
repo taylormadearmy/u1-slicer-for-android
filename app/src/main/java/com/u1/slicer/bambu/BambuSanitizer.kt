@@ -1281,7 +1281,8 @@ $componentRefs    </components>
      */
     fun extractPlate(inputFile: File, targetPlateId: Int, outputDir: File,
                      hasPlateJsons: Boolean? = null,
-                     plateObjectIds: Set<String>? = null): File {
+                     plateObjectIds: Set<String>? = null,
+                     objectExtruderMap: Map<String, Int>? = null): File {
         val outputFile = File(outputDir, "plate${targetPlateId}_${inputFile.name}")
 
         ZipFile(inputFile).use { srcZip ->
@@ -1308,6 +1309,7 @@ $componentRefs    </components>
             // objects from config.  This keeps plate files lean when the original
             // file has many plates.
             var referencedObjectIds: Set<String>? = null
+            var wroteModelSettings = false
 
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
                 for (entry in srcZip.entries()) {
@@ -1331,6 +1333,7 @@ $componentRefs    </components>
                             writeStored(destZip, entry.name, content)
                         }
                         entry.name == "Metadata/model_settings.config" -> {
+                            wroteModelSettings = true
                             // Strip <assemble> section and unreferenced object entries
                             var stripped = stripAssembleSection(String(content))
                             val refIds = referencedObjectIds
@@ -1351,9 +1354,39 @@ $componentRefs    </components>
                         else -> writeStored(destZip, entry.name, content)
                     }
                 }
+
+                if (!wroteModelSettings) {
+                    val effectiveExtruderMap = objectExtruderMap
+                        ?.filterKeys { key -> referencedObjectIds?.contains(key) ?: true }
+                        ?.filterValues { value -> value > 0 }
+                        ?.toSortedMap(compareBy { it.toIntOrNull() ?: Int.MAX_VALUE })
+                        .orEmpty()
+                    if (effectiveExtruderMap.isNotEmpty()) {
+                        writeStored(
+                            destZip,
+                            "Metadata/model_settings.config",
+                            buildSyntheticModelConfig(effectiveExtruderMap).toByteArray()
+                        )
+                        Log.i(
+                            TAG,
+                            "extractPlate: synthesized model_settings.config for ${effectiveExtruderMap.size} object(s)"
+                        )
+                    }
+                }
             }
         }
         return outputFile
+    }
+
+    private fun buildSyntheticModelConfig(objectExtruderMap: Map<String, Int>): String = buildString {
+        appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
+        appendLine("<config>")
+        for ((objectId, extruder) in objectExtruderMap) {
+            appendLine("""  <object id="$objectId">""")
+            appendLine("""    <metadata key="extruder" value="$extruder"/>""")
+            appendLine("""  </object>""")
+        }
+        appendLine("</config>")
     }
 
     /**

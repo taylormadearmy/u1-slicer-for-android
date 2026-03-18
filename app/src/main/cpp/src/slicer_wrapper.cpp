@@ -68,6 +68,14 @@ Java_com_u1_slicer_NativeLibrary_getModelInfo(JNIEnv* env, jobject) {
     return sapil::modelInfoToJava(env, info);
 }
 
+JNIEXPORT jobject JNICALL
+Java_com_u1_slicer_NativeLibrary_getPreparePreviewMesh(JNIEnv* env, jobject) {
+    if (!g_engine) return nullptr;
+    sapil::PreviewMesh mesh = g_engine->getPreparePreviewMesh();
+    if (mesh.extruder_indices.empty()) return nullptr;
+    return sapil::previewMeshToJava(env, mesh);
+}
+
 // ---- Slicing ----
 JNIEXPORT jobject JNICALL
 Java_com_u1_slicer_NativeLibrary_slice(JNIEnv* env, jobject thiz, jobject jconfig) {

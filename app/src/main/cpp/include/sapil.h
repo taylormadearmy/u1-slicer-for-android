@@ -96,6 +96,12 @@ struct ModelInfo {
     bool is_manifold = true;
 };
 
+// ---- Native Prepare Preview ----
+struct PreviewMesh {
+    std::vector<float> triangle_positions;   // world-space xyz triplets, 9 floats per triangle
+    std::vector<uint8_t> extruder_indices;   // 0-based per-triangle preview color/extruder index
+};
+
 // ---- Slice Result ----
 struct SliceResult {
     bool success = false;
@@ -119,6 +125,7 @@ public:
     // Model operations
     bool loadModel(const std::string& filepath);
     ModelInfo getModelInfo() const;
+    PreviewMesh getPreparePreviewMesh() const;
     void clearModel();
 
     // Slicing
@@ -147,6 +154,7 @@ private:
 SliceConfig configFromJava(JNIEnv* env, jobject jconfig);
 jobject configToJava(JNIEnv* env, const SliceConfig& config);
 jobject modelInfoToJava(JNIEnv* env, const ModelInfo& info);
+jobject previewMeshToJava(JNIEnv* env, const PreviewMesh& mesh);
 jobject sliceResultToJava(JNIEnv* env, const SliceResult& result);
 
 } // namespace sapil

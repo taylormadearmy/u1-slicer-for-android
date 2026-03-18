@@ -171,11 +171,7 @@ class TestCommandReceiver(
         }
 
         Log.i(TAG, "LOAD_FILE: loading ${file.absolutePath} (${file.length() / 1024}KB)")
-        val uri = androidx.core.content.FileProvider.getUriForFile(
-            context, "${context.packageName}.fileprovider", file
-        )
-        Log.i(TAG, "LOAD_FILE: using FileProvider URI: $uri")
-        mainHandler.post { slicerViewModel.loadModel(uri) }
+        mainHandler.post { slicerViewModel.loadModelFromFile(file) }
     }
 
     private fun handleSetPrinter(intent: Intent) {
