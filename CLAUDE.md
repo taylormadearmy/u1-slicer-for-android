@@ -17,12 +17,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ## Release
 
-1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.4.8` -> `1.4.10`)
+1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.4.10` -> `1.4.11`)
 2. **Update docs** — update test counts in this file and `README.md` if they changed
 3. **Commit and push**:
    ```bash
    git add -p
-   git commit -m "bump: v1.4.10 - <short description>"
+   git commit -m "bump: v1.4.11 - <short description>"
    git push
    ```
 4. **Build the release APK**:
@@ -31,12 +31,12 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```
 5. **Rename the APK** with the version number:
    ```bash
-   cp app/build/outputs/apk/release/app-release.apk u1-slicer-v1.4.10.apk
+   cp app/build/outputs/apk/release/app-release.apk u1-slicer-v1.4.11.apk
    ```
 6. **Create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
    ```bash
-   gh release create v1.4.10 u1-slicer-v1.4.10.apk \
-     --title "v1.4.10" \
+   gh release create v1.4.11 u1-slicer-v1.4.11.apk \
+     --title "v1.4.11" \
      --notes "Brief description of what changed."
    ```
 

@@ -14,10 +14,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - First slice attempt on `slip slide spin fidget.3mf` failed with `Coordinate outside allowed range`
 - The failure path shows `hasCustomPlacement=true` and a wipe tower near the edge, so the placement/wipe-tower interaction needs another pass
 
-### B32: Printer can show a thumbnail from a different job after upload
+### B32: Printer still shows the generic printer image after upload
 - Repro from `G:/My Drive/tes-data/output (2).gcode`
-- Moonraker/Klipper may reuse stale thumbnail metadata when multiple uploads use the same remote filename
-- Printer uploads should use a unique job filename instead of reusing `output.gcode`
+- After upload, the printer falls back to its default/generic image instead of the file thumbnail
+- Suspected cause: Moonraker/Klipper thumbnail handling or upload metadata caching still needs investigation
 
 ## Open Features
 
@@ -38,6 +38,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **B32**: Thumbnail format switched to vanilla Klipper format (no `THUMBNAIL_BLOCK_START/END` wrappers, 76-char base64 lines) — matches u1-slicer-bridge which is confirmed working on Snapmaker hardware; the THUMBNAIL_BLOCK_START format added in v1.4.10 requires newer Moonraker and was causing the printer to show its default icon instead of the job preview — FIXED v1.4.11
 - **B30**: Uploaded printer thumbnails now mirror Orca's native `THUMBNAIL_BLOCK_START/END` wrapping and line length so Moonraker/Klipper recognizes the embedded preview instead of showing the default icon
 - **I2**: First post-update Clipper "Coordinate outside allowed range" failure hardened again — FIXED v1.4.1
 - **Native Prepare Preview**: Prepare preview now uses native/Orca-backed mesh export instead of the old Kotlin-only path — DONE v1.4.0

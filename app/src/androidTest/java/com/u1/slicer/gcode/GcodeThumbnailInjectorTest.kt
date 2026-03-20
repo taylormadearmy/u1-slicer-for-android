@@ -59,21 +59,16 @@ class GcodeThumbnailInjectorTest {
         val bitmap = GcodeThumbnailInjector.extractPreviewImage(threeMfFile)!!
         val blocks = GcodeThumbnailInjector.buildThumbnailBlocks(bitmap)
 
-        assertTrue("Should contain thumbnail block start markers", blocks.contains("; THUMBNAIL_BLOCK_START"))
         assertTrue("Should contain 48x48 thumbnail", blocks.contains("; thumbnail begin 48x48"))
         assertTrue("Should contain 300x300 thumbnail", blocks.contains("; thumbnail begin 300x300"))
         assertTrue("Should contain thumbnail end markers", blocks.contains("; thumbnail end"))
-        assertTrue("Should contain thumbnail block end markers", blocks.contains("; THUMBNAIL_BLOCK_END"))
+        assertFalse("Should NOT contain THUMBNAIL_BLOCK_START wrappers", blocks.contains("; THUMBNAIL_BLOCK_START"))
 
         // Count exactly 2 begin/end pairs
         val beginCount = "; thumbnail begin".toRegex().findAll(blocks).count()
         val endCount = "; thumbnail end".toRegex().findAll(blocks).count()
-        val blockStartCount = "; THUMBNAIL_BLOCK_START".toRegex().findAll(blocks).count()
-        val blockEndCount = "; THUMBNAIL_BLOCK_END".toRegex().findAll(blocks).count()
         assertEquals("Should have 2 thumbnail begin markers", 2, beginCount)
         assertEquals("Should have 2 thumbnail end markers", 2, endCount)
-        assertEquals("Should have 2 thumbnail block start markers", 2, blockStartCount)
-        assertEquals("Should have 2 thumbnail block end markers", 2, blockEndCount)
     }
 
     @Test
@@ -121,8 +116,8 @@ G1 X10 Y10
         assertTrue("inject() should return true", result)
 
         val content = gcodeFile.readText()
-        assertTrue("Should start with thumbnail block wrapper", content.startsWith("; THUMBNAIL_BLOCK_START"))
-        assertTrue("Should contain thumbnail header", content.contains("; thumbnail begin 48x48"))
+        assertTrue("Should start with thumbnail begin (no wrapper)", content.startsWith("; thumbnail begin 48x48"))
+        assertTrue("Should contain 300x300 thumbnail", content.contains("; thumbnail begin 300x300"))
     }
 
     @Test

@@ -13,7 +13,7 @@ import java.util.zip.ZipFile
  * blocks into G-code files. Moonraker/Klipper reads these blocks and serves
  * them via /server/files/thumbnails.
  *
- * Format: `; thumbnail begin WxH LEN\n; <base64 lines>\n; thumbnail end`
+ * Format: `; thumbnail begin WxH LEN\n; <base64 lines, 76 chars>\n; thumbnail end\n;`
  * Sizes: 48x48 and 300x300 (matches Klipper's expected sizes).
  *
  * Ported from u1-slicer-bridge's gcode_thumbnails.py.
@@ -142,18 +142,17 @@ object GcodeThumbnailInjector {
             rgb.recycle()
 
             val b64 = Base64.encodeToString(pngBytes, Base64.NO_WRAP)
-            sb.append("; THUMBNAIL_BLOCK_START\n")
-            sb.append(";\n")
             sb.append("; thumbnail begin ${w}x${h} ${b64.length}\n")
-            // Split into 78-char lines to mirror Orca's native thumbnail writer.
+            // Split into 76-char lines — matches the vanilla Klipper/Moonraker format used by
+            // u1-slicer-bridge and supported by all Moonraker versions (incl. older firmware).
             var i = 0
             while (i < b64.length) {
-                val end = minOf(i + 78, b64.length)
+                val end = minOf(i + 76, b64.length)
                 sb.append("; ${b64.substring(i, end)}\n")
                 i = end
             }
             sb.append("; thumbnail end\n")
-            sb.append("; THUMBNAIL_BLOCK_END\n\n")
+            sb.append(";\n")
         }
         return sb.toString()
     }
