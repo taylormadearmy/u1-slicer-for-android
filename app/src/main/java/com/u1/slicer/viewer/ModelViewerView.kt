@@ -1,7 +1,10 @@
 package com.u1.slicer.viewer
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.view.MotionEvent
+import android.view.PixelCopy
 
 class ModelViewerView(context: Context) : BaseGLViewerView(context) {
 
@@ -140,6 +143,19 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     override fun handleActionCancel() {
         draggingIndex = -1
         renderer.highlightIndex = -1
+    }
+
+    /**
+     * Capture the current GL frame as a Bitmap using PixelCopy (API 26+).
+     * Calls back on the main thread with the bitmap, or null on failure.
+     */
+    fun captureBitmap(callback: (android.graphics.Bitmap?) -> Unit) {
+        if (width <= 0 || height <= 0) { callback(null); return }
+        val bmp = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+        PixelCopy.request(this, bmp, { result ->
+            if (result == PixelCopy.SUCCESS) callback(bmp)
+            else { bmp.recycle(); callback(null) }
+        }, Handler(Looper.getMainLooper()))
     }
 
     /**

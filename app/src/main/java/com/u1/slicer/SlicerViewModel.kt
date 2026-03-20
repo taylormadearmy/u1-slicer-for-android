@@ -1133,6 +1133,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    @Volatile private var pendingThumbnailBitmap: android.graphics.Bitmap? = null
+    fun setPendingThumbnailBitmap(bitmap: android.graphics.Bitmap?) {
+        pendingThumbnailBitmap = bitmap
+    }
+
     fun startSlicing() {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
@@ -1348,15 +1353,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         GcodeToolRemapper.remap(result.gcodePath, slots)
                         Log.i("SlicerVM", "Post-processed G-code: remapped tools to physical slots $slots")
                     }
-                    // Inject preview thumbnails into G-code for Klipper/Moonraker
-                    val sourcePath = rawInputFile?.absolutePath ?: sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
-                    if (sourcePath != null) {
-                        try {
-                            val injected = GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
-                            if (injected) Log.i("SlicerVM", "Thumbnails injected into G-code")
-                        } catch (e: Throwable) {
-                            Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
+                    // Inject preview thumbnails into G-code for Klipper/Moonraker.
+                    // 3MF: extract preview image from ZIP. STL: fall back to GL capture bitmap.
+                    try {
+                        val sourcePath = rawInputFile?.absolutePath ?: sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
+                        val injected = sourcePath != null && GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
+                        if (injected) {
+                            Log.i("SlicerVM", "Thumbnails injected from 3MF preview")
+                        } else {
+                            val bmp = pendingThumbnailBitmap
+                            if (bmp != null && GcodeThumbnailInjector.injectFromBitmap(result.gcodePath, bmp)) {
+                                Log.i("SlicerVM", "Thumbnails injected from GL capture")
+                            }
                         }
+                    } catch (e: Throwable) {
+                        Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
+                    } finally {
+                        pendingThumbnailBitmap = null
                     }
 
                     _state.value = SlicerState.SliceComplete(result)

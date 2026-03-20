@@ -537,6 +537,7 @@ fun PrepareScreen(
     val copyCount by viewModel.copyCount.collectAsState()
     val modelScale by viewModel.modelScale.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
+    var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
 
     // Plate selector dialog
     if (showPlateSelector && threeMfInfo != null) {
@@ -689,7 +690,8 @@ fun PrepareScreen(
                                 onInfoClick = { showInfoDialog = true },
                                 modelScale = modelScale,
                                 cameraState = sharedPreviewCameraState,
-                                onCameraStateChange = onSharedPreviewCameraStateChange
+                                onCameraStateChange = onSharedPreviewCameraStateChange,
+                                onViewerReady = { captureViewer = it }
                             )
                             if (showInfoDialog && loadedInfo != null) {
                                 ModelInfoDialog(
@@ -765,7 +767,15 @@ fun PrepareScreen(
                         .align(Alignment.TopCenter)
                 ) {
                     SliceButton(onClick = {
-                        viewModel.startSlicing()
+                        val viewer = captureViewer
+                        if (viewer != null) {
+                            viewer.captureBitmap { bitmap ->
+                                viewModel.setPendingThumbnailBitmap(bitmap)
+                                viewModel.startSlicing()
+                            }
+                        } else {
+                            viewModel.startSlicing()
+                        }
                         onNavigatePreview()
                     })
                 }
@@ -1683,7 +1693,8 @@ fun InlineModelPreview(
     onInfoClick: (() -> Unit)? = null,
     modelScale: SlicerViewModel.ModelScale = SlicerViewModel.ModelScale(),
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
-    onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null
+    onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
+    onViewerReady: ((com.u1.slicer.viewer.ModelViewerView?) -> Unit)? = null
 ) {
     var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
@@ -1874,6 +1885,7 @@ fun InlineModelPreview(
                     factory = { ctx ->
                         com.u1.slicer.viewer.ModelViewerView(ctx).also { view ->
                             viewerView = view
+                            onViewerReady?.invoke(view)
                             view.onCameraChanged = onCameraStateChange
                             view.setOnContentReady { viewerLoading = false }
                             mesh?.let { view.setMesh(it) }
@@ -1891,7 +1903,7 @@ fun InlineModelPreview(
                         }
                     },
                     onRelease = { view ->
-                        if (viewerView === view) viewerView = null
+                        if (viewerView === view) { viewerView = null; onViewerReady?.invoke(null) }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
