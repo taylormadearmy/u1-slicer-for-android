@@ -531,4 +531,26 @@ class SlicingOverridesTest {
         assertEquals("0", result["skirt_loops"])
         assertEquals("0", result["skirt_height"])
     }
+
+    // --- B31: auto_brim from Bambu source leaking through profile_keys[] ---
+
+    @Test
+    fun `buildProfileOverrides emits no_brim when brim_width is 0`() {
+        // auto_brim from Bambu file must not leak through — brim_type must be
+        // explicitly set so OrcaSlicer does not add geometry-based brims to small objects.
+        val cfg = SliceConfig(brimWidth = 0f)
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        assertEquals("no_brim", result["brim_type"])
+        assertEquals("0.0", result["brim_width"])
+    }
+
+    @Test
+    fun `buildProfileOverrides emits manual_brim when brim_width is positive`() {
+        val cfg = SliceConfig(brimWidth = 0f)
+        val ov = SlicingOverrides(brimWidth = OverrideValue(OverrideMode.OVERRIDE, 5f))
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        assertEquals("manual_brim", result["brim_type"])
+        assertEquals("5.0", result["brim_width"])
+    }
 }
