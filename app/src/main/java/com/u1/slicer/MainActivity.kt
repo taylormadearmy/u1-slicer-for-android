@@ -769,14 +769,17 @@ fun PrepareScreen(
                     SliceButton(onClick = {
                         val viewer = captureViewer
                         if (viewer != null) {
+                            // Navigate only after PixelCopy completes — navigating first can
+                            // destroy the GL surface before the capture finishes (bugbot B1).
                             viewer.captureBitmap { bitmap ->
                                 viewModel.setPendingThumbnailBitmap(bitmap)
                                 viewModel.startSlicing()
+                                onNavigatePreview()
                             }
                         } else {
                             viewModel.startSlicing()
+                            onNavigatePreview()
                         }
-                        onNavigatePreview()
                     })
                 }
             }

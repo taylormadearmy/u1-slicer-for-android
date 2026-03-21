@@ -1139,6 +1139,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startSlicing() {
+        // Consume the bitmap atomically before launching so it is cleared even if slicing
+        // fails early or throws — avoids leaking a full-resolution screen-capture Bitmap.
+        val capturedBitmap = pendingThumbnailBitmap.also { pendingThumbnailBitmap = null }
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
             try {
@@ -1360,16 +1363,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         val injected = sourcePath != null && GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
                         if (injected) {
                             Log.i("SlicerVM", "Thumbnails injected from 3MF preview")
-                        } else {
-                            val bmp = pendingThumbnailBitmap
-                            if (bmp != null && GcodeThumbnailInjector.injectFromBitmap(result.gcodePath, bmp)) {
-                                Log.i("SlicerVM", "Thumbnails injected from GL capture")
-                            }
+                        } else if (capturedBitmap != null && GcodeThumbnailInjector.injectFromBitmap(result.gcodePath, capturedBitmap)) {
+                            Log.i("SlicerVM", "Thumbnails injected from GL capture")
                         }
                     } catch (e: Throwable) {
                         Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
-                    } finally {
-                        pendingThumbnailBitmap = null
                     }
 
                     _state.value = SlicerState.SliceComplete(result)

@@ -57,7 +57,7 @@ struct SliceConfig {
     float support_angle = 45.0f;
 
     // Skirt/Brim
-    int skirt_loops = 1;
+    int skirt_loops = 0;
     float skirt_distance = 6.0f;
     float brim_width = 0.0f;
 
