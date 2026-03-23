@@ -259,7 +259,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Extract MakerWorld design ID
         val designId = com.u1.slicer.network.MakerWorldUtils.extractDesignId(url)
         if (designId == null) {
-            _state.value = SlicerState.Error("Unsupported URL: $url")
+            _state.value = SlicerState.Error(
+                "Unsupported shared link.\n\n" +
+                    "Share a MakerWorld model page link, or send a downloaded 3MF/STL file to U1 Slicer."
+            )
             return
         }
         // Set loading state immediately (before coroutine dispatch) so UI shows spinner
@@ -2008,7 +2011,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun showUnsupportedFileError(filename: String) {
         val ext = filename.substringAfterLast('.', "")
         _state.value = SlicerState.Error(
-            "Unsupported file type: .$ext\n\nPlease select a 3MF, STL, or OBJ file."
+            "Unsupported file type: .$ext\n\n" +
+                "Please open a 3MF, STL, OBJ, or STEP model file in U1 Slicer."
         )
     }
 

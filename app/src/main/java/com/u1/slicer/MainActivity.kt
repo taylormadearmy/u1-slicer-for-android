@@ -2,6 +2,7 @@ package com.u1.slicer
 
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -96,11 +98,69 @@ class MainActivity : ComponentActivity() {
         handleIncomingIntent(intent)
     }
 
+    private fun isSupportedIncomingModel(uri: Uri): Pair<Boolean, String?> {
+        val displayName = viewModel.getFileDisplayName(uri)
+        val fallbackName = uri.lastPathSegment
+            ?.substringAfterLast('/')
+            ?.substringAfterLast(':')
+        val candidateName = displayName ?: fallbackName
+        val mimeType = contentResolver.getType(uri)
+        val supportedMimeTypes = setOf(
+            "application/sla",
+            "application/octet-stream",
+            "binary/octet-stream",
+            "application/zip",
+            "application/x-zip-compressed",
+            "model/stl",
+            "application/vnd.ms-pki.stl",
+            "application/vnd.ms-3mfdocument",
+            "model/3mf"
+        )
+        val supported = when {
+            !candidateName.isNullOrBlank() -> SlicerViewModel.isSupportedFile(candidateName)
+            !mimeType.isNullOrBlank() -> mimeType in supportedMimeTypes
+            else -> false
+        }
+        return supported to candidateName
+    }
+
+    private fun importIncomingModelUri(uri: Uri) {
+        val (supported, candidateName) = isSupportedIncomingModel(uri)
+        val name = candidateName ?: ""
+        diagnostics.recordEvent(
+            "incoming_model_uri",
+            mapOf(
+                "uri" to uri.toString(),
+                "scheme" to uri.scheme,
+                "displayName" to name,
+                "mimeType" to contentResolver.getType(uri),
+                "supported" to supported
+            )
+        )
+        if (supported) {
+            viewModel.loadModel(uri)
+        } else {
+            viewModel.showUnsupportedFileError(if (name.isNotBlank()) name else "shared file")
+        }
+    }
+
     private fun handleIncomingIntent(intent: Intent?) {
+        if (intent != null) {
+            diagnostics.recordEvent(
+                "incoming_intent",
+                mapOf(
+                    "action" to intent.action,
+                    "type" to intent.type,
+                    "data" to intent.data?.toString(),
+                    "hasExtraStream" to intent.hasExtra(Intent.EXTRA_STREAM),
+                    "hasExtraText" to intent.hasExtra(Intent.EXTRA_TEXT)
+                )
+            )
+        }
         when (intent?.action) {
             Intent.ACTION_VIEW -> {
                 intent.data?.let { uri ->
-                    viewModel.loadModel(uri)
+                    importIncomingModelUri(uri)
                     intent.action = null
                     intent.data = null
                 }
@@ -115,7 +175,7 @@ class MainActivity : ComponentActivity() {
                 }
                 if (uri != null) {
                     Log.i("SlicerVM", "ACTION_SEND with EXTRA_STREAM: $uri")
-                    viewModel.loadModel(uri)
+                    importIncomingModelUri(uri)
                     intent.action = null
                     intent.removeExtra(Intent.EXTRA_STREAM)
                     return
@@ -128,6 +188,31 @@ class MainActivity : ComponentActivity() {
                     viewModel.importFromSharedUrl(text)
                     intent.action = null
                     intent.removeExtra(Intent.EXTRA_TEXT)
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                val uris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+                }
+                diagnostics.recordEvent(
+                    "incoming_send_multiple",
+                    mapOf(
+                        "count" to (uris?.size ?: 0),
+                        "type" to intent.type,
+                        "uris" to (uris?.map { it.toString() } ?: emptyList<String>())
+                    )
+                )
+                val selectedUri = uris?.firstOrNull { uri ->
+                    isSupportedIncomingModel(uri).first
+                } ?: uris?.firstOrNull()
+                if (selectedUri != null) {
+                    Log.i("SlicerVM", "ACTION_SEND_MULTIPLE using EXTRA_STREAM: $selectedUri")
+                    importIncomingModelUri(selectedUri)
+                    intent.action = null
+                    intent.removeExtra(Intent.EXTRA_STREAM)
                 }
             }
         }
@@ -814,6 +899,11 @@ fun PrepareScreen(
 // =============================================================================
 @Composable
 fun PrepareEmptyState(onPickFile: () -> Unit, onBrowseMakerWorld: () -> Unit = {}) {
+    val context = LocalContext.current
+    var showMakerWorldInfo by remember { mutableStateOf(false) }
+    if (showMakerWorldInfo) {
+        MakerWorldModeDialog(onDismiss = { showMakerWorldInfo = false })
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -874,14 +964,62 @@ fun PrepareEmptyState(onPickFile: () -> Unit, onBrowseMakerWorld: () -> Unit = {
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
             )
             Spacer(modifier = Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = onBrowseMakerWorld,
+            Button(
+                onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://makerworld.com/en")).apply {
+                        addCategory(Intent.CATEGORY_BROWSABLE)
+                    }
+                    context.startActivity(intent)
+                },
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("Browse MakerWorld")
+                Text("Open MakerWorld in Browser")
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onBrowseMakerWorld) {
+                    Text("Browse MakerWorld in App")
+                }
+                IconButton(onClick = { showMakerWorldInfo = true }) {
+                    Icon(Icons.Default.Info, "MakerWorld help")
+                }
             }
         }
     }
+}
+
+@Composable
+private fun MakerWorldModeDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Got it") }
+        },
+        title = { Text("Choose A MakerWorld Path") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Open MakerWorld in Browser",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to U1 Slicer.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                HorizontalDivider()
+                Text(
+                    "Browse MakerWorld in App",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    "Best for quick public browsing and direct in-app downloads. Google sign-in is not supported inside the app browser, and browser login will not sync back into it.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    )
 }
 
 // =============================================================================

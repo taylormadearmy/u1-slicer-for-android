@@ -3,6 +3,7 @@ package com.u1.slicer.ui
 import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Environment
@@ -23,12 +24,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -37,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.SlicerViewModel
 
@@ -72,6 +77,22 @@ internal fun hasAuthCookies(cookies: String): Boolean =
         cookies.contains("sessionid") ||
         cookies.length > 500
 
+private fun Uri.shouldOpenExternallyForAuth(): Boolean {
+    val normalizedHost = host?.lowercase() ?: return false
+    return normalizedHost == "accounts.google.com" ||
+        normalizedHost.endsWith(".accounts.google.com") ||
+        normalizedHost == "appleid.apple.com" ||
+        normalizedHost == "www.facebook.com" ||
+        normalizedHost == "m.facebook.com"
+}
+
+private fun openUrlInBrowser(context: Context, url: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+        addCategory(Intent.CATEGORY_BROWSABLE)
+    }
+    context.startActivity(intent)
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,8 +101,16 @@ fun MakerWorldBrowserScreen(
     onModelDownloaded: () -> Unit,
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
     var isLoading by remember { mutableStateOf(true) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var currentUrl by remember { mutableStateOf(START_URL) }
+    var externalAuthUrl by remember { mutableStateOf<String?>(null) }
+
+    fun requestExternalAuth(url: String) {
+        currentUrl = url
+        externalAuthUrl = url
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -99,6 +128,36 @@ fun MakerWorldBrowserScreen(
         }
     }
 
+    externalAuthUrl?.let { targetUrl ->
+        AlertDialog(
+            onDismissRequest = { externalAuthUrl = null },
+            title = { Text("Google Sign-In Not Supported In App") },
+            text = {
+                Text(
+                    "Google blocks sign-in inside embedded app browsers like this one. " +
+                        "Open MakerWorld in your browser instead, then download the 3MF/STL " +
+                        "there or share the model link back to U1 Slicer. Browser login will " +
+                        "not automatically sign the in-app browser in."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        openUrlInBrowser(context, targetUrl)
+                        externalAuthUrl = null
+                    }
+                ) {
+                    Text("Use Browser")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { externalAuthUrl = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -106,6 +165,21 @@ fun MakerWorldBrowserScreen(
                 navigationIcon = {
                     IconButton(onClick = { onBack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            openUrlInBrowser(
+                                context,
+                                currentUrl
+                            )
+                        }
+                    ) {
+                        Icon(
+                            Icons.Default.OpenInBrowser,
+                            contentDescription = "Open in browser"
+                        )
                     }
                 }
             )
@@ -130,14 +204,27 @@ fun MakerWorldBrowserScreen(
                             override fun shouldOverrideUrlLoading(
                                 view: WebView?,
                                 request: WebResourceRequest?
-                            ): Boolean = false
+                            ): Boolean {
+                                val targetUrl = request?.url ?: return false
+                                if (targetUrl.shouldOpenExternallyForAuth()) {
+                                    requestExternalAuth(targetUrl.toString())
+                                    return true
+                                }
+                                return false
+                            }
 
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 isLoading = true
+                                if (!url.isNullOrBlank()) {
+                                    currentUrl = url
+                                }
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
+                                if (!url.isNullOrBlank()) {
+                                    currentUrl = url
+                                }
                                 // Try to extract auth cookies on every makerworld.com page load.
                                 // The two-stage login sets real auth cookies only after the
                                 // second "Continue" step, so we check every page.
@@ -174,8 +261,13 @@ fun MakerWorldBrowserScreen(
                                             popupView: WebView?,
                                             request: WebResourceRequest?
                                         ): Boolean {
-                                            val targetUrl = request?.url?.toString() ?: return false
-                                            mainWebView.loadUrl(targetUrl)
+                                            val targetUrl = request?.url ?: return false
+                                            if (targetUrl.shouldOpenExternallyForAuth()) {
+                                                requestExternalAuth(targetUrl.toString())
+                                                popupView?.destroy()
+                                                return true
+                                            }
+                                            mainWebView.loadUrl(targetUrl.toString())
                                             popupView?.destroy()
                                             return true
                                         }
@@ -186,6 +278,14 @@ fun MakerWorldBrowserScreen(
                                             favicon: Bitmap?
                                         ) {
                                             if (url.isNullOrBlank()) return
+                                            currentUrl = url
+                                            val parsed = Uri.parse(url)
+                                            if (parsed.shouldOpenExternallyForAuth()) {
+                                                requestExternalAuth(url)
+                                                popupView?.stopLoading()
+                                                popupView?.destroy()
+                                                return
+                                            }
                                             mainWebView.loadUrl(url)
                                             popupView?.stopLoading()
                                             popupView?.destroy()

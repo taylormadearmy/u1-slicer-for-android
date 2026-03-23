@@ -145,19 +145,19 @@ class MakerWorldUtilsTest {
     @Test
     fun `classifyDownloadError - login required in body`() {
         val msg = MakerWorldUtils.classifyDownloadError(200, "Please log in to continue")
-        assertTrue(msg.contains("download limit"))
+        assertTrue(msg.contains("share the model link"))
     }
 
     @Test
     fun `classifyDownloadError - unlogged in body`() {
         val msg = MakerWorldUtils.classifyDownloadError(403, "unlogged-in state")
-        assertTrue(msg.contains("download limit"))
+        assertTrue(msg.contains("share the model link"))
     }
 
     @Test
     fun `classifyDownloadError - 403 without body`() {
         val msg = MakerWorldUtils.classifyDownloadError(403, null)
-        assertTrue(msg.contains("requires login"))
+        assertTrue(msg.contains("share the model link"))
     }
 
     @Test
@@ -177,7 +177,7 @@ class MakerWorldUtilsTest {
     @Test
     fun `classifyNonZipResponse - login page`() {
         val msg = MakerWorldUtils.classifyNonZipResponse("<html>Please sign in</html>", 1024)
-        assertTrue(msg.contains("login"))
+        assertTrue(msg.contains("share the link"))
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.u1.slicer.ui
 
+import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -232,8 +233,12 @@ fun SettingsScreen(
             var cookieInput by remember { mutableStateOf("") }
             val hasCookies = makerWorldCookies.isNotBlank()
             var showCookieInfo by remember { mutableStateOf(false) }
+            var showMakerWorldModeInfo by remember { mutableStateOf(false) }
             if (showCookieInfo) {
                 CookieInfoDialog(onDismiss = { showCookieInfo = false })
+            }
+            if (showMakerWorldModeInfo) {
+                MakerWorldModeDialog(onDismiss = { showMakerWorldModeInfo = false })
             }
             val cookieFileLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.GetContent()
@@ -257,13 +262,52 @@ fun SettingsScreen(
                 }
             }
 
-            SettingsSection("MakerWorld") {
-                // Primary action: Browse MakerWorld in WebView
-                Button(
-                    onClick = onNavigateMakerWorldLogin,
+            SettingsSection(
+                title = "MakerWorld",
+                trailing = {
+                    IconButton(onClick = { showMakerWorldModeInfo = true }) {
+                        Icon(
+                            Icons.Outlined.Info,
+                            contentDescription = "MakerWorld help",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            ) {
+                Text(
+                    "Google sign-in is not supported inside the app browser. " +
+                        "Best results come from opening MakerWorld in your browser, then " +
+                        "downloading the 3MF/STL there or sharing the model link back to U1 Slicer.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) { Text("Browse MakerWorld") }
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://makerworld.com/en"))
+                            intent.addCategory(Intent.CATEGORY_BROWSABLE)
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Open MakerWorld in Browser") }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = onNavigateMakerWorldLogin,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("Browse MakerWorld in App") }
+                }
 
                 // Advanced: manual cookie entry (collapsed by default)
                 var showAdvanced by remember { mutableStateOf(false) }
@@ -298,15 +342,8 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f)
                             )
-                            IconButton(
-                                onClick = { showCookieInfo = true }
-                            ) {
-                                Icon(
-                                    Icons.Outlined.Info,
-                                    contentDescription = "Cookie instructions",
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
+                            TextButton(onClick = { showCookieInfo = true }) {
+                                Text("Cookie help")
                             }
                             Switch(
                                 checked = cookiesEnabled,
@@ -515,7 +552,11 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsSection(
+    title: String,
+    trailing: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -527,8 +568,15 @@ private fun SettingsSection(title: String, content: @Composable ColumnScope.() -
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp,
-                color = MaterialTheme.colorScheme.primary)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.primary)
+                trailing?.invoke()
+            }
             content()
         }
     }
@@ -568,23 +616,34 @@ private fun CookieInfoDialog(onDismiss: () -> Unit) {
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    "Recommended: Browse MakerWorld",
+                    "Recommended: Use your browser",
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
                 Text(
-                    "Tap \"Browse MakerWorld\" on the Prepare screen. Log in once and your session is saved. Downloads go straight to the slicer.",
+                    "Open MakerWorld in Chrome or your default browser, sign in there, then either download the 3MF/STL and open it with U1 Slicer or share the MakerWorld model link back to U1 Slicer.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
                 )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
-                    "Alternative: Manual cookie entry",
+                    "Optional: Browse MakerWorld in app",
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
                 Text(
-                    "If browsing doesn't work (e.g. social login), you can paste cookies manually:",
+                    "The in-app browser is still useful for public pages and direct downloads, but Google sign-in will open externally and browser login will not sync back into the in-app browser.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Text(
+                    "Advanced: Manual cookie entry",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                Text(
+                    "If you want shared-link imports to use your MakerWorld session, you can still paste cookies manually:",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
                 )
@@ -610,6 +669,38 @@ private fun CookieInfoDialog(onDismiss: () -> Unit) {
                     "Cookies expire periodically. If downloads stop working, browse MakerWorld again or refresh your cookies.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+        }
+    )
+}
+
+@Composable
+private fun MakerWorldModeDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Got it") }
+        },
+        title = { Text("Choose A MakerWorld Path") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Open MakerWorld in Browser",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to U1 Slicer.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                HorizontalDivider()
+                Text(
+                    "Browse MakerWorld in App",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    "Best for quick public browsing and direct in-app downloads. Google sign-in is not supported inside the app browser, and browser login will not sync back into it.",
+                    style = MaterialTheme.typography.bodySmall
                 )
             }
         }

@@ -33,6 +33,7 @@
                 <data android:scheme="content" />
                 <data android:scheme="file" />
                 <data android:mimeType="application/sla" />
+                <data android:mimeType="binary/octet-stream" />
                 <data android:mimeType="model/stl" />
                 <data android:mimeType="application/vnd.ms-pki.stl" />
                 <data android:mimeType="application/vnd.ms-3mfdocument" />
@@ -48,6 +49,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="file" />
                 <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="binary/octet-stream" />
                 <data android:host="*" />
                 <data android:pathPattern=".*\\.3mf" />
                 <data android:pathPattern=".*\\.3MF" />
@@ -61,12 +63,42 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="content" />
                 <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="binary/octet-stream" />
+            </intent-filter>
+            <!-- Downloads app sometimes resolves taps using a downloads:// content URI
+                 without a useful MIME type. Match those narrowly by authority/path and
+                 rely on in-app filename validation after launch. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:host="downloads" android:pathPrefix="/all_downloads/" />
+                <data android:scheme="content" android:host="downloads" android:pathPrefix="/my_downloads/" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
                 <data android:mimeType="application/sla" />
                 <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="binary/octet-stream" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="model/stl" />
+                <data android:mimeType="application/vnd.ms-pki.stl" />
+                <data android:mimeType="application/vnd.ms-3mfdocument" />
+                <data android:mimeType="model/3mf" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+                <data android:mimeType="application/sla" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="binary/octet-stream" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
                 <data android:mimeType="model/stl" />
                 <data android:mimeType="application/vnd.ms-pki.stl" />
                 <data android:mimeType="application/vnd.ms-3mfdocument" />
