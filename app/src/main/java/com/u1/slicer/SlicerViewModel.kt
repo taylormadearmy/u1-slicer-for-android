@@ -1399,10 +1399,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         Log.i("SlicerVM", "Re-embedding 3MF ($reason) before slicing")
                         val isSingleExtruderRefresh = profileNeedsReEmbed && remap == null && _config.value.extruderCount <= 1
-                        if (!isSingleExtruderRefresh) {
+                        val shouldAvoidReloadClear = firstSliceAfterUpgrade && remap == null
+                        if (!isSingleExtruderRefresh && !shouldAvoidReloadClear) {
                             // Multi-extruder/remap path: clear first to avoid OOM from holding
                             // two large model instances in native memory during re-load.
                             native.clearModel()
+                        } else if (shouldAvoidReloadClear) {
+                            diagnostics.recordEvent(
+                                "upgrade_slice_skip_clear_model",
+                                mapOf(
+                                    "firstSliceAfterUpgrade" to true,
+                                    "reason" to "avoid clearModel() before reload on the first slice after upgrade"
+                                )
+                            )
                         }
                         // Single-extruder settings refresh: skip clearModel() — files are small
                         // (no OOM risk) and clearModel()+loadModel() can corrupt native statics,

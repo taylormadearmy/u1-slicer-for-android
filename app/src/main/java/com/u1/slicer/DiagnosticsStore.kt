@@ -326,6 +326,7 @@ class DiagnosticsStore(private val context: Context) {
             "hard_crash_during_slice",
             "manual_restart_requested",
             "manual_reset_app_state",
+            "upgrade_slice_skip_clear_model",
             "restart_requested",
             "clipper_recovery_deferred"
         )
@@ -353,6 +354,7 @@ class DiagnosticsStore(private val context: Context) {
                 "hard_crash_during_slice" -> "hard_crash_during_slice"
                 "manual_restart_requested" -> "manual_restart_requested"
                 "manual_reset_app_state" -> "manual_reset_app_state files=${obj.optInt("filesCleared")} cache=${obj.optInt("cacheCleared")} total=${obj.optInt("totalCleared")}"
+                "upgrade_slice_skip_clear_model" -> "upgrade_slice_skip_clear_model reason=${obj.optString("reason")}"
                 "restart_requested" -> "restart_requested trigger=${obj.optString("trigger")}"
                 "clipper_recovery_deferred" -> "clipper_recovery_deferred"
                 else -> type
