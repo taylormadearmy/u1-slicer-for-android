@@ -1685,7 +1685,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Proactive recovery from Clipper errors: clear all intermediate cache files,
-     * reset native state, re-run the full pipeline from rawInputFile, then re-slice.
+     * reset native state, and surface a recoverable error instead of killing the app.
      *
      * Uses rawInputFile (the pre-sanitize raw copy, e.g. "Button-for-S-trousers.3mf") rather
      * than sourceModelFile / plateFile because those are intermediate files (sanitized_* /
@@ -1693,42 +1693,36 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * and survives the cache clear.
      */
     private fun attemptClipperRecovery() {
-        // Clipper coordinate overflow is caused by stale native static state that
-        // accumulates across model loads within the same process. In-process recovery
-        // (clearModel + re-pipeline + re-slice) doesn't work — same native statics
-        // produce identical failures. A process restart (SIGKILL + AlarmManager relaunch)
-        // gives fresh JNI_OnLoad with clean state, which fixes the issue.
-        Log.w("SlicerVM", "Clipper error: restarting app for fresh native state")
-        diagnostics.markClipperRecoveryPending()
+        Log.w("SlicerVM", "Clipper error: leaving app running and surfacing recoverable error")
         diagnostics.recordEvent(
-            "clipper_recovery_restart",
+            "clipper_recovery_deferred",
             mapOf(
                 "rawFile" to rawInputFile?.absolutePath,
                 "plateId" to recoveryPlateId,
                 "currentModelPath" to currentModelFile?.absolutePath
             )
         )
-        _state.value = SlicerState.Slicing(0, "Restarting for clean state…")
-        restartApp()
+        native.clearModel()
+        diagnostics.clearSliceInProgress()
+        _state.value = SlicerState.Error(
+            "Slicing failed: geometry overflow.\n\n" +
+                "Try reducing copies, moving the wipe tower, or restarting the app and trying again."
+        )
     }
 
     /**
-     * Nuclear option: clear all cache, kill process, restart via AlarmManager.
-     * Guarantees fresh native state (clean JNI_OnLoad). Used as last resort for Clipper errors.
+     * Nuclear option: clear transient cache, reset native state, and exit the current process.
+     * The user can reopen the app manually to get a fresh JNI/native init.
      */
     fun restartApp() {
         val app = getApplication<Application>()
         diagnostics.markUpgradeRestartRequested("manual_restart", safeNativeDiagnosticsState())
         UpgradeDetector.clearIntermediateCache(app.filesDir)
+        app.cacheDir.deleteRecursively()
+        diagnostics.consumePendingUpgradeMarker()
         native.clearModel()
-        val intent = app.packageManager.getLaunchIntentForPackage(app.packageName)
-        intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        val pi = android.app.PendingIntent.getActivity(
-            app, 0, intent,
-            android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        val am = app.getSystemService(android.app.AlarmManager::class.java)
-        am.set(android.app.AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + 500, pi)
+        clearModel()
+        Log.i("SlicerVM", "Manual restart requested: cleared transient cache and exiting")
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 
@@ -1941,19 +1935,30 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    fun clearCacheFiles(): Int {
-        val ctx = getApplication<Application>()
+    private fun deleteRecursivelyCount(file: File): Int {
+        if (!file.exists()) return 0
         var count = 0
-        ctx.filesDir.listFiles()?.forEach { f ->
-            if (f.name.endsWith(".3mf") || f.name.endsWith(".gcode")) {
-                f.delete()
-                count++
+        if (file.isDirectory) {
+            file.listFiles()?.forEach { child ->
+                count += deleteRecursivelyCount(child)
             }
         }
-        if (count > 0) {
-            clearModel()
-            Log.i("SlicerVM", "Manually cleared $count cached files")
-        }
+        if (file.delete()) count++
+        return count
+    }
+
+    fun resetAppState(): Int {
+        val ctx = getApplication<Application>()
+        val filesCleared = deleteRecursivelyCount(ctx.filesDir)
+        val cacheCleared = deleteRecursivelyCount(ctx.cacheDir)
+        diagnostics.consumePendingUpgradeMarker()
+        diagnostics.consumeClipperRecoveryPending()
+        diagnostics.consumeSliceInProgressMarker()
+        val count = filesCleared + cacheCleared
+        native.clearModel()
+        clearModel()
+        Log.i("SlicerVM", "Manually reset app state: cleared $count files/directories")
+        android.os.Process.killProcess(android.os.Process.myPid())
         return count
     }
 

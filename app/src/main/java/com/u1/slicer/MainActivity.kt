@@ -75,24 +75,6 @@ class MainActivity : ComponentActivity() {
         uri?.let { viewModel.saveGcodeTo(it) }
     }
 
-    private fun scheduleSelfRestartAndKill() {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        val pendingIntent = android.app.PendingIntent.getActivity(
-            this,
-            0,
-            launchIntent,
-            android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        val alarmManager = getSystemService(android.app.AlarmManager::class.java)
-        alarmManager.set(
-            android.app.AlarmManager.RTC_WAKEUP,
-            System.currentTimeMillis() + 500,
-            pendingIntent
-        )
-        android.os.Process.killProcess(android.os.Process.myPid())
-    }
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIncomingIntent(intent)
@@ -241,14 +223,16 @@ class MainActivity : ComponentActivity() {
 
         when (detector.detect(saved, current)) {
             UpgradeDetector.Result.APK_CHANGED -> {
-                // APK changed — aggressively delete ALL cached 3MF and G-code files.
-                // We used to force a relaunch here to try to recover stale native state,
-                // but v1.3.64 showed the real fix was the guarded first post-upgrade slice
-                // path, not the restart itself.
-                val count = detector.filesToClearOnUpgrade(filesDir).onEach { it.delete() }.size
+                // APK changed — aggressively delete generated cache files and exit.
+                // Android 15 blocks background self-relaunches, so we keep the purge and
+                // ask the user to reopen the app manually for a fresh process.
+                val cacheFilesCleared = UpgradeDetector.clearIntermediateCache(filesDir)
+                val modelFilesCleared = detector.filesToClearOnUpgrade(filesDir).onEach { it.delete() }.size
+                cacheDir.deleteRecursively()
+                val count = cacheFilesCleared + modelFilesCleared
                 val reason = if (saved.lastVersionCode != currentVersion)
                     "version ${saved.lastVersionCode}→$currentVersion" else "APK reinstalled"
-                Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files, restarting into fresh process")
+                Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files/directories, exiting for a fresh process")
                 diagnostics.recordEvent(
                     "upgrade_check",
                     mapOf(
@@ -279,7 +263,8 @@ class MainActivity : ComponentActivity() {
                 diagnostics.consumeClipperRecoveryPending()
                 diagnostics.consumeSliceInProgressMarker()
                 diagnostics.markUpgradeRestartRequested("apk_changed", null)
-                scheduleSelfRestartAndKill()
+                viewModel.clearModel()
+                android.os.Process.killProcess(android.os.Process.myPid())
                 return true
             }
             UpgradeDetector.Result.SAME_APK -> {

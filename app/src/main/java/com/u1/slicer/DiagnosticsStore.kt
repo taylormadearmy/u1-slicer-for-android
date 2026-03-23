@@ -207,6 +207,15 @@ class DiagnosticsStore(private val context: Context) {
         return persisted
     }
 
+    fun consumePendingUpgradeMarker(): Boolean {
+        val pending = prefs.contains(KEY_PENDING_RESTART)
+        if (pending) {
+            prefs.edit().remove(KEY_PENDING_RESTART).apply()
+            sessionHasPostUpgradeGuard = false
+        }
+        return pending
+    }
+
     private fun persistPendingUpgradeMarker(trigger: String, nativeStateJson: String?): Boolean {
         val nativeState = nativeStateJson?.let(::parseNativeState)
         val marker = JSONObject()

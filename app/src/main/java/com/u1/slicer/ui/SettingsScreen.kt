@@ -531,18 +531,22 @@ fun SettingsScreen(
 
                 OutlinedButton(
                     onClick = {
-                        val count = viewModel.clearCacheFiles()
-                        backupStatus = if (count > 0) "Cleared $count cached files" else "No cached files to clear"
+                        val count = viewModel.resetAppState()
+                        backupStatus = if (count > 0) {
+                            "Reset app state and cleared $count files/directories"
+                        } else {
+                            "Reset app state"
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.outlinedButtonColors(
                         contentColor = MaterialTheme.colorScheme.error
                     )
-                ) { Text("Clear Cache") }
+                ) { Text("Reset App State") }
 
                 Text(
-                    "Deletes cached 3MF and G-code files. Use if slicing fails after an update.",
+                    "Clears generated files, cache, and recovery markers, then closes the app. Reopen it afterward if slicing fails after an update.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
