@@ -154,6 +154,10 @@ class DiagnosticsStore(private val context: Context) {
     fun consumeSliceInProgressMarker(): String? {
         val marker = prefs.getString(KEY_SLICE_IN_PROGRESS, null) ?: return null
         prefs.edit().remove(KEY_SLICE_IN_PROGRESS).apply()
+        recordEvent(
+            "slice_in_progress_marker_consumed",
+            mapOf("marker" to marker)
+        )
         return marker
     }
 
@@ -172,7 +176,10 @@ class DiagnosticsStore(private val context: Context) {
      */
     fun consumeClipperRecoveryPending(): Boolean {
         val pending = prefs.getBoolean(KEY_CLIPPER_RECOVERY_PENDING, false)
-        if (pending) prefs.edit().remove(KEY_CLIPPER_RECOVERY_PENDING).apply()
+        if (pending) {
+            prefs.edit().remove(KEY_CLIPPER_RECOVERY_PENDING).apply()
+            recordEvent("clipper_recovery_pending_consumed", mapOf("pending" to true))
+        }
         return pending
     }
 
@@ -210,8 +217,13 @@ class DiagnosticsStore(private val context: Context) {
     fun consumePendingUpgradeMarker(): Boolean {
         val pending = prefs.contains(KEY_PENDING_RESTART)
         if (pending) {
+            val marker = prefs.getString(KEY_PENDING_RESTART, null)
             prefs.edit().remove(KEY_PENDING_RESTART).apply()
             sessionHasPostUpgradeGuard = false
+            recordEvent(
+                "pending_upgrade_marker_consumed",
+                mapOf("marker" to marker)
+            )
         }
         return pending
     }
@@ -273,6 +285,7 @@ class DiagnosticsStore(private val context: Context) {
         diagnosticsDir.mkdirs()
         val pendingRestart = prefs.getString(KEY_PENDING_RESTART, null)
         val historyLines = if (historyFile.exists()) historyFile.readLines() else emptyList()
+        val timelineLines = buildTimelineLines(historyLines)
         val out = buildString {
             appendLine("U1 Slicer Clipper Investigation Bundle")
             appendLine("sessionId=$sessionId")
@@ -284,12 +297,73 @@ class DiagnosticsStore(private val context: Context) {
             appendLine("sessionHasPostUpgradeGuard=$sessionHasPostUpgradeGuard")
             if (!latestError.isNullOrBlank()) appendLine("latestError=$latestError")
             appendLine("pendingUpgradeMarker=${pendingRestart ?: "<none>"}")
+            if (timelineLines.isNotEmpty()) {
+                appendLine()
+                appendLine("Timeline:")
+                timelineLines.forEach { appendLine(it) }
+            }
             appendLine()
             appendLine("Recent events:")
             trimToMax(historyLines, MAX_HISTORY_LINES).forEach { appendLine(it) }
         }
         bundleFile.writeText(out)
         return bundleFile
+    }
+
+    private fun buildTimelineLines(historyLines: List<String>): List<String> {
+        val interesting = setOf(
+            "app_launch",
+            "upgrade_check",
+            "native_configured",
+            "post_upgrade_guard_armed",
+            "post_upgrade_guard_observed",
+            "post_upgrade_slice_settled",
+            "pending_upgrade_marker_consumed",
+            "slice_in_progress_marker_consumed",
+            "clipper_recovery_pending_consumed",
+            "clipper_recovery_suppressed",
+            "clipper_failure",
+            "hard_crash_during_slice",
+            "manual_restart_requested",
+            "manual_reset_app_state",
+            "restart_requested",
+            "clipper_recovery_deferred"
+        )
+        return historyLines.mapNotNull { line ->
+            val obj = try {
+                JSONObject(line)
+            } catch (_: Exception) {
+                return@mapNotNull null
+            }
+            val type = obj.optString("type")
+            if (type !in interesting) return@mapNotNull null
+            val timestamp = obj.optLong("timestampMs", 0L)
+            val summary = when (type) {
+                "app_launch" -> "app_launch guard=${obj.optString("sessionHasPostUpgradeGuard")}"
+                "upgrade_check" -> "upgrade_check result=${obj.optString("result")} reason=${obj.optString("reason")}"
+                "native_configured" -> "native_configured state=${obj.optString("nativeState")}"
+                "post_upgrade_guard_armed" -> "post_upgrade_guard_armed trigger=${obj.optString("trigger")} persisted=${obj.optString("markerPersisted")}"
+                "post_upgrade_guard_observed" -> "post_upgrade_guard_observed status=${obj.optString("status")}"
+                "post_upgrade_slice_settled" -> "post_upgrade_slice_settled"
+                "pending_upgrade_marker_consumed" -> "pending_upgrade_marker_consumed"
+                "slice_in_progress_marker_consumed" -> "slice_in_progress_marker_consumed"
+                "clipper_recovery_pending_consumed" -> "clipper_recovery_pending_consumed"
+                "clipper_recovery_suppressed" -> "clipper_recovery_suppressed"
+                "clipper_failure" -> "clipper_failure source=${obj.optString("source")} autoRecovery=${obj.optString("autoRecoveryAttempted")}"
+                "hard_crash_during_slice" -> "hard_crash_during_slice"
+                "manual_restart_requested" -> "manual_restart_requested"
+                "manual_reset_app_state" -> "manual_reset_app_state files=${obj.optInt("filesCleared")} cache=${obj.optInt("cacheCleared")} total=${obj.optInt("totalCleared")}"
+                "restart_requested" -> "restart_requested trigger=${obj.optString("trigger")}"
+                "clipper_recovery_deferred" -> "clipper_recovery_deferred"
+                else -> type
+            }
+            val timeText = if (timestamp > 0L) {
+                java.time.Instant.ofEpochMilli(timestamp).toString()
+            } else {
+                "unknown-time"
+            }
+            "$timeText $summary"
+        }.takeLast(25)
     }
 
     private fun trimHistory() {

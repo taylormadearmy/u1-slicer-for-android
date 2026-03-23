@@ -1238,7 +1238,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // auto-restarts to prevent crash loops (error → restart → same error → restart).
         if (diagnostics.consumeClipperRecoveryPending()) {
             clipperRetryAttempted = true
-            Log.i("SlicerVM", "Previous session was clipper recovery — suppressing further auto-restarts")
+            diagnostics.recordEvent(
+                "clipper_recovery_suppressed",
+                mapOf(
+                    "currentSessionId" to diagnostics.sessionId,
+                    "currentPid" to android.os.Process.myPid()
+                )
+            )
         }
         try {
             native.configureDiagnostics(diagnostics.diagnosticsPath())
@@ -1722,7 +1728,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         diagnostics.consumePendingUpgradeMarker()
         native.clearModel()
         clearModel()
-        Log.i("SlicerVM", "Manual restart requested: cleared transient cache and exiting")
+        diagnostics.recordEvent(
+            "manual_restart_requested",
+            mapOf(
+                "clearedIntermediateCache" to true,
+                "clearedCacheDir" to true
+            )
+        )
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 
@@ -1957,7 +1969,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val count = filesCleared + cacheCleared
         native.clearModel()
         clearModel()
-        Log.i("SlicerVM", "Manually reset app state: cleared $count files/directories")
+        diagnostics.recordEvent(
+            "manual_reset_app_state",
+            mapOf(
+                "filesCleared" to filesCleared,
+                "cacheCleared" to cacheCleared,
+                "totalCleared" to count
+            )
+        )
         android.os.Process.killProcess(android.os.Process.myPid())
         return count
     }
