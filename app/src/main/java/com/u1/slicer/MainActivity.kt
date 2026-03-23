@@ -227,9 +227,9 @@ class MainActivity : ComponentActivity() {
                 // Android 15 blocks background self-relaunches, so we keep the purge and
                 // ask the user to reopen the app manually for a fresh process.
                 val cacheFilesCleared = UpgradeDetector.clearIntermediateCache(filesDir)
-                val modelFilesCleared = detector.filesToClearOnUpgrade(filesDir).onEach { it.delete() }.size
+                val transientFilesCleared = UpgradeDetector.clearUpgradeTransientFiles(filesDir)
                 cacheDir.deleteRecursively()
-                val count = cacheFilesCleared + modelFilesCleared
+                val count = cacheFilesCleared + transientFilesCleared
                 val reason = if (saved.lastVersionCode != currentVersion)
                     "version ${saved.lastVersionCode}→$currentVersion" else "APK reinstalled"
                 Log.i("SlicerVM", "APK change detected ($reason): cleared $count cached files/directories, exiting for a fresh process")

@@ -160,6 +160,31 @@ class UpgradeDetectorTest {
     }
 
     @Test
+    fun `upgradeTransientFiles clears generated files but preserves diagnostics and datastore`() {
+        val dir = tempDir.root
+        val datastore = File(dir, "datastore").apply { mkdirs() }
+        File(datastore, "u1_slicer_settings.preferences_pb").createNewFile()
+        val diagnostics = File(dir, "diagnostics").apply { mkdirs() }
+        File(diagnostics, "clipper_investigation.jsonl").createNewFile()
+        File(dir, "profileInstalled").createNewFile()
+        File(dir, "embedded_model.3mf").createNewFile()
+        File(dir, "sanitized_model.3mf").createNewFile()
+        val scratch = File(dir, "scratch").apply { mkdirs() }
+        File(scratch, "nested.tmp").createNewFile()
+
+        val files = UpgradeDetector.upgradeTransientFiles(dir)
+        val names = files.map { it.name }.toSet()
+
+        assertTrue("embedded model should be cleared", "embedded_model.3mf" in names)
+        assertTrue("sanitized model should be cleared", "sanitized_model.3mf" in names)
+        assertTrue("profileInstalled should be cleared", "profileInstalled" in names)
+        assertTrue("nested scratch file should be cleared", "nested.tmp" in names)
+        assertTrue("scratch directory should be cleared", "scratch" in names)
+        assertFalse("datastore must be preserved", "datastore" in names)
+        assertFalse("diagnostics must be preserved", "diagnostics" in names)
+    }
+
+    @Test
     fun `filesToClearOnStartup also clears stale files on normal launch`() {
         // Even without upgrade detection, SAME_APK clears transient files
         // as a safety net against stale cache from a crash-killed process
