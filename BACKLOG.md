@@ -4,17 +4,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B38: Post-upgrade native Clipper/helper-geometry failure on first slice - INVESTIGATING
-- Strongly associated with install/upgrade-over-the-top flows, especially on Pixel 9a and now reliably on Pixel 6 release repro loops
-- Historically presented as `Coordinate outside allowed range`, geometry overflow, or visually wrong first slice after upgrade
-- Current best concrete failing path is still `GCode.head_wrap_detect_zone.union`, but the latest release bundles also show the bad pre-`Outer wall` block as unlabeled `OTHER` geometry with impossible model-bearing coordinates
-- Latest release-side loop (`v1.4.74`-`v1.4.75`) confirmed:
-  - the bad result is still rejected as invalid
-  - the same suspicious block persists around lines ~694-703
-  - the new writer / first-layer breadcrumbs still are not surfacing in exported diagnostics bundles
-  - failure shape alternates between sentinel-style and finite but wrong Y coordinates
-  - the block shape is stable, but the Y coordinate generation differs between good and bad runs
-- Deep investigation notes, repro history, and narrowed hypotheses live in [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md)
+### B38: Post-upgrade native slicing failure — FIXED v1.5.0
+- Root cause: `Print::m_origin` (Vec3d) uninitialized — on Android `set_plate_origin()` is never called, so release builds read garbage (sometimes `-inf`) for the Y component, corrupting all wipe tower travel moves
+- Secondary: `Print::m_isBBLPrinter` (bool) uninitialized — release builds sometimes selected the wrong BBL wipe tower
+- Fix: default initializers for both members + audit of other uninitialized fields in Print-related classes
+- Full investigation history in [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md)
 
 ### B34: Printer light button icon confused for app theme toggle (GitHub #7) — FIXED
 - The button used `Icons.Default.LightMode` (sun) / `Icons.Default.DarkMode` (moon) — identical to Android's theme-switch icons
@@ -79,6 +73,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Blocked**: upstream was v0.9.4 alpha as of 2026-03-12, untested on real hardware
 - Wait for v1.0 / hardware-verified release before porting
 - Requires native .so rebuild
+
+### D1: Document slicer engine upgrade process
+- Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
+- Should document: submodule pin process, our Android-specific patches that must be re-applied (`#ifdef __ANDROID__` diagnostics, initializer fixes, build fixes for clipper.hpp/Brim.cpp/CutSurface.cpp), SAPIL JNI interface contract, config key differences, native rebuild workflow
+- Include a checklist for testing after an engine upgrade
+- Useful for both routine Snapmaker Orca updates and the eventual FullSpectrum fork evaluation (F14)
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
