@@ -4,6 +4,18 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B38: Post-upgrade native Clipper/helper-geometry failure on first slice - INVESTIGATING
+- Strongly associated with install/upgrade-over-the-top flows, especially on Pixel 9a and now reliably on Pixel 6 release repro loops
+- Historically presented as `Coordinate outside allowed range`, geometry overflow, or visually wrong first slice after upgrade
+- Current best concrete failing path is still `GCode.head_wrap_detect_zone.union`, but the latest release bundles also show the bad pre-`Outer wall` block as unlabeled `OTHER` geometry with impossible model-bearing coordinates
+- Latest release-side loop (`v1.4.74`-`v1.4.75`) confirmed:
+  - the bad result is still rejected as invalid
+  - the same suspicious block persists around lines ~694-703
+  - the new writer / first-layer breadcrumbs still are not surfacing in exported diagnostics bundles
+  - failure shape alternates between sentinel-style and finite but wrong Y coordinates
+  - the block shape is stable, but the Y coordinate generation differs between good and bad runs
+- Deep investigation notes, repro history, and narrowed hypotheses live in [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md)
+
 ### B34: Printer light button icon confused for app theme toggle (GitHub #7) — FIXED
 - The button used `Icons.Default.LightMode` (sun) / `Icons.Default.DarkMode` (moon) — identical to Android's theme-switch icons
 - Fixed: changed to `Icons.Default.Lightbulb` (yellow when on, dimmed when off) — clearly a physical light, not a UI theme toggle
@@ -29,6 +41,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 ### B36: MakerWorld download/loading text is unclear — FIXED v1.4.22
 - Status messages during MakerWorld import were confusing (e.g. "Loading Downloading from MakerWorld……")
 - Fixed: each loading state now provides a complete display message ("Downloading from MakerWorld…", "Loading model.3mf…", "Preparing model…")
+
+### B37: Hueforge filament pauses / colour changes are dropped when sliced in-app (GitHub #21)
+- Repro model from issue: `https://makerworld.com/models/402958?appSharePlatform=copy`
+- Reported behavior: the source 3MF includes the required colour changes at specific layer heights, but after slicing in the app those pauses/tool changes are not emitted
+- Visible symptom: Slice Summary / filament usage attributes the whole print to nozzle 2 and excludes nozzles 3 and 4
+- Investigate whether Hueforge-style layer-based filament swaps are being lost during 3MF import, profile embed/sanitize, native config translation, or G-code post-processing
+- Need a regression asset/test once root cause is understood, since this is a real multi-colour workflow rather than a standard per-object extruder assignment case
 
 ## Open Cleanup
 

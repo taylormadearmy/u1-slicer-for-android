@@ -22,6 +22,9 @@ namespace sapil {
 void diagnostics_set_output_path(const std::string& path);
 std::string diagnostics_get_state_json();
 void diagnostics_record_native_event(const std::string& event, const std::string& payload_json = "{}");
+void diagnostics_trace_native_event(const std::string& event, const std::string& payload_json = "{}");
+void diagnostics_clear_trace_buffer();
+void diagnostics_flush_trace_buffer(const std::string& reason);
 void diagnostics_note_clipper_point(long long x, long long y, const char* source);
 
 // ---- Progress Callback ----

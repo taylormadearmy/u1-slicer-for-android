@@ -3,9 +3,10 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.4.32` (`versionCode 121`)
+Current release: `v1.5.0` (`versionCode 166`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
+> For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
 
 ## Build
 
@@ -56,7 +57,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
-### Unit tests (`app/src/test/`) - 515 tests across 31 classes
+### Unit tests (`app/src/test/`) - 517 tests across 31 classes
 - `gcode/GcodeParserTest.kt` (26) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109

@@ -1,5 +1,6 @@
 #include "../include/sapil.h"
 #include "sapil_internal.h"
+#include "sapil_diagnostics.h"
 #include <fstream>
 #include <algorithm>
 #include <cmath>
@@ -374,11 +375,20 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh() const {
 std::string getFilesDir() { return g_files_dir; }
 
 void SlicerEngine::clearModel() {
-    g_model.clear_objects();
+    const size_t old_object_count = g_model.objects.size();
+    const size_t old_preview_count = g_model_preview_extruders.size();
+    g_model = Slic3r::Model();
     g_model_config = Slic3r::DynamicPrintConfig();
     g_model_info = ModelInfo();
     g_model_loaded = false;
     g_model_preview_extruders.clear();
+    g_files_dir.clear();
+    std::ostringstream payload;
+    payload << "{"
+            << "\"oldObjectCount\":" << old_object_count << ","
+            << "\"oldPreviewObjectCount\":" << old_preview_count
+            << "}";
+    diagnostics_record_native_event("native_model_cleared", payload.str());
     SAPIL_LOGI("Model cleared");
 }
 

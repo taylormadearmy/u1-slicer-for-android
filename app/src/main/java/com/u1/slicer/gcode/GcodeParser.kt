@@ -19,12 +19,15 @@ object GcodeParser {
         var absoluteE = true
         var perExtruderMm = emptyList<Float>()
         var currentFeatureType: Byte = FeatureType.OTHER
+        var currentFeatureLabel: String = "OTHER"
         var wipeTowerE = 0f      // total E extruded in prime/wipe tower regions
         var wipeTowerEStart = Float.NaN  // E value at entry to prime tower region
 
         BufferedReader(FileReader(file)).use { reader ->
+            var lineNumber = 0
             var line: String?
             while (reader.readLine().also { line = it } != null) {
+                lineNumber++
                 val l = line!!
                 val len = l.length
 
@@ -52,6 +55,7 @@ object GcodeParser {
                     if (startsWithAt(l, start, ";TYPE:")) {
                         val typeName = l.substring(start + 6).trim()
                         val prevFeature = currentFeatureType
+                        currentFeatureLabel = typeName
                         currentFeatureType = when {
                             typeName.startsWith("Outer wall")            -> FeatureType.OUTER_WALL
                             typeName.startsWith("Inner wall")            -> FeatureType.INNER_WALL
@@ -134,7 +138,9 @@ object GcodeParser {
                                 type = if (isExtrude) MoveType.EXTRUDE else MoveType.TRAVEL,
                                 x0 = x, y0 = y, x1 = newX, y1 = newY,
                                 extruder = currentExtruder,
-                                featureType = currentFeatureType
+                                featureType = currentFeatureType,
+                                lineNumber = lineNumber,
+                                featureLabel = currentFeatureLabel
                             ))
                         }
                         x = newX; y = newY

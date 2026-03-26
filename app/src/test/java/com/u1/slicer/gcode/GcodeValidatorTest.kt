@@ -369,4 +369,117 @@ class GcodeValidatorTest {
         val gcode = "G28\nG1 X10\nM84\n"
         assertNull(GcodeValidator.extractEstimatedTime(gcode))
     }
+
+    @Test
+    fun summarizeParsedOutput_countsModelAndPrimeTowerExtrusionSeparately() {
+        val parsed = ParsedGcode(
+            layers = listOf(
+                GcodeLayer(
+                    index = 0,
+                    z = 0.2f,
+                    moves = listOf(
+                        GcodeMove(MoveType.TRAVEL, 0f, 0f, 10f, 10f),
+                        GcodeMove(MoveType.EXTRUDE, 10f, 10f, 20f, 20f, featureType = FeatureType.OUTER_WALL),
+                        GcodeMove(MoveType.EXTRUDE, 20f, 20f, 30f, 30f, featureType = FeatureType.PRIME_TOWER)
+                    )
+                )
+            )
+        )
+
+        val summary = GcodeValidator.summarizeParsedOutput(parsed)
+
+        assertEquals(1, summary.layerCount)
+        assertEquals(3, summary.totalMoves)
+        assertEquals(2, summary.extrudeMoves)
+        assertEquals(1, summary.nonPrimeExtrudeMoves)
+        assertEquals(1, summary.primeTowerExtrudeMoves)
+        assertEquals(1, summary.modelExtrudeMoves)
+        assertEquals(0, summary.skirtExtrudeMoves)
+        assertNotNull(summary.modelExtrudeBounds)
+        assertEquals(10f, summary.modelExtrudeBounds!!.minX, 0.001f)
+        assertEquals(20f, summary.modelExtrudeBounds!!.maxX, 0.001f)
+        assertFalse(GcodeValidator.isEffectivelyEmpty(summary))
+    }
+
+    @Test
+    fun isEffectivelyEmpty_trueWhenOnlyPrimeTowerExtrusionExists() {
+        val parsed = ParsedGcode(
+            layers = listOf(
+                GcodeLayer(
+                    index = 0,
+                    z = 0.2f,
+                    moves = listOf(
+                        GcodeMove(MoveType.EXTRUDE, 10f, 10f, 20f, 20f, featureType = FeatureType.PRIME_TOWER)
+                    )
+                )
+            )
+        )
+
+        val summary = GcodeValidator.summarizeParsedOutput(parsed)
+
+        assertEquals(1, summary.extrudeMoves)
+        assertEquals(0, summary.nonPrimeExtrudeMoves)
+        assertEquals(1, summary.primeTowerExtrudeMoves)
+        assertEquals(0, summary.modelExtrudeMoves)
+        assertTrue(GcodeValidator.isEffectivelyEmpty(summary))
+    }
+
+    @Test
+    fun isEffectivelyEmpty_trueWhenOnlySkirtExtrusionExists() {
+        val parsed = ParsedGcode(
+            layers = listOf(
+                GcodeLayer(
+                    index = 0,
+                    z = 0.2f,
+                    moves = listOf(
+                        GcodeMove(MoveType.EXTRUDE, 5f, 5f, 25f, 5f, featureType = FeatureType.SKIRT),
+                        GcodeMove(MoveType.EXTRUDE, 25f, 5f, 25f, 25f, featureType = FeatureType.SKIRT)
+                    )
+                )
+            )
+        )
+
+        val summary = GcodeValidator.summarizeParsedOutput(parsed)
+
+        assertEquals(2, summary.extrudeMoves)
+        assertEquals(2, summary.nonPrimeExtrudeMoves)
+        assertEquals(0, summary.modelExtrudeMoves)
+        assertEquals(2, summary.skirtExtrudeMoves)
+        assertNull(summary.modelExtrudeBounds)
+        assertNotNull(summary.nonPrimeExtrudeBounds)
+        assertTrue(GcodeValidator.isEffectivelyEmpty(summary))
+    }
+
+    @Test
+    fun summarizeParsedOutput_flagsSuspiciousModelCoordinates() {
+        val parsed = ParsedGcode(
+            layers = listOf(
+                GcodeLayer(
+                    index = 0,
+                    z = 0.2f,
+                    moves = listOf(
+                        GcodeMove(
+                            MoveType.EXTRUDE,
+                            120f,
+                            130f,
+                            130f,
+                            -9.223372E15f,
+                            featureType = FeatureType.OUTER_WALL,
+                            lineNumber = 42,
+                            featureLabel = "Outer wall"
+                        )
+                    )
+                )
+            )
+        )
+
+        val summary = GcodeValidator.summarizeParsedOutput(parsed)
+
+        assertEquals(1, summary.modelExtrudeMoves)
+        assertEquals(1, summary.suspiciousModelExtrudeMoves)
+        assertEquals(1, summary.suspiciousModelSamples.size)
+        assertEquals(42, summary.suspiciousModelSamples[0].lineNumber)
+        assertEquals("Outer wall", summary.suspiciousModelSamples[0].featureLabel)
+        assertTrue(GcodeValidator.hasSuspiciousModelGeometry(summary))
+    }
 }

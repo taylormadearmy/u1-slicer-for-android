@@ -21,7 +21,9 @@ data class GcodeMove(
     val x0: Float, val y0: Float,
     val x1: Float, val y1: Float,
     val extruder: Int = 0,
-    val featureType: Byte = FeatureType.OUTER_WALL
+    val featureType: Byte = FeatureType.OUTER_WALL,
+    val lineNumber: Int = -1,
+    val featureLabel: String = ""
 )
 
 enum class MoveType {

@@ -9,6 +9,43 @@ package com.u1.slicer.gcode
  */
 object GcodeValidator {
 
+    data class MoveSample(
+        val x0: Float,
+        val y0: Float,
+        val x1: Float,
+        val y1: Float,
+        val featureType: Byte,
+        val lineNumber: Int,
+        val featureLabel: String
+    )
+
+    data class ExtrusionBounds(
+        val minX: Float,
+        val maxX: Float,
+        val minY: Float,
+        val maxY: Float,
+        val moveCount: Int
+    ) {
+        val width get() = maxX - minX
+        val depth get() = maxY - minY
+    }
+
+    data class OutputSummary(
+        val layerCount: Int,
+        val totalMoves: Int,
+        val extrudeMoves: Int,
+        val nonPrimeExtrudeMoves: Int,
+        val primeTowerExtrudeMoves: Int,
+        val modelExtrudeMoves: Int,
+        val skirtExtrudeMoves: Int,
+        val supportExtrudeMoves: Int,
+        val helperExtrudeMoves: Int,
+        val suspiciousModelExtrudeMoves: Int,
+        val suspiciousModelSamples: List<MoveSample>,
+        val modelExtrudeBounds: ExtrusionBounds?,
+        val nonPrimeExtrudeBounds: ExtrusionBounds?
+    )
+
     data class PrimeTowerFootprint(
         val minX: Double, val maxX: Double,
         val minY: Double, val maxY: Double,
@@ -124,6 +161,162 @@ object GcodeValidator {
 
     /** True if the G-code has at least one executable M104/M109 with non-zero S value. */
     fun hasNonZeroNozzleTemps(gcode: String) = extractNozzleTemps(gcode).isNotEmpty()
+
+    /**
+     * Summarize the parsed G-code in a way that helps distinguish a real slice from
+     * a false-positive "success" that only contains travel or prime-tower moves.
+     */
+    fun summarizeParsedOutput(parsed: ParsedGcode): OutputSummary {
+        var extrudeMoves = 0
+        var nonPrimeExtrudeMoves = 0
+        var primeTowerExtrudeMoves = 0
+        var modelExtrudeMoves = 0
+        var skirtExtrudeMoves = 0
+        var supportExtrudeMoves = 0
+        var helperExtrudeMoves = 0
+        var suspiciousModelExtrudeMoves = 0
+        val suspiciousModelSamples = mutableListOf<MoveSample>()
+        var modelMinX = Float.POSITIVE_INFINITY
+        var modelMaxX = Float.NEGATIVE_INFINITY
+        var modelMinY = Float.POSITIVE_INFINITY
+        var modelMaxY = Float.NEGATIVE_INFINITY
+        var nonPrimeMinX = Float.POSITIVE_INFINITY
+        var nonPrimeMaxX = Float.NEGATIVE_INFINITY
+        var nonPrimeMinY = Float.POSITIVE_INFINITY
+        var nonPrimeMaxY = Float.NEGATIVE_INFINITY
+        for (layer in parsed.layers) {
+            for (move in layer.moves) {
+                if (move.type != MoveType.EXTRUDE) continue
+                extrudeMoves++
+                if (move.featureType == FeatureType.PRIME_TOWER) {
+                    primeTowerExtrudeMoves++
+                } else {
+                    nonPrimeExtrudeMoves++
+                    nonPrimeMinX = minOf(nonPrimeMinX, move.x0, move.x1)
+                    nonPrimeMaxX = maxOf(nonPrimeMaxX, move.x0, move.x1)
+                    nonPrimeMinY = minOf(nonPrimeMinY, move.y0, move.y1)
+                    nonPrimeMaxY = maxOf(nonPrimeMaxY, move.y0, move.y1)
+                    when {
+                        isModelBearingFeature(move.featureType) -> {
+                            modelExtrudeMoves++
+                            modelMinX = minOf(modelMinX, move.x0, move.x1)
+                            modelMaxX = maxOf(modelMaxX, move.x0, move.x1)
+                            modelMinY = minOf(modelMinY, move.y0, move.y1)
+                            modelMaxY = maxOf(modelMaxY, move.y0, move.y1)
+                            if (isSuspiciousModelMove(move)) {
+                                suspiciousModelExtrudeMoves++
+                                if (suspiciousModelSamples.size < 5) {
+                                    suspiciousModelSamples += MoveSample(
+                                        x0 = move.x0,
+                                        y0 = move.y0,
+                                        x1 = move.x1,
+                                        y1 = move.y1,
+                                        featureType = move.featureType,
+                                        lineNumber = move.lineNumber,
+                                        featureLabel = move.featureLabel
+                                    )
+                                }
+                            }
+                        }
+                        move.featureType == FeatureType.SKIRT -> {
+                            skirtExtrudeMoves++
+                            helperExtrudeMoves++
+                        }
+                        move.featureType == FeatureType.SUPPORT ||
+                            move.featureType == FeatureType.SUPPORT_INTERFACE -> {
+                            supportExtrudeMoves++
+                            helperExtrudeMoves++
+                        }
+                        else -> helperExtrudeMoves++
+                    }
+                }
+            }
+        }
+        return OutputSummary(
+            layerCount = parsed.layers.size,
+            totalMoves = parsed.totalMoves,
+            extrudeMoves = extrudeMoves,
+            nonPrimeExtrudeMoves = nonPrimeExtrudeMoves,
+            primeTowerExtrudeMoves = primeTowerExtrudeMoves,
+            modelExtrudeMoves = modelExtrudeMoves,
+            skirtExtrudeMoves = skirtExtrudeMoves,
+            supportExtrudeMoves = supportExtrudeMoves,
+            helperExtrudeMoves = helperExtrudeMoves,
+            suspiciousModelExtrudeMoves = suspiciousModelExtrudeMoves,
+            suspiciousModelSamples = suspiciousModelSamples,
+            modelExtrudeBounds = extrusionBoundsOrNull(
+                modelExtrudeMoves,
+                modelMinX,
+                modelMaxX,
+                modelMinY,
+                modelMaxY
+            ),
+            nonPrimeExtrudeBounds = extrusionBoundsOrNull(
+                nonPrimeExtrudeMoves,
+                nonPrimeMinX,
+                nonPrimeMaxX,
+                nonPrimeMinY,
+                nonPrimeMaxY
+            )
+        )
+    }
+
+    /**
+     * True when the parsed output contains no actual printable extrusion for the model.
+     * We intentionally require non-prime-tower extrusion here so tower-only output gets
+     * treated as invalid.
+     */
+    fun isEffectivelyEmpty(summary: OutputSummary): Boolean {
+        return summary.layerCount == 0 ||
+            summary.totalMoves == 0 ||
+            summary.extrudeMoves == 0 ||
+            summary.modelExtrudeMoves == 0
+    }
+
+    fun hasSuspiciousModelGeometry(summary: OutputSummary): Boolean {
+        return summary.suspiciousModelExtrudeMoves > 0
+    }
+
+    private fun isModelBearingFeature(featureType: Byte): Boolean {
+        return featureType != FeatureType.PRIME_TOWER &&
+            featureType != FeatureType.SKIRT &&
+            featureType != FeatureType.SUPPORT &&
+            featureType != FeatureType.SUPPORT_INTERFACE
+    }
+
+    private fun extrusionBoundsOrNull(
+        moveCount: Int,
+        minX: Float,
+        maxX: Float,
+        minY: Float,
+        maxY: Float
+    ): ExtrusionBounds? {
+        if (moveCount <= 0 || minX.isInfinite() || maxX.isInfinite() || minY.isInfinite() || maxY.isInfinite()) {
+            return null
+        }
+        return ExtrusionBounds(
+            minX = minX,
+            maxX = maxX,
+            minY = minY,
+            maxY = maxY,
+            moveCount = moveCount
+        )
+    }
+
+    private fun isSuspiciousModelMove(move: GcodeMove): Boolean {
+        return isSuspiciousCoordinate(move.x0) ||
+            isSuspiciousCoordinate(move.y0) ||
+            isSuspiciousCoordinate(move.x1) ||
+            isSuspiciousCoordinate(move.y1) ||
+            move.x0 < -5f || move.x0 > 275f ||
+            move.y0 < -5f || move.y0 > 275f ||
+            move.x1 < -5f || move.x1 > 275f ||
+            move.y1 < -5f || move.y1 > 275f
+    }
+
+    private fun isSuspiciousCoordinate(value: Float): Boolean {
+        return !value.isFinite() || kotlin.math.abs(value) > 10_000f
+    }
 
     /**
      * Extract the retract_length_toolchange config value from G-code comments.

@@ -14,6 +14,7 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Exception.hpp"
+#include "libslic3r/clipper.hpp"
 
 // =============================================================================
 // sapil_print.cpp — Slicing using PrusaSlicer's Slic3r::Print
@@ -52,6 +53,81 @@ static const char* supportTypeName(Slic3r::SupportType type) {
         case Slic3r::stTree: return "tree";
         default: return "unknown";
     }
+}
+
+static std::string buildNativeModelSnapshot(const Slic3r::Model& model)
+{
+    std::ostringstream out;
+    out << "{";
+    out << "\"objectCount\":" << model.objects.size() << ",";
+    size_t printable_objects = 0;
+    size_t printable_instances = 0;
+    out << "\"objects\":[";
+    bool first_object = true;
+    for (size_t object_index = 0; object_index < model.objects.size(); ++object_index) {
+        const auto* obj = model.objects[object_index];
+        if (obj == nullptr) continue;
+        if (obj->printable) printable_objects++;
+        size_t object_printable_instances = 0;
+        for (const auto* inst : obj->instances) {
+            if (inst != nullptr && inst->printable) {
+                ++object_printable_instances;
+                ++printable_instances;
+            }
+        }
+        if (!first_object) out << ",";
+        first_object = false;
+        out << "{"
+            << "\"index\":" << object_index << ","
+            << "\"printable\":" << (obj->printable ? "true" : "false") << ","
+            << "\"volumeCount\":" << obj->volumes.size() << ","
+            << "\"instanceCount\":" << obj->instances.size() << ","
+            << "\"printableInstanceCount\":" << object_printable_instances;
+
+        auto raw_bb = obj->raw_bounding_box();
+        if (raw_bb.defined) {
+            out << ",\"rawBounds\":{"
+                << "\"xMin\":" << raw_bb.min.x() << ","
+                << "\"xMax\":" << raw_bb.max.x() << ","
+                << "\"yMin\":" << raw_bb.min.y() << ","
+                << "\"yMax\":" << raw_bb.max.y() << ","
+                << "\"zMin\":" << raw_bb.min.z() << ","
+                << "\"zMax\":" << raw_bb.max.z()
+                << "}";
+        }
+
+        out << ",\"instances\":[";
+        bool first_instance = true;
+        for (size_t instance_index = 0; instance_index < obj->instances.size(); ++instance_index) {
+            const auto* inst = obj->instances[instance_index];
+            if (inst == nullptr) continue;
+            if (!first_instance) out << ",";
+            first_instance = false;
+            const auto offset = inst->get_offset();
+            const auto scaling = inst->get_scaling_factor();
+            out << "{"
+                << "\"index\":" << instance_index << ","
+                << "\"printable\":" << (inst->printable ? "true" : "false") << ","
+                << "\"offset\":{"
+                << "\"x\":" << offset.x() << ","
+                << "\"y\":" << offset.y() << ","
+                << "\"z\":" << offset.z()
+                << "},"
+                << "\"scale\":{"
+                << "\"x\":" << scaling.x() << ","
+                << "\"y\":" << scaling.y() << ","
+                << "\"z\":" << scaling.z()
+                << "}"
+                << "}";
+        }
+        out << "]";
+        out << "}";
+    }
+    out << "],";
+    out << "\"printableObjectCount\":" << printable_objects << ",";
+    out << "\"printableInstanceCount\":" << printable_instances;
+    out << "}";
+    return out.str();
 }
 
 SlicerEngine::SlicerEngine() : pImpl(new Impl()) {
@@ -356,6 +432,19 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
     }
 
     try {
+        diagnostics_clear_trace_buffer();
+        ::ClipperLib::diagnostics_clear_trace_buffer();
+        diagnostics_trace_native_event(
+            "native_trace_slice_start",
+            std::string("{") +
+                "\"wipeTowerEnabled\":" + (config.wipe_tower_enabled ? "true" : "false") + "," +
+                "\"wipeTowerX\":" + std::to_string(config.wipe_tower_x) + "," +
+                "\"wipeTowerY\":" + std::to_string(config.wipe_tower_y) + "," +
+                "\"wipeTowerWidth\":" + std::to_string(config.wipe_tower_width) + "," +
+                "\"supportEnabled\":" + (config.support_enabled ? "true" : "false") + "," +
+                "\"extruderCount\":" + std::to_string(config.extruder_count) +
+            "}"
+        );
         // Build config: defaults → 3MF embedded config → user overrides.
         // The embedded config (from ProfileEmbedder) contains machine_start_gcode,
         // change_filament_gcode, and all Snapmaker profile settings.  Without this,
@@ -626,6 +715,18 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         // Apply the config to the print
         print.apply(model, dpc);
+        diagnostics_record_native_event("slice_native_model_snapshot", buildNativeModelSnapshot(model));
+
+        // Checkpoint 1: validate wipe_tower_y immediately after config apply
+        if (config.wipe_tower_enabled) {
+            auto& wty = print.config().wipe_tower_y.values;
+            std::ostringstream cp1;
+            cp1 << "{\"checkpoint\":\"after_apply\",\"vec_size\":" << wty.size();
+            for (size_t i = 0; i < wty.size(); ++i)
+                cp1 << ",\"y[" << i << "]\":" << wty[i];
+            cp1 << ",\"input_y\":" << config.wipe_tower_y << "}";
+            diagnostics_record_native_event("wipe_tower_y_checkpoint", cp1.str());
+        }
 
         Slic3r::BoundingBoxf3 finalWorldBB;
         for (auto* obj : model.objects) {
@@ -700,7 +801,29 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // scheduler cannot schedule child tasks when the arena is limited to 1 thread.
         print.process();
 
+        // Checkpoint 2: validate wipe_tower_y after print.process()
+        if (config.wipe_tower_enabled) {
+            auto& wty = print.config().wipe_tower_y.values;
+            std::ostringstream cp2;
+            cp2 << "{\"checkpoint\":\"after_process\",\"vec_size\":" << wty.size();
+            for (size_t i = 0; i < wty.size(); ++i)
+                cp2 << ",\"y[" << i << "]\":" << wty[i];
+            cp2 << "}";
+            diagnostics_record_native_event("wipe_tower_y_checkpoint", cp2.str());
+        }
+
         if (progress) progress(90, "Generating G-code");
+
+        // Checkpoint 3: validate wipe_tower_y right before G-code export
+        if (config.wipe_tower_enabled) {
+            auto& wty = print.config().wipe_tower_y.values;
+            std::ostringstream cp3;
+            cp3 << "{\"checkpoint\":\"before_export\",\"vec_size\":" << wty.size();
+            for (size_t i = 0; i < wty.size(); ++i)
+                cp3 << ",\"y[" << i << "]\":" << wty[i];
+            cp3 << "}";
+            diagnostics_record_native_event("wipe_tower_y_checkpoint", cp3.str());
+        }
 
         // Generate G-code — use the same directory as the loaded model
         extern std::string getFilesDir();

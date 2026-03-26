@@ -102,6 +102,25 @@ else()
 endif()
 
 # =============================================================================
+# HWASan (Hardware Address Sanitizer) — diagnostic build for memory bugs
+# Enable with: cmake -DENABLE_HWASAN=ON
+# Requires arm64-v8a, Android API 34+, NDK 26+
+# =============================================================================
+option(ENABLE_HWASAN "Enable HWASan for memory bug detection" OFF)
+if(ENABLE_HWASAN)
+    message(STATUS ">>> HWASan ENABLED — diagnostic build <<<")
+    add_compile_options(-fsanitize=hwaddress -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=hwaddress)
+endif()
+
+option(ENABLE_ASAN "Enable ASan for memory bug detection" OFF)
+if(ENABLE_ASAN)
+    message(STATUS ">>> ASan ENABLED — diagnostic build <<<")
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls)
+    add_link_options(-fsanitize=address)
+endif()
+
+# =============================================================================
 # Android-specific definitions
 # =============================================================================
 add_compile_definitions(

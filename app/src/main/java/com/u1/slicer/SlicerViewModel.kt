@@ -1,8 +1,10 @@
 package com.u1.slicer
 
+import android.app.ActivityManager
 import android.app.Application
 import android.content.Intent
 import android.net.Uri
+import android.os.Debug
 import android.provider.OpenableColumns
 import android.util.Log
 import androidx.core.content.FileProvider
@@ -17,6 +19,7 @@ import org.json.JSONObject
 import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
 import com.u1.slicer.gcode.GcodeToolRemapper
+import com.u1.slicer.gcode.GcodeValidator
 import com.u1.slicer.gcode.ParsedGcode
 
 import com.u1.slicer.data.ModelInfo
@@ -40,8 +43,24 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.security.MessageDigest
+import java.util.zip.ZipFile
 
 class SlicerViewModel(application: Application) : AndroidViewModel(application) {
+
+    private data class SliceOutputValidation(
+        val parsedGcode: ParsedGcode?,
+        val summary: Map<String, Any?>,
+        val errorMessage: String?
+    )
+
+    private data class ExpectedModelFootprint(
+        val minX: Float,
+        val maxX: Float,
+        val minY: Float,
+        val maxY: Float,
+        val instanceCount: Int
+    )
 
     private val native = NativeLibrary()
     private val diagnostics = DiagnosticsStore(application)
@@ -208,6 +227,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Enables single-extruder re-embed without clearModel() to avoid Clipper state corruption.
     private var profileNeedsReEmbed = false
 
+    // Keep each import/slice session in its own transient workspace so an upgrade
+    // or reinstall cannot accidentally reuse stale generated files from a previous epoch.
+    private val transientWorkspaceToken = diagnostics.sessionId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+
+    private fun transientWorkspaceDir(): File {
+        val dir = File(getApplication<Application>().filesDir, "transient/$transientWorkspaceToken")
+        dir.mkdirs()
+        return dir
+    }
+
+    private fun transientCacheDir(): File {
+        val dir = File(getApplication<Application>().cacheDir, "transient/$transientWorkspaceToken")
+        dir.mkdirs()
+        return dir
+    }
+
     /** Exposed for 3D viewer navigation */
     val currentModelPath: String? get() = currentModelFile?.absolutePath
 
@@ -270,8 +305,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
+                val workspaceDir = transientWorkspaceDir()
                 // Clean intermediate files from previous model loads
-                val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
+                val cleared = UpgradeDetector.clearIntermediateCache(workspaceDir)
                 if (cleared > 0) Log.i("SlicerVM", "Cleared $cleared intermediate cache files before MakerWorld import")
                 clipperRetryAttempted = false  // Reset retry flag for new model
                 val client = okhttp3.OkHttpClient.Builder()
@@ -366,7 +402,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 Log.i("SlicerVM", "MakerWorld response: HTTP ${response.code}, Content-Type: $contentType")
 
                 // API returns JSON with signed download URL — follow it
-                val outputFile = File(context.filesDir, "makerworld_${designId}.3mf")
+                val outputFile = File(workspaceDir, "makerworld_${designId}.3mf")
                 if (contentType.contains("json")) {
                     val json = response.body?.string() ?: ""
                     response.close()
@@ -463,7 +499,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     java.util.zip.ZipFile(outputFile).use { profileEmbedder.parseSourceConfig(it) }
                 } else null
 
-                val processed = BambuSanitizer.process(outputFile, context.filesDir, isBambu = origInfo.isBambu)
+                val processed = BambuSanitizer.process(outputFile, workspaceDir, isBambu = origInfo.isBambu)
                 val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
                 _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
 
@@ -471,7 +507,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceModelInfo = processedInfo
                 toolRemapSlots = null
                 val mergedInfo = _threeMfInfo.value!!
-                val sanitized = embedProfile(processed, mergedInfo, context)
+                val sanitized = embedProfile(processed, mergedInfo, workspaceDir)
 
                 currentModelFile = sanitized
                 if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
@@ -497,9 +533,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
+                val workspaceDir = transientWorkspaceDir()
                 // Clean intermediate files from previous model loads to prevent stale
                 // sanitized/embedded/plate files from accidentally being referenced.
-                val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
+                val cleared = UpgradeDetector.clearIntermediateCache(workspaceDir)
                 if (cleared > 0) Log.i("SlicerVM", "Cleared $cleared intermediate cache files before new model load")
                 clipperRetryAttempted = false  // Reset retry flag for new model
                 val inputStream = context.contentResolver.openInputStream(uri) ?: run {
@@ -510,10 +547,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val filename = normalizeIncomingFilename(getDisplayName(context, uri) ?: "model.stl")
                 currentModelName = filename
                 _state.value = SlicerState.Loading("Loading $filename…")
-                val file = File(context.filesDir, filename)
+                val file = File(workspaceDir, filename)
                 // Copy via temp file to avoid self-referential truncation
                 // when the source URI points to our own FileProvider
-                val tmpFile = File(context.cacheDir, "import_${System.currentTimeMillis()}")
+                val tmpFile = File(transientCacheDir(), "import_${System.currentTimeMillis()}")
                 try {
                     tmpFile.outputStream().use { inputStream.copyTo(it) }
                     tmpFile.copyTo(file, overwrite = true)
@@ -579,7 +616,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Sanitize first (strip printable="0", restructure multi-color, clean XML),
                     // then embed Snapmaker profile.  Without process(), non-printable build
                     // items cause "Coordinate outside allowed range" Clipper errors.
-                    val processed = BambuSanitizer.process(file, context.filesDir, isBambu = origInfo.isBambu)
+                val processed = BambuSanitizer.process(file, workspaceDir, isBambu = origInfo.isBambu)
                     val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
                     _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
 
@@ -592,7 +629,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // so the preserve path in buildConfig() activates correctly for Bambu files
                     // with multi-extruder assignments (needed for support preservation — B10 fix).
                     val mergedInfo = _threeMfInfo.value!!
-                    val sanitized = embedProfile(processed, mergedInfo, context)
+                    val sanitized = embedProfile(processed, mergedInfo, workspaceDir)
 
                     // Show plate selector for multi-plate files (use origInfo since
                     // process() strips plate_N.json files that isMultiPlate relies on).
@@ -637,7 +674,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 _state.value = SlicerState.Loading("Downloading $filename…")
                 val context = getApplication<Application>()
                 val safeFilename = filename.replace(Regex("[/\\\\:*?\"<>|]"), "_")
-                val cacheFile = File(context.cacheDir, safeFilename)
+                val cacheFile = File(transientCacheDir(), safeFilename)
                 val client = okhttp3.OkHttpClient.Builder()
                     .followRedirects(true)
                     .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
@@ -675,7 +712,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
-                val cleared = UpgradeDetector.clearIntermediateCache(context.filesDir)
+                val workspaceDir = transientWorkspaceDir()
+                val cleared = UpgradeDetector.clearIntermediateCache(workspaceDir)
                 if (cleared > 0) Log.i("SlicerVM", "Cleared $cleared intermediate cache files before direct model load")
                 clipperRetryAttempted = false
                 if (!file.exists() || !file.canRead()) {
@@ -687,21 +725,29 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 currentModelName = filename
                 _state.value = SlicerState.Loading("Loading $filename…")
 
-                rawInputFile = file
+                val sourceFile = if (file.parentFile?.absolutePath == workspaceDir.absolutePath) {
+                    file
+                } else {
+                    val copied = File(workspaceDir, filename)
+                    file.copyTo(copied, overwrite = true)
+                    copied
+                }
+
+                rawInputFile = sourceFile
                 recoveryPlateId = -1
                 diagnostics.recordEvent(
                     "model_imported",
                     mapOf(
                         "filename" to filename,
-                        "copiedTo" to file.absolutePath,
-                        "sizeBytes" to file.length(),
+                        "copiedTo" to sourceFile.absolutePath,
+                        "sizeBytes" to sourceFile.length(),
                         "directFileLoad" to true
                     )
                 )
 
                 val fileToLoad = if (filename.endsWith(".3mf", ignoreCase = true)) {
                     try {
-                        java.util.zip.ZipFile(file).use { zip ->
+                        java.util.zip.ZipFile(sourceFile).use { zip ->
                             if (zip.entries().toList().isEmpty()) {
                                 _state.value = SlicerState.Error("3MF file is empty or invalid")
                                 return@launch
@@ -712,19 +758,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
 
-                    oversizedArchiveMessage(file)?.let { message ->
+                    oversizedArchiveMessage(sourceFile)?.let { message ->
                         Log.w("SlicerVM", "Large direct 3MF will try to load anyway: $message")
                         diagnostics.recordEvent(
                             "oversized_archive_warning",
                             mapOf(
                                 "source" to "direct_file",
                                 "filename" to filename,
-                                "sizeBytes" to file.length()
+                                "sizeBytes" to sourceFile.length()
                             )
                         )
                     }
 
-                    val origInfo = ThreeMfParser.parse(file)
+                    val origInfo = ThreeMfParser.parse(sourceFile)
                     recoveryOrigInfo = origInfo
 
                     Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
@@ -732,10 +778,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         "paint=${origInfo.hasPaintData}, toolChanges=${origInfo.hasLayerToolChanges}")
 
                     _sourceConfig.value = if (origInfo.isBambu) {
-                        java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
+                        java.util.zip.ZipFile(sourceFile).use { profileEmbedder.parseSourceConfig(it) }
                     } else null
 
-                    val processed = BambuSanitizer.process(file, context.filesDir, isBambu = origInfo.isBambu)
+                    val processed = BambuSanitizer.process(sourceFile, workspaceDir, isBambu = origInfo.isBambu)
                     val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
                     _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
 
@@ -743,7 +789,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceModelInfo = processedInfo
                     toolRemapSlots = null
                     val mergedInfo = _threeMfInfo.value!!
-                    val sanitized = embedProfile(processed, mergedInfo, context)
+                    val sanitized = embedProfile(processed, mergedInfo, workspaceDir)
 
                     if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
                         Log.i("SlicerVM", "Multi-plate: ${origInfo.plates.size} plates, showing selector")
@@ -760,7 +806,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceModelFile = null
                     sourceModelInfo = null
                     _sourceConfig.value = null
-                    file
+                    sourceFile
                 }
 
                 currentModelFile = fileToLoad
@@ -791,6 +837,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
+                val workspaceDir = transientWorkspaceDir()
                 // Pass hasPlateJsons from _threeMfInfo which preserves the original value
                 // (process() strips plate_N.json files from the ZIP, so auto-detection
                 // on the processed file would always return false).
@@ -801,13 +848,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     ?.find { it.plateId == plateId }?.objectIds?.toSet()
                 val plateExtruderMap = _threeMfInfo.value?.objectExtruderMap
                     ?.filterKeys { key -> plateObjectIds?.contains(key) == true }
-                val rawPlateFile = BambuSanitizer.extractPlate(file, plateId, context.filesDir,
+                val rawPlateFile = BambuSanitizer.extractPlate(file, plateId, workspaceDir,
                     hasPlateJsons = hasPlateJsons,
                     plateObjectIds = plateObjectIds,
                     objectExtruderMap = plateExtruderMap)
                 // Restructure per-plate: inline component meshes so OrcaSlicer
                 // can assign per-volume extruders (deferred from process()).
-                val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, context.filesDir)
+                val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, workspaceDir)
                 // Lightweight parse: only reads model_settings.config (~1KB) for extruder
                 // indices, skips the 15MB+ main model XML entirely (~2s saved).
                 val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
@@ -1175,7 +1222,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Build Snapmaker profile config and embed it into the 3MF file.
      * Replaces BambuSanitizer.process() for the OrcaSlicer backend.
      */
-    private fun embedProfile(file: java.io.File, info: ThreeMfInfo, context: android.app.Application): java.io.File {
+    private fun embedProfile(file: java.io.File, info: ThreeMfInfo, outputDir: java.io.File): java.io.File {
         val cfg = _config.value
         val extCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
@@ -1215,7 +1262,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             overrides = buildProfileOverrides(cfg, extCount, usedSlots, hasSourceConfig = sourceConfig != null),
             targetExtruderCount = targetCount
         )
-        return profileEmbedder.embed(file, embeddedConfig, context.filesDir, info, extruderRemap)
+        return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap)
     }
 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
@@ -1298,6 +1345,186 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "sizeY" to currentInfo.sizeY,
                 "sizeZ" to currentInfo.sizeZ
             ) else null
+        )
+    }
+
+    private fun sliceGeometrySnapshot(
+        sliceConfig: SliceConfig,
+        profileOverrides: Map<String, Any>,
+        firstSliceThisLaunch: Boolean,
+        firstSliceAfterUpgrade: Boolean,
+        mi: ModelInfo?,
+        copies: Int,
+        custom: FloatArray?,
+        remap: List<Int>?
+    ): Map<String, Any?> {
+        val scale = _modelScale.value
+        return mapOf(
+            "firstSliceThisLaunch" to firstSliceThisLaunch,
+            "firstSliceAfterUpgrade" to firstSliceAfterUpgrade,
+            "modelName" to currentModelName,
+            "currentModelPath" to currentModelFile?.absolutePath,
+            "sourceModelPath" to sourceModelFile?.absolutePath,
+            "rawInputPath" to rawInputFile?.absolutePath,
+            "selectedPlateId" to recoveryPlateId.takeIf { it >= 0 },
+            "copyCount" to copies,
+            "hasCustomPlacement" to (custom != null),
+            "customPlacement" to custom?.toList(),
+            "toolRemapSlots" to remap,
+            "colorMapping" to _colorMapping.value,
+            "modelScale" to mapOf("x" to scale.x, "y" to scale.y, "z" to scale.z),
+            "modelInfo" to if (mi != null) mapOf(
+                "sizeX" to mi.sizeX,
+                "sizeY" to mi.sizeY,
+                "sizeZ" to mi.sizeZ,
+                "triangleCount" to mi.triangleCount,
+                "volumeCount" to mi.volumeCount,
+                "isManifold" to mi.isManifold
+            ) else null,
+            "extruderCount" to sliceConfig.extruderCount,
+            "wipeTower" to mapOf(
+                "enabled" to sliceConfig.wipeTowerEnabled,
+                "x" to sliceConfig.wipeTowerX,
+                "y" to sliceConfig.wipeTowerY,
+                "width" to sliceConfig.wipeTowerWidth
+            ),
+            "support" to mapOf(
+                "enabled" to sliceConfig.supportEnabled,
+                "overrideMode" to slicingOverrides.value.supports.mode.name,
+                "typeOverrideMode" to slicingOverrides.value.supportType.mode.name,
+                "typeOverrideValue" to slicingOverrides.value.supportType.value
+            ),
+            "resolvedSupportTypeForProfile" to profileOverrides["support_type"],
+            "resolvedSupportEnabledForProfile" to profileOverrides["enable_support"],
+            "resolvedSupportAngleForProfile" to profileOverrides["support_threshold_angle"]
+        )
+    }
+
+    private fun sliceProcessDiagnosticsMap(): Map<String, Any?> {
+        val runtime = Runtime.getRuntime()
+        val activityManager = getApplication<Application>()
+            .getSystemService(android.content.Context.ACTIVITY_SERVICE) as? ActivityManager
+        val memoryInfo = ActivityManager.MemoryInfo().also { info ->
+            activityManager?.getMemoryInfo(info)
+        }
+        return mapOf(
+            "pid" to android.os.Process.myPid(),
+            "nativeState" to safeNativeDiagnosticsState(),
+            "javaHeapUsedBytes" to (runtime.totalMemory() - runtime.freeMemory()),
+            "javaHeapFreeBytes" to runtime.freeMemory(),
+            "javaHeapTotalBytes" to runtime.totalMemory(),
+            "javaHeapMaxBytes" to runtime.maxMemory(),
+            "nativeHeapAllocatedBytes" to Debug.getNativeHeapAllocatedSize(),
+            "nativeHeapFreeBytes" to Debug.getNativeHeapFreeSize(),
+            "nativeHeapSizeBytes" to Debug.getNativeHeapSize(),
+            "systemLowMemory" to memoryInfo?.lowMemory,
+            "systemAvailMemBytes" to memoryInfo?.availMem,
+            "systemTotalMemBytes" to memoryInfo?.totalMem,
+            "systemThresholdBytes" to memoryInfo?.threshold
+        )
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun summarizeZipEntries(file: File, maxEntries: Int = 20): List<Map<String, Any?>> {
+        ZipFile(file).use { zip ->
+            return zip.entries().asSequence()
+                .take(maxEntries)
+                .map { entry ->
+                    mapOf(
+                        "name" to entry.name,
+                        "size" to entry.size,
+                        "compressedSize" to entry.compressedSize,
+                        "crc" to entry.crc
+                    )
+                }
+                .toList()
+        }
+    }
+
+    private fun extractEmbeddedConfigSummary(file: File): Map<String, Any?>? {
+        if (!file.extension.equals("3mf", ignoreCase = true)) return null
+        return try {
+            ZipFile(file).use { zip ->
+                val projectSettingsEntry = zip.getEntry("Metadata/project_settings.config")
+                val projectSettings = projectSettingsEntry
+                    ?.let { zip.getInputStream(it).bufferedReader().use { reader -> reader.readText() } }
+                val modelSettingsEntry = zip.entries().asSequence()
+                    .firstOrNull { it.name.contains("model_settings") || it.name.contains("Slic3r_PE_model") }
+                val modelSettings = modelSettingsEntry
+                    ?.let { zip.getInputStream(it).bufferedReader().use { reader -> reader.readText() } }
+
+                fun digestText(text: String?): String? {
+                    if (text == null) return null
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    val bytes = text.toByteArray(Charsets.UTF_8)
+                    digest.update(bytes)
+                    return digest.digest().joinToString("") { "%02x".format(it) }
+                }
+
+                fun pickLines(text: String?, keys: List<String>): List<String> {
+                    val lines = text?.lines().orEmpty()
+                    return keys.mapNotNull { key ->
+                        lines.firstOrNull { it.startsWith("$key ") || it.startsWith("$key=") }
+                            ?.trim()
+                    }
+                }
+
+                mapOf(
+                    "projectSettingsEntry" to projectSettingsEntry?.name,
+                    "projectSettingsSha256" to digestText(projectSettings),
+                    "projectSettingsLines" to pickLines(
+                        projectSettings,
+                        listOf(
+                            "single_extruder_multi_material",
+                            "enable_prime_tower",
+                            "extruder_count",
+                            "is_extruder_used",
+                            "wipe_tower_x",
+                            "wipe_tower_y",
+                            "prime_tower_width"
+                        )
+                    ),
+                    "modelSettingsEntry" to modelSettingsEntry?.name,
+                    "modelSettingsSha256" to digestText(modelSettings),
+                    "modelSettingsLines" to pickLines(
+                        modelSettings,
+                        listOf(
+                            "plater_name",
+                            "extruder",
+                            "filament_ids",
+                            "is_extruder_used",
+                            "wipe_tower_x",
+                            "wipe_tower_y"
+                        )
+                    )
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun summarizeModelFile(file: File?): Map<String, Any?>? {
+        if (file == null || !file.exists()) return null
+        return mapOf(
+            "path" to file.absolutePath,
+            "sizeBytes" to file.length(),
+            "lastModifiedMs" to file.lastModified(),
+            "sha256" to sha256(file),
+            "zipEntries" to if (file.extension.equals("3mf", ignoreCase = true)) summarizeZipEntries(file) else null,
+            "embeddedConfig" to extractEmbeddedConfigSummary(file)
         )
     }
 
@@ -1399,24 +1626,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         Log.i("SlicerVM", "Re-embedding 3MF ($reason) before slicing")
                         val isSingleExtruderRefresh = profileNeedsReEmbed && remap == null && _config.value.extruderCount <= 1
-                        val shouldAvoidReloadClear = firstSliceAfterUpgrade && remap == null
-                        if (!isSingleExtruderRefresh && !shouldAvoidReloadClear) {
+                        if (!isSingleExtruderRefresh) {
                             // Multi-extruder/remap path: clear first to avoid OOM from holding
                             // two large model instances in native memory during re-load.
                             native.clearModel()
-                        } else if (shouldAvoidReloadClear) {
-                            diagnostics.recordEvent(
-                                "upgrade_slice_skip_clear_model",
-                                mapOf(
-                                    "firstSliceAfterUpgrade" to true,
-                                    "reason" to "avoid clearModel() before reload on the first slice after upgrade"
-                                )
-                            )
                         }
                         // Single-extruder settings refresh: skip clearModel() — files are small
                         // (no OOM risk) and clearModel()+loadModel() can corrupt native statics,
                         // causing "Coordinate outside allowed range" Clipper errors (I2).
-                        val reembedded = embedProfile(src, srcInfo, context)
+                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir())
                         currentModelFile = reembedded
                         val reloadOk = native.loadModel(reembedded.absolutePath)
                         diagnostics.recordEvent(
@@ -1514,7 +1732,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // USE_FILE passthrough: base values from _config.value are used as-is.
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
-                val sliceConfig = ov.resolveInto(_config.value).let { cfg ->
+                val resolvedSliceConfig = ov.resolveInto(_config.value).let { cfg ->
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
                     if (cfg.wipeTowerEnabled) {
@@ -1528,6 +1746,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         cfg.copy(wipeTowerX = clampedX, wipeTowerY = clampedY)
                     } else cfg
                 }
+                val sliceConfig = resolvedSliceConfig
                 val profileOverrides = buildProfileOverrides(
                     sliceConfig,
                     sliceConfig.extruderCount,
@@ -1541,6 +1760,31 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         profileOverrides = profileOverrides,
                         firstSliceThisLaunch = firstSliceThisLaunch,
                         firstSliceAfterUpgrade = firstSliceAfterUpgrade
+                    )
+                )
+                diagnostics.recordEvent(
+                    "slice_geometry_snapshot",
+                    sliceGeometrySnapshot(
+                        sliceConfig = sliceConfig,
+                        profileOverrides = profileOverrides,
+                        firstSliceThisLaunch = firstSliceThisLaunch,
+                        firstSliceAfterUpgrade = firstSliceAfterUpgrade,
+                        mi = mi,
+                        copies = copies,
+                        custom = custom,
+                        remap = remap
+                    )
+                )
+                diagnostics.recordEvent(
+                    "slice_process_snapshot",
+                    sliceProcessDiagnosticsMap()
+                )
+                diagnostics.recordEvent(
+                    "slice_file_snapshot",
+                    mapOf(
+                        "rawInputFile" to summarizeModelFile(rawInputFile),
+                        "sourceModelFile" to summarizeModelFile(sourceModelFile),
+                        "currentModelFile" to summarizeModelFile(currentModelFile)
                     )
                 )
                 diagnostics.recordEvent(
@@ -1570,6 +1814,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (result != null && result.success) {
+                    val outputValidation = validateSliceOutput(
+                        result,
+                        buildExpectedModelFootprint(mi, copies, custom)
+                    )
+                    diagnostics.recordEvent("slice_output_validation", outputValidation.summary)
+                    if (outputValidation.errorMessage != null) {
+                        diagnostics.recordEvent(
+                            "slice_output_invalid",
+                            outputValidation.summary + ("reason" to outputValidation.errorMessage)
+                        )
+                        diagnostics.clearSliceInProgress()
+                        _state.value = SlicerState.Error(outputValidation.errorMessage)
+                        return@launch
+                    }
+
                     diagnostics.markSliceSucceeded()
                     diagnostics.recordEvent(
                         "slice_succeeded",
@@ -1603,12 +1862,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                     _state.value = SlicerState.SliceComplete(result)
                     _gcodePreview.value = native.getGcodePreview(50)
-                    // Parse G-code for layer viewer
-                    try {
-                        _parsedGcode.value = GcodeParser.parse(File(result.gcodePath))
-                    } catch (e: Throwable) {
-                        Log.w("SlicerVM", "G-code parse failed: ${e.message}")
-                    }
+                    _parsedGcode.value = outputValidation.parsedGcode
                     settingsRepo.saveSliceConfig(_config.value)
                     // Save job to history
                     val cfg = _config.value
@@ -1676,6 +1930,218 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun isClipperError(msg: String): Boolean {
         return msg.contains("Coordinate outside allowed range", ignoreCase = true) ||
             msg.contains("clipper", ignoreCase = true)
+    }
+
+    private fun validateSliceOutput(
+        result: SliceResult,
+        expectedFootprint: ExpectedModelFootprint?
+    ): SliceOutputValidation {
+        val gcodeFile = File(result.gcodePath)
+        val baseSummary = linkedMapOf<String, Any?>(
+            "gcodePath" to result.gcodePath,
+            "fileExists" to gcodeFile.exists(),
+            "fileSizeBytes" to gcodeFile.length(),
+            "nativeTotalLayers" to result.totalLayers,
+            "nativeEstimatedTimeSeconds" to result.estimatedTimeSeconds,
+            "nativeEstimatedFilamentMm" to result.estimatedFilamentMm,
+            "expectedModelFootprint" to expectedFootprint?.let {
+                mapOf(
+                    "minX" to it.minX,
+                    "maxX" to it.maxX,
+                    "minY" to it.minY,
+                    "maxY" to it.maxY,
+                    "instanceCount" to it.instanceCount
+                )
+            }
+        )
+        if (!gcodeFile.exists() || gcodeFile.length() <= 0L) {
+            return SliceOutputValidation(
+                parsedGcode = null,
+                summary = baseSummary,
+                errorMessage = "Slicing produced no usable G-code output.\n\nTry Reset App State and slice again."
+            )
+        }
+
+        return try {
+            val parsed = GcodeParser.parse(gcodeFile)
+            val outputSummary = GcodeValidator.summarizeParsedOutput(parsed)
+            val modelBounds = outputSummary.modelExtrudeBounds
+            val nonPrimeBounds = outputSummary.nonPrimeExtrudeBounds
+            val suspiciousLineContexts = buildSuspiciousModelLineContexts(
+                gcodeFile = gcodeFile,
+                samples = outputSummary.suspiciousModelSamples
+            )
+            val overlapsExpectedModelFootprint = expectedFootprint?.let { expected ->
+                modelBounds?.let { actual ->
+                    rectanglesOverlap(
+                        expected.minX,
+                        expected.maxX,
+                        expected.minY,
+                        expected.maxY,
+                        actual.minX,
+                        actual.maxX,
+                        actual.minY,
+                        actual.maxY
+                    )
+                }
+            }
+            val summary = baseSummary + mapOf(
+                "parsedLayerCount" to outputSummary.layerCount,
+                "parsedTotalMoves" to outputSummary.totalMoves,
+                "parsedExtrudeMoves" to outputSummary.extrudeMoves,
+                "parsedNonPrimeExtrudeMoves" to outputSummary.nonPrimeExtrudeMoves,
+                "parsedPrimeTowerExtrudeMoves" to outputSummary.primeTowerExtrudeMoves,
+                "parsedModelExtrudeMoves" to outputSummary.modelExtrudeMoves,
+                "parsedSkirtExtrudeMoves" to outputSummary.skirtExtrudeMoves,
+                "parsedSupportExtrudeMoves" to outputSummary.supportExtrudeMoves,
+                "parsedHelperExtrudeMoves" to outputSummary.helperExtrudeMoves,
+                "parsedSuspiciousModelExtrudeMoves" to outputSummary.suspiciousModelExtrudeMoves,
+                "parsedSuspiciousModelSamples" to outputSummary.suspiciousModelSamples.map {
+                    mapOf(
+                        "x0" to it.x0,
+                        "y0" to it.y0,
+                        "x1" to it.x1,
+                        "y1" to it.y1,
+                        "featureType" to it.featureType,
+                        "lineNumber" to it.lineNumber,
+                        "featureLabel" to it.featureLabel
+                    )
+                },
+                "parsedSuspiciousModelLineContexts" to suspiciousLineContexts,
+                "parsedModelExtrudeBounds" to modelBounds?.let {
+                    mapOf(
+                        "minX" to it.minX,
+                        "maxX" to it.maxX,
+                        "minY" to it.minY,
+                        "maxY" to it.maxY,
+                        "moveCount" to it.moveCount
+                    )
+                },
+                "parsedNonPrimeExtrudeBounds" to nonPrimeBounds?.let {
+                    mapOf(
+                        "minX" to it.minX,
+                        "maxX" to it.maxX,
+                        "minY" to it.minY,
+                        "maxY" to it.maxY,
+                        "moveCount" to it.moveCount
+                    )
+                },
+                "overlapsExpectedModelFootprint" to overlapsExpectedModelFootprint,
+                "parsedWipeTowerFilamentMm" to parsed.wipeTowerFilamentMm
+            )
+            val errorMessage = when {
+                GcodeValidator.isEffectivelyEmpty(outputSummary) ->
+                    "Slicing produced empty or invalid output.\n\nThe generated G-code did not contain any printable model extrusion. Try Reset App State and slice again."
+                GcodeValidator.hasSuspiciousModelGeometry(outputSummary) ->
+                    "Slicing produced invalid output.\n\nThe generated model extrusion contained impossible coordinates. Try Reset App State and slice again."
+                overlapsExpectedModelFootprint == false ->
+                    "Slicing produced invalid output.\n\nThe generated model extrusion did not overlap the expected model footprint. Try Reset App State and slice again."
+                else -> null
+            }
+            SliceOutputValidation(
+                parsedGcode = parsed,
+                summary = summary,
+                errorMessage = errorMessage
+            )
+        } catch (t: Throwable) {
+            SliceOutputValidation(
+                parsedGcode = null,
+                summary = baseSummary + mapOf(
+                    "parseError" to (t.message ?: t.javaClass.simpleName)
+                ),
+                errorMessage = "Slicing produced unreadable G-code output.\n\nTry Reset App State and slice again."
+            )
+        }
+    }
+
+    private fun buildSuspiciousModelLineContexts(
+        gcodeFile: File,
+        samples: List<GcodeValidator.MoveSample>
+    ): List<Map<String, Any?>> {
+        if (samples.isEmpty() || !gcodeFile.exists()) return emptyList()
+        val lineNumbers = samples
+            .mapNotNull { it.lineNumber.takeIf { line -> line > 0 } }
+            .distinct()
+            .take(3)
+        if (lineNumbers.isEmpty()) return emptyList()
+
+        val lines = try {
+            gcodeFile.readLines()
+        } catch (_: Throwable) {
+            return emptyList()
+        }
+
+        val contexts = mutableListOf<Map<String, Any?>>()
+        for (lineNumber in lineNumbers) {
+            val idx = lineNumber - 1
+            if (idx !in lines.indices) continue
+            val start = maxOf(0, idx - 2)
+            val end = minOf(lines.lastIndex, idx + 2)
+            contexts += mapOf(
+                "lineNumber" to lineNumber,
+                "windowStart" to start + 1,
+                "windowEnd" to end + 1,
+                "lines" to (start..end).map { rawIndex ->
+                    mapOf(
+                        "lineNumber" to rawIndex + 1,
+                        "text" to lines[rawIndex]
+                    )
+                }
+            )
+        }
+        return contexts
+    }
+
+    private fun buildExpectedModelFootprint(
+        mi: ModelInfo?,
+        copies: Int,
+        custom: FloatArray?
+    ): ExpectedModelFootprint? {
+        if (mi == null || mi.sizeX <= 0f || mi.sizeY <= 0f) return null
+        val scale = _modelScale.value
+        val scaledSizeX = mi.sizeX * scale.x
+        val scaledSizeY = mi.sizeY * scale.y
+        if (scaledSizeX <= 0f || scaledSizeY <= 0f) return null
+        val positions = custom ?: CopyArrangeCalculator.calculate(scaledSizeX, scaledSizeY, copies)
+        if (positions.isEmpty()) return null
+        val halfX = scaledSizeX / 2f
+        val halfY = scaledSizeY / 2f
+        var minX = Float.POSITIVE_INFINITY
+        var maxX = Float.NEGATIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY
+        var maxY = Float.NEGATIVE_INFINITY
+        for (i in positions.indices step 2) {
+            val cx = positions[i]
+            val cy = positions.getOrNull(i + 1) ?: continue
+            minX = minOf(minX, cx - halfX)
+            maxX = maxOf(maxX, cx + halfX)
+            minY = minOf(minY, cy - halfY)
+            maxY = maxOf(maxY, cy + halfY)
+        }
+        if (minX.isInfinite() || maxX.isInfinite() || minY.isInfinite() || maxY.isInfinite()) {
+            return null
+        }
+        return ExpectedModelFootprint(
+            minX = minX,
+            maxX = maxX,
+            minY = minY,
+            maxY = maxY,
+            instanceCount = positions.size / 2
+        )
+    }
+
+    private fun rectanglesOverlap(
+        aMinX: Float,
+        aMaxX: Float,
+        aMinY: Float,
+        aMaxY: Float,
+        bMinX: Float,
+        bMaxX: Float,
+        bMinY: Float,
+        bMaxY: Float
+    ): Boolean {
+        return maxOf(aMinX, bMinX) <= minOf(aMaxX, bMaxX) &&
+            maxOf(aMinY, bMinY) <= minOf(aMaxY, bMaxY)
     }
 
     /**

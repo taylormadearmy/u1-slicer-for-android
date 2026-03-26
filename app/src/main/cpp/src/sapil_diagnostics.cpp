@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <deque>
 
 #include <unistd.h>
 
@@ -19,6 +20,8 @@ std::string g_native_generation;
 std::string g_native_build_id = std::string(SLIC3R_VERSION_FULL) + "/" + std::string(SLIC3R_BUILD_TIME);
 bool g_native_init_flushed = false;
 constexpr size_t kMaxHistoryLines = 200;
+constexpr size_t kMaxTraceEntries = 160;
+std::deque<std::string> g_trace_buffer;
 
 std::string json_escape(const std::string& input)
 {
@@ -66,6 +69,13 @@ void append_json_line_locked(const std::string& json_line)
     output << json_line << '\n';
     output.close();
     trim_history_locked();
+}
+
+void push_trace_line_locked(const std::string& json_line)
+{
+    g_trace_buffer.push_back(json_line);
+    while (g_trace_buffer.size() > kMaxTraceEntries)
+        g_trace_buffer.pop_front();
 }
 
 std::string base_event_json(const std::string& event)
@@ -122,6 +132,46 @@ void diagnostics_record_native_event(const std::string& event, const std::string
     flush_native_init_locked();
     std::string payload = payload_json.empty() ? "{}" : payload_json;
     append_json_line_locked(base_event_json(event) + ",\"payload\":" + payload + "}");
+}
+
+void diagnostics_trace_native_event(const std::string& event, const std::string& payload_json)
+{
+    std::lock_guard<std::mutex> lock(g_diag_mutex);
+    if (g_native_generation.empty()) {
+        g_native_generation = std::to_string(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count()) +
+            "-" + std::to_string(getpid());
+    }
+    flush_native_init_locked();
+    std::string payload = payload_json.empty() ? "{}" : payload_json;
+    push_trace_line_locked(base_event_json(event) + ",\"payload\":" + payload + "}");
+}
+
+void diagnostics_clear_trace_buffer()
+{
+    std::lock_guard<std::mutex> lock(g_diag_mutex);
+    g_trace_buffer.clear();
+}
+
+void diagnostics_flush_trace_buffer(const std::string& reason)
+{
+    std::lock_guard<std::mutex> lock(g_diag_mutex);
+    if (g_native_generation.empty()) {
+        g_native_generation = std::to_string(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count()) +
+            "-" + std::to_string(getpid());
+    }
+    flush_native_init_locked();
+    std::ostringstream payload;
+    payload << "{"
+            << "\"reason\":\"" << json_escape(reason) << "\","
+            << "\"entryCount\":" << g_trace_buffer.size()
+            << "}";
+    append_json_line_locked(base_event_json("native_trace_flush") + ",\"payload\":" + payload.str() + "}");
+    for (const std::string& line : g_trace_buffer)
+        append_json_line_locked(line);
 }
 
 void diagnostics_note_clipper_point(long long x, long long y, const char* source)

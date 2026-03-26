@@ -314,6 +314,7 @@ class DiagnosticsStore(private val context: Context) {
         val interesting = setOf(
             "app_launch",
             "upgrade_check",
+            "apk_changed_while_running",
             "native_configured",
             "post_upgrade_guard_armed",
             "post_upgrade_guard_observed",
@@ -326,7 +327,35 @@ class DiagnosticsStore(private val context: Context) {
             "hard_crash_during_slice",
             "manual_restart_requested",
             "manual_reset_app_state",
-            "upgrade_slice_skip_clear_model",
+            "native_model_cleared",
+            "slice_geometry_snapshot",
+            "slice_process_snapshot",
+            "slice_native_model_snapshot",
+            "slice_file_snapshot",
+            "first_layer_dispatch_snapshot",
+            "first_layer_region_snapshot",
+            "first_layer_extrude_entry_snapshot",
+            "first_layer_extrude_snapshot",
+            "gcode_writer_invalid_line",
+            "slice_output_validation",
+            "slice_output_invalid",
+            "clipper_coordinate_out_of_range",
+            "clipper_invalid_path_detected",
+            "native_trace_flush",
+            "clipper_bounds_fallback",
+            "wipe_tower_rib_snapshot",
+            "wipe_tower_support_wall_snapshot",
+            "wipe_tower_invalid_rib_polygon",
+            "partplate_wipe_tower_polygon",
+            "partplate_invalid_wipe_tower_polygon",
+            "snapmaker_wipe_tower_polygon",
+            "snapmaker_invalid_wipe_tower_polygon",
+            "first_layer_brim_snapshot",
+            "first_layer_islands_snapshot",
+            "first_layer_convex_hull_snapshot",
+            "head_wrap_detect_zone_inputs",
+            "head_wrap_detect_zone_skipped",
+            "head_wrap_detect_zone_fallback",
             "restart_requested",
             "clipper_recovery_deferred"
         )
@@ -342,6 +371,7 @@ class DiagnosticsStore(private val context: Context) {
             val summary = when (type) {
                 "app_launch" -> "app_launch guard=${obj.optString("sessionHasPostUpgradeGuard")}"
                 "upgrade_check" -> "upgrade_check result=${obj.optString("result")} reason=${obj.optString("reason")}"
+                "apk_changed_while_running" -> "apk_changed_while_running launch=${obj.optLong("launchApkUpdateTime")} current=${obj.optLong("currentApkUpdateTime")}"
                 "native_configured" -> "native_configured state=${obj.optString("nativeState")}"
                 "post_upgrade_guard_armed" -> "post_upgrade_guard_armed trigger=${obj.optString("trigger")} persisted=${obj.optString("markerPersisted")}"
                 "post_upgrade_guard_observed" -> "post_upgrade_guard_observed status=${obj.optString("status")}"
@@ -354,7 +384,36 @@ class DiagnosticsStore(private val context: Context) {
                 "hard_crash_during_slice" -> "hard_crash_during_slice"
                 "manual_restart_requested" -> "manual_restart_requested"
                 "manual_reset_app_state" -> "manual_reset_app_state files=${obj.optInt("filesCleared")} cache=${obj.optInt("cacheCleared")} total=${obj.optInt("totalCleared")}"
-                "upgrade_slice_skip_clear_model" -> "upgrade_slice_skip_clear_model reason=${obj.optString("reason")}"
+                "native_model_cleared" -> "native_model_cleared payload=${obj.optJSONObject("payload")}"
+                "slice_geometry_snapshot" -> "slice_geometry_snapshot model=${obj.optString("modelName")} copies=${obj.optInt("copyCount")} wipeTower=${obj.optJSONObject("wipeTower")?.optBoolean("enabled")} "
+                "slice_process_snapshot" -> "slice_process_snapshot pid=${obj.optInt("pid")} javaHeapUsed=${obj.optLong("javaHeapUsedBytes")} nativeHeapAllocated=${obj.optLong("nativeHeapAllocatedBytes")} lowMemory=${obj.opt("systemLowMemory")}"
+                "slice_native_model_snapshot" -> "slice_native_model_snapshot payload=${obj.optJSONObject("payload")}"
+                "slice_file_snapshot" -> "slice_file_snapshot raw=${obj.optJSONObject("rawInputFile")?.optString("sha256")} current=${obj.optJSONObject("currentModelFile")?.optString("sha256")}"
+                "first_layer_dispatch_snapshot" -> "first_layer_dispatch_snapshot phase=${obj.optString("phase")} object=${obj.optInt("objectIndex")} layer=${obj.optInt("layerId")} regionCount=${obj.optInt("regionCount")} perimeters=${obj.optInt("totalPerimeterCount")} infills=${obj.optInt("totalInfillCount")}"
+                "first_layer_region_snapshot" -> "first_layer_region_snapshot phase=${obj.optString("phase")} region=${obj.optInt("regionIndex")} perimeters=${obj.optInt("perimeterCount")} infills=${obj.optInt("infillCount")}"
+                "first_layer_extrude_entry_snapshot" -> "first_layer_extrude_entry_snapshot entry=${obj.optString("entryPoint")} role=${obj.optString("role")} layer=${obj.optInt("layerIndex")} pathCount=${obj.optInt("pathCount")}"
+                "first_layer_extrude_snapshot" -> "first_layer_extrude_snapshot role=${obj.optString("role")} layer=${obj.optInt("layerIndex")} points=${obj.optInt("pointCount")} speed=${obj.optDouble("speed")}"
+                "gcode_writer_window_line" -> "gcode_writer_window_line lineIndex=${obj.optInt("lineIndex")} reason=${obj.optString("reason")} op=${obj.optString("operationLabel")}"
+                "gcode_writer_invalid_line" -> "gcode_writer_invalid_line lineIndex=${obj.optInt("lineIndex")} op=${obj.optString("operationLabel")}"
+                "slice_output_validation" -> "slice_output_validation layers=${obj.optInt("parsedLayerCount")} extrude=${obj.optInt("parsedExtrudeMoves")} nonPrime=${obj.optInt("parsedNonPrimeExtrudeMoves")} est=${obj.opt("nativeEstimatedTimeSeconds")}"
+                "slice_output_invalid" -> "slice_output_invalid reason=${obj.optString("reason")} nonPrime=${obj.optInt("parsedNonPrimeExtrudeMoves")} est=${obj.opt("nativeEstimatedTimeSeconds")}"
+                "clipper_coordinate_out_of_range" -> "clipper_coordinate_out_of_range payload=${obj.optJSONObject("payload")}"
+                  "clipper_invalid_path_detected" -> "clipper_invalid_path_detected payload=${obj.optJSONObject("payload")}"
+                  "native_trace_flush" -> "native_trace_flush reason=${obj.optJSONObject("payload")?.optString("reason")} entries=${obj.optJSONObject("payload")?.optInt("entryCount")}"
+                  "clipper_bounds_fallback" -> "clipper_bounds_fallback payload=${obj.optJSONObject("payload")}"
+                "wipe_tower_rib_snapshot" -> "wipe_tower_rib_snapshot payload=${obj.optJSONObject("payload")}"
+                "wipe_tower_support_wall_snapshot" -> "wipe_tower_support_wall_snapshot payload=${obj.optJSONObject("payload")}"
+                "wipe_tower_invalid_rib_polygon" -> "wipe_tower_invalid_rib_polygon payload=${obj.optJSONObject("payload")}"
+                "partplate_wipe_tower_polygon" -> "partplate_wipe_tower_polygon payload=${obj.optJSONObject("payload")}"
+                "partplate_invalid_wipe_tower_polygon" -> "partplate_invalid_wipe_tower_polygon payload=${obj.optJSONObject("payload")}"
+                "snapmaker_wipe_tower_polygon" -> "snapmaker_wipe_tower_polygon payload=${obj.optJSONObject("payload")}"
+                "snapmaker_invalid_wipe_tower_polygon" -> "snapmaker_invalid_wipe_tower_polygon payload=${obj.optJSONObject("payload")}"
+                "first_layer_brim_snapshot" -> "first_layer_brim_snapshot payload=${obj.optJSONObject("payload")}"
+                "first_layer_islands_snapshot" -> "first_layer_islands_snapshot payload=${obj.optJSONObject("payload")}"
+                "first_layer_convex_hull_snapshot" -> "first_layer_convex_hull_snapshot payload=${obj.optJSONObject("payload")}"
+                "head_wrap_detect_zone_inputs" -> "head_wrap_detect_zone_inputs payload=${obj.optJSONObject("payload")}"
+                "head_wrap_detect_zone_skipped" -> "head_wrap_detect_zone_skipped payload=${obj.optJSONObject("payload")}"
+                "head_wrap_detect_zone_fallback" -> "head_wrap_detect_zone_fallback payload=${obj.optJSONObject("payload")}"
                 "restart_requested" -> "restart_requested trigger=${obj.optString("trigger")}"
                 "clipper_recovery_deferred" -> "clipper_recovery_deferred"
                 else -> type

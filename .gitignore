@@ -51,3 +51,7 @@ slice_test.png
 
 # PrusaSlicer source (large, fetched via script)
 app/src/main/cpp/prusaslicer/
+
+# Investigation artifacts (device screenshots, UI dumps, diagnostics pulls)
+_device_artifacts/
+diagnostics_pulls/

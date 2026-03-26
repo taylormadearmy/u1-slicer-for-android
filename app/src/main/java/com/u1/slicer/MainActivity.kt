@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: SlicerViewModel by viewModels()
     private val printerViewModel: PrinterViewModel by viewModels()
     private var testReceiver: TestCommandReceiver? = null
+    private var launchApkUpdateTime: Long = 0L
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -304,6 +305,14 @@ class MainActivity : ComponentActivity() {
         return false
     }
 
+    private fun getCurrentApkUpdateTime(): Long {
+        return try {
+            packageManager.getPackageInfo(packageName, 0).lastUpdateTime
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
     override fun onDestroy() {
         testReceiver?.let {
             try { unregisterReceiver(it) } catch (_: Exception) {}
@@ -312,8 +321,29 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    override fun onResume() {
+        super.onResume()
+        val currentApkUpdateTime = getCurrentApkUpdateTime()
+        if (launchApkUpdateTime != 0L && currentApkUpdateTime != launchApkUpdateTime) {
+            diagnostics.recordEvent(
+                "apk_changed_while_running",
+                mapOf(
+                    "launchApkUpdateTime" to launchApkUpdateTime,
+                    "currentApkUpdateTime" to currentApkUpdateTime
+                )
+            )
+            Log.w(
+                "SlicerVM",
+                "APK changed while the app process was still alive; forcing cold restart"
+            )
+            launchApkUpdateTime = currentApkUpdateTime
+            clearStaleCacheOnUpgrade()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        launchApkUpdateTime = getCurrentApkUpdateTime()
         diagnostics.recordEvent(
             "app_launch",
             mapOf(
@@ -973,6 +1003,7 @@ fun PrepareEmptyState(onPickFile: () -> Unit, onBrowseMakerWorld: () -> Unit = {
             }
         }
     }
+
 }
 
 @Composable
@@ -1108,6 +1139,10 @@ fun PreviewScreen(
                     ErrorCard(
                         s.message,
                         onRetry = { onNavigatePrepare() },
+                        onResetAndRetry = {
+                            viewModel.resetAppState()
+                            onNavigatePrepare()
+                        },
                         onRestart = { viewModel.restartApp() },
                         onShareDiagnostics = { viewModel.shareDiagnostics() }
                     )
@@ -1801,11 +1836,14 @@ fun MultiColorInfoCard(
 fun ErrorCard(
     message: String,
     onRetry: () -> Unit,
+    onResetAndRetry: (() -> Unit)? = null,
     onRestart: (() -> Unit)? = null,
     onShareDiagnostics: (() -> Unit)? = null
 ) {
     val isClipperError = message.contains("Coordinate outside allowed range", ignoreCase = true) ||
-        message.contains("clipper", ignoreCase = true)
+        message.contains("clipper", ignoreCase = true) ||
+        message.contains("impossible coordinates", ignoreCase = true) ||
+        message.contains("invalid output", ignoreCase = true)
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -1824,24 +1862,27 @@ fun ErrorCard(
                     color = MaterialTheme.colorScheme.error)
             }
             Text(message, color = Color.White.copy(alpha = 0.8f))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onRetry,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("Try Again")
-                }
-                if (isClipperError && onRestart != null) {
-                    OutlinedButton(
-                        onClick = onRestart,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        ),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isClipperError && onResetAndRetry != null) {
+                    Button(
+                        onClick = onResetAndRetry,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
                     ) {
-                        Text("Restart App")
+                        Text("Reset & Retry")
+                    }
+                } else {
+                    Button(
+                        onClick = onRetry,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Try Again")
                     }
                 }
                 if (isClipperError && onShareDiagnostics != null) {
