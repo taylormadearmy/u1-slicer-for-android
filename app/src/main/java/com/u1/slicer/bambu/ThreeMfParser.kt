@@ -160,7 +160,7 @@ object ThreeMfParser {
                 // this layer G-code instead of object-level color segmentation.
                 val layerToolInfo = if (isBambu) {
                     val gcodeEntry = zip.getEntry("Metadata/custom_gcode_per_layer.xml")
-                    gcodeEntry?.let { detectLayerToolInfo(zip.getInputStream(it)) }
+                    gcodeEntry?.let { parseLayerToolCustomGcodeXml(zip.getInputStream(it).bufferedReader().readText()) }
                 } else null
                 val hasLayerToolChanges = layerToolInfo?.hasToolChanges == true
 
@@ -381,7 +381,7 @@ object ThreeMfParser {
                 val layerToolInfo = zip.getEntry("Metadata/custom_gcode_per_layer.xml")
                     ?.let { entry ->
                         val xml = zip.getInputStream(entry).bufferedReader().readText()
-                        detectLayerToolInfoFromText(xml)
+                        parseLayerToolCustomGcodeXml(xml)
                     }
                 val layerToolExtruders = layerToolInfo?.extruders.orEmpty()
                 val filteredColors = linkedSetOf<String>()
@@ -622,43 +622,6 @@ object ThreeMfParser {
             return true
         }
         return false
-    }
-
-    private data class LayerToolInfo(
-        val hasToolChanges: Boolean,
-        val colors: List<String>,
-        val extruders: Set<Int>
-    )
-
-    private fun detectLayerToolInfoFromText(xml: String): LayerToolInfo {
-        val colors = linkedSetOf<String>()
-        val extruders = linkedSetOf<Int>()
-        val layerRegex = Regex("""<layer\b([^>]*)>""")
-        val typeRegex = Regex("""\btype="([^"]+)"""")
-        val extruderRegex = Regex("""\bextruder="([^"]+)"""")
-        val colorRegex = Regex("""\bcolor="([^"]+)"""")
-        var hasToolChanges = false
-
-        layerRegex.findAll(xml).forEach { match ->
-            val attrs = match.groupValues[1]
-            val type = typeRegex.find(attrs)?.groupValues?.getOrNull(1)
-            if (type == "2") {
-                hasToolChanges = true
-                extruderRegex.find(attrs)?.groupValues?.getOrNull(1)
-                    ?.toIntOrNull()
-                    ?.let { extruders.add(it) }
-                colorRegex.find(attrs)?.groupValues?.getOrNull(1)
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { colors.add(it.take(7)) }
-            }
-        }
-
-        return LayerToolInfo(hasToolChanges, colors.toList(), extruders)
-    }
-
-    private fun detectLayerToolInfo(inputStream: InputStream): LayerToolInfo {
-        val xml = inputStream.bufferedReader().readText()
-        return detectLayerToolInfoFromText(xml)
     }
 
     private fun detectColorsFromFilamentSequence(

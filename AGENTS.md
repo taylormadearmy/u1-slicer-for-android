@@ -11,7 +11,7 @@
 
 **Test:**
 ```bash
-./gradlew testDebugUnitTest                 # 517 JVM unit tests
+./gradlew testDebugUnitTest                 # 519 JVM unit tests
 ./gradlew connectedDebugAndroidTest         # 125 instrumented tests
 ```
 
@@ -19,7 +19,7 @@
 **Public-safe rule:** never deploy automated tests to personal or non-phone devices.
 
 **App ID:** `com.u1.slicer.orca`
-**Current release:** `v1.4.75` (`versionCode 164`)
+**Current release:** `v1.5.1` (`versionCode 167`)
 
 ## Backlog
 

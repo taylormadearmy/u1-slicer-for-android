@@ -10,6 +10,7 @@ import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.gcode.GcodeValidator
+import com.u1.slicer.gcode.LayerToolPauseInjector
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -405,6 +406,7 @@ class ProfileEmbedderIntegrationTest {
 
     @Test
     fun flippyFlappyMini_fullPipeline_emitsLayerChangePauseGcode() {
+        val sourceAsset = asset("flippy+flappy+mini.3mf")
         val embedded = fullPipeline("flippy+flappy+mini.3mf")
         assertTrue("embedded sample should load", lib.loadModel(embedded.absolutePath))
 
@@ -412,6 +414,11 @@ class ProfileEmbedderIntegrationTest {
         assertNotNull("slice should return a result", result)
         assertTrue("layer-change sample should slice successfully: ${result?.errorMessage}", result!!.success)
 
+        // Same as app: native slice omits pause lines; LayerToolPauseInjector adds them from source 3MF metadata.
+        assertTrue(
+            "pause injector should run using source asset metadata",
+            LayerToolPauseInjector.injectFrom3mf(result.gcodePath, sourceAsset)
+        )
         val gcode = File(result.gcodePath).readText()
         assertTrue(
             "layer-change sample should emit pause/color-swap G-code",
