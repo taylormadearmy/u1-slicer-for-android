@@ -49,6 +49,10 @@ Experimental work is preserved on branch **`archive/layer-change-experiment-2026
 
 Work from stable baseline: **`fix/slice-perf-from-v1.5.0-baseline`** (from `a554c36`).
 
+## Clean re-implementation (same branch)
+
+Layer-change behaviour from the experiment archive was **re-applied onto this baseline** by checking out the known-good **Kotlin + `sapil_print.cpp`** sources from `archive/layer-change-experiment-2026-03`, while **keeping the v1.5.0 `libprusaslicer-jni.so`** (no replacement with the experimental large binary). Debug-only NDJSON logging was **removed** after porting. Re-run timing on device to confirm **~7 s** slice returns.
+
 ## Diff snapshot: v1.5.0 (`a554c36`) vs experiment archive (`archive/layer-change-experiment-2026-03`)
 
 Quick comparison for the **native slice entrypoints** (not exhaustive):

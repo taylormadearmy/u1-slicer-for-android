@@ -208,6 +208,9 @@ class ProfileEmbedder(private val context: Context) {
             // Bambu preserve path: start with source config, overlay Snapmaker hardware
             config = sourceConfig.toMutableMap()
             config.putAll(printerProfile!!.toMap())
+            if (info.hasLayerToolChanges) {
+                sourceConfig["machine_pause_gcode"]?.let { config["machine_pause_gcode"] = it }
+            }
             Log.i(TAG, "Using preserve path (Bambu with assignments/tool-changes/paint)")
         } else {
             // Standard path: full Snapmaker profile stack
@@ -239,9 +242,23 @@ class ProfileEmbedder(private val context: Context) {
         config.remove("inherits")
         config.remove("inherits_group")
 
-        // Strip Bambu-specific G-code
+        // Strip Bambu-specific G-code.
+        // Hueforge-style models can encode layer-by-layer colour swaps in
+        // machine_pause_gcode, so preserve that one when the source file
+        // explicitly carries layer tool changes.
         config.remove("time_lapse_gcode")
-        config.remove("machine_pause_gcode")
+        if (!info.hasLayerToolChanges) {
+            config.remove("machine_pause_gcode")
+        }
+        if (info.hasLayerToolChanges) {
+            // U1 handles these files as manual pause-driven filament swaps, not as
+            // AMS-style tool changes. Keep the pause script, but drop the Bambu
+            // SEMM/toolchange settings that would otherwise trigger the wrong path.
+            config["single_extruder_multi_material"] = "0"
+            config.remove("single_extruder_multi_material_priming")
+            config.remove("manual_filament_change")
+            config.remove("change_filament_gcode")
+        }
         val fsg = config["filament_start_gcode"]
         if (fsg is List<*> && fsg.any { it.toString().contains("M142") || it.toString().contains("air_filtration") }) {
             config.remove("filament_start_gcode")
@@ -266,6 +283,16 @@ class ProfileEmbedder(private val context: Context) {
         // extruder assignments in model_settings.config — the root cause of the multi-colour
         // regression where Dragon Scale sliced as single-colour despite correct volume entries.
         config["extruder_count"] = targetExtruderCount.toString()
+
+        Log.i(
+            TAG,
+            "buildConfig final layer-tool keys: " +
+                "single_extruder_multi_material=${config["single_extruder_multi_material"]} " +
+                "single_extruder_multi_material_priming=${config["single_extruder_multi_material_priming"]} " +
+                "change_filament_gcode=${config["change_filament_gcode"] != null} " +
+                "machine_pause_gcode=${config["machine_pause_gcode"] != null} " +
+                "extruder_count=${config["extruder_count"]}"
+        )
 
         Log.i(TAG, "Built config with ${config.size} keys, $targetExtruderCount extruders")
         return config
@@ -529,7 +556,14 @@ class ProfileEmbedder(private val context: Context) {
                             }
                         }
 
-                        // Pass through — raw-copy to avoid decompressing+recompressing
+                        // Layer-change metadata stays on the source/selected-plate file for
+                        // preview parsing and post-slice pause injection, but we intentionally
+                        // keep it out of the embedded file sent to native Orca. The selected-plate
+                        // native slice path becomes extremely slow when this metadata is present,
+                        // while the U1-compatible output is produced by LayerToolPauseInjector.
+                        name == "Metadata/custom_gcode_per_layer.xml" && info.hasLayerToolChanges -> {
+                            Log.i(TAG, "Skipping custom_gcode_per_layer.xml in embedded file; native slice uses pause-injection fallback")
+                        }
                         else -> {
                             rawCopyEntry(srcZip, entry, destZip)
                         }
@@ -602,7 +636,6 @@ class ProfileEmbedder(private val context: Context) {
         return text.toByteArray()
     }
 
-    /** Write a ZIP entry using STORED (no compression) method — required by 3MF spec. */
     private fun writeStored(zip: ZipOutputStream, name: String, data: ByteArray) {
         val entry = ZipEntry(name)
         entry.method = ZipEntry.STORED

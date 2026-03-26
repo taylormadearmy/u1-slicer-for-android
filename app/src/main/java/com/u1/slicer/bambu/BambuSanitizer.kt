@@ -32,6 +32,7 @@ object BambuSanitizer {
         "Metadata/slice_info.config",
         "Metadata/cut_information.xml",
         "Metadata/filament_sequence.json",
+        // Preserve layer-change metadata so Hueforge-style previews can infer colors.
         "Metadata/Slic3r_PE.config",
         "Metadata/Slic3r_PE_model.config"
     )
@@ -184,6 +185,11 @@ object BambuSanitizer {
  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>
 </Types>"""
                                 writeStored(destZip, name, cleanTypes.toByteArray())
+                            }
+
+                            // Keep layer-change metadata for Hueforge-style previews.
+                            name == "Metadata/custom_gcode_per_layer.xml" -> {
+                                rawCopyZipEntry(srcZip, entry, destZip)
                             }
 
                             // Drop unknown Metadata files (Bambu-specific configs like
@@ -1511,6 +1517,12 @@ $componentRefs    </components>
                             }
                             writeStored(destZip, entry.name, text.toByteArray())
                         }
+                        entry.name == "Metadata/custom_gcode_per_layer.xml" -> {
+                            val filtered = filterCustomGcodePerLayer(String(content), targetPlateId)
+                            if (filtered.isNotBlank()) {
+                                writeStored(destZip, entry.name, filtered.toByteArray())
+                            }
+                        }
                         else -> writeStored(destZip, entry.name, content)
                     }
                 }
@@ -1536,6 +1548,27 @@ $componentRefs    </components>
             }
         }
         return outputFile
+    }
+
+    private fun filterCustomGcodePerLayer(xml: String, targetPlateId: Int): String {
+        val header = """<?xml version="1.0" encoding="utf-8"?>"""
+        val plateRegex = Regex("""<plate>[\s\S]*?</plate>""")
+        val selectedBlock = plateRegex.findAll(xml)
+            .map { it.value }
+            .firstOrNull { block ->
+                block.contains("""<plate_info id="$targetPlateId"/>""")
+            }
+            ?: return xml
+        val renumberedBlock = selectedBlock.replace(
+            Regex("""<plate_info id="$targetPlateId"\s*/>"""),
+            """<plate_info id="1"/>"""
+        )
+        return buildString {
+            appendLine(header)
+            appendLine("<custom_gcodes_per_layer>")
+            appendLine(renumberedBlock)
+            appendLine("</custom_gcodes_per_layer>")
+        }
     }
 
     private fun buildSyntheticModelConfig(objectExtruderMap: Map<String, Int>): String = buildString {

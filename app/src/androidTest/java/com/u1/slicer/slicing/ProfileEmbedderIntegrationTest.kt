@@ -6,6 +6,7 @@ import com.u1.slicer.NativeLibrary
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
+import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.gcode.GcodeValidator
@@ -284,6 +285,269 @@ class ProfileEmbedderIntegrationTest {
     }
 
     // ─── INI / JSON import ────────────────────────────────────────────────────
+
+    @Test
+    fun embed_preservesMachinePauseGcodeForLayerToolChanges() {
+        val sourceConfig = mapOf(
+            "machine_pause_gcode" to "M0 ; pause for color swap",
+            "change_filament_gcode" to "M600 ; swap filament",
+            "single_extruder_multi_material" to "1",
+            "enable_support" to "1"
+        )
+        val info = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            hasLayerToolChanges = true
+        )
+
+        val preserved = embedder.buildConfig(
+            info = info,
+            sourceConfig = sourceConfig,
+            targetExtruderCount = 1
+        )
+        assertEquals(
+            "Layer tool changes must preserve machine_pause_gcode for Hueforge-style pauses",
+            "M0 ; pause for color swap",
+            preserved["machine_pause_gcode"]?.toString()
+        )
+        assertEquals(
+            "Layer tool changes must force manual pause compatibility on U1",
+            "0",
+            preserved["single_extruder_multi_material"]?.toString()
+        )
+        assertFalse(
+            "Layer tool changes should drop the Bambu filament swap script",
+            preserved.containsKey("change_filament_gcode")
+        )
+
+        val stripped = embedder.buildConfig(
+            info = info.copy(hasLayerToolChanges = false),
+            sourceConfig = sourceConfig,
+            targetExtruderCount = 1
+        )
+        assertFalse(
+            "machine_pause_gcode should be stripped when the source has no layer tool changes",
+            stripped.containsKey("machine_pause_gcode")
+        )
+    }
+
+    @Test
+    fun shashibo_detectsLayerToolColors() {
+        val info = ThreeMfParser.parse(asset("Shashibo-h2s-textured.3mf"))
+
+        assertTrue("Shashibo should be recognized as Bambu", info.isBambu)
+        assertTrue("layer tool changes should be detected", info.hasLayerToolChanges)
+        assertTrue(
+            "layer tool colors should produce a multi-colour preview",
+            info.detectedColors.size > 1
+        )
+        assertTrue(
+            "layer tool colors should produce a multi-extruder preview state",
+            info.detectedExtruderCount > 1
+        )
+    }
+
+    @Test
+    fun coloredBenchy_detectsMultiColourMetadata() {
+        val info = ThreeMfParser.parse(asset("colored_3DBenchy (1).3mf"))
+
+        assertTrue("colored benchy should be recognized as Bambu", info.isBambu)
+        assertTrue(
+            "project settings should produce a multi-colour preview",
+            info.detectedColors.size > 1
+        )
+        assertTrue(
+            "project settings should produce a multi-extruder preview state",
+            info.detectedExtruderCount > 1
+        )
+    }
+
+    @Test
+    fun flippyFlappyMini_detectsLayerChangeColours() {
+        val info = ThreeMfParser.parse(asset("flippy+flappy+mini.3mf"))
+
+        assertTrue("flippy+flappy+mini should be recognized as Bambu", info.isBambu)
+        assertTrue(
+            "layer-change tool changes should be detected",
+            info.hasLayerToolChanges
+        )
+        assertTrue(
+            "layer-change colors should produce a multi-colour preview",
+            info.detectedColors.size > 1
+        )
+        assertTrue(
+            "layer-change colors should produce a multi-extruder preview state",
+            info.detectedExtruderCount > 1
+        )
+    }
+
+    @Test
+    fun flippyFlappyMini_previewMeshUsesLayerChangeColours() {
+        val input = asset("flippy+flappy+mini.3mf")
+        val info = ThreeMfParser.parse(input)
+        val mesh = com.u1.slicer.viewer.ThreeMfMeshParser.parse(
+            file = input,
+            detectedColorCount = info.detectedColors.size
+        )
+
+        assertNotNull("preview mesh should parse", mesh)
+        assertTrue(
+            "preview mesh should carry per-triangle color indices",
+            mesh!!.hasPerVertexColor
+        )
+        assertTrue(
+            "layer-change preview mesh should contain multiple color indices",
+            mesh.extruderIndices?.toSet()?.size ?: 0 > 1
+        )
+    }
+
+    @Test
+    fun flippyFlappyMini_fullPipeline_emitsLayerChangePauseGcode() {
+        val embedded = fullPipeline("flippy+flappy+mini.3mf")
+        assertTrue("embedded sample should load", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(defaultSliceConfig)
+        assertNotNull("slice should return a result", result)
+        assertTrue("layer-change sample should slice successfully: ${result?.errorMessage}", result!!.success)
+
+        val gcode = File(result.gcodePath).readText()
+        assertTrue(
+            "layer-change sample should emit pause/color-swap G-code",
+            gcode.contains("M400 U1") || gcode.contains("; PAUSE_PRINT")
+        )
+        assertTrue(
+            "layer-change sample should stay in single-extruder pause mode",
+            gcode.contains("; single_extruder_multi_material = 0")
+        )
+    }
+
+    @Test
+    fun flippyFlappyMini_embedDropsLayerToolMetadataForNativeSliceFallback() {
+        val input = asset("flippy+flappy+mini.3mf")
+        val info = ThreeMfParser.parse(input)
+        val sanitized = BambuSanitizer.process(input, outDir, isBambu = true)
+        val config = embedder.buildConfig(
+            info = info,
+            sourceConfig = ZipFile(input).use { embedder.parseSourceConfig(it) },
+            targetExtruderCount = 1
+        )
+
+        val embedded = embedder.embed(sanitized, config, outDir, info)
+        ZipFile(embedded).use { zip ->
+            val entry = zip.getEntry("Metadata/custom_gcode_per_layer.xml")
+            assertNull(
+                "embedded file should drop custom_gcode_per_layer.xml so native slicing stays on the fast path",
+                entry
+            )
+        }
+    }
+
+    @Test
+    fun flippyFlappyMini_sanitizerPreservesLayerToolMetadata() {
+        val input = asset("flippy+flappy+mini.3mf")
+        val sanitized = BambuSanitizer.process(input, outDir, isBambu = true)
+        ZipFile(sanitized).use { zip ->
+            assertNotNull(
+                "sanitized file should preserve custom_gcode_per_layer.xml",
+                zip.getEntry("Metadata/custom_gcode_per_layer.xml")
+            )
+        }
+    }
+
+    @Test
+    fun flippyFlappyMini_extractPlateKeepsOnlySelectedLayerToolMetadata() {
+        val input = asset("flippy+flappy+mini.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val sanitized = BambuSanitizer.process(input, outDir, isBambu = true)
+        val targetPlateId = 4
+        val plateObjectIds = origInfo.plates.firstOrNull { it.plateId == targetPlateId }?.objectIds?.toSet()
+        assertNotNull("sample should expose plate $targetPlateId", plateObjectIds)
+
+        val plateFile = BambuSanitizer.extractPlate(
+            inputFile = sanitized,
+            targetPlateId = targetPlateId,
+            outputDir = outDir,
+            hasPlateJsons = origInfo.hasPlateJsons,
+            plateObjectIds = plateObjectIds
+        )
+
+        ZipFile(plateFile).use { zip ->
+            val entry = zip.getEntry("Metadata/custom_gcode_per_layer.xml")
+            assertNotNull("plate extract should keep custom_gcode_per_layer.xml", entry)
+            val xml = zip.getInputStream(entry).bufferedReader().readText()
+            assertTrue("single-plate extract should be renumbered to plate 1", xml.contains("""plate_info id="1""""))
+            assertFalse("original plate id should be rewritten for single-plate slicing", xml.contains("""plate_info id="$targetPlateId""""))
+            assertFalse("other plate metadata should be removed", xml.contains("""plate_info id="10""""))
+        }
+    }
+
+    @Test
+    fun flippyFlappyMini_plateSelectionDetectsOnlySelectedColours() {
+        val input = asset("flippy+flappy+mini.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val sanitized = BambuSanitizer.process(input, outDir, isBambu = true)
+        val targetPlateId = 4
+        val plateObjectIds = origInfo.plates.firstOrNull { it.plateId == targetPlateId }?.objectIds?.toSet()
+        assertNotNull("sample should expose plate $targetPlateId", plateObjectIds)
+
+        val rawPlateFile = BambuSanitizer.extractPlate(
+            inputFile = sanitized,
+            targetPlateId = targetPlateId,
+            outputDir = outDir,
+            hasPlateJsons = origInfo.hasPlateJsons,
+            plateObjectIds = plateObjectIds
+        )
+        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
+        val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
+
+        assertTrue("selected plate should keep layer tool changes", plateInfo.hasLayerToolChanges)
+        assertEquals(
+            "selected plate should expose only the two colours it uses",
+            2,
+            plateInfo.detectedColors.size
+        )
+        assertEquals(
+            "selected plate should look dual-colour after plate filtering",
+            2,
+            plateInfo.detectedExtruderCount
+        )
+    }
+
+    @Test
+    fun layerToolPlateMerge_prefersSelectedPlatePalette() {
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = true,
+            detectedColors = listOf("#111111", "#222222", "#333333"),
+            detectedExtruderCount = 3,
+            hasLayerToolChanges = true
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            detectedColors = listOf("#111111", "#333333"),
+            detectedExtruderCount = 2,
+            hasLayerToolChanges = true
+        )
+
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, selectedPlateId = 1)
+        assertEquals(
+            "layer-tool plates should prefer the selected plate palette",
+            plateInfo.detectedColors,
+            merged.detectedColors
+        )
+        assertEquals(
+            "layer-tool plates should keep the selected plate extruder count",
+            2,
+            merged.detectedExtruderCount
+        )
+    }
 
     /**
      * Bridge: settings.spec.ts — "filament JSON imports correctly"

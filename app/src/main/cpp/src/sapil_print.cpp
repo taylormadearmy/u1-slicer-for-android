@@ -286,7 +286,8 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // single_extruder_multi_material to true, which makes WipeTower2 perform bowden-style
     // 94mm filament unload/reload sequences during tool changes — completely wrong for the U1
     // and causes filament jams.  Must be set to false.
-    dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+    if (!has_embedded_profile)
+        dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
 
     // Wipe tower filament handling — OrcaSlicer defaults are for bowden SEMM printers
     // (cooling_tube_retraction=91.5, cooling_tube_length=5, parking_pos=92, ramming=on).
@@ -485,6 +486,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "machine_start_gcode",
                     "machine_end_gcode",
                     "change_filament_gcode",
+                    "machine_pause_gcode",
                     "before_layer_change_gcode",
                     "layer_change_gcode",
                     // Machine axis limits (M201 / M203)
@@ -623,6 +625,8 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "extruder_offset",
                     // Tool change / wipe tower filament handling (from printer+filament profile)
                     "single_extruder_multi_material",
+                    "single_extruder_multi_material_priming",
+                    "manual_filament_change",
                     "cooling_tube_retraction",
                     "cooling_tube_length",
                     "parking_pos_retraction",
