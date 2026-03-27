@@ -57,6 +57,54 @@ class LayerToolPauseInjectorTest {
     }
 
     @Test
+    fun `injectFrom3mf preserves nozzle_temperature array indexes with nil entries`() {
+        val dir = createTempDir(prefix = "layer_tool_pause_nil_indexes_")
+        try {
+            val model = File(dir, "sample.3mf")
+            ZipOutputStream(model.outputStream()).use { zip ->
+                write(zip, "Metadata/custom_gcode_per_layer.xml", """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <custom_gcodes_per_layer>
+                      <plate>
+                        <plate_info id="1"/>
+                        <layer top_z="1.6" type="1" extruder="2" color="#F4D976" extra="" gcode="M601"/>
+                        <mode value="SingleExtruder"/>
+                      </plate>
+                    </custom_gcodes_per_layer>
+                """.trimIndent())
+                // If index handling is wrong (e.g. skipping "nil" entries), toolIndex=1 (T1)
+                // could incorrectly pick up the next value (230).
+                write(
+                    zip,
+                    "Metadata/project_settings.config",
+                    """{"machine_pause_gcode":"M400 U1","nozzle_temperature":["nil","220","230"]}"""
+                )
+            }
+
+            val gcode = File(dir, "sample.gcode")
+            gcode.writeText(
+                """
+                ;LAYER_CHANGE
+                ;Z:1.5
+                G1 X1 Y1
+                ;LAYER_CHANGE
+                ;Z:1.7
+                G1 X2 Y2
+                """.trimIndent() + "\n"
+            )
+
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            val text = gcode.readText()
+            assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
+            assertTrue(text.contains("T1"))
+            assertTrue("Injector must use nozzle_temperature[1]=220 for toolIndex=1 even when index 0 is nil", text.contains("M109 S220"))
+            assertFalse("Should not incorrectly use nozzle_temperature[2]=230 due to shifted indexes", text.contains("M109 S230"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `injectFrom3mf does nothing when no custom layer metadata exists`() {
         val dir = createTempDir(prefix = "layer_tool_pause_empty_")
         try {

@@ -26,7 +26,7 @@ object LayerToolPauseInjector {
         if (!model3mf.exists() || !model3mf.name.endsWith(".3mf", ignoreCase = true)) return false
 
         val pauseTargets = mutableListOf<PauseTarget>()
-        var nozzleTemps: List<Int>? = null
+        var nozzleTemps: Map<Int, Int>? = null
         val pauseCommand = ZipFile(model3mf).use { zip ->
             zip.getEntry("Metadata/custom_gcode_per_layer.xml")?.let { entry ->
                 val xml = zip.getInputStream(entry).bufferedReader().readText()
@@ -86,7 +86,7 @@ object LayerToolPauseInjector {
                                                 writer.write("; layer_tool extruder ${target.extruderBambu} → T$toolIndex\n")
                                                 writer.write("T$toolIndex\n")
                                                 // Prefer 3MF project settings; fall back to explicit M104/M109 Tn in source G-code.
-                                                val setTemp = nozzleTemps?.getOrNull(toolIndex)
+                                            val setTemp = nozzleTemps?.get(toolIndex)
                                                     ?: gcodeToolTemps[toolIndex]
                                                 if (setTemp != null && setTemp in 1..400) {
                                                     writer.write("M109 S$setTemp\n")
@@ -139,17 +139,17 @@ object LayerToolPauseInjector {
         }.sortedWith(compareBy({ it.topZ }, { it.extruderBambu })).toList()
 
     /** Bambu `project_settings.config` JSON: `nozzle_temperature` array index matches T index (0 = T0, …). */
-    private fun parseNozzleTemperatures(projectSettingsJson: String): List<Int>? {
+    private fun parseNozzleTemperatures(projectSettingsJson: String): Map<Int, Int>? {
         return try {
             val obj = JSONObject(projectSettingsJson.trim())
             val arr = obj.optJSONArray("nozzle_temperature") ?: return null
-            buildList {
-                for (i in 0 until arr.length()) {
-                    val s = arr.optString(i, "").trim()
-                    val n = s.substringBefore(".").toIntOrNull() ?: continue
-                    add(n)
-                }
-            }.takeIf { it.isNotEmpty() }
+            val temps = mutableMapOf<Int, Int>()
+            for (i in 0 until arr.length()) {
+                val s = arr.optString(i, "").trim()
+                val n = s.substringBefore(".").toIntOrNull() ?: continue
+                if (n in 1..400) temps[i] = n
+            }
+            temps.takeIf { it.isNotEmpty() }
         } catch (_: Exception) {
             null
         }
