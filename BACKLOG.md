@@ -39,7 +39,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 ### B37: Hueforge filament pauses / colour changes are dropped when sliced in-app (GitHub #21)
 - Repro model from issue: `https://makerworld.com/models/402958?appSharePlatform=copy`
 - Reported behavior: the source 3MF includes the required colour changes at specific layer heights, but after slicing in the app those pauses/tool changes are not emitted
-- Visible symptom: Slice Summary / filament usage attributes the whole print to nozzle 2 and excludes nozzles 3 and 4
+- Visible symptom: Slice Summary / filament usage attributes the whole print to nozzle 2 and excludes nozzles 3 and 4 — follow-up UX parity for summary/preview is tracked separately under **F47** / [`#27`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/27) and **F46** / [`#26`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/26)
 - Investigate whether Hueforge-style layer-based filament swaps are being lost during 3MF import, profile embed/sanitize, native config translation, or G-code post-processing
 - Need a regression asset/test once root cause is understood, since this is a real multi-colour workflow rather than a standard per-object extruder assignment case
 
@@ -58,6 +58,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Caution**: `clipperRetryAttempted` may protect against Clipper edge cases unrelated to upgrades — verify before removing
 
 ## Open Features
+
+### F46: Prepare preview colours for layer-tool / Hueforge models (GitHub #26)
+- Layer-based tool changes slice correctly, but Prepare 3D preview does not show per-layer / per-extruder colours like per-object or SEMM workflows
+- Track: [`#26`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/26)
+
+### F47: Slice summary filament usage for layer-tool / pause-based prints (GitHub #27)
+- G-code and pause injection work; Preview slice summary and per-extruder usage often do not match other multicolour prints
+- Track: [`#27`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/27)
 
 ### F45: Bambu printer support (GitHub #16)
 - Add support for Bambu Lab printers (communication protocol differs from Moonraker)

@@ -110,6 +110,43 @@ class MergeThreeMfInfoTest {
     }
 
     @Test
+    fun `mergeThreeMfInfoForPlate layer-tool models include base object colour from selected plate`() {
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(
+                com.u1.slicer.bambu.ThreeMfPlate(
+                    plateId = 4,
+                    name = "Small - Dual Colour",
+                    objectIds = listOf("5"),
+                    filamentIndices = emptySet()
+                )
+            ),
+            isBambu = true,
+            isMultiPlate = true,
+            detectedColors = listOf("#161616", "#F4D976", "#368CF9"),
+            detectedExtruderCount = 3,
+            hasLayerToolChanges = true,
+            objectExtruderMap = mapOf("5" to 1)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            detectedColors = listOf("#F4D976"),
+            detectedExtruderCount = 1,
+            hasLayerToolChanges = true,
+            usedExtruderIndices = setOf(2)
+        )
+
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, selectedPlateId = 4)
+
+        assertEquals(listOf("#161616", "#F4D976"), merged.detectedColors)
+        assertEquals(2, merged.detectedExtruderCount)
+        assertEquals(setOf(1, 2), merged.usedExtruderIndices)
+    }
+
+    @Test
     fun `mergeThreeMfInfo prefers processed objectExtruderMap when available`() {
         val origInfo = ThreeMfInfo(
             objects = emptyList(), plates = emptyList(),
@@ -376,5 +413,22 @@ class MergeThreeMfInfoTest {
         assertNotNull(remap)
         // colorMapping=[2,0,3,1]: file extruder 1→slot2→compact3, 2→slot0→compact1, 3→slot3→compact4, 4→slot1→compact2
         assertEquals(mapOf(1 to 3, 2 to 1, 3 to 4, 4 to 2), remap)
+    }
+
+    @Test
+    fun `buildCompactExtruderRemap returns null for layer tool change models`() {
+        val info = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            hasLayerToolChanges = true,
+            usedExtruderIndices = setOf(1, 2, 3)
+        )
+
+        assertNull(
+            "Layer tool change models should stay single-filament at slice time",
+            buildCompactExtruderRemap(info, listOf(0, 1, 2))
+        )
     }
 }

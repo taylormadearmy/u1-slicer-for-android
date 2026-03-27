@@ -55,3 +55,10 @@ app/src/main/cpp/prusaslicer/
 # Investigation artifacts (device screenshots, UI dumps, diagnostics pulls)
 _device_artifacts/
 diagnostics_pulls/
+
+# Repo-root scratch (device pulls, unzip experiments)
+/_*.3mf
+/_*.gcode
+/_*.zip
+/_embedded_*_unzipped/
+app/.cmake-orca-arm64/

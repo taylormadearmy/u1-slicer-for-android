@@ -414,6 +414,26 @@ class GcodeParserTest {
         assertEquals(0f, result.wipeTowerFilamentMm, 0.01f)
     }
 
+    @Test
+    fun `colorSegmentsByPausePrint assigns extruder index after each PAUSE_PRINT`() {
+        val file = writeGcode("""
+            G1 Z0.2
+            G1 X1 Y1 E1
+            ; PAUSE_PRINT
+            G1 X2 Y2 E2
+            ; PAUSE_PRINT
+            G1 X3 Y3 E3
+        """.trimIndent())
+        val result = GcodeParser.parse(file, colorSegmentsByPausePrint = true)
+        val moves = result.layers.flatMap { it.moves }
+        assertTrue(moves.isNotEmpty())
+        assertEquals(0, moves.first().extruder)
+        val bySeg = moves.groupBy { it.extruder }
+        assertTrue(bySeg[0]?.isNotEmpty() == true)
+        assertTrue(bySeg[1]?.isNotEmpty() == true)
+        assertTrue(bySeg[2]?.isNotEmpty() == true)
+    }
+
     // Helper extension
     private fun ParsedGcode.moves(layerIndex: Int) = layers[layerIndex].moves
 }

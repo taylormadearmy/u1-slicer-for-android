@@ -32,7 +32,9 @@ object ThreeMfParser {
     private val BAMBU_MARKERS = setOf(
         "Metadata/model_settings.config",
         "Metadata/slice_info.config",
-        "Metadata/filament_sequence.json"
+        "Metadata/filament_sequence.json",
+        "Metadata/project_settings.config",
+        "Metadata/custom_gcode_per_layer.xml"
     )
 
     fun inspectArchiveSizing(file: File): ArchiveSizingRisk? {
@@ -153,11 +155,14 @@ object ThreeMfParser {
                         }
                 }
 
-                // Detect layer tool changes
-                val hasLayerToolChanges = if (isBambu) {
+                // Detect layer tool changes and any per-layer colors embedded in the
+                // custom_gcode_per_layer.xml metadata.  Hueforge-style files often use
+                // this layer G-code instead of object-level color segmentation.
+                val layerToolInfo = if (isBambu) {
                     val gcodeEntry = zip.getEntry("Metadata/custom_gcode_per_layer.xml")
-                    gcodeEntry != null && detectLayerToolChanges(zip.getInputStream(gcodeEntry))
-                } else false
+                    gcodeEntry?.let { parseLayerToolCustomGcodeXml(zip.getInputStream(it).bufferedReader().readText()) }
+                } else null
+                val hasLayerToolChanges = layerToolInfo?.hasToolChanges == true
 
                 // Detect colors from multiple sources (priority order)
                 val detectedColors = mutableListOf<String>()
@@ -208,6 +213,14 @@ object ThreeMfParser {
                             zip.getInputStream(configEntry), detectedColors
                         )
                     }
+                }
+
+                // Hueforge-style per-layer tool changes can carry the real preview colors
+                // even when the object geometry itself is single-colour.
+                val layerToolColors = layerToolInfo?.colors.orEmpty()
+                if (layerToolColors.isNotEmpty() && detectedColors.size <= 1) {
+                    detectedColors.clear()
+                    detectedColors.addAll(layerToolColors)
                 }
                 // Build plates: use model_settings.config plate→object mappings when
                 // available (groups multiple objects per plate correctly), otherwise
@@ -262,10 +275,12 @@ object ThreeMfParser {
                 val uniqueExtruders = if (allExtruderValuesMain.isNotEmpty())
                     allExtruderValuesMain else extruderAssignments.values.toSet()
                 val hasMultiExtruderAssignments = uniqueExtruders.size > 1
+                val layerToolExtruderCount = layerToolInfo?.extruders?.size ?: 0
                 val extruderCount = maxOf(
                     1,
                     extruderAssignments.values.maxOrNull() ?: 0,
-                    detectedColors.size
+                    detectedColors.size,
+                    layerToolExtruderCount
                 )
 
                 // 5. Synthesize placeholder colors when multi-extruder but no colors detected
@@ -359,12 +374,47 @@ object ThreeMfParser {
                         uniqueExtruders
                     }
                 } ?: uniqueExtruders
+                val projectColors = mutableListOf<String>()
+                zip.getEntry("Metadata/project_settings.config")?.let { entry ->
+                    detectColorsFromJsonSettings(zip.getInputStream(entry), projectColors)
+                }
+                val layerToolInfo = zip.getEntry("Metadata/custom_gcode_per_layer.xml")
+                    ?.let { entry ->
+                        val xml = zip.getInputStream(entry).bufferedReader().readText()
+                        parseLayerToolCustomGcodeXml(xml)
+                    }
+                val layerToolExtruders = layerToolInfo?.extruders.orEmpty()
+                val filteredColors = linkedSetOf<String>()
+                val filteredExtruders = (effectiveExtruders + layerToolExtruders)
+                    .filter { it > 0 }
+                    .toSortedSet()
+                if (projectColors.isNotEmpty() && filteredExtruders.isNotEmpty()) {
+                    filteredExtruders.forEach { extruderIndex ->
+                        projectColors.getOrNull(extruderIndex - 1)?.let { filteredColors.add(it) }
+                    }
+                }
+                layerToolInfo?.colors.orEmpty().forEach { filteredColors.add(it) }
+                val detectedColors = filteredColors.toList()
+                val detectedExtruderCount = when {
+                    filteredExtruders.isNotEmpty() -> maxOf(filteredExtruders.size, detectedColors.size)
+                    detectedColors.isNotEmpty() -> detectedColors.size
+                    else -> 1
+                }
+                Log.i(
+                    TAG,
+                    "parseForPlateSelection: projectColors=${projectColors.size} layerToolColors=${layerToolInfo?.colors} " +
+                        "layerToolExtruders=${layerToolInfo?.extruders} uniqueExtruders=$uniqueExtruders " +
+                        "filteredExtruders=$filteredExtruders detectedColors=$detectedColors"
+                )
                 ThreeMfInfo(
                     objects = emptyList(),
                     plates = lightweightPlates,
                     isBambu = isBambu,
                     isMultiPlate = false,
-                    usedExtruderIndices = effectiveExtruders,
+                    hasLayerToolChanges = layerToolInfo?.hasToolChanges == true,
+                    detectedColors = detectedColors,
+                    detectedExtruderCount = detectedExtruderCount,
+                    usedExtruderIndices = if (filteredExtruders.isNotEmpty()) filteredExtruders else effectiveExtruders,
                     objectExtruderMap = extruderAssignments.toMap()
                 )
             }
@@ -572,12 +622,6 @@ object ThreeMfParser {
             return true
         }
         return false
-    }
-
-    private fun detectLayerToolChanges(inputStream: InputStream): Boolean {
-        // Look for type="2" entries (tool change G-code)
-        val content = inputStream.bufferedReader().readText()
-        return content.contains("type=\"2\"")
     }
 
     private fun detectColorsFromFilamentSequence(

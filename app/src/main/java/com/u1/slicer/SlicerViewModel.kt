@@ -20,6 +20,7 @@ import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
 import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.GcodeValidator
+import com.u1.slicer.gcode.LayerToolPauseInjector
 import com.u1.slicer.gcode.ParsedGcode
 
 import com.u1.slicer.data.ModelInfo
@@ -866,13 +867,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // processed file which has had filament_sequence.json stripped by process().
                 // _threeMfInfo.value holds the correctly-merged info from openModel().
                 val preSelectInfo = _threeMfInfo.value
-                _threeMfInfo.value = if (preSelectInfo != null)
+                val mergedPlateInfo = if (preSelectInfo != null)
                     mergeThreeMfInfoForPlate(plateInfo, preSelectInfo, plateId)
                 else
                     plateInfo
+                _threeMfInfo.value = mergedPlateInfo
                 toolRemapSlots = null
-                currentModelFile = plateFile
-                loadNativeModel(plateFile)
+                // Re-embed the selected plate so slice-time config preserves the
+                // original file's layer-change settings (SEMM/pause G-code), not just
+                // the preview metadata merged above.
+                val embeddedPlateFile = embedProfile(plateFile, mergedPlateInfo, workspaceDir)
+                currentModelFile = embeddedPlateFile
+                loadNativeModel(embeddedPlateFile)
             } catch (e: Throwable) {
                 native.clearModel() // Reset native state to prevent stale Clipper errors on retry
                 _state.value = SlicerState.Error("Error extracting plate: ${e.message}")
@@ -925,23 +931,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Check for multi-color from 3MF parsing
                 val mfInfo = _threeMfInfo.value
                 if (mfInfo != null && mfInfo.detectedExtruderCount > 1) {
-                    // Compact extruder count: use the smaller of detected colors and
-                    // physical extruders (Snapmaker U1 has 4).  Compact mode slices as
-                    // N-extruder and G-code post-processing remaps T-commands to physical slots.
-                    val extCount = mfInfo.detectedExtruderCount.coerceIn(1, 4)
-                    // Compute tower position that avoids the model
-                    val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
-                    val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
-                        positions, info.sizeX, info.sizeY, _config.value.wipeTowerWidth
-                    )
-                    _config.value = _config.value.copy(
-                        extruderCount = extCount,
-                        wipeTowerEnabled = true,
-                        wipeTowerX = towerPos.first,
-                        wipeTowerY = towerPos.second
-                    )
-                    customWipeTowerPos = towerPos
-                    Log.i("SlicerVM", "Auto-placed wipe tower at (${towerPos.first}, ${towerPos.second})")
+                    val layerToolOnly = mfInfo.hasLayerToolChanges &&
+                        !mfInfo.hasPaintData &&
+                        !mfInfo.hasMultiExtruderAssignments
+
                     // Auto-apply closest-extruder mapping immediately — no dialog popup.
                     // The inline UI on the model page lets the user change assignments.
                     val presets = extruderPresets.value
@@ -954,9 +947,45 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val initialMapping = com.u1.slicer.ui.ensureMultiSlotMapping(
                         rawMapping, mfInfo.detectedColors.size
                     )
-                    _colorMapping.value = initialMapping
-                    applyMultiColorAssignments(initialMapping, presets, emptyList())
-                    Log.i("SlicerVM", "Auto-applied color mapping: $extCount extruders, mapping=$initialMapping")
+
+                    if (layerToolOnly) {
+                        // Hueforge-style layer-change files should stay a single-filament slice so
+                        // Orca applies the custom per-layer tool changes as color-change pauses.
+                        // We still keep the preview colours/mapping so the model view remains
+                        // multi-colour, but we do not force a multi-extruder slice configuration.
+                        _colorMapping.value = initialMapping
+                        val previewSlots = initialMapping.distinct().sorted()
+                        _activeExtruderColors.value = buildPreviewSlotColors(presets, previewSlots)
+                        _selectedExtruder.value = 0
+                        toolRemapSlots = null
+                        customWipeTowerPos = null
+                        _config.value = _config.value.copy(
+                            extruderCount = 1,
+                            wipeTowerEnabled = false
+                        )
+                        Log.i("SlicerVM", "Applied layer-tool preview mapping only: colors=${initialMapping.size}, previewSlots=$previewSlots")
+                    } else {
+                        // Compact extruder count: use the smaller of detected colors and
+                        // physical extruders (Snapmaker U1 has 4).  Compact mode slices as
+                        // N-extruder and G-code post-processing remaps T-commands to physical slots.
+                        val extCount = mfInfo.detectedExtruderCount.coerceIn(1, 4)
+                        // Compute tower position that avoids the model
+                        val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
+                        val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
+                            positions, info.sizeX, info.sizeY, _config.value.wipeTowerWidth
+                        )
+                        _config.value = _config.value.copy(
+                            extruderCount = extCount,
+                            wipeTowerEnabled = true,
+                            wipeTowerX = towerPos.first,
+                            wipeTowerY = towerPos.second
+                        )
+                        customWipeTowerPos = towerPos
+                        Log.i("SlicerVM", "Auto-placed wipe tower at (${towerPos.first}, ${towerPos.second})")
+                        _colorMapping.value = initialMapping
+                        applyMultiColorAssignments(initialMapping, presets, emptyList())
+                        Log.i("SlicerVM", "Auto-applied color mapping: $extCount extruders, mapping=$initialMapping")
+                    }
                 } else {
                     _colorMapping.value = null
                     _selectedExtruder.value = 0
@@ -1805,6 +1834,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     "wipeTowerXY=(${sliceConfig.wipeTowerX},${sliceConfig.wipeTowerY})")
 
                 diagnostics.markSliceInProgress(currentModelFile!!.name)
+
                 val result = native.slice(sliceConfig)
 
                 // If the user cancelled while the native call was running, discard the result.
@@ -1814,9 +1844,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (result != null && result.success) {
+                    val layerToolMetadataFile = when {
+                        _threeMfInfo.value?.hasLayerToolChanges != true -> null
+                        sourceModelFile?.exists() == true -> sourceModelFile
+                        else -> currentModelFile
+                    }
+                    val injectedLayerToolPause = layerToolMetadataFile
+                        ?.let { LayerToolPauseInjector.injectFrom3mf(result.gcodePath, it) }
+                        ?: false
+                    if (injectedLayerToolPause) {
+                        Log.i(
+                            "SlicerVM",
+                            "Injected layer-change pause commands into ${result.gcodePath} using ${layerToolMetadataFile?.name}"
+                        )
+                    }
                     val outputValidation = validateSliceOutput(
                         result,
-                        buildExpectedModelFootprint(mi, copies, custom)
+                        buildExpectedModelFootprint(mi, copies, custom),
+                        colorSegmentsByPausePrint = _threeMfInfo.value?.hasLayerToolChanges == true
                     )
                     diagnostics.recordEvent("slice_output_validation", outputValidation.summary)
                     if (outputValidation.errorMessage != null) {
@@ -1934,7 +1979,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun validateSliceOutput(
         result: SliceResult,
-        expectedFootprint: ExpectedModelFootprint?
+        expectedFootprint: ExpectedModelFootprint?,
+        colorSegmentsByPausePrint: Boolean = false
     ): SliceOutputValidation {
         val gcodeFile = File(result.gcodePath)
         val baseSummary = linkedMapOf<String, Any?>(
@@ -1963,7 +2009,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         return try {
-            val parsed = GcodeParser.parse(gcodeFile)
+            val parsed = GcodeParser.parse(gcodeFile, colorSegmentsByPausePrint = colorSegmentsByPausePrint)
             val outputSummary = GcodeValidator.summarizeParsedOutput(parsed)
             val modelBounds = outputSummary.modelExtrudeBounds
             val nonPrimeBounds = outputSummary.nonPrimeExtrudeBounds
@@ -2038,6 +2084,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     "Slicing produced invalid output.\n\nThe generated model extrusion did not overlap the expected model footprint. Try Reset App State and slice again."
                 else -> null
             }
+
             SliceOutputValidation(
                 parsedGcode = parsed,
                 summary = summary,
@@ -2596,6 +2643,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             sourceInfo: com.u1.slicer.bambu.ThreeMfInfo,
             selectedPlateId: Int? = null
         ): com.u1.slicer.bambu.ThreeMfInfo {
+            val sourcePlate = selectedPlateId?.let { plateId ->
+                sourceInfo.plates.firstOrNull { it.plateId == plateId }
+            }
             val sourcePlateFilamentIndices = selectedPlateId?.let { plateId ->
                 sourceInfo.plates
                     .firstOrNull { it.plateId == plateId }
@@ -2604,31 +2654,79 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     ?.toSet()
                     ?: emptySet()
             } ?: emptySet()
+            val sourcePlateObjectExtruders = sourcePlate
+                ?.objectIds
+                ?.mapNotNull { objectId -> sourceInfo.objectExtruderMap[objectId] }
+                ?.filter { it > 0 }
+                ?.toSet()
+                ?: emptySet()
             val plateFilamentIndices = plateInfo.plates
                 .flatMap { it.filamentIndices }
                 .filter { it > 0 }
                 .toSet()
-            // Filter colors to only those extruder indices used on this plate.
-            // usedExtruderIndices are 1-based; detectedColors is 0-indexed.
-            // Filter whenever usedExtruderIndices is populated (size >= 1) AND
-            // there are multiple source colors to filter from. This correctly
-            // handles single-extruder plates (showing only 1 color instead of all).
-            val usedIndices = listOf(
-                sourcePlateFilamentIndices,
-                plateFilamentIndices,
-                plateInfo.usedExtruderIndices
-            ).maxByOrNull { it.size } ?: emptySet()
-            val filteredColors = if (usedIndices.isNotEmpty() && sourceInfo.detectedColors.size > 1) {
-                usedIndices.sorted().mapNotNull { idx ->
-                    sourceInfo.detectedColors.getOrNull(idx - 1) // 1-based → 0-indexed
+            val mergedUsedExtruderIndices = if (sourceInfo.hasLayerToolChanges) {
+                linkedSetOf<Int>().apply {
+                    addAll(sourcePlateObjectExtruders.sorted())
+                    addAll(sourcePlateFilamentIndices.sorted())
+                    addAll(plateFilamentIndices.sorted())
+                    addAll(plateInfo.usedExtruderIndices.filter { it > 0 }.sorted())
                 }
             } else {
-                sourceInfo.detectedColors
+                plateInfo.usedExtruderIndices
             }
+            // Layer-change models use per-layer tool colors rather than per-object
+            // extruder assignment, so filtering to plate filament indices collapses the
+            // preview back to one colour. Keep the full source palette in that case.
+            val filteredColors = if (sourceInfo.hasLayerToolChanges) {
+                val selectedLayerToolColors = linkedSetOf<String>()
+                val selectedExtruders = mergedUsedExtruderIndices.filter { it > 0 }.sorted()
+                if (selectedExtruders.isNotEmpty()) {
+                    selectedExtruders.forEach { extruderIndex ->
+                        sourceInfo.detectedColors.getOrNull(extruderIndex - 1)
+                            ?.let { selectedLayerToolColors.add(it) }
+                    }
+                }
+                plateInfo.detectedColors.forEach { selectedLayerToolColors.add(it) }
+                selectedLayerToolColors.toList().ifEmpty {
+                    plateInfo.detectedColors.ifEmpty { sourceInfo.detectedColors }
+                }
+            } else {
+                // Filter colors to only those extruder indices used on this plate.
+                // usedExtruderIndices are 1-based; detectedColors is 0-indexed.
+                // Filter whenever usedExtruderIndices is populated (size >= 1) AND
+                // there are multiple source colors to filter from. This correctly
+                // handles single-extruder plates (showing only 1 color instead of all).
+                val usedIndices = listOf(
+                    sourcePlateFilamentIndices,
+                    plateFilamentIndices,
+                    plateInfo.usedExtruderIndices
+                ).maxByOrNull { it.size } ?: emptySet()
+                if (usedIndices.isNotEmpty() && sourceInfo.detectedColors.size > 1) {
+                    usedIndices.sorted().mapNotNull { idx ->
+                        sourceInfo.detectedColors.getOrNull(idx - 1) // 1-based → 0-indexed
+                    }
+                } else {
+                    sourceInfo.detectedColors
+                }
+            }
+            Log.i(
+                "SlicerVM",
+                "mergeThreeMfInfoForPlate: plate=$selectedPlateId layerTools=${sourceInfo.hasLayerToolChanges} " +
+                    "sourcePlateObjectExtruders=$sourcePlateObjectExtruders sourcePlateFilamentIndices=$sourcePlateFilamentIndices " +
+                    "plateInfo.usedExtruders=${plateInfo.usedExtruderIndices} mergedUsedExtruders=$mergedUsedExtruderIndices " +
+                    "filteredColors=$filteredColors"
+            )
             return plateInfo.copy(
                 isBambu = sourceInfo.isBambu,
                 detectedColors = filteredColors,
-                detectedExtruderCount = if (filteredColors.isNotEmpty()) filteredColors.size else sourceInfo.detectedExtruderCount,
+                detectedExtruderCount = if (sourceInfo.hasLayerToolChanges) {
+                    maxOf(plateInfo.detectedExtruderCount, filteredColors.size, mergedUsedExtruderIndices.size)
+                } else if (filteredColors.isNotEmpty()) {
+                    filteredColors.size
+                } else {
+                    sourceInfo.detectedExtruderCount
+                },
+                usedExtruderIndices = mergedUsedExtruderIndices,
                 hasPaintData = sourceInfo.hasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
                 hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments,
@@ -2852,6 +2950,7 @@ internal fun buildCompactExtruderRemap(
     colorMapping: List<Int>?
 ): Map<Int, Int>? {
     if (colorMapping.isNullOrEmpty()) return null
+    if (info.hasLayerToolChanges && !info.hasPaintData) return null
     // SEMM (paint-based) models: paint state filament indices are not affected by the
     // extruder attribute remap in model_settings.config.  GcodeToolRemapper handles the
     // physical slot assignment for these models, so suppress the XML extruder remap here.

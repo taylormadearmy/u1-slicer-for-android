@@ -1972,7 +1972,15 @@ fun InlineModelPreview(
                     modelFilePath.endsWith(".stl", ignoreCase = true) ->
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
-                        com.u1.slicer.NativeLibrary().getPreparePreviewMesh()?.toMeshData()
+                        if (colorMapping != null || extruderMap != null) {
+                            com.u1.slicer.viewer.ThreeMfMeshParser.parse(
+                                file = file,
+                                extruderMap = extruderMap,
+                                detectedColorCount = colorMapping?.size ?: 0
+                            )
+                        } else {
+                            com.u1.slicer.NativeLibrary().getPreparePreviewMesh()?.toMeshData()
+                        }
                     else -> null
                 }
             } catch (_: Throwable) {

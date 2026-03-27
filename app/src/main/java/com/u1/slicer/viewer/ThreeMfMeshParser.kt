@@ -65,6 +65,7 @@ object ThreeMfMeshParser {
 
             val result = zip.getInputStream(modelEntry).use { streamParseModel(it) }
             val isH2cProject = detectIsH2cProject(zip)
+            val layerToolHeights = detectLayerToolHeights(zip)
             val buildItems = filterBuildItems(result.buildItems)
             val mainObjects = result.objects
             Log.d("ThreeMfMesh", "Build items: ${buildItems.size}, main objects: ${mainObjects.size}")
@@ -99,14 +100,15 @@ object ThreeMfMeshParser {
                             listOf(MeshWithContext(compMesh, null, 0)),
                             extruderMap,
                             detectedColorCount,
-                            isH2cProject
+                            isH2cProject,
+                            layerToolHeights
                         )
                     }
                 }
                 return null
             }
 
-            return buildMeshData(meshList, extruderMap, detectedColorCount, isH2cProject)
+            return buildMeshData(meshList, extruderMap, detectedColorCount, isH2cProject, layerToolHeights)
         }
     }
 
@@ -121,6 +123,22 @@ object ThreeMfMeshParser {
                 }
             }
         }.getOrDefault(false)
+    }
+
+    private fun detectLayerToolHeights(zip: ZipFile): List<Float> {
+        val entry = zip.getEntry("Metadata/custom_gcode_per_layer.xml") ?: return emptyList()
+        val heights = linkedSetOf<Float>()
+        runCatching {
+            zip.getInputStream(entry).bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    if (!line.contains("<layer")) return@forEach
+                    if (!line.contains("top_z=")) return@forEach
+                    if (!line.contains("type=\"2\"") && !line.contains("gcode=\"tool_change\"")) return@forEach
+                    extractFloatAttr(line, "top_z=\"")?.let { heights.add(it) }
+                }
+            }
+        }
+        return heights.sorted()
     }
 
     /**
@@ -502,10 +520,15 @@ object ThreeMfMeshParser {
         meshes: List<MeshWithContext>,
         extruderIndexMap: Map<Int, Byte>? = null,
         detectedColorCount: Int = 0,
-        isH2cProject: Boolean = false
+        isH2cProject: Boolean = false,
+        layerToolHeights: List<Float> = emptyList()
     ): MeshData? {
         val mergedMeshes = mergeH2cPairs(meshes)
         val sparsePaintStateMap = buildSparsePaintStateMap(mergedMeshes, detectedColorCount, isH2cProject)
+        val inferredLayerHeights = if (layerToolHeights.isNotEmpty() &&
+            detectedColorCount > 1 &&
+            (extruderIndexMap == null || extruderIndexMap.isEmpty())
+        ) layerToolHeights else emptyList()
         val totalTris = mergedMeshes.sumOf { meshCtx ->
             val specs = meshCtx.mesh.paintSpecs
             if (specs == null) {
@@ -576,6 +599,7 @@ object ThreeMfMeshParser {
                 val p1 = transformedPoint(verts, b, t)
                 val p2 = transformedPoint(verts, c, t)
                 val spec = paintSpecs?.getOrNull(i)
+                val centroidZ = (p0[2] + p1[2] + p2[2]) / 3f
 
                 if (spec != null && isTriangleSelectorSpec(spec)) {
                     emitTriangleSelectorTriangles(
@@ -591,7 +615,15 @@ object ThreeMfMeshParser {
                     val paintIdx = spec?.let {
                         directPaintIndexFromSpec(it, detectedColorCount, sparsePaintStateMap)
                     } ?: -1
-                    appendTriangle(p0, p1, p2, if (paintIdx >= 0) paintIdx.toByte() else volumeExtruderIdx)
+                    val layerBandIdx = if (inferredLayerHeights.isNotEmpty()) {
+                        layerBandIndexForZ(centroidZ, inferredLayerHeights, detectedColorCount)
+                    } else -1
+                    val finalIdx = when {
+                        paintIdx >= 0 -> paintIdx.toByte()
+                        layerBandIdx >= 0 -> layerBandIdx.toByte()
+                        else -> volumeExtruderIdx
+                    }
+                    appendTriangle(p0, p1, p2, finalIdx)
                 }
             }
         }
@@ -764,6 +796,19 @@ object ThreeMfMeshParser {
         isH2cProject -> if (state <= 1) -1 else state - 1
         state <= 3 -> -1
         else -> state - 3
+    }
+
+    private fun layerBandIndexForZ(
+        z: Float,
+        layerToolHeights: List<Float>,
+        detectedColorCount: Int
+    ): Int {
+        if (layerToolHeights.isEmpty() || detectedColorCount <= 1) return -1
+        var band = 0
+        while (band < layerToolHeights.size && z > layerToolHeights[band] + 1e-4f) {
+            band++
+        }
+        return band.coerceAtMost(detectedColorCount - 1)
     }
 
     private fun parseStateDigit(ch: Char?): Int? = when (ch) {

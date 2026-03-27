@@ -6,7 +6,13 @@ import java.io.FileReader
 
 object GcodeParser {
 
-    fun parse(file: File): ParsedGcode {
+    /**
+     * @param colorSegmentsByPausePrint When true, assigns extruder indices 0–3 by counting
+     *   `; PAUSE_PRINT` markers (layer-change manual swaps) instead of `T` commands.
+     *   Used for Hueforge-style models sliced as single-filament G-code.
+     */
+    @JvmOverloads
+    fun parse(file: File, colorSegmentsByPausePrint: Boolean = false): ParsedGcode {
         val layers = mutableListOf<GcodeLayer>()
         val currentMoves = ArrayList<GcodeMove>(512) // reused across layers, avoids re-allocation
         var currentZ = 0f
@@ -15,6 +21,8 @@ object GcodeParser {
         var x = 0f
         var y = 0f
         var currentExtruder = 0
+        var pauseSegmentExtruder = 0
+        var pausePrintSegmentsBumped = 0
         var lastE = 0f
         var absoluteE = true
         var perExtruderMm = emptyList<Float>()
@@ -22,9 +30,9 @@ object GcodeParser {
         var currentFeatureLabel: String = "OTHER"
         var wipeTowerE = 0f      // total E extruded in prime/wipe tower regions
         var wipeTowerEStart = Float.NaN  // E value at entry to prime tower region
+        var lineNumber = 0
 
         BufferedReader(FileReader(file)).use { reader ->
-            var lineNumber = 0
             var line: String?
             while (reader.readLine().also { line = it } != null) {
                 lineNumber++
@@ -38,6 +46,15 @@ object GcodeParser {
 
                 // Comment-only line
                 if (l[start] == ';') {
+                    if (colorSegmentsByPausePrint && startsWithAt(l, start, "; PAUSE_PRINT")) {
+                        val afterPauseToken = start + "; PAUSE_PRINT".length
+                        if (afterPauseToken >= len ||
+                            l[afterPauseToken] == ' ' || l[afterPauseToken] == '\t'
+                        ) {
+                            pauseSegmentExtruder = (pauseSegmentExtruder + 1).coerceAtMost(3)
+                            pausePrintSegmentsBumped++
+                        }
+                    }
                     if (startsWithAt(l, start, ";LAYER_CHANGE") || startsWithAt(l, start, "; layer_change")) {
                         if (currentMoves.isNotEmpty()) {
                             layers.add(GcodeLayer(layerIndex++, currentZ, currentMoves.toList()))
@@ -134,10 +151,12 @@ object GcodeParser {
                         if (hasE) lastE = newE
 
                         if (newX != x || newY != y) {
+                            val moveExtruder =
+                                if (colorSegmentsByPausePrint) pauseSegmentExtruder else currentExtruder
                             currentMoves.add(GcodeMove(
                                 type = if (isExtrude) MoveType.EXTRUDE else MoveType.TRAVEL,
                                 x0 = x, y0 = y, x1 = newX, y1 = newY,
-                                extruder = currentExtruder,
+                                extruder = moveExtruder,
                                 featureType = currentFeatureType,
                                 lineNumber = lineNumber,
                                 featureLabel = currentFeatureLabel
