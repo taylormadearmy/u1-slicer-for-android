@@ -6,7 +6,7 @@ Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 ex
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v1.5.7` (`versionCode 173`)
+Current release: `v1.5.8` (`versionCode 174`)
 
 ## Security
 
