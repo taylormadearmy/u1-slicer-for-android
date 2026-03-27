@@ -42,7 +42,9 @@ class LayerToolPauseInjectorTest {
 
             assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
             val text = gcode.readText()
-            assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n\n;LAYER_CHANGE\n;Z:1.7"))
+            assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
+            assertTrue("Bambu extruder 2 must map to T1 after pause", text.contains("T1"))
+            assertTrue(text.contains(";LAYER_CHANGE\n;Z:1.7"))
         } finally {
             dir.deleteRecursively()
         }
@@ -85,7 +87,10 @@ class LayerToolPauseInjectorTest {
             gcode.writeText(";LAYER_CHANGE\n;Z:0.6\nG1 X2 Y2\n")
 
             assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
-            assertTrue(gcode.readText().contains("; PAUSE_PRINT\nM400 U1\n\n;LAYER_CHANGE"))
+            val out = gcode.readText()
+            assertTrue(out.contains("; PAUSE_PRINT\nM400 U1\n"))
+            assertTrue(out.contains("T1"))
+            assertTrue(out.contains(";LAYER_CHANGE"))
         } finally {
             dir.deleteRecursively()
         }

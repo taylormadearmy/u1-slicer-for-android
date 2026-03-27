@@ -425,6 +425,10 @@ class ProfileEmbedderIntegrationTest {
             gcode.contains("M400 U1") || gcode.contains("; PAUSE_PRINT")
         )
         assertTrue(
+            "Bambu extruder 2 in custom_gcode_per_layer must emit T1 (or remapped after GcodeToolRemapper)",
+            gcode.contains("; layer_tool extruder 2")
+        )
+        assertTrue(
             "layer-change sample should stay in single-extruder pause mode",
             gcode.contains("; single_extruder_multi_material = 0")
         )

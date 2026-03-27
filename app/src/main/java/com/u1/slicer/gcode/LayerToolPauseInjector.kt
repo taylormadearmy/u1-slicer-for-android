@@ -8,13 +8,21 @@ object LayerToolPauseInjector {
     private val layerRegex = Regex("""<layer\b([^>]*)>""")
     private val topZRegex = Regex("""\btop_z="([^"]+)"""")
     private val typeRegex = Regex("""\btype="([^"]+)"""")
+    private val extruderXmlRegex = Regex("""\bextruder="([^"]+)"""")
     private val pauseRegex = Regex("""^\s*; ?PAUSE_PRINT\s*$""")
     private val zCommentRegex = Regex("""^\s*;Z:([0-9.]+)\s*$""")
+
+    /**
+     * One layer-change row in Bambu `custom_gcode_per_layer.xml`.
+     * [topZ] is the first layer whose Z is strictly above this (see inject loop).
+     * [extruderBambu] is 1-based as in the file (1→T0, 2→T1, …). If missing, treated as 1.
+     */
+    private data class PauseTarget(val topZ: Float, val extruderBambu: Int)
 
     fun injectFrom3mf(gcodePath: String, model3mf: File): Boolean {
         if (!model3mf.exists() || !model3mf.name.endsWith(".3mf", ignoreCase = true)) return false
 
-        val pauseTargets = mutableListOf<Float>()
+        val pauseTargets = mutableListOf<PauseTarget>()
         val pauseCommand = ZipFile(model3mf).use { zip ->
             zip.getEntry("Metadata/custom_gcode_per_layer.xml")?.let { entry ->
                 val xml = zip.getInputStream(entry).bufferedReader().readText()
@@ -31,7 +39,10 @@ object LayerToolPauseInjector {
         val gcodeFile = File(gcodePath)
         if (!gcodeFile.exists()) return false
 
-        val pendingTargets = pauseTargets.distinct().sorted().toMutableList()
+        val pendingTargets = pauseTargets
+            .distinctBy { it.topZ to it.extruderBambu }
+            .sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
+            .toMutableList()
         if (pendingTargets.isEmpty()) return false
 
         val parentDir = gcodeFile.parentFile ?: gcodeFile.absoluteFile.parentFile
@@ -58,16 +69,21 @@ object LayerToolPauseInjector {
                             if (next != null) {
                                 val z = zCommentRegex.find(next)?.groupValues?.getOrNull(1)?.toFloatOrNull()
                                 if (z != null) {
-                                    while (pendingTargets.isNotEmpty() && z > pendingTargets.first() + EPSILON) {
+                                    while (pendingTargets.isNotEmpty() && z > pendingTargets.first().topZ + EPSILON) {
+                                        val target = pendingTargets.removeAt(0)
                                         if (!hasPauseImmediatelyBefore()) {
                                             writer.write("; PAUSE_PRINT\n")
                                             writer.write(pauseCommand)
                                             writer.write("\n")
+                                            val toolIndex = target.extruderBambu - 1
+                                            if (toolIndex in 1..3) {
+                                                writer.write("; layer_tool extruder ${target.extruderBambu} → T$toolIndex\n")
+                                                writer.write("T$toolIndex\n")
+                                            }
                                             writer.write("\n")
                                             injected = true
                                             lastNonBlank = "; PAUSE_PRINT"
                                         }
-                                        pendingTargets.removeAt(0)
                                     }
                                 }
                                 writer.write(line)
@@ -99,11 +115,14 @@ object LayerToolPauseInjector {
         }
     }
 
-    private fun extractPauseTargets(xml: String): List<Float> =
+    private fun extractPauseTargets(xml: String): List<PauseTarget> =
         layerRegex.findAll(xml).mapNotNull { match ->
             val attrs = match.groupValues[1]
             val type = typeRegex.find(attrs)?.groupValues?.getOrNull(1)
             if (type != "1" && type != "2") return@mapNotNull null
-            topZRegex.find(attrs)?.groupValues?.getOrNull(1)?.toFloatOrNull()
-        }.sorted().toList()
+            val topZ = topZRegex.find(attrs)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+                ?: return@mapNotNull null
+            val extruderBambu = extruderXmlRegex.find(attrs)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+            PauseTarget(topZ, extruderBambu)
+        }.sortedWith(compareBy({ it.topZ }, { it.extruderBambu })).toList()
 }
