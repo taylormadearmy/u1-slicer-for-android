@@ -1,5 +1,6 @@
 package com.u1.slicer.gcode
 
+import org.json.JSONObject
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -23,6 +24,7 @@ object LayerToolPauseInjector {
         if (!model3mf.exists() || !model3mf.name.endsWith(".3mf", ignoreCase = true)) return false
 
         val pauseTargets = mutableListOf<PauseTarget>()
+        var nozzleTemps: List<Int>? = null
         val pauseCommand = ZipFile(model3mf).use { zip ->
             zip.getEntry("Metadata/custom_gcode_per_layer.xml")?.let { entry ->
                 val xml = zip.getInputStream(entry).bufferedReader().readText()
@@ -30,6 +32,7 @@ object LayerToolPauseInjector {
             }
             zip.getEntry("Metadata/project_settings.config")?.let { entry ->
                 val json = zip.getInputStream(entry).bufferedReader().readText()
+                nozzleTemps = parseNozzleTemperatures(json)
                 Regex(""""machine_pause_gcode"\s*:\s*"([^"]*)"""").find(json)?.groupValues?.getOrNull(1)
             }
         } ?: "M400 U1"
@@ -79,6 +82,11 @@ object LayerToolPauseInjector {
                                             if (toolIndex in 1..3) {
                                                 writer.write("; layer_tool extruder ${target.extruderBambu} → T$toolIndex\n")
                                                 writer.write("T$toolIndex\n")
+                                                // Wait for nozzle temp from project_settings (same index as Tn).
+                                                val setTemp = nozzleTemps?.getOrNull(toolIndex)
+                                                if (setTemp != null && setTemp in 1..400) {
+                                                    writer.write("M109 S$setTemp\n")
+                                                }
                                             }
                                             writer.write("\n")
                                             injected = true
@@ -125,4 +133,21 @@ object LayerToolPauseInjector {
             val extruderBambu = extruderXmlRegex.find(attrs)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
             PauseTarget(topZ, extruderBambu)
         }.sortedWith(compareBy({ it.topZ }, { it.extruderBambu })).toList()
+
+    /** Bambu `project_settings.config` JSON: `nozzle_temperature` array index matches T index (0 = T0, …). */
+    private fun parseNozzleTemperatures(projectSettingsJson: String): List<Int>? {
+        return try {
+            val obj = JSONObject(projectSettingsJson.trim())
+            val arr = obj.optJSONArray("nozzle_temperature") ?: return null
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val s = arr.optString(i, "").trim()
+                    val n = s.substringBefore(".").toIntOrNull() ?: continue
+                    add(n)
+                }
+            }.takeIf { it.isNotEmpty() }
+        } catch (_: Exception) {
+            null
+        }
+    }
 }

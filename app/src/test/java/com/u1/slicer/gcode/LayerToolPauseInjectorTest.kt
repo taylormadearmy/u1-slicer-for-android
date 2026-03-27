@@ -25,7 +25,11 @@ class LayerToolPauseInjectorTest {
                       </plate>
                     </custom_gcodes_per_layer>
                 """.trimIndent())
-                write(zip, "Metadata/project_settings.config", """{"machine_pause_gcode":"M400 U1"}""")
+                write(
+                    zip,
+                    "Metadata/project_settings.config",
+                    """{"machine_pause_gcode":"M400 U1","nozzle_temperature":["220","230","220","220","220"]}"""
+                )
             }
 
             val gcode = File(dir, "sample.gcode")
@@ -44,6 +48,7 @@ class LayerToolPauseInjectorTest {
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue("Bambu extruder 2 must map to T1 after pause", text.contains("T1"))
+            assertTrue("nozzle_temperature[1] should follow T1 for filament 2", text.contains("M109 S230"))
             assertTrue(text.contains(";LAYER_CHANGE\n;Z:1.7"))
         } finally {
             dir.deleteRecursively()
