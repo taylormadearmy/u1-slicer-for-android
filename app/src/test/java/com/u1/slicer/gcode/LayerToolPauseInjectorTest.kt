@@ -1,5 +1,6 @@
 package com.u1.slicer.gcode
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -134,6 +135,48 @@ class LayerToolPauseInjectorTest {
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(text.contains("T2"))
             assertTrue("Missing project settings should still heat selected tool", text.contains("M109 S225"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `injectFrom3mf uses current tool for M109 without T when project settings missing`() {
+        val dir = createTempDir(prefix = "layer_tool_pause_gcode_temp_current_tool_")
+        try {
+            val model = File(dir, "sample.3mf")
+            ZipOutputStream(model.outputStream()).use { zip ->
+                write(zip, "Metadata/custom_gcode_per_layer.xml", """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <custom_gcodes_per_layer>
+                      <plate>
+                        <plate_info id="1"/>
+                        <layer top_z="1.6" type="1" extruder="3" color="#AABBCC" extra="" gcode="tool_change"/>
+                      </plate>
+                    </custom_gcodes_per_layer>
+                """.trimIndent())
+            }
+
+            val gcode = File(dir, "sample.gcode")
+            gcode.writeText(
+                """
+                T2
+                M109 S225
+                ;LAYER_CHANGE
+                ;Z:1.7
+                G1 X10 Y10
+                """.trimIndent() + "\n"
+            )
+
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            val text = gcode.readText()
+            assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
+            assertTrue(text.contains("T2"))
+
+            // The input already contains a tool temp for the current tool (T2). Injector should also
+            // inject another `M109 S225` immediately after switching to T2 for the pause.
+            val count = Regex("""\bM109\s+S225\b""").findAll(text).count()
+            assertEquals(2, count)
         } finally {
             dir.deleteRecursively()
         }

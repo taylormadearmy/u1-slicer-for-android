@@ -13,6 +13,7 @@ object LayerToolPauseInjector {
     private val pauseRegex = Regex("""^\s*; ?PAUSE_PRINT\s*$""")
     private val zCommentRegex = Regex("""^\s*;Z:([0-9.]+)\s*$""")
     private val gcodeParamRegex = Regex("""\b([A-Za-z])([+-]?\d*\.?\d+)""")
+    private val toolOnlyRegex = Regex("""^T([0-9]+(?:\.[0-9]+)?)\s*$""")
 
     /**
      * One layer-change row in Bambu `custom_gcode_per_layer.xml`.
@@ -161,8 +162,12 @@ object LayerToolPauseInjector {
     private fun parseToolNozzleTemperaturesFromGcode(gcodeFile: File): Map<Int, Int> {
         return try {
             val temps = mutableMapOf<Int, Int>()
+            var currentTool: Int? = null
             gcodeFile.forEachLine { raw ->
                 val line = raw.substringBefore(';').trim()
+                toolOnlyRegex.find(line)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { tool ->
+                    currentTool = tool
+                }
                 if (!line.startsWith("M104") && !line.startsWith("M109")) return@forEachLine
                 var tool: Int? = null
                 var temp: Int? = null
@@ -174,10 +179,13 @@ object LayerToolPauseInjector {
                         "S" -> temp = value.substringBefore('.').toIntOrNull()
                     }
                 }
-                val t = tool
+                // If the G-code line doesn't explicitly set Tn (e.g. `M109 S170`), assume it applies to
+                // the current tool selected previously (`Tn`).
+                val t = tool ?: currentTool
                 val s = temp
                 if (t != null && s != null && s in 1..400) {
                     temps[t] = s
+                    currentTool = t
                 }
             }
             temps
