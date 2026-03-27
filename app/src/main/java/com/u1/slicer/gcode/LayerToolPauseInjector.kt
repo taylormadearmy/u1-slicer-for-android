@@ -12,6 +12,7 @@ object LayerToolPauseInjector {
     private val extruderXmlRegex = Regex("""\bextruder="([^"]+)"""")
     private val pauseRegex = Regex("""^\s*; ?PAUSE_PRINT\s*$""")
     private val zCommentRegex = Regex("""^\s*;Z:([0-9.]+)\s*$""")
+    private val gcodeParamRegex = Regex("""\b([A-Za-z])([+-]?\d*\.?\d+)""")
 
     /**
      * One layer-change row in Bambu `custom_gcode_per_layer.xml`.
@@ -41,6 +42,7 @@ object LayerToolPauseInjector {
 
         val gcodeFile = File(gcodePath)
         if (!gcodeFile.exists()) return false
+        val gcodeToolTemps = parseToolNozzleTemperaturesFromGcode(gcodeFile)
 
         val pendingTargets = pauseTargets
             .distinctBy { it.topZ to it.extruderBambu }
@@ -82,8 +84,9 @@ object LayerToolPauseInjector {
                                             if (toolIndex in 1..3) {
                                                 writer.write("; layer_tool extruder ${target.extruderBambu} → T$toolIndex\n")
                                                 writer.write("T$toolIndex\n")
-                                                // Wait for nozzle temp from project_settings (same index as Tn).
+                                                // Prefer 3MF project settings; fall back to explicit M104/M109 Tn in source G-code.
                                                 val setTemp = nozzleTemps?.getOrNull(toolIndex)
+                                                    ?: gcodeToolTemps[toolIndex]
                                                 if (setTemp != null && setTemp in 1..400) {
                                                     writer.write("M109 S$setTemp\n")
                                                 }
@@ -148,6 +151,38 @@ object LayerToolPauseInjector {
             }.takeIf { it.isNotEmpty() }
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /**
+     * Fallback parser: read explicit `M104/M109 ... Tn` commands already present in generated G-code.
+     * This covers sanitized 3MF variants where `project_settings.config` is unavailable.
+     */
+    private fun parseToolNozzleTemperaturesFromGcode(gcodeFile: File): Map<Int, Int> {
+        return try {
+            val temps = mutableMapOf<Int, Int>()
+            gcodeFile.forEachLine { raw ->
+                val line = raw.substringBefore(';').trim()
+                if (!line.startsWith("M104") && !line.startsWith("M109")) return@forEachLine
+                var tool: Int? = null
+                var temp: Int? = null
+                gcodeParamRegex.findAll(line).forEach { match ->
+                    val key = match.groupValues[1].uppercase()
+                    val value = match.groupValues[2]
+                    when (key) {
+                        "T" -> tool = value.substringBefore('.').toIntOrNull()
+                        "S" -> temp = value.substringBefore('.').toIntOrNull()
+                    }
+                }
+                val t = tool
+                val s = temp
+                if (t != null && s != null && s in 1..400) {
+                    temps[t] = s
+                }
+            }
+            temps
+        } catch (_: Exception) {
+            emptyMap()
         }
     }
 }

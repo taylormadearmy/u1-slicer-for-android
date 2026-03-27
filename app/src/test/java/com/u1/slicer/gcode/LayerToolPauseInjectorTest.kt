@@ -89,13 +89,51 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent())
             }
             val gcode = File(dir, "sample.gcode")
-            gcode.writeText(";LAYER_CHANGE\n;Z:0.6\nG1 X2 Y2\n")
+            gcode.writeText("M109 S215 T1\n;LAYER_CHANGE\n;Z:0.6\nG1 X2 Y2\n")
 
             assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
             val out = gcode.readText()
             assertTrue(out.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(out.contains("T1"))
+            assertTrue("Fallback should reuse tool temp found in G-code prologue", out.contains("M109 S215"))
             assertTrue(out.contains(";LAYER_CHANGE"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `injectFrom3mf uses gcode temp fallback when project settings missing`() {
+        val dir = createTempDir(prefix = "layer_tool_pause_gcode_temp_")
+        try {
+            val model = File(dir, "sample.3mf")
+            ZipOutputStream(model.outputStream()).use { zip ->
+                write(zip, "Metadata/custom_gcode_per_layer.xml", """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <custom_gcodes_per_layer>
+                      <plate>
+                        <plate_info id="1"/>
+                        <layer top_z="1.6" type="1" extruder="3" color="#AABBCC" extra="" gcode="tool_change"/>
+                      </plate>
+                    </custom_gcodes_per_layer>
+                """.trimIndent())
+            }
+
+            val gcode = File(dir, "sample.gcode")
+            gcode.writeText(
+                """
+                M109 S225 T2
+                ;LAYER_CHANGE
+                ;Z:1.7
+                G1 X10 Y10
+                """.trimIndent() + "\n"
+            )
+
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            val text = gcode.readText()
+            assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
+            assertTrue(text.contains("T2"))
+            assertTrue("Missing project settings should still heat selected tool", text.contains("M109 S225"))
         } finally {
             dir.deleteRecursively()
         }

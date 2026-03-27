@@ -19,7 +19,7 @@
 **Public-safe rule:** never deploy automated tests to personal or non-phone devices.
 
 **App ID:** `com.u1.slicer.orca`
-**Current release:** `v1.5.4` (`versionCode 170`)
+**Current release:** `v1.5.5` (`versionCode 171`)
 
 ## Backlog
 
