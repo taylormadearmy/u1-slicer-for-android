@@ -14,6 +14,8 @@ object LayerToolPauseInjector {
     private val zCommentRegex = Regex("""^\s*;Z:([0-9.]+)\s*$""")
     private val gcodeParamRegex = Regex("""\b([A-Za-z])([+-]?\d*\.?\d+)""")
     private val toolOnlyRegex = Regex("""^T([0-9]+(?:\.[0-9]+)?)\s*$""")
+    private val smTargetTempRegex = Regex("""\bTARGET_TEMP=(\d+(?:\.\d+)?)\b""")
+    private val smIndexRegex = Regex("""\bINDEX=(\d+(?:\.\d+)?)\b""")
 
     /**
      * One layer-change row in Bambu `custom_gcode_per_layer.xml`.
@@ -44,6 +46,7 @@ object LayerToolPauseInjector {
         val gcodeFile = File(gcodePath)
         if (!gcodeFile.exists()) return false
         val gcodeToolTemps = parseToolNozzleTemperaturesFromGcode(gcodeFile)
+        val gcodeSmTargetTemps = parseSmTargetTempsFromGcode(gcodeFile)
 
         val pendingTargets = pauseTargets
             .distinctBy { it.topZ to it.extruderBambu }
@@ -88,8 +91,9 @@ object LayerToolPauseInjector {
                                                 // Prefer 3MF project settings; fall back to explicit M104/M109 Tn in source G-code.
                                             val setTemp = nozzleTemps?.get(toolIndex)
                                                     ?: gcodeToolTemps[toolIndex]
+                                                    ?: gcodeSmTargetTemps[toolIndex]
                                                 if (setTemp != null && setTemp in 1..400) {
-                                                    writer.write("M109 S$setTemp\n")
+                                                    writer.write("M109 S$setTemp T$toolIndex\n")
                                                 }
                                             }
                                             writer.write("\n")
@@ -186,6 +190,36 @@ object LayerToolPauseInjector {
                 if (t != null && s != null && s in 1..400) {
                     temps[t] = s
                     currentTool = t
+                }
+            }
+            temps
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    /**
+     * Parse target temps from Snapmaker helper commands such as:
+     *   SM_PRINT_START_LINE INDEX=1 TARGET_TEMP=220
+     *   SM_PRINT_FLOW_CALIBRATE INDEX=1 TARGET_TEMP=220
+     * Index values map to tool indices in compact-space G-code (0-based for T0/T1/... in this app).
+     */
+    private fun parseSmTargetTempsFromGcode(gcodeFile: File): Map<Int, Int> {
+        return try {
+            val temps = mutableMapOf<Int, Int>()
+            gcodeFile.forEachLine { raw ->
+                val line = raw.substringBefore(';').trim()
+                if (!line.startsWith("SM_PRINT_START_LINE") && !line.startsWith("SM_PRINT_FLOW_CALIBRATE")) {
+                    return@forEachLine
+                }
+                val index = smIndexRegex.find(line)?.groupValues?.getOrNull(1)
+                    ?.substringBefore('.')
+                    ?.toIntOrNull()
+                val temp = smTargetTempRegex.find(line)?.groupValues?.getOrNull(1)
+                    ?.substringBefore('.')
+                    ?.toIntOrNull()
+                if (index != null && temp != null && temp in 1..400) {
+                    temps[index] = temp
                 }
             }
             temps
