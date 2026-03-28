@@ -2049,18 +2049,7 @@ fun InlineModelPreview(
             }
             // F46: Z-band recolour for layer-tool (Hueforge) models
             if (layerToolOnly && layerToolSegments != null && extruderColors.isNotEmpty() && colorMapping != null) {
-                fun toRgba(hex: String): FloatArray {
-                    if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
-                    return try {
-                        val c = android.graphics.Color.parseColor(hex)
-                        floatArrayOf(
-                            android.graphics.Color.red(c) / 255f,
-                            android.graphics.Color.green(c) / 255f,
-                            android.graphics.Color.blue(c) / 255f, 1f
-                        )
-                    } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
-                }
-                val palette = colorMapping.map { slot -> toRgba(extruderColors.getOrElse(slot) { "" }) }
+                val palette = colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
                 Log.i(
                     "InlineModelPreview",
                     "recolorByZBands segments=${layerToolSegments.size} mapping=$colorMapping " +
@@ -2074,23 +2063,12 @@ fun InlineModelPreview(
                 v.recolorMesh(palette)  // trigger GL thread VBO re-upload
             } else if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
                 // Apply recolor when we have both mesh and colors (paint-data models)
-                fun toRgba(hex: String): FloatArray {
-                    if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
-                    return try {
-                        val c = android.graphics.Color.parseColor(hex)
-                        floatArrayOf(
-                            android.graphics.Color.red(c) / 255f,
-                            android.graphics.Color.green(c) / 255f,
-                            android.graphics.Color.blue(c) / 255f, 1f
-                        )
-                    } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
-                }
                 val palette = if (colorMapping != null) {
                     // Multi-color: remap mesh indices → slot colors
-                    colorMapping.map { slot -> toRgba(extruderColors.getOrElse(slot) { "" }) }
+                    colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
                 } else {
                     // Single-color: palette[0] = first non-blank color
-                    listOf(toRgba(extruderColors.firstOrNull { it.isNotBlank() } ?: ""))
+                    listOf(SlicerViewModel.staticHexColorToFloatArray(extruderColors.firstOrNull { it.isNotBlank() } ?: ""))
                 }
                 Log.i(
                     "InlineModelPreview",

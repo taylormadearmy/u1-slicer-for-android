@@ -142,18 +142,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Convert a hex color string (#RRGGBB or RRGGBB) to a FloatArray of [R, G, B, 1f].
      * Returns a neutral grey on parse failure.
      */
-    fun hexColorToFloatArray(hex: String): FloatArray {
-        if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
-        return try {
-            val c = android.graphics.Color.parseColor(if (hex.startsWith("#")) hex else "#$hex")
-            floatArrayOf(
-                android.graphics.Color.red(c) / 255f,
-                android.graphics.Color.green(c) / 255f,
-                android.graphics.Color.blue(c) / 255f,
-                1f
-            )
-        } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
-    }
+    fun hexColorToFloatArray(hex: String): FloatArray = staticHexColorToFloatArray(hex)
 
     /**
      * Build a map of objectId (Int) → 0-based extruder index (Byte) for mesh preview coloring.
@@ -2620,6 +2609,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     companion object {
+        /**
+         * Convert a hex color string (#RRGGBB or RRGGBB) to a FloatArray of [R, G, B, 1f].
+         * Returns a neutral grey on parse failure. Callable without a ViewModel instance.
+         */
+        fun staticHexColorToFloatArray(hex: String): FloatArray {
+            if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
+            return try {
+                val c = android.graphics.Color.parseColor(if (hex.startsWith("#")) hex else "#$hex")
+                floatArrayOf(
+                    android.graphics.Color.red(c) / 255f,
+                    android.graphics.Color.green(c) / 255f,
+                    android.graphics.Color.blue(c) / 255f,
+                    1f
+                )
+            } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
+        }
+
         internal fun normalizeImportedSliceConfig(config: SliceConfig): SliceConfig {
             // Older backups can carry skirt_loops=1 from before the Snapmaker U1
             // default was corrected to 0. Keep imports aligned with SettingsRepository.
