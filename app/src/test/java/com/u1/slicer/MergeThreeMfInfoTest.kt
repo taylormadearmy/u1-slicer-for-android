@@ -1,5 +1,6 @@
 package com.u1.slicer
 
+import com.u1.slicer.bambu.LayerToolSegment
 import com.u1.slicer.bambu.ThreeMfInfo
 import org.junit.Assert.*
 import org.junit.Test
@@ -322,6 +323,32 @@ class MergeThreeMfInfoTest {
         )
         val merged = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
         assertEquals(mapOf("1" to 1, "2" to 2), merged.objectExtruderMap)
+    }
+
+    @Test
+    fun `mergeThreeMfInfo carries layerToolSegments from origInfo`() {
+        val segments = listOf(LayerToolSegment(1.0f, 1), LayerToolSegment(5.0f, 2))
+        val origInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(), isBambu = false, isMultiPlate = false,
+            hasLayerToolChanges = true,
+            layerToolSegments = segments
+        )
+        val processedInfo = ThreeMfInfo(objects = emptyList(), plates = emptyList(), isBambu = false, isMultiPlate = false)
+        val merged = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+        assertEquals(segments, merged.layerToolSegments)
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate carries layerToolSegments from sourceInfo`() {
+        val segments = listOf(LayerToolSegment(2.0f, 1), LayerToolSegment(8.0f, 2))
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(), isBambu = false, isMultiPlate = false,
+            hasLayerToolChanges = true,
+            layerToolSegments = segments
+        )
+        val plateInfo = ThreeMfInfo(objects = emptyList(), plates = emptyList(), isBambu = false, isMultiPlate = false)
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo)
+        assertEquals(segments, merged.layerToolSegments)
     }
 
     @Test

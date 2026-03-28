@@ -2677,7 +2677,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // Prefer the processed file's map when available: BambuSanitizer can inline
             // compound-object parts into concrete mesh object IDs, which is exactly what
             // the preview parser needs for per-part coloring (for example calicube).
-            objectExtruderMap = processedInfo.objectExtruderMap.ifEmpty { origInfo.objectExtruderMap }
+            objectExtruderMap = processedInfo.objectExtruderMap.ifEmpty { origInfo.objectExtruderMap },
+            layerToolSegments = origInfo.layerToolSegments
         )
 
         /**
@@ -2825,7 +2826,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 hasPaintData = sourceInfo.hasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
                 hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments,
-                objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap }
+                objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap },
+                layerToolSegments = sourceInfo.layerToolSegments
             )
         }
 
