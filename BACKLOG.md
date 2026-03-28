@@ -67,6 +67,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Remaining gap: filament usage in the summary is all attributed to T0 because layer-tool models slice as single-extruder; the pause injector adds pauses post-slice but doesn't split the filament accounting across extruders
 - Track: [`#27`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/27)
 
+### F48: Better Prepare preview for very large 3MF models (GitHub #29)
+- Very large models fall back to a simplified top-down bed footprint preview (loses 3D perspective and colour detail)
+- Investigate: LOD/mesh decimation for a lower-poly 3D preview, budget-aware simplification on import, or streaming coarse-then-refine
+- Must not regress B18 OOM protections
+- Track: [`#29`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/29)
+
 ### F45: Bambu printer support (GitHub #16)
 - Add support for Bambu Lab printers (communication protocol differs from Moonraker)
 - Consider allowing upload of arbitrary OrcaSlicer printer configs
