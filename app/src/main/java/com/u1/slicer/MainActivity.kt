@@ -656,6 +656,7 @@ fun PrepareScreen(
     val copyCount by viewModel.copyCount.collectAsState()
     val modelScale by viewModel.modelScale.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
+    val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
 
@@ -808,7 +809,9 @@ fun PrepareScreen(
                                 modelScale = modelScale,
                                 cameraState = sharedPreviewCameraState,
                                 onCameraStateChange = onSharedPreviewCameraStateChange,
-                                onViewerReady = { captureViewer = it }
+                                onViewerReady = { captureViewer = it },
+                                layerToolOnly = layerToolOnly,
+                                layerToolSegments = threeMfInfo?.layerToolSegments
                             )
                             if (showInfoDialog && loadedInfo != null) {
                                 ModelInfoDialog(
@@ -1949,7 +1952,10 @@ fun InlineModelPreview(
     modelScale: SlicerViewModel.ModelScale = SlicerViewModel.ModelScale(),
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
     onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
-    onViewerReady: ((com.u1.slicer.viewer.ModelViewerView?) -> Unit)? = null
+    onViewerReady: ((com.u1.slicer.viewer.ModelViewerView?) -> Unit)? = null,
+    // F46: layer-tool (Hueforge) Z-band recolour
+    layerToolOnly: Boolean = false,
+    layerToolSegments: List<com.u1.slicer.bambu.LayerToolSegment>? = null
 ) {
     var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
@@ -2029,7 +2035,7 @@ fun InlineModelPreview(
     // Fixes B22 race: previously mesh loaded on IO (slow) while colors arrived via StateFlow
     // (fast). Separate LaunchedEffects had timing gaps — colors effect fired before mesh was
     // ready (skip), then mesh effect read stale empty colors from closure (skip).
-    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState) {
+    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState, layerToolOnly, layerToolSegments) {
         val m = mesh; val v = viewerView
         if (m != null && v != null) {
             // Only call setMesh when the mesh instance actually changed
@@ -2041,8 +2047,33 @@ fun InlineModelPreview(
             if (extruderColors.isNotEmpty()) {
                 v.setExtruderColors(extruderColors)
             }
-            // Apply recolor when we have both mesh and colors
-            if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
+            // F46: Z-band recolour for layer-tool (Hueforge) models
+            if (layerToolOnly && layerToolSegments != null && extruderColors.isNotEmpty() && colorMapping != null) {
+                fun toRgba(hex: String): FloatArray {
+                    if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
+                    return try {
+                        val c = android.graphics.Color.parseColor(hex)
+                        floatArrayOf(
+                            android.graphics.Color.red(c) / 255f,
+                            android.graphics.Color.green(c) / 255f,
+                            android.graphics.Color.blue(c) / 255f, 1f
+                        )
+                    } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
+                }
+                val palette = colorMapping.map { slot -> toRgba(extruderColors.getOrElse(slot) { "" }) }
+                Log.i(
+                    "InlineModelPreview",
+                    "recolorByZBands segments=${layerToolSegments.size} mapping=$colorMapping " +
+                        "extruderColors=$extruderColors paletteSize=${palette.size}"
+                )
+                m.recolorByZBands(
+                    segments = layerToolSegments,
+                    colorMapping = colorMapping,
+                    colorPalette = palette
+                )
+                v.recolorMesh(palette)  // trigger GL thread VBO re-upload
+            } else if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
+                // Apply recolor when we have both mesh and colors (paint-data models)
                 fun toRgba(hex: String): FloatArray {
                     if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
                     return try {

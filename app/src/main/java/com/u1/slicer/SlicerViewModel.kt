@@ -130,6 +130,32 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val selectedExtruder: StateFlow<Int> = _selectedExtruder.asStateFlow()
 
     /**
+     * True when the loaded model uses only layer-tool (Hueforge-style) colour changes —
+     * no paint data and no per-object extruder assignments. In this mode the Prepare
+     * preview should be recoloured by Z-band using [recolorByZBands] instead of the
+     * per-triangle extruder-index path.
+     */
+    private val _layerToolOnly = MutableStateFlow(false)
+    val layerToolOnly: StateFlow<Boolean> = _layerToolOnly.asStateFlow()
+
+    /**
+     * Convert a hex color string (#RRGGBB or RRGGBB) to a FloatArray of [R, G, B, 1f].
+     * Returns a neutral grey on parse failure.
+     */
+    fun hexColorToFloatArray(hex: String): FloatArray {
+        if (hex.isBlank()) return floatArrayOf(0.7f, 0.7f, 0.7f, 1f)
+        return try {
+            val c = android.graphics.Color.parseColor(if (hex.startsWith("#")) hex else "#$hex")
+            floatArrayOf(
+                android.graphics.Color.red(c) / 255f,
+                android.graphics.Color.green(c) / 255f,
+                android.graphics.Color.blue(c) / 255f,
+                1f
+            )
+        } catch (_: Exception) { floatArrayOf(0.91f, 0.48f, 0f, 1f) }
+    }
+
+    /**
      * Build a map of objectId (Int) → 0-based extruder index (Byte) for mesh preview coloring.
      * Uses objectExtruderMap from ThreeMfInfo (1-based) converted to 0-based.
      */
@@ -983,6 +1009,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             extruderCount = 1,
                             wipeTowerEnabled = false
                         )
+                        // F46: signal that InlineModelPreview should use recolorByZBands
+                        _layerToolOnly.value = true
                         Log.i("SlicerVM", "Applied layer-tool preview mapping only: colors=${initialMapping.size}, previewSlots=$previewSlots")
                     } else {
                         // Compact extruder count: use the smaller of detected colors and
@@ -1003,11 +1031,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         customWipeTowerPos = towerPos
                         Log.i("SlicerVM", "Auto-placed wipe tower at (${towerPos.first}, ${towerPos.second})")
                         _colorMapping.value = initialMapping
+                        _layerToolOnly.value = false
                         applyMultiColorAssignments(initialMapping, presets, emptyList())
                         Log.i("SlicerVM", "Auto-applied color mapping: $extCount extruders, mapping=$initialMapping")
                     }
                 } else {
                     _colorMapping.value = null
+                    _layerToolOnly.value = false
                     _selectedExtruder.value = 0
                     // Reset multi-extruder state: single-color model uses 1 extruder.
                     // Without this, stale extruderCount from a previous multi-color model
