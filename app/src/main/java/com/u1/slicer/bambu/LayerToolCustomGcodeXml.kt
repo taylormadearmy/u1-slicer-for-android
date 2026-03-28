@@ -36,3 +36,26 @@ internal fun parseLayerToolCustomGcodeXml(xml: String): LayerToolCustomGcodeXmlI
 
     return LayerToolCustomGcodeXmlInfo(hasToolChanges, colors.toList(), extruders)
 }
+
+/**
+ * Parses `custom_gcode_per_layer.xml` into an ordered list of Z→extruder segments.
+ * Each entry represents "from this Z and up, use this extruder" (last entry with topZ ≤ triangle Z wins).
+ * extruderBambu is 1-based (1→T0, 2→T1). Entries are sorted ascending by topZ.
+ * Returns empty list if no type-1 or type-2 layers are found.
+ */
+internal fun parseLayerToolSegments(xml: String): List<LayerToolSegment> {
+    val layerRegex = Regex("""<layer\b([^>]*)>""")
+    val typeRegex = Regex("""\btype="([^"]+)"""")
+    val topZRegex = Regex("""\btop_z="([^"]+)"""")
+    val extruderRegex = Regex("""\bextruder="([^"]+)"""")
+
+    return layerRegex.findAll(xml).mapNotNull { match ->
+        val attrs = match.groupValues[1]
+        val type = typeRegex.find(attrs)?.groupValues?.getOrNull(1)
+        if (type != "1" && type != "2") return@mapNotNull null
+        val topZ = topZRegex.find(attrs)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+            ?: return@mapNotNull null
+        val extruder = extruderRegex.find(attrs)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+        LayerToolSegment(topZ = topZ, extruderBambu = extruder)
+    }.sortedBy { it.topZ }.toList()
+}
