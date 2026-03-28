@@ -158,11 +158,15 @@ object ThreeMfParser {
                 // Detect layer tool changes and any per-layer colors embedded in the
                 // custom_gcode_per_layer.xml metadata.  Hueforge-style files often use
                 // this layer G-code instead of object-level color segmentation.
-                val layerToolInfo = if (isBambu) {
-                    val gcodeEntry = zip.getEntry("Metadata/custom_gcode_per_layer.xml")
-                    gcodeEntry?.let { parseLayerToolCustomGcodeXml(zip.getInputStream(it).bufferedReader().readText()) }
+                val layerToolXml: String? = if (isBambu) {
+                    zip.getEntry("Metadata/custom_gcode_per_layer.xml")
+                        ?.let { zip.getInputStream(it).bufferedReader().readText() }
                 } else null
+                val layerToolInfo = layerToolXml?.let { parseLayerToolCustomGcodeXml(it) }
                 val hasLayerToolChanges = layerToolInfo?.hasToolChanges == true
+                val layerToolSegments: List<LayerToolSegment>? = if (hasLayerToolChanges && layerToolXml != null) {
+                    parseLayerToolSegments(layerToolXml).takeIf { it.isNotEmpty() }
+                } else null
 
                 // Detect colors from multiple sources (priority order)
                 val detectedColors = mutableListOf<String>()
@@ -302,7 +306,8 @@ object ThreeMfParser {
                     detectedExtruderCount = extruderCount,
                     hasPlateJsons = plateJsonCount > 1,
                     usedExtruderIndices = uniqueExtruders,
-                    objectExtruderMap = extruderAssignments.toMap()
+                    objectExtruderMap = extruderAssignments.toMap(),
+                    layerToolSegments = layerToolSegments
                 )
             }
         } catch (e: Exception) {

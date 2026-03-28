@@ -1,15 +1,12 @@
 package com.u1.slicer.gcode
 
+import com.u1.slicer.bambu.parseLayerToolSegments
 import org.json.JSONObject
 import java.io.File
 import java.util.zip.ZipFile
 
 object LayerToolPauseInjector {
     private const val EPSILON = 0.0001f
-    private val layerRegex = Regex("""<layer\b([^>]*)>""")
-    private val topZRegex = Regex("""\btop_z="([^"]+)"""")
-    private val typeRegex = Regex("""\btype="([^"]+)"""")
-    private val extruderXmlRegex = Regex("""\bextruder="([^"]+)"""")
     private val pauseRegex = Regex("""^\s*; ?PAUSE_PRINT\s*$""")
     private val zCommentRegex = Regex("""^\s*;Z:([0-9.]+)\s*$""")
     private val gcodeParamRegex = Regex("""\b([A-Za-z])([+-]?\d*\.?\d+)""")
@@ -136,15 +133,7 @@ object LayerToolPauseInjector {
     }
 
     private fun extractPauseTargets(xml: String): List<PauseTarget> =
-        layerRegex.findAll(xml).mapNotNull { match ->
-            val attrs = match.groupValues[1]
-            val type = typeRegex.find(attrs)?.groupValues?.getOrNull(1)
-            if (type != "1" && type != "2") return@mapNotNull null
-            val topZ = topZRegex.find(attrs)?.groupValues?.getOrNull(1)?.toFloatOrNull()
-                ?: return@mapNotNull null
-            val extruderBambu = extruderXmlRegex.find(attrs)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
-            PauseTarget(topZ, extruderBambu)
-        }.sortedWith(compareBy({ it.topZ }, { it.extruderBambu })).toList()
+        parseLayerToolSegments(xml).map { PauseTarget(it.topZ, it.extruderBambu) }
 
     /** Bambu `project_settings.config` JSON: `nozzle_temperature` array index matches T index (0 = T0, …). */
     private fun parseNozzleTemperatures(projectSettingsJson: String): Map<Int, Int>? {
