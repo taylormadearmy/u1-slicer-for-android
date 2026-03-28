@@ -349,8 +349,7 @@ class MainActivity : ComponentActivity() {
             "app_launch",
             mapOf(
                 "savedInstanceState" to (savedInstanceState != null),
-                "intentAction" to intent?.action,
-                "sessionHasPostUpgradeGuard" to diagnostics.sessionHasPostUpgradeGuard()
+                "intentAction" to intent?.action
             )
         )
 

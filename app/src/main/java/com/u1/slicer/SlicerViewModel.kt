@@ -1364,13 +1364,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun sliceDiagnosticsMap(
         sliceConfig: SliceConfig,
         profileOverrides: Map<String, Any>,
-        firstSliceThisLaunch: Boolean,
-        firstSliceAfterUpgrade: Boolean
+        firstSliceThisLaunch: Boolean
     ): Map<String, Any?> {
         val currentInfo = lastModelInfo
         return mapOf(
             "firstSliceThisLaunch" to firstSliceThisLaunch,
-            "firstSliceAfterUpgrade" to firstSliceAfterUpgrade,
             "modelName" to currentModelName,
             "currentModelPath" to currentModelFile?.absolutePath,
             "sourceModelPath" to sourceModelFile?.absolutePath,
@@ -1403,7 +1401,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         sliceConfig: SliceConfig,
         profileOverrides: Map<String, Any>,
         firstSliceThisLaunch: Boolean,
-        firstSliceAfterUpgrade: Boolean,
         mi: ModelInfo?,
         copies: Int,
         custom: FloatArray?,
@@ -1412,7 +1409,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val scale = _modelScale.value
         return mapOf(
             "firstSliceThisLaunch" to firstSliceThisLaunch,
-            "firstSliceAfterUpgrade" to firstSliceAfterUpgrade,
             "modelName" to currentModelName,
             "currentModelPath" to currentModelFile?.absolutePath,
             "sourceModelPath" to sourceModelFile?.absolutePath,
@@ -1653,7 +1649,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sliceCancelled = false
                 _state.value = SlicerState.Slicing(0, "Preparing...")
 
-                val (firstSliceThisLaunch, firstSliceAfterUpgrade) = diagnostics.markSliceStart()
+                val firstSliceThisLaunch = diagnostics.markSliceStart()
 
                 // Re-embed before slicing when needed: settings changes between slices
                 // (overrides, extruder count, prime tower toggle) must reach the native
@@ -1692,8 +1688,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             "native_model_reload_before_slice",
                             mapOf(
                                 "success" to reloadOk,
-                                "path" to reembedded.absolutePath,
-                                "firstSliceAfterUpgrade" to firstSliceAfterUpgrade
+                                "path" to reembedded.absolutePath
                             )
                         )
                         if (!reloadOk) {
@@ -1747,8 +1742,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             "success" to ok,
                             "mode" to "custom",
                             "instanceCount" to (custom.size / 2),
-                            "positions" to custom.toList(),
-                            "firstSliceAfterUpgrade" to firstSliceAfterUpgrade
+                            "positions" to custom.toList()
                         )
                     )
                 } else {
@@ -1769,8 +1763,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 "instanceCount" to copies,
                                 "positions" to positions.toList(),
                                 "scaledModelSizeX" to (mi.sizeX * s.x),
-                                "scaledModelSizeY" to (mi.sizeY * s.y),
-                                "firstSliceAfterUpgrade" to firstSliceAfterUpgrade
+                                "scaledModelSizeY" to (mi.sizeY * s.y)
                             )
                         )
                     } else {
@@ -1809,8 +1802,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sliceDiagnosticsMap(
                         sliceConfig = sliceConfig,
                         profileOverrides = profileOverrides,
-                        firstSliceThisLaunch = firstSliceThisLaunch,
-                        firstSliceAfterUpgrade = firstSliceAfterUpgrade
+                        firstSliceThisLaunch = firstSliceThisLaunch
                     )
                 )
                 diagnostics.recordEvent(
@@ -1819,7 +1811,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         sliceConfig = sliceConfig,
                         profileOverrides = profileOverrides,
                         firstSliceThisLaunch = firstSliceThisLaunch,
-                        firstSliceAfterUpgrade = firstSliceAfterUpgrade,
                         mi = mi,
                         copies = copies,
                         custom = custom,
@@ -1842,7 +1833,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     "pre_slice_native_state",
                     mapOf(
                         "firstSliceThisLaunch" to firstSliceThisLaunch,
-                        "firstSliceAfterUpgrade" to firstSliceAfterUpgrade,
                         "nativeState" to safeNativeDiagnosticsState(),
                         "currentModelPath" to currentModelFile?.absolutePath,
                         "sourceModelPath" to sourceModelFile?.absolutePath,
@@ -1898,7 +1888,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
 
-                    diagnostics.markSliceSucceeded()
                     diagnostics.recordEvent(
                         "slice_succeeded",
                         mapOf(

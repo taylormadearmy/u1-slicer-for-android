@@ -69,18 +69,14 @@ class DiagnosticsStore(private val context: Context) {
         sessionIdCache ?: "${System.currentTimeMillis()}-${Process.myPid()}".also { sessionIdCache = it }
     }
 
-    private var sessionHasPostUpgradeGuard = prefs.contains(KEY_PENDING_RESTART)
     private var firstModelLoadRecorded = false
     private var firstSliceRecorded = false
-    private var firstSliceAfterUpgradeRecorded = false
 
     private val diagnosticsDir = File(context.filesDir, "diagnostics").apply { mkdirs() }
     private val historyFile = File(diagnosticsDir, "clipper_investigation.jsonl")
     private val bundleFile = File(diagnosticsDir, "clipper_investigation_bundle.txt")
 
     fun diagnosticsPath(): String = historyFile.absolutePath
-
-    fun sessionHasPostUpgradeGuard(): Boolean = sessionHasPostUpgradeGuard
 
     fun pendingUpgradeTrigger(): String? {
         val pendingJson = prefs.getString(KEY_PENDING_RESTART, null) ?: return null
@@ -97,17 +93,14 @@ class DiagnosticsStore(private val context: Context) {
         return first
     }
 
-    fun markSliceStart(): Pair<Boolean, Boolean> {
+    fun markSliceStart(): Boolean {
         val firstSliceThisLaunch = !firstSliceRecorded
         firstSliceRecorded = true
-        val firstSliceAfterUpgrade = sessionHasPostUpgradeGuard && !firstSliceAfterUpgradeRecorded
-        if (firstSliceAfterUpgrade) firstSliceAfterUpgradeRecorded = true
-        return firstSliceThisLaunch to firstSliceAfterUpgrade
+        return firstSliceThisLaunch
     }
 
     fun markUpgradePendingForCurrentSession(trigger: String, nativeStateJson: String?): Boolean {
         val persisted = persistPendingUpgradeMarker(trigger, nativeStateJson)
-        sessionHasPostUpgradeGuard = sessionHasPostUpgradeGuard || persisted
         recordEvent(
             "post_upgrade_guard_armed",
             mapOf(
@@ -118,13 +111,6 @@ class DiagnosticsStore(private val context: Context) {
             )
         )
         return persisted
-    }
-
-    fun markSliceSucceeded() {
-        if (!prefs.contains(KEY_PENDING_RESTART)) return
-        prefs.edit().remove(KEY_PENDING_RESTART).apply()
-        sessionHasPostUpgradeGuard = false
-        recordEvent("post_upgrade_slice_settled")
     }
 
     /**
@@ -195,7 +181,6 @@ class DiagnosticsStore(private val context: Context) {
         obj.put("versionCode", PackageInfoCompat.getLongVersionCode(packageInfo))
         obj.put("apkLastUpdateTime", packageInfo.lastUpdateTime)
         obj.put("buildType", if (BuildConfig.DEBUG) "debug" else "release")
-        obj.put("sessionHasPostUpgradeGuard", sessionHasPostUpgradeGuard)
         details.forEach { (key, value) -> obj.put(key, toJsonValue(value)) }
         historyFile.appendText(obj.toString() + "\n")
         trimHistory()
@@ -219,7 +204,6 @@ class DiagnosticsStore(private val context: Context) {
         if (pending) {
             val marker = prefs.getString(KEY_PENDING_RESTART, null)
             prefs.edit().remove(KEY_PENDING_RESTART).apply()
-            sessionHasPostUpgradeGuard = false
             recordEvent(
                 "pending_upgrade_marker_consumed",
                 mapOf("marker" to marker)
@@ -294,7 +278,6 @@ class DiagnosticsStore(private val context: Context) {
             appendLine("versionCode=${PackageInfoCompat.getLongVersionCode(packageInfo)}")
             appendLine("apkLastUpdateTime=${packageInfo.lastUpdateTime}")
             appendLine("buildType=${if (BuildConfig.DEBUG) "debug" else "release"}")
-            appendLine("sessionHasPostUpgradeGuard=$sessionHasPostUpgradeGuard")
             if (!latestError.isNullOrBlank()) appendLine("latestError=$latestError")
             appendLine("pendingUpgradeMarker=${pendingRestart ?: "<none>"}")
             if (timelineLines.isNotEmpty()) {
@@ -318,7 +301,6 @@ class DiagnosticsStore(private val context: Context) {
             "native_configured",
             "post_upgrade_guard_armed",
             "post_upgrade_guard_observed",
-            "post_upgrade_slice_settled",
             "pending_upgrade_marker_consumed",
             "slice_in_progress_marker_consumed",
             "clipper_recovery_pending_consumed",
@@ -369,13 +351,12 @@ class DiagnosticsStore(private val context: Context) {
             if (type !in interesting) return@mapNotNull null
             val timestamp = obj.optLong("timestampMs", 0L)
             val summary = when (type) {
-                "app_launch" -> "app_launch guard=${obj.optString("sessionHasPostUpgradeGuard")}"
+                "app_launch" -> "app_launch"
                 "upgrade_check" -> "upgrade_check result=${obj.optString("result")} reason=${obj.optString("reason")}"
                 "apk_changed_while_running" -> "apk_changed_while_running launch=${obj.optLong("launchApkUpdateTime")} current=${obj.optLong("currentApkUpdateTime")}"
                 "native_configured" -> "native_configured state=${obj.optString("nativeState")}"
                 "post_upgrade_guard_armed" -> "post_upgrade_guard_armed trigger=${obj.optString("trigger")} persisted=${obj.optString("markerPersisted")}"
                 "post_upgrade_guard_observed" -> "post_upgrade_guard_observed status=${obj.optString("status")}"
-                "post_upgrade_slice_settled" -> "post_upgrade_slice_settled"
                 "pending_upgrade_marker_consumed" -> "pending_upgrade_marker_consumed"
                 "slice_in_progress_marker_consumed" -> "slice_in_progress_marker_consumed"
                 "clipper_recovery_pending_consumed" -> "clipper_recovery_pending_consumed"
