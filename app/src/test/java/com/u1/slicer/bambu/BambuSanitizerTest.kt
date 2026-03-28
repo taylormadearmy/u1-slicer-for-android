@@ -134,14 +134,16 @@ class BambuSanitizerTest {
     }
 
     @Test
-    fun `mmu_segmentation is stripped not converted to paint_color`() {
-        // PrusaSlicer mmu_segmentation uses a different encoding than Bambu paint_color.
-        // Renaming produced malformed data → SIGSEGV in multi_material_segmentation_by_painting().
-        // The correct fix is to STRIP the attribute so it never populates mmu_segmentation_facets.
-        val input = """<triangle v1="0" v2="1" v3="2" slic3rpe:mmu_segmentation="AABB"/>"""
-        val output = input.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
-        assertFalse("slic3rpe:mmu_segmentation must be stripped", output.contains("mmu_segmentation"))
-        assertFalse("must NOT be renamed to paint_color (different encoding)", output.contains("paint_color="))
+    fun `mmu_segmentation is renamed to paint_color for SEMM support`() {
+        // PrusaSlicer mmu_segmentation uses the same RLE hex encoding as Bambu paint_color.
+        // Renaming allows multi_material_segmentation_by_painting() to process PrusaSlicer
+        // SEMM models (e.g. Korok mask) as multi-extruder jobs.
+        // The previous SIGSEGV was caused by filament_colour.size()=1 (OOB in num_facets_states),
+        // which was fixed in applyConfigToPrusa() by sizing filament_colour to n_ext.
+        val input = """ slic3rpe:mmu_segmentation="4""""
+        val output = input.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+        assertFalse("slic3rpe:mmu_segmentation attribute name must be gone", output.contains("mmu_segmentation"))
+        assertTrue("must be renamed to paint_color=", output.contains("""paint_color="4""""))
     }
 
     @Test

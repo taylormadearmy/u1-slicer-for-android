@@ -500,7 +500,7 @@ class ProfileEmbedder(private val context: Context) {
                         //   xmlns:BambuStudio, metadata elements) that cause OrcaSlicer's BBS
                         //   3MF reader to reject the file when requiredextensions="p" is present.
                         // - Preserve p:path and xmlns:p (needed for component file refs).
-                        // - Strip PrusaSlicer slic3rpe:mmu_segmentation for paint-data files.
+                        // - Convert PrusaSlicer slic3rpe:mmu_segmentation → paint_color= for paint-data files.
                         name.endsWith(".model") -> {
                             if (name == "3D/3dmodel.model" && entry.size > 50_000_000L) {
                                 // Giant main model: stream-clean to avoid buffering hundreds of MB.
@@ -510,7 +510,7 @@ class ProfileEmbedder(private val context: Context) {
                                 // raw-copy to avoid expensive regex cleaning on large meshes.
                                 // restructurePlateFile() will clean when inlining later.
                                 // MUST NOT skip when hasPaintData: cleanModelXmlForOrcaSlicer()
-                                // strips paint_color= attributes that cause SEMM SIGSEGV on Android.
+                                // converts slic3rpe:mmu_segmentation → paint_color= for PrusaSlicer SEMM.
                                 rawCopyEntry(srcZip, entry, destZip)
                             } else if (name != "3D/3dmodel.model" && entry.size > 50_000_000L) {
                                 // Large component (>50MB): stream-clean to avoid OOM.
@@ -601,10 +601,16 @@ class ProfileEmbedder(private val context: Context) {
      */
     private fun cleanModelXmlForOrcaSlicer(content: ByteArray, hasPaintData: Boolean): ByteArray {
         var text = String(content)
-        // SEMM (paint-based multi-color) is now enabled — TBB parallel execution algorithms
+        // SEMM (paint-based multi-color) is enabled — TBB parallel execution algorithms
         // are replaced with serial shims (extern/tbb_serial/) to prevent ARM64 data races.
-        // paint_color and mmu_segmentation attributes are PRESERVED for OrcaSlicer's
+        // Bambu paint_color= attributes are preserved as-is for OrcaSlicer's
         // multi_material_segmentation_by_painting() to process.
+        // PrusaSlicer slic3rpe:mmu_segmentation uses the same RLE hex encoding as Bambu
+        // paint_color — rename it so OrcaSlicer's SEMM algorithm can process it.
+        if (hasPaintData && text.contains("slic3rpe:mmu_segmentation")) {
+            text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+            text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
+        }
         text = text.replace(Regex("""\s+requiredextensions="[^"]*""""), "")
         text = text.replace(Regex("""\s+p:UUID="[^"]*""""), "")
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
@@ -662,30 +668,36 @@ class ProfileEmbedder(private val context: Context) {
         val pUuidRegex = Regex("""\s+p:UUID="[^"]*"""")
         val reqExtRegex = Regex("""\s+requiredextensions="[^"]*"""")
         val bambuNsRegex = Regex("""\s+xmlns:BambuStudio="[^"]*"""")
+        val slic3rNsRegex = Regex("""\s+xmlns:slic3rpe="[^"]*"""")
         val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
-        // SEMM enabled — paint_color/mmu_segmentation are PRESERVED (TBB serial shim prevents ARM64 data races)
+        // SEMM enabled — Bambu paint_color= preserved; PrusaSlicer slic3rpe:mmu_segmentation
+        // is renamed to paint_color= (same RLE hex encoding) so OrcaSlicer can process it.
+        val renameMmu = hasPaintData
         try {
             tmpFile.bufferedWriter().use { out ->
                 srcZip.getInputStream(srcEntry).bufferedReader().use { reader ->
                     reader.forEachLine { line ->
-                        // Fast path: mesh data lines without any Bambu attributes
-                        // (paint_color/mmu_segmentation are preserved for SEMM)
+                        // Fast path: mesh data lines without any attributes needing removal
+                        val hasMmu = renameMmu && line.contains("slic3rpe:mmu_segmentation")
                         if (!line.contains("p:UUID") && !line.contains("requiredextensions") &&
                             !line.contains("xmlns:BambuStudio") && !line.contains("<metadata") &&
-                            !line.contains("type=\"other\"")) {
+                            !line.contains("type=\"other\"") && !line.contains("xmlns:slic3rpe") &&
+                            !hasMmu) {
                             if (line.isNotBlank()) {
                                 out.write(line)
                                 out.newLine()
                             }
                             return@forEachLine
                         }
-                        // Slow path: header/footer lines — apply full cleaning
-                        var cleaned = line.replace(pUuidRegex, "")
+                        // Slow path: lines needing cleaning or mmu rename
+                        var cleaned = line
+                        if (hasMmu) cleaned = cleaned.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+                        cleaned = cleaned.replace(pUuidRegex, "")
                         cleaned = cleaned.replace(reqExtRegex, "")
                         cleaned = cleaned.replace(bambuNsRegex, "")
+                        cleaned = cleaned.replace(slic3rNsRegex, "")
                         cleaned = cleaned.replace(metadataRegex, "")
                         cleaned = cleaned.replace("""type="other"""", """type="model"""")
-                        // paint_color/mmu_segmentation preserved for SEMM
                         if (cleaned.isNotBlank()) {
                             out.write(cleaned)
                             out.newLine()

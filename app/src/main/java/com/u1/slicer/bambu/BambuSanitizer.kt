@@ -951,15 +951,16 @@ $componentRefs    </components>
     }
 
     /**
-     * Strip PrusaSlicer slic3rpe:mmu_segmentation attributes from triangle elements.
+     * Convert PrusaSlicer slic3rpe:mmu_segmentation attributes to Bambu paint_color format.
      *
-     * PrusaSlicer uses a different encoding than Bambu's paint_color format.
-     * Renaming slic3rpe:mmu_segmentation → paint_color produces malformed data
-     * that causes OrcaSlicer's multi_material_segmentation_by_painting() to crash
-     * with SIGSEGV (corrupt ExPolygons).  Strip the attribute entirely so it is
-     * never loaded into mmu_segmentation_facets.
-     * Multi-color for PrusaSlicer files is handled by per-volume extruder assignment
-     * (Slic3r_PE_model.config) which is injected by process().
+     * PrusaSlicer uses the same RLE hex encoding as Bambu's paint_color= for per-triangle
+     * extruder paint data.  Renaming slic3rpe:mmu_segmentation → paint_color allows
+     * OrcaSlicer's multi_material_segmentation_by_painting() to process PrusaSlicer
+     * SEMM models (e.g. Korok mask) as multi-extruder jobs on the U1.
+     *
+     * The SIGSEGV previously observed when renaming was caused by filament_colour.size()
+     * being 1 (OOB array access in num_facets_states) — that root cause was fixed in
+     * applyConfigToPrusa() by sizing filament_colour to n_ext.
      *
      * Native Bambu paint_color= attributes (e.g. colored 3DBenchy) are NOT affected
      * by this function — they remain in place so OrcaSlicer's SEMM algorithm can
@@ -969,8 +970,9 @@ $componentRefs    </components>
         var text = String(content)
         if (!text.contains("slic3rpe:mmu_segmentation")) return content
 
-        // Strip the attribute value and name (handles both quoted forms)
-        text = text.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
+        // Rename slic3rpe:mmu_segmentation → paint_color (same RLE hex encoding)
+        text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+        // Strip the PrusaSlicer namespace declaration (no longer needed)
         text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
 
         return text.toByteArray()
@@ -1040,12 +1042,11 @@ $componentRefs    </components>
         text = text.replace(Regex("""\s+xmlns:BambuStudio="[^"]*""""), "")
         text = text.replace(Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?"""), "")
         text = text.replace("""type="other"""", """type="model"""")
-        // Strip PrusaSlicer mmu_segmentation paint data: for restructured files multi-color
-        // is handled via per-volume extruder assignment (Slic3r_PE_model.config), not SEMM.
-        // Keeping slic3rpe:mmu_segmentation would populate mmu_segmentation_facets and trigger
-        // multi_material_segmentation_by_painting(), causing SIGSEGV on this data.
+        // Convert PrusaSlicer mmu_segmentation → paint_color for restructured files.
+        // Same encoding as Bambu paint_color=; allows multi_material_segmentation_by_painting()
+        // to produce multi-extruder tool changes from PrusaSlicer SEMM paint data.
         if (text.contains("slic3rpe:mmu_segmentation")) {
-            text = text.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
+            text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
             text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
         }
         return text.toByteArray()
