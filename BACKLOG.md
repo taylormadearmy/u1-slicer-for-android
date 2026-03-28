@@ -36,6 +36,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Status messages during MakerWorld import were confusing (e.g. "Loading Downloading from MakerWorld……")
 - Fixed: each loading state now provides a complete display message ("Downloading from MakerWorld…", "Loading model.3mf…", "Preparing model…")
 
+### B39: Plus/home screen shown during slow model load, causing confusion and double-loads (GitHub #30)
+- On large files or slower devices, the plus screen remains visible while the model loads in the background
+- Users see no feedback that the file was accepted and tap to select again, causing duplicate loads or unexpected state
+- Fix: emit a loading/in-progress state immediately on file selection so the plus screen is replaced before native load completes
+- Track: [`#30`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/30)
+
 ### B37: Hueforge filament pauses / colour changes are dropped when sliced in-app (GitHub #21) — FIXED v1.5.x
 - Root cause: layer-tool pause injection pipeline was not implemented; `custom_gcode_per_layer.xml` layer-change data was ignored
 - Fix: full layer-tool pipeline implemented in v1.5.1–v1.5.11: detects `hasLayerToolChanges`, extracts per-layer extruder assignments from XML, injects `PAUSE_PRINT` + `M109 S{temp} T{n}` at the correct layer heights post-slice
