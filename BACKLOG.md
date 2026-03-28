@@ -68,10 +68,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Remaining gap: the 3D mesh preview renders as single-colour (model slices as 1-extruder; per-layer colour segmentation in the 3D view is not implemented)
 - Track: [`#26`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/26)
 
-### F47: Slice summary filament usage for layer-tool / pause-based prints (GitHub #27)
-- G-code and pause injection work correctly (B37 fixed)
-- Remaining gap: filament usage in the summary is all attributed to T0 because layer-tool models slice as single-extruder; the pause injector adds pauses post-slice but doesn't split the filament accounting across extruders
-- Track: [`#27`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/27)
+### F47: Slice summary filament usage for layer-tool / pause-based prints (GitHub #27) — FIXED v1.5.x
+- `GcodeParser` accepts `colorSegmentsByPausePrint=true` which assigns filament mm to extruder indices by counting `PAUSE_PRINT` markers instead of T commands
+- Set automatically in `SlicerViewModel` when layer-tool pause injection ran — summary correctly shows per-extruder breakdown for Hueforge prints
+- Issue #27 closed.
 
 ### F48: Better Prepare preview for very large 3MF models (GitHub #29)
 - Very large models fall back to a simplified top-down bed footprint preview (loses 3D perspective and colour detail)
