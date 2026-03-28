@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let {
+            viewModel.setLoadingFromPicker()
             val name = viewModel.getFileDisplayName(it) ?: ""
             if (name.isEmpty() || SlicerViewModel.isSupportedFile(name)) {
                 viewModel.loadModel(it)

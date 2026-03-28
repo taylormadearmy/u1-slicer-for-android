@@ -2576,6 +2576,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun getFileDisplayName(uri: Uri): String? =
         getDisplayName(getApplication(), uri)
 
+    /** Immediately transition to Loading state when the file picker returns a URI. */
+    fun setLoadingFromPicker() {
+        _state.value = SlicerState.Loading("Loading…")
+    }
+
     /** Show error for unsupported file type selected in the picker. */
     fun showUnsupportedFileError(filename: String) {
         val ext = filename.substringAfterLast('.', "")
