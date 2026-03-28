@@ -6,6 +6,7 @@ import android.util.Log
 import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ThreeMfParser
+import com.u1.slicer.bambu.parseLayerToolSegments
 import org.junit.After
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -207,6 +208,62 @@ class NativePreparePreviewTest {
         assertTrue(
             "Expected Dragon plate 3 preview to preserve at least 3 colours, got $distinctPreviewIndices",
             distinctPreviewIndices.size >= 3
+        )
+    }
+
+    @Test
+    fun layerToolSegments_parsedFromFlippy_and_recolorByZBands_producesDistinctVertexColours() {
+        // F46 regression: flippy+flappy+mini.3mf is a Hueforge/layer-tool model.
+        // After parse, ThreeMfInfo.layerToolSegments must be non-null and non-empty.
+        // After recolorByZBands, the MeshData must have at least 2 distinct RGBA colours
+        // across its triangles (i.e., the mesh is no longer single-colour).
+        copyAssetToModelFile("flippy+flappy+mini.3mf")
+
+        val info = ThreeMfParser.parse(modelFile)
+        assertTrue("flippy should be detected as hasLayerToolChanges", info.hasLayerToolChanges)
+
+        val segments = info.layerToolSegments
+        assertNotNull("layerToolSegments should be populated for flippy (F46)", segments)
+        segments!!
+        assertTrue("layerToolSegments should be non-empty for flippy", segments.isNotEmpty())
+        assertTrue(
+            "flippy should have at least 2 layer-tool segments (2 colours), got ${segments.size}",
+            segments.size >= 2
+        )
+
+        // Load native preview mesh
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+        val preview = lib.getPreparePreviewMesh()
+        assertNotNull("Native preview mesh should be available for flippy", preview)
+        preview!!
+
+        // Convert to MeshData and apply Z-band recolour
+        val meshData = preview.toMeshData()
+        assertNotNull("MeshData conversion should succeed", meshData)
+        meshData!!
+
+        // Build a minimal 2-colour palette (red=extruder 1, green=extruder 2)
+        val palette = listOf(
+            floatArrayOf(1f, 0f, 0f, 1f),
+            floatArrayOf(0f, 1f, 0f, 1f)
+        )
+        val colorMapping = listOf(0, 1)  // extruder0=0 → palette[0], extruder0=1 → palette[1]
+
+        meshData.recolorByZBands(segments, colorMapping, palette)
+
+        // After recolour, check that at least 2 distinct R values appear across triangle vertices
+        // (red = 1.0 for extruder 1, green = 0.0 R for extruder 2)
+        val buf = meshData.vertices
+        val triCount = meshData.vertexCount / 3
+        val rValues = mutableSetOf<Float>()
+        for (tri in 0 until triCount) {
+            val rOffset = tri * 3 * 10 + 6  // first vertex of triangle, R channel at offset 6
+            rValues.add(buf.get(rOffset))
+            if (rValues.size >= 2) break
+        }
+        assertTrue(
+            "recolorByZBands should produce at least 2 distinct R values for flippy (both extruder colours visible), got $rValues",
+            rValues.size >= 2
         )
     }
 }
