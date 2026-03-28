@@ -1062,6 +1062,7 @@ fun PreviewScreen(
     val coreVersion by viewModel.coreVersion.collectAsState()
     val parsedGcode by viewModel.parsedGcode.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
+    val colorMapping by viewModel.colorMapping.collectAsState()
     val config by viewModel.config.collectAsState()
 
     Scaffold(
@@ -1121,6 +1122,7 @@ fun PreviewScreen(
                         InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
+                            colorMapping = colorMapping,
                             slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D,
                             cameraState = sharedPreviewCameraState,
@@ -1132,7 +1134,8 @@ fun PreviewScreen(
                         perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
                         wipeTowerFilamentMm = parsedGcode?.wipeTowerFilamentMm ?: 0f,
                         bedTemp = config.bedTemp,
-                        extruderColors = extruderColors.filter { it.isNotBlank() }
+                        extruderColors = extruderColors.filter { it.isNotBlank() },
+                        colorMapping = colorMapping
                     )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -1594,8 +1597,12 @@ fun SliceCompleteSummaryCard(
     perExtruderFilamentMm: List<Float> = emptyList(),
     wipeTowerFilamentMm: Float = 0f,
     bedTemp: Int = 0,
-    extruderColors: List<String> = emptyList()
+    extruderColors: List<String> = emptyList(),
+    colorMapping: List<Int>? = null
 ) {
+    val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
+        buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -1634,7 +1641,8 @@ fun SliceCompleteSummaryCard(
                     ) {
                         rowItems.forEachIndexed { columnIndex, mm ->
                             val i = rowIndex * 2 + columnIndex
-                            val colorHex = extruderColors.getOrNull(i) ?: "#808080"
+                            val slot = displaySlots.getOrElse(i) { i.coerceIn(0, 3) }
+                            val colorHex = extruderColors.getOrNull(slot) ?: "#808080"
                             val color = try {
                                 Color(android.graphics.Color.parseColor(colorHex))
                             } catch (_: Exception) {
@@ -1656,7 +1664,7 @@ fun SliceCompleteSummaryCard(
                                 Spacer(Modifier.width(6.dp))
                                 Column {
                                     Text(
-                                        "E${i + 1}",
+                                        "E${slot + 1}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.White.copy(alpha = 0.7f)
                                     )
@@ -1684,6 +1692,30 @@ fun SliceCompleteSummaryCard(
             }
         }
     }
+}
+
+/**
+ * Build a stable display-slot order for per-extruder filament summaries.
+ *
+ * perExtruderFilamentMm comes from compact slicer output order, while users pick physical
+ * slots via colorMapping (e.g. compact [0,1] mapped to physical [2,1] => E3, E2). We show
+ * used mapped slots first, then fill with remaining physical slots.
+ */
+internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?): List<Int> {
+    if (count <= 0) return emptyList()
+    if (colorMapping.isNullOrEmpty()) return (0 until count).map { it.coerceIn(0, 3) }
+
+    val ordered = mutableListOf<Int>()
+    colorMapping.forEach { slot ->
+        if (slot in 0..3 && slot !in ordered) ordered += slot
+    }
+    for (slot in 0..3) {
+        if (slot !in ordered) ordered += slot
+    }
+    while (ordered.size < count) {
+        ordered += ordered.lastOrNull() ?: 0
+    }
+    return ordered.take(count)
 }
 
 @Composable
@@ -2714,6 +2746,7 @@ fun ExtruderPickerRow(
 fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
+    colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     onExpand: () -> Unit,
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
@@ -2730,12 +2763,16 @@ fun InlineGcodePreview(
         ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
     else 1
 
-    LaunchedEffect(parsedGcode, extruderColors, viewerView, cameraState) {
+    val previewColors = remember(extruderColors, colorMapping) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping)
+    }
+
+    LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState) {
         val v = viewerView ?: return@LaunchedEffect
         viewerLoading = true
         maxLayer = gcodeLayerCount - 1
-        if (extruderColors.isNotEmpty()) {
-            v.setExtruderColors(extruderColors)
+        if (previewColors.isNotEmpty()) {
+            v.setExtruderColors(previewColors)
         }
         v.setGcode(parsedGcode)
         cameraState?.let { v.applyCameraState(it) }
@@ -2854,6 +2891,28 @@ fun InlineGcodePreview(
             }
         }
     }
+}
+
+internal fun normalizeGcodePreviewColors(
+    extruderColors: List<String>,
+    colorMapping: List<Int>?
+): List<String> {
+    val normalized = MutableList(4) { "" }
+    for (slot in 0..3) {
+        normalized[slot] = extruderColors.getOrNull(slot).orEmpty()
+    }
+    // Ensure compact tool indices (T0/T1...) also resolve to the mapped slot colors.
+    if (!colorMapping.isNullOrEmpty()) {
+        colorMapping.take(4).forEachIndexed { compactIdx, slot ->
+            if (slot in 0..3) {
+                val slotColor = extruderColors.getOrNull(slot).orEmpty()
+                if (slotColor.isNotBlank()) {
+                    normalized[compactIdx] = slotColor
+                }
+            }
+        }
+    }
+    return normalized
 }
 
 @Composable

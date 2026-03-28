@@ -213,4 +213,29 @@ class CopyArrangeCalculatorTest {
             )
         }
     }
+
+    @Test
+    fun `single copy position is min-corner not center - 10x10 model`() {
+        // Regression: buildExpectedModelFootprint was treating positions as centers,
+        // which shifted the expected footprint by half the object size in each axis.
+        // Positions are min-corner: object occupies [x, x+sizeX) x [y, y+sizeY).
+        val positions = CopyArrangeCalculator.calculate(10f, 10f, 1)
+        // Min-corner: (270-10)/2 = 130
+        assertEquals(130f, positions[0], 0.01f)
+        assertEquals(130f, positions[1], 0.01f)
+        // Object occupies [130, 140] x [130, 140] — NOT centered at 130.
+        val expectedMinX = 130f
+        val expectedMaxX = 140f
+        val expectedMinY = 130f
+        val expectedMaxY = 140f
+        // Verify treating as min-corner gives correct bounds:
+        val minX = positions[0]
+        val maxX = positions[0] + 10f
+        val minY = positions[1]
+        val maxY = positions[1] + 10f
+        assertEquals(expectedMinX, minX, 0.01f)
+        assertEquals(expectedMaxX, maxX, 0.01f)
+        assertEquals(expectedMinY, minY, 0.01f)
+        assertEquals(expectedMaxY, maxY, 0.01f)
+    }
 }

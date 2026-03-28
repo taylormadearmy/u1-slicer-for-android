@@ -434,6 +434,45 @@ class GcodeParserTest {
         assertTrue(bySeg[2]?.isNotEmpty() == true)
     }
 
+    @Test
+    fun `colorSegmentsByPausePrint computes per-extruder filament from parsed moves`() {
+        val file = writeGcode(
+            """
+            G1 Z0.2
+            G1 X1 Y1 E1.0
+            ; PAUSE_PRINT
+            G1 X2 Y2 E2.0
+            ; filament used [mm] = 3406.23,0.00
+            """.trimIndent()
+        )
+        val result = GcodeParser.parse(file, colorSegmentsByPausePrint = true)
+
+        // In pause-segment mode we must reflect post-pause segments, not stale footer comments.
+        assertEquals(2, result.perExtruderFilamentMm.size)
+        assertEquals(1.0f, result.perExtruderFilamentMm[0], 0.0001f)
+        assertEquals(1.0f, result.perExtruderFilamentMm[1], 0.0001f)
+    }
+
+    @Test
+    fun `multi-tool computed usage compacts away unused leading tool slots`() {
+        val file = writeGcode(
+            """
+            G1 Z0.2
+            T1
+            G1 X1 Y1 E1.0
+            T2
+            G1 X2 Y2 E2.0
+            ; filament used [mm] = 7203.11,6387.34,0.00,0.00,0.00
+            """.trimIndent()
+        )
+        val result = GcodeParser.parse(file)
+
+        // Parsed extrusion data should drive compact per-tool usage: two tools, no phantom extras.
+        assertEquals(2, result.perExtruderFilamentMm.size)
+        assertEquals(1.0f, result.perExtruderFilamentMm[0], 0.0001f)
+        assertEquals(1.0f, result.perExtruderFilamentMm[1], 0.0001f)
+    }
+
     // Helper extension
     private fun ParsedGcode.moves(layerIndex: Int) = layers[layerIndex].moves
 }

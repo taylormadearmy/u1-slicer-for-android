@@ -26,6 +26,8 @@ object GcodeParser {
         var lastE = 0f
         var absoluteE = true
         var perExtruderMm = emptyList<Float>()
+        val computedPerExtruderMm = FloatArray(4)
+        val computedExtruderOrder = mutableListOf<Int>()
         var currentFeatureType: Byte = FeatureType.OTHER
         var currentFeatureLabel: String = "OTHER"
         var wipeTowerE = 0f      // total E extruded in prime/wipe tower regions
@@ -147,12 +149,26 @@ object GcodeParser {
                         }
 
                         val hasE = !newE.isNaN()
-                        val isExtrude = hasE && if (absoluteE) newE > lastE else newE > 0f
+                        val eBefore = lastE
+                        val isExtrude = hasE && if (absoluteE) newE > eBefore else newE > 0f
                         if (hasE) lastE = newE
 
                         if (newX != x || newY != y) {
                             val moveExtruder =
                                 if (colorSegmentsByPausePrint) pauseSegmentExtruder else currentExtruder
+                            if (isExtrude) {
+                                val extrudedMm = if (absoluteE) {
+                                    (newE - eBefore).coerceAtLeast(0f)
+                                } else {
+                                    newE.coerceAtLeast(0f)
+                                }
+                                if (moveExtruder in 0..3 && extrudedMm > 0f) {
+                                    if (computedPerExtruderMm[moveExtruder] <= 0f) {
+                                        computedExtruderOrder += moveExtruder
+                                    }
+                                    computedPerExtruderMm[moveExtruder] += extrudedMm
+                                }
+                            }
                             currentMoves.add(GcodeMove(
                                 type = if (isExtrude) MoveType.EXTRUDE else MoveType.TRAVEL,
                                 x0 = x, y0 = y, x1 = newX, y1 = newY,
@@ -206,9 +222,33 @@ object GcodeParser {
             layers.add(GcodeLayer(layerIndex, currentZ, currentMoves.toList()))
         }
 
+        val hasComputedExtrusion = computedPerExtruderMm.any { it > 0f }
+        val normalizedFooterPerExtruderMm = perExtruderMm
+            .take(4)
+            .dropLastWhile { it <= 0f }
+        val compactComputedPerExtruderMm = computedExtruderOrder.map { idx ->
+            computedPerExtruderMm[idx]
+        }
+        val resolvedPerExtruderMm = when {
+            // In pause-segment mode, footer comments often don't reflect post-injected tool splits.
+            colorSegmentsByPausePrint && hasComputedExtrusion -> compactComputedPerExtruderMm
+            // For multi-tool jobs, prefer parsed extrusion usage so phantom footer tools
+            // (e.g. extra zero entries) do not create fake preview slots/colors.
+            hasComputedExtrusion && compactComputedPerExtruderMm.size >= 2 -> compactComputedPerExtruderMm
+            normalizedFooterPerExtruderMm.isNotEmpty() -> normalizedFooterPerExtruderMm
+            hasComputedExtrusion -> compactComputedPerExtruderMm
+            perExtruderMm.isNotEmpty() -> perExtruderMm.take(4)
+            else -> emptyList()
+        }
+        val finalPerExtruderMm = if (resolvedPerExtruderMm.size <= 4) {
+            resolvedPerExtruderMm
+        } else {
+            resolvedPerExtruderMm.take(4)
+        }
+
         return ParsedGcode(
             layers = layers,
-            perExtruderFilamentMm = perExtruderMm,
+            perExtruderFilamentMm = finalPerExtruderMm,
             wipeTowerFilamentMm = wipeTowerE
         )
     }

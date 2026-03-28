@@ -814,4 +814,20 @@ class SlicingOverridesTest {
         assertEquals("on", formatFileValue(listOf("1", "1")))
         assertEquals("60", formatFileValue(listOf(60, 60)))
     }
+
+    // --- Korok / SEMM duplicate-slot compact extruder count ---
+
+    @Test
+    fun `buildProfileOverrides nozzle_temperature length matches compact extruder count not raw slot list size`() {
+        // SEMM colorMapping [0,0,1,1,3] has 5 elements but only 3 unique physical slots.
+        // targetCount = distinct().size = 3; buildProfileOverrides must get 3, not 5.
+        // Regression: passing raw usedSlots.size (5) resulted in extruders=5 in overrides,
+        // but passing usedSlots.distinct().size (3) correctly configures a 3-extruder job.
+        val cfg = SliceConfig(nozzleTemp = 220)
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 3, hasSourceConfig = false)
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as? List<*>
+        assertEquals("nozzle_temperature should have 3 entries for 3-extruder SEMM job", 3, temps?.size)
+    }
 }

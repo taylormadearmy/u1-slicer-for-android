@@ -269,6 +269,84 @@ class LayerToolPauseInjectorTest {
         }
     }
 
+    @Test
+    fun `injectFrom3mf falls back to last seen M109 temp when tool-specific missing`() {
+        val dir = createTempDir(prefix = "layer_tool_pause_last_temp_fallback_")
+        try {
+            val model = File(dir, "sample.3mf")
+            ZipOutputStream(model.outputStream()).use { zip ->
+                write(zip, "Metadata/custom_gcode_per_layer.xml", """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <custom_gcodes_per_layer>
+                      <plate>
+                        <plate_info id="1"/>
+                        <layer top_z="1.6" type="1" extruder="2" color="#AABBCC" extra="" gcode="tool_change"/>
+                      </plate>
+                    </custom_gcodes_per_layer>
+                """.trimIndent())
+            }
+
+            val gcode = File(dir, "sample.gcode")
+            gcode.writeText(
+                """
+                M109 S220 T2
+                ;LAYER_CHANGE
+                ;Z:1.7
+                G1 X10 Y10
+                """.trimIndent() + "\n"
+            )
+
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            val text = gcode.readText()
+            assertTrue(text.contains("T1"))
+            assertTrue("If tool-specific lookup fails, injector should still set switched tool temp", text.contains("M109 S220 T1"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `injectFrom3mf skips when native CP toolchange workflow already exists`() {
+        val dir = createTempDir(prefix = "layer_tool_pause_native_toolchange_")
+        try {
+            val model = File(dir, "sample.3mf")
+            ZipOutputStream(model.outputStream()).use { zip ->
+                write(zip, "Metadata/custom_gcode_per_layer.xml", """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <custom_gcodes_per_layer>
+                      <plate>
+                        <plate_info id="1"/>
+                        <layer top_z="1.6" type="1" extruder="2" color="#AABBCC" extra="" gcode="tool_change"/>
+                      </plate>
+                    </custom_gcodes_per_layer>
+                """.trimIndent())
+                write(
+                    zip,
+                    "Metadata/project_settings.config",
+                    """{"machine_pause_gcode":"M400 U1","nozzle_temperature":["220","220","220","220"]}"""
+                )
+            }
+
+            val gcode = File(dir, "sample.gcode")
+            gcode.writeText(
+                """
+                ; CP TOOLCHANGE START
+                T1
+                ; CP TOOLCHANGE END
+                ;LAYER_CHANGE
+                ;Z:1.7
+                G1 X10 Y10
+                """.trimIndent() + "\n"
+            )
+
+            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            val text = gcode.readText()
+            assertFalse(text.contains("; PAUSE_PRINT"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     private fun write(zip: ZipOutputStream, name: String, text: String) {
         zip.putNextEntry(ZipEntry(name))
         zip.write(text.toByteArray())

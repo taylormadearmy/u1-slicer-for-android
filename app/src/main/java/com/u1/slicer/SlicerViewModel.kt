@@ -280,6 +280,26 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
             _config.value = saved.copy(bedTemp = resolvedBedTemp)
         }
+
+        // Keep Preview colors in sync with printer slot colors.
+        // Mapping can be chosen before presets finish loading from DataStore, which
+        // otherwise leaves G-code Preview stuck on default slot colors.
+        viewModelScope.launch {
+            extruderPresets.collect { presets ->
+                refreshMappedPreviewColors(presets)
+            }
+        }
+    }
+
+    private fun refreshMappedPreviewColors(presets: List<ExtruderPreset>) {
+        val mapping = _colorMapping.value
+        if (mapping.isNullOrEmpty()) return
+        val usedSlots = mapping.distinct().sorted()
+        val refreshed = buildPreviewSlotColors(presets, usedSlots)
+        if (refreshed != _activeExtruderColors.value) {
+            _activeExtruderColors.value = refreshed
+            Log.i("SlicerVM", "Refreshed mapped preview slot colors from presets: used=$usedSlots colors=$refreshed")
+        }
     }
 
     /**
@@ -1259,7 +1279,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Use compact extruder count (= number of unique used slots, up to 4).
         // When slots are non-contiguous (e.g. E2+E4), we slice as compact N-extruder
         // and post-process G-code to remap T-commands + SM indices to physical slots.
-        val targetCount = if (usedSlots != null) usedSlots.size else extCount
+        // For SEMM models toolRemapSlots holds the full colorMapping list (may contain
+        // duplicates, e.g. [0,0,1,1,3]) — use distinct count, not raw size.
+        val targetCount = if (usedSlots != null) usedSlots.distinct().size else extCount
         // No extruder remap in the 3MF — keep compact numbering (1,2,…).
         // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.
         val extruderRemap = buildCompactExtruderRemap(info, colorMapping)
@@ -1288,7 +1310,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val embeddedConfig = profileEmbedder.buildConfig(
             info = info,
             sourceConfig = sourceConfig,
-            overrides = buildProfileOverrides(cfg, extCount, usedSlots, hasSourceConfig = sourceConfig != null),
+            overrides = buildProfileOverrides(cfg, targetCount, usedSlots, hasSourceConfig = sourceConfig != null),
             targetExtruderCount = targetCount
         )
         return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap)
@@ -1861,7 +1883,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val outputValidation = validateSliceOutput(
                         result,
                         buildExpectedModelFootprint(mi, copies, custom),
-                        colorSegmentsByPausePrint = _threeMfInfo.value?.hasLayerToolChanges == true
+                        // Only force pause-segment coloring when we actually injected pause markers.
+                        // Painted/toolchange workflows should continue to use T-command extruder indices.
+                        colorSegmentsByPausePrint = injectedLayerToolPause
                     )
                     diagnostics.recordEvent("slice_output_validation", outputValidation.summary)
                     if (outputValidation.errorMessage != null) {
@@ -2151,19 +2175,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (scaledSizeX <= 0f || scaledSizeY <= 0f) return null
         val positions = custom ?: CopyArrangeCalculator.calculate(scaledSizeX, scaledSizeY, copies)
         if (positions.isEmpty()) return null
-        val halfX = scaledSizeX / 2f
-        val halfY = scaledSizeY / 2f
+        // CopyArrangeCalculator returns min-corner (lower-left) coordinates, not centers.
         var minX = Float.POSITIVE_INFINITY
         var maxX = Float.NEGATIVE_INFINITY
         var minY = Float.POSITIVE_INFINITY
         var maxY = Float.NEGATIVE_INFINITY
         for (i in positions.indices step 2) {
-            val cx = positions[i]
-            val cy = positions.getOrNull(i + 1) ?: continue
-            minX = minOf(minX, cx - halfX)
-            maxX = maxOf(maxX, cx + halfX)
-            minY = minOf(minY, cy - halfY)
-            maxY = maxOf(maxY, cy + halfY)
+            val ox = positions[i]
+            val oy = positions.getOrNull(i + 1) ?: continue
+            minX = minOf(minX, ox)
+            maxX = maxOf(maxX, ox + scaledSizeX)
+            minY = minOf(minY, oy)
+            maxY = maxOf(maxY, oy + scaledSizeY)
         }
         if (minX.isInfinite() || maxX.isInfinite() || minY.isInfinite() || maxY.isInfinite()) {
             return null
@@ -2677,7 +2700,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // Layer-change models use per-layer tool colors rather than per-object
             // extruder assignment, so filtering to plate filament indices collapses the
             // preview back to one colour. Keep the full source palette in that case.
-            val filteredColors = if (sourceInfo.hasLayerToolChanges) {
+            val layerToolOnly = sourceInfo.hasLayerToolChanges &&
+                !sourceInfo.hasPaintData &&
+                !sourceInfo.hasMultiExtruderAssignments
+            val filteredColors = if (layerToolOnly) {
                 val selectedLayerToolColors = linkedSetOf<String>()
                 val selectedExtruders = mergedUsedExtruderIndices.filter { it > 0 }.sorted()
                 if (selectedExtruders.isNotEmpty()) {
@@ -2686,23 +2712,62 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             ?.let { selectedLayerToolColors.add(it) }
                     }
                 }
-                plateInfo.detectedColors.forEach { selectedLayerToolColors.add(it) }
                 selectedLayerToolColors.toList().ifEmpty {
                     plateInfo.detectedColors.ifEmpty { sourceInfo.detectedColors }
                 }
             } else {
                 // Filter colors to only those extruder indices used on this plate.
                 // usedExtruderIndices are 1-based; detectedColors is 0-indexed.
-                // Filter whenever usedExtruderIndices is populated (size >= 1) AND
-                // there are multiple source colors to filter from. This correctly
-                // handles single-extruder plates (showing only 1 color instead of all).
-                val usedIndices = listOf(
-                    sourcePlateFilamentIndices,
-                    plateFilamentIndices,
-                    plateInfo.usedExtruderIndices
-                ).maxByOrNull { it.size } ?: emptySet()
-                if (usedIndices.isNotEmpty() && sourceInfo.detectedColors.size > 1) {
-                    usedIndices.sorted().mapNotNull { idx ->
+                // Prefer the selected source-plate indices first, because restructured plate
+                // extraction can over-report transient/toolchange indices in plateInfo.
+                val usedIndices = if (sourceInfo.hasMultiExtruderAssignments) {
+                    if (sourceInfo.hasLayerToolChanges) {
+                        // Layer-tool + assignment models are prone to over-reported transient indices;
+                        // trust the selected source plate first to avoid phantom extra colours.
+                        when {
+                            sourcePlateFilamentIndices.isNotEmpty() -> sourcePlateFilamentIndices
+                            sourcePlateObjectExtruders.isNotEmpty() -> sourcePlateObjectExtruders
+                            plateFilamentIndices.isNotEmpty() -> plateFilamentIndices
+                            else -> plateInfo.usedExtruderIndices
+                        }
+                    } else {
+                        // Pure per-object assignment models (no layer-tool metadata) can have sparse
+                        // source object mappings after restructure; keep the richest extracted set.
+                        listOf(
+                            sourcePlateFilamentIndices,
+                            sourcePlateObjectExtruders,
+                            plateFilamentIndices,
+                            plateInfo.usedExtruderIndices
+                        ).maxByOrNull { it.size } ?: emptySet()
+                    }
+                } else {
+                    listOf(
+                        sourcePlateFilamentIndices,
+                        plateFilamentIndices,
+                        plateInfo.usedExtruderIndices
+                    ).maxByOrNull { it.size } ?: emptySet()
+                }
+                val effectiveUsedIndices = if (
+                    sourceInfo.hasMultiExtruderAssignments &&
+                    sourceInfo.hasLayerToolChanges &&
+                    usedIndices.size <= 1 &&
+                    plateInfo.usedExtruderIndices.size > 1
+                ) {
+                    // Some restructured plates under-report selected source filament indices
+                    // as a single base slot even though the plate actually uses one additional
+                    // layer-tool slot. Expand to a stable dual-slot set instead of collapsing
+                    // to one color or expanding to all over-reported transient slots.
+                    val seed = usedIndices.firstOrNull() ?: plateInfo.usedExtruderIndices.minOrNull() ?: 1
+                    val next = plateInfo.usedExtruderIndices
+                        .filter { it > 0 && it != seed }
+                        .sorted()
+                        .firstOrNull()
+                    linkedSetOf(seed).apply { next?.let { add(it) } }
+                } else {
+                    usedIndices
+                }
+                if (effectiveUsedIndices.isNotEmpty() && sourceInfo.detectedColors.size > 1) {
+                    effectiveUsedIndices.sorted().mapNotNull { idx ->
                         sourceInfo.detectedColors.getOrNull(idx - 1) // 1-based → 0-indexed
                     }
                 } else {
@@ -2711,7 +2776,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
             Log.i(
                 "SlicerVM",
-                "mergeThreeMfInfoForPlate: plate=$selectedPlateId layerTools=${sourceInfo.hasLayerToolChanges} " +
+                "mergeThreeMfInfoForPlate: plate=$selectedPlateId layerTools=${sourceInfo.hasLayerToolChanges} layerToolOnly=$layerToolOnly " +
                     "sourcePlateObjectExtruders=$sourcePlateObjectExtruders sourcePlateFilamentIndices=$sourcePlateFilamentIndices " +
                     "plateInfo.usedExtruders=${plateInfo.usedExtruderIndices} mergedUsedExtruders=$mergedUsedExtruderIndices " +
                     "filteredColors=$filteredColors"
@@ -2719,7 +2784,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             return plateInfo.copy(
                 isBambu = sourceInfo.isBambu,
                 detectedColors = filteredColors,
-                detectedExtruderCount = if (sourceInfo.hasLayerToolChanges) {
+                detectedExtruderCount = if (layerToolOnly) {
                     maxOf(plateInfo.detectedExtruderCount, filteredColors.size, mergedUsedExtruderIndices.size)
                 } else if (filteredColors.isNotEmpty()) {
                     filteredColors.size

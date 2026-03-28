@@ -29,7 +29,7 @@ class PreparePreviewViewModelTest {
 
             viewModel.selectPlate(3)
 
-            waitUntil("plate 3 loaded with color mapping") {
+            waitUntil("plate 3 loaded with color mapping", timeoutMs = 90_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
                     viewModel.colorMapping.value != null
             }

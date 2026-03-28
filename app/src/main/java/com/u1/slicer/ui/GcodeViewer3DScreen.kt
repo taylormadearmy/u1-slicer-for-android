@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.u1.slicer.normalizeGcodePreviewColors
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.viewer.GcodeViewerView
 import kotlin.coroutines.resume
@@ -29,6 +30,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 fun GcodeViewer3DScreen(
     parsedGcode: ParsedGcode,
     extruderColors: List<String> = emptyList(),
+    colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     onBack: () -> Unit
 ) {
@@ -44,10 +46,14 @@ fun GcodeViewer3DScreen(
     // Set colors + upload gcode atomically on the GL thread.
     // suspendCancellableCoroutine waits for the GL work to finish before
     // clearing the loading indicator.
-    LaunchedEffect(parsedGcode, extruderColors, viewerView) {
+    val previewColors = remember(extruderColors, colorMapping) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping)
+    }
+
+    LaunchedEffect(parsedGcode, previewColors, viewerView) {
         val v = viewerView ?: return@LaunchedEffect
         isLoading = true
-        val colors = extruderColors
+        val colors = previewColors
         val gcode = parsedGcode
         suspendCancellableCoroutine { cont ->
             v.queueEvent {

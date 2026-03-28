@@ -16,6 +16,7 @@ object LayerToolPauseInjector {
     private val toolOnlyRegex = Regex("""^T([0-9]+(?:\.[0-9]+)?)\s*$""")
     private val smTargetTempRegex = Regex("""\bTARGET_TEMP=(\d+(?:\.\d+)?)\b""")
     private val smIndexRegex = Regex("""\bINDEX=(\d+(?:\.\d+)?)\b""")
+    private const val NATIVE_TOOLCHANGE_MARKER = "; CP TOOLCHANGE START"
 
     /**
      * One layer-change row in Bambu `custom_gcode_per_layer.xml`.
@@ -45,8 +46,10 @@ object LayerToolPauseInjector {
 
         val gcodeFile = File(gcodePath)
         if (!gcodeFile.exists()) return false
+        if (containsNativeToolchangeWorkflow(gcodeFile)) return false
         val gcodeToolTemps = parseToolNozzleTemperaturesFromGcode(gcodeFile)
         val gcodeSmTargetTemps = parseSmTargetTempsFromGcode(gcodeFile)
+        val gcodeLastNozzleTemp = parseLastNozzleTempFromGcode(gcodeFile)
 
         val pendingTargets = pauseTargets
             .distinctBy { it.topZ to it.extruderBambu }
@@ -89,9 +92,10 @@ object LayerToolPauseInjector {
                                                 writer.write("; layer_tool extruder ${target.extruderBambu} → T$toolIndex\n")
                                                 writer.write("T$toolIndex\n")
                                                 // Prefer 3MF project settings; fall back to explicit M104/M109 Tn in source G-code.
-                                            val setTemp = nozzleTemps?.get(toolIndex)
+                                                val setTemp = nozzleTemps?.get(toolIndex)
                                                     ?: gcodeToolTemps[toolIndex]
                                                     ?: gcodeSmTargetTemps[toolIndex]
+                                                    ?: gcodeLastNozzleTemp
                                                 if (setTemp != null && setTemp in 1..400) {
                                                     writer.write("M109 S$setTemp T$toolIndex\n")
                                                 }
@@ -225,6 +229,41 @@ object LayerToolPauseInjector {
             temps
         } catch (_: Exception) {
             emptyMap()
+        }
+    }
+
+    /** Last seen non-zero nozzle temperature from executable M104/M109 lines. */
+    private fun parseLastNozzleTempFromGcode(gcodeFile: File): Int? {
+        return try {
+            var last: Int? = null
+            gcodeFile.forEachLine { raw ->
+                val line = raw.substringBefore(';').trim()
+                if (!line.startsWith("M104") && !line.startsWith("M109")) return@forEachLine
+                val temp = gcodeParamRegex.findAll(line)
+                    .firstOrNull { it.groupValues[1].equals("S", ignoreCase = true) }
+                    ?.groupValues?.getOrNull(2)
+                    ?.substringBefore('.')
+                    ?.toIntOrNull()
+                if (temp != null && temp in 1..400) last = temp
+            }
+            last
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Painted/per-part multicolour jobs already contain native Orca toolchange sequences.
+     * Injecting additional PAUSE_PRINT segments on top of those creates bogus extra segments
+     * and can skew preview/extruder usage logic.
+     */
+    private fun containsNativeToolchangeWorkflow(gcodeFile: File): Boolean {
+        return try {
+            gcodeFile.useLines { lines ->
+                lines.any { it.contains(NATIVE_TOOLCHANGE_MARKER) }
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 }

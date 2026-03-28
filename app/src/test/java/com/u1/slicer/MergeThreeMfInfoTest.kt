@@ -147,6 +147,144 @@ class MergeThreeMfInfoTest {
     }
 
     @Test
+    fun `mergeThreeMfInfoForPlate with per-object assignments avoids full layer-tool palette`() {
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(
+                com.u1.slicer.bambu.ThreeMfPlate(
+                    plateId = 5,
+                    name = "Textured",
+                    objectIds = listOf("58"),
+                    filamentIndices = setOf(1, 2)
+                )
+            ),
+            isBambu = true,
+            isMultiPlate = true,
+            detectedColors = listOf("#C1", "#C2", "#C3", "#C4", "#C5"),
+            detectedExtruderCount = 5,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = true
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            detectedColors = listOf("#C1", "#C2", "#C3", "#C4", "#C5"),
+            detectedExtruderCount = 5,
+            usedExtruderIndices = setOf(1, 2)
+        )
+
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, selectedPlateId = 5)
+
+        assertEquals(listOf("#C1", "#C2"), merged.detectedColors)
+        assertEquals(2, merged.detectedExtruderCount)
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate prefers selected source plate indices over over-reported used extruders`() {
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(
+                com.u1.slicer.bambu.ThreeMfPlate(
+                    plateId = 5,
+                    name = "Selected Plate",
+                    objectIds = listOf("58"),
+                    filamentIndices = setOf(1, 2)
+                )
+            ),
+            isBambu = true,
+            isMultiPlate = true,
+            detectedColors = listOf("#A", "#B", "#C", "#D"),
+            detectedExtruderCount = 4,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = true
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            // Extracted plate metadata can over-report here; should not drive color count.
+            usedExtruderIndices = setOf(1, 2, 3),
+            detectedColors = listOf("#A", "#B", "#C", "#D"),
+            detectedExtruderCount = 4
+        )
+
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, selectedPlateId = 5)
+
+        assertEquals(listOf("#A", "#B"), merged.detectedColors)
+        assertEquals(2, merged.detectedExtruderCount)
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate layer-tool assignment fallback expands one reported source slot to stable dual slot`() {
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(
+                com.u1.slicer.bambu.ThreeMfPlate(
+                    plateId = 5,
+                    name = "Selected Plate",
+                    objectIds = listOf("58"),
+                    filamentIndices = setOf(1)
+                )
+            ),
+            isBambu = true,
+            isMultiPlate = true,
+            detectedColors = listOf("#F4D976", "#EC008C", "#F7D959", "#F4EE2A"),
+            detectedExtruderCount = 4,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = true
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            usedExtruderIndices = setOf(1, 2, 3)
+        )
+
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, selectedPlateId = 5)
+
+        assertEquals(listOf("#F4D976", "#EC008C"), merged.detectedColors)
+        assertEquals(2, merged.detectedExtruderCount)
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate non-layer-tool assignment keeps richer extracted used extruders`() {
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(
+                com.u1.slicer.bambu.ThreeMfPlate(
+                    plateId = 3,
+                    name = "Dragon Plate 3",
+                    objectIds = listOf("58"),
+                    filamentIndices = emptySet()
+                )
+            ),
+            isBambu = true,
+            isMultiPlate = true,
+            detectedColors = listOf("#F4EE2A", "#F4D976", "#EC008C"),
+            detectedExtruderCount = 3,
+            hasLayerToolChanges = false,
+            hasMultiExtruderAssignments = true,
+            objectExtruderMap = mapOf("58" to 1)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            usedExtruderIndices = setOf(1, 2, 3)
+        )
+
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, selectedPlateId = 3)
+
+        assertEquals(listOf("#F4EE2A", "#F4D976", "#EC008C"), merged.detectedColors)
+        assertEquals(3, merged.detectedExtruderCount)
+    }
+
+    @Test
     fun `mergeThreeMfInfo prefers processed objectExtruderMap when available`() {
         val origInfo = ThreeMfInfo(
             objects = emptyList(), plates = emptyList(),
