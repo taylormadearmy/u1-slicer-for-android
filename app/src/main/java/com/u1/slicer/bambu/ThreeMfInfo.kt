@@ -21,6 +21,11 @@ data class ThreeMfObject(
     val triangles: Int = 0
 )
 
+data class LayerToolSegment(
+    val topZ: Float,
+    val extruderBambu: Int  // 1-based: 1→T0, 2→T1, etc.
+)
+
 data class ThreeMfInfo(
     val objects: List<ThreeMfObject>,
     val plates: List<ThreeMfPlate>,
@@ -45,7 +50,8 @@ data class ThreeMfInfo(
     val usedExtruderIndices: Set<Int> = emptySet(),
     /** Per-object extruder assignments: objectId (String) → 1-based extruder index.
      *  Used by mesh preview to color per-volume. */
-    val objectExtruderMap: Map<String, Int> = emptyMap()
+    val objectExtruderMap: Map<String, Int> = emptyMap(),
+    val layerToolSegments: List<LayerToolSegment>? = null
 ) {
     /** Whether the original Bambu structure must be preserved (not rebuilt with trimesh) */
     val needsPreserve: Boolean get() = isBambu && (
