@@ -55,6 +55,50 @@ data class MeshData(
         }
     }
 
+    /**
+     * Recolours mesh triangles based on their Z centroid position relative to layer-tool segments.
+     * Used for Hueforge/layer-tool models where colour changes at specific Z heights.
+     *
+     * @param segments Ordered list of Z-band boundaries (ascending topZ). The last segment whose
+     *                 topZ ≤ triangle Z centroid determines the extruder. If no segment matches,
+     *                 extruder 1 (base colour) is used.
+     * @param colorMapping List where index i maps to extruderBambu-1 (0-based). Used to find
+     *                     the palette index for a given 0-based extruder.
+     * @param colorPalette RGBA float arrays indexed by compact palette index.
+     */
+    fun recolorByZBands(
+        segments: List<com.u1.slicer.bambu.LayerToolSegment>,
+        colorMapping: List<Int>,
+        colorPalette: List<FloatArray>
+    ) {
+        if (segments.isEmpty() || colorPalette.isEmpty()) return
+        val buf = vertices
+        val triCount = vertexCount / 3
+        for (tri in 0 until triCount) {
+            val base0 = tri * 3 * FLOATS_PER_VERTEX
+            val z0 = buf.get(base0 + 2)
+            val z1 = buf.get(base0 + FLOATS_PER_VERTEX + 2)
+            val z2 = buf.get(base0 + FLOATS_PER_VERTEX * 2 + 2)
+            val zCentroid = (z0 + z1 + z2) / 3f
+
+            // Last segment whose topZ ≤ zCentroid; if none, default to extruder 1 (base colour)
+            val extruderBambu = segments.lastOrNull { it.topZ <= zCentroid }?.extruderBambu ?: 1
+            val extruder0 = extruderBambu - 1  // convert to 0-based
+            val compactIndex = colorMapping.indexOf(extruder0).takeIf { it >= 0 } ?: 0
+            val safeIndex = compactIndex.coerceAtMost(colorPalette.size - 1)
+            val color = colorPalette[safeIndex]
+            val r = color[0]; val g = color[1]; val b = color[2]; val a = color[3]
+
+            for (v in 0 until 3) {
+                val vBase = (tri * 3 + v) * FLOATS_PER_VERTEX + 6
+                buf.put(vBase, r)
+                buf.put(vBase + 1, g)
+                buf.put(vBase + 2, b)
+                buf.put(vBase + 3, a)
+            }
+        }
+    }
+
     companion object {
         const val FLOATS_PER_VERTEX = 10 // x,y,z, nx,ny,nz, r,g,b,a
         const val BYTES_PER_VERTEX = FLOATS_PER_VERTEX * 4
