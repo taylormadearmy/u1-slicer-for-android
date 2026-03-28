@@ -36,12 +36,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Status messages during MakerWorld import were confusing (e.g. "Loading Downloading from MakerWorld……")
 - Fixed: each loading state now provides a complete display message ("Downloading from MakerWorld…", "Loading model.3mf…", "Preparing model…")
 
-### B37: Hueforge filament pauses / colour changes are dropped when sliced in-app (GitHub #21)
-- Repro model from issue: `https://makerworld.com/models/402958?appSharePlatform=copy`
-- Reported behavior: the source 3MF includes the required colour changes at specific layer heights, but after slicing in the app those pauses/tool changes are not emitted
-- Visible symptom: Slice Summary / filament usage attributes the whole print to nozzle 2 and excludes nozzles 3 and 4 — follow-up UX parity for summary/preview is tracked separately under **F47** / [`#27`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/27) and **F46** / [`#26`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/26)
-- Investigate whether Hueforge-style layer-based filament swaps are being lost during 3MF import, profile embed/sanitize, native config translation, or G-code post-processing
-- Need a regression asset/test once root cause is understood, since this is a real multi-colour workflow rather than a standard per-object extruder assignment case
+### B37: Hueforge filament pauses / colour changes are dropped when sliced in-app (GitHub #21) — FIXED v1.5.x
+- Root cause: layer-tool pause injection pipeline was not implemented; `custom_gcode_per_layer.xml` layer-change data was ignored
+- Fix: full layer-tool pipeline implemented in v1.5.1–v1.5.11: detects `hasLayerToolChanges`, extracts per-layer extruder assignments from XML, injects `PAUSE_PRINT` + `M109 S{temp} T{n}` at the correct layer heights post-slice
+- Issue #21 closed. Follow-up UX parity (preview colours, summary usage) tracked under F46/F47.
 
 ## Open Cleanup
 
@@ -60,11 +58,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 ## Open Features
 
 ### F46: Prepare preview colours for layer-tool / Hueforge models (GitHub #26)
-- Layer-based tool changes slice correctly, but Prepare 3D preview does not show per-layer / per-extruder colours like per-object or SEMM workflows
+- Extruder colour chips and `_activeExtruderColors` are populated for layer-tool models (v1.5.1), so the colour swatches on the Prepare screen show the correct palette
+- Remaining gap: the 3D mesh preview renders as single-colour (model slices as 1-extruder; per-layer colour segmentation in the 3D view is not implemented)
 - Track: [`#26`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/26)
 
 ### F47: Slice summary filament usage for layer-tool / pause-based prints (GitHub #27)
-- G-code and pause injection work; Preview slice summary and per-extruder usage often do not match other multicolour prints
+- G-code and pause injection work correctly (B37 fixed)
+- Remaining gap: filament usage in the summary is all attributed to T0 because layer-tool models slice as single-extruder; the pause injector adds pauses post-slice but doesn't split the filament accounting across extruders
 - Track: [`#27`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/27)
 
 ### F45: Bambu printer support (GitHub #16)
