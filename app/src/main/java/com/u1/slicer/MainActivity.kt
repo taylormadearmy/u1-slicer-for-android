@@ -56,6 +56,8 @@ class MainActivity : ComponentActivity() {
     private val printerViewModel: PrinterViewModel by viewModels()
     private var testReceiver: TestCommandReceiver? = null
     private var launchApkUpdateTime: Long = 0L
+    private var pendingNavigateTo: String? = null
+    private var navigateTabCallback: ((String) -> Unit)? = null
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -79,6 +81,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        intent.getStringExtra(AppEventNotifier.EXTRA_NAVIGATE_TO)?.let { route ->
+            intent.removeExtra(AppEventNotifier.EXTRA_NAVIGATE_TO)
+            val cb = navigateTabCallback
+            if (cb != null) {
+                cb(route)
+            } else {
+                pendingNavigateTo = route
+            }
+        }
         handleIncomingIntent(intent)
     }
 
@@ -369,6 +380,10 @@ class MainActivity : ComponentActivity() {
 
         // Only handle VIEW intents on fresh launch, not on recreation
         if (savedInstanceState == null) {
+            intent.getStringExtra(AppEventNotifier.EXTRA_NAVIGATE_TO)?.let { route ->
+                pendingNavigateTo = route
+                intent.removeExtra(AppEventNotifier.EXTRA_NAVIGATE_TO)
+            }
             handleIncomingIntent(intent)
         }
 
@@ -416,6 +431,15 @@ class MainActivity : ComponentActivity() {
                 }
                 LaunchedEffect(sharedPreviewModelKey) {
                     sharedPreviewCameraState = null
+                }
+
+                // Wire up notification deep-link navigation and consume any pending cold-start route
+                LaunchedEffect(navController) {
+                    navigateTabCallback = { route -> navigateTab(route) }
+                    pendingNavigateTo?.let { route ->
+                        pendingNavigateTo = null
+                        navigateTab(route)
+                    }
                 }
 
                 // Wire up the test receiver's navigate callback now that we have navController
