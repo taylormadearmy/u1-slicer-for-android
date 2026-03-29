@@ -2839,7 +2839,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // The UI needs extruderCount > 1 and hasMultiExtruderAssignments=false to activate
             // the layerToolOnly recolor path.
             val isHueforgePlate = selectedPlateId != null &&
-                sourceInfo.hasLayerToolChanges && !plateInfo.hasPaintData &&
+                sourceInfo.hasLayerToolChanges && !sourceInfo.hasPaintData &&
                 sourcePlateObjectExtruders.size <= 1 && sourcePlateFilamentIndices.size <= 1
             return plateInfo.copy(
                 isBambu = sourceInfo.isBambu,
