@@ -1,5 +1,6 @@
 package com.u1.slicer.printer
 
+import com.u1.slicer.AppEventNotifier
 import com.u1.slicer.data.SettingsRepository
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.MoonrakerClient
@@ -58,10 +59,17 @@ class PrinterRepository(
     fun startPolling(scope: CoroutineScope) {
         stopPolling()
         pollingJob = scope.launch(Dispatchers.IO) {
+            var prevState = "disconnected"
             while (isActive) {
                 val latestStatus = client.getStatus()
                 _status.value = latestStatus
                 PrintProgressNotifier.update(appContext, latestStatus)
+                val event = detectTransition(
+                    prevState, latestStatus.state,
+                    latestStatus.filename, latestStatus.progressPercent
+                )
+                event?.let { AppEventNotifier.notify(appContext, it) }
+                prevState = latestStatus.state
                 val interval = if (rapidPollCyclesRemaining > 0) {
                     rapidPollCyclesRemaining--
                     500L
@@ -114,6 +122,28 @@ class PrinterRepository(
         client.setHeaterTemperature(heater, targetC)
 
     companion object {
+        internal fun detectTransition(
+            prev: String,
+            curr: String,
+            filename: String,
+            progress: Int
+        ): AppEventNotifier.Event? {
+            val activePrev = prev == "printing" || prev == "paused"
+            return when {
+                curr == "printing" && prev != "printing" ->
+                    AppEventNotifier.Event.PrintStarted(filename)
+                curr == "paused" && prev == "printing" ->
+                    AppEventNotifier.Event.PrintPaused(filename, progress)
+                curr == "complete" && activePrev ->
+                    AppEventNotifier.Event.PrintComplete(filename)
+                (curr == "error" || curr == "cancelled") && activePrev ->
+                    AppEventNotifier.Event.PrintFailed(filename)
+                curr == "disconnected" && activePrev ->
+                    AppEventNotifier.Event.PrinterOffline
+                else -> null
+            }
+        }
+
         internal fun buildPrinterUploadFilename(sourceName: String, nowMillis: Long = System.currentTimeMillis()): String {
             val base = sourceName
                 .substringBeforeLast('.', sourceName)
