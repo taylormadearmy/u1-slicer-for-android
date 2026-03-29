@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.printer.PrinterViewModel
@@ -79,6 +80,7 @@ fun PrinterScreen(
 
     // Camera feed polling
     var cameraFrame by remember { mutableStateOf<Bitmap?>(null) }
+    var showFullscreen by remember { mutableStateOf(false) }
     var candidateIndex by remember { mutableStateOf(0) }
 
     LaunchedEffect(webcamCandidates) {
@@ -246,12 +248,31 @@ fun PrinterScreen(
                     ) {
                         val frame = cameraFrame
                         if (frame != null) {
-                            Image(
-                                bitmap = frame.asImageBitmap(),
-                                contentDescription = "Camera feed",
-                                modifier = Modifier.fillMaxWidth(),
-                                contentScale = ContentScale.FillWidth
-                            )
+                            Box {
+                                Image(
+                                    bitmap = frame.asImageBitmap(),
+                                    contentDescription = "Camera feed",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentScale = ContentScale.FillWidth
+                                )
+                                IconButton(
+                                    onClick = { showFullscreen = true },
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(4.dp)
+                                        .background(
+                                            color = Color.Black.copy(alpha = 0.4f),
+                                            shape = CircleShape
+                                        )
+                                        .size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Fullscreen,
+                                        contentDescription = "Fullscreen",
+                                        tint = Color.White
+                                    )
+                                }
+                            }
                         } else {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -267,6 +288,46 @@ fun PrinterScreen(
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            if (showFullscreen) {
+                val fullFrame = cameraFrame
+                Dialog(
+                    onDismissRequest = { showFullscreen = false },
+                    properties = DialogProperties(usePlatformDefaultWidth = false)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (fullFrame != null) {
+                            Image(
+                                bitmap = fullFrame.asImageBitmap(),
+                                contentDescription = "Camera feed fullscreen",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        IconButton(
+                            onClick = { showFullscreen = false },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp)
+                                .background(
+                                    color = Color.Black.copy(alpha = 0.4f),
+                                    shape = CircleShape
+                                )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.FullscreenExit,
+                                contentDescription = "Exit fullscreen",
+                                tint = Color.White
+                            )
                         }
                     }
                 }
