@@ -62,13 +62,10 @@ data class MeshData(
      * @param segments Ordered list of Z-band boundaries (ascending topZ). The last segment whose
      *                 topZ ≤ triangle Z centroid determines the extruder. If no segment matches,
      *                 extruder 1 (base colour) is used.
-     * @param colorMapping List where index i maps to extruderBambu-1 (0-based). Used to find
-     *                     the palette index for a given 0-based extruder.
-     * @param colorPalette RGBA float arrays indexed by compact palette index.
+     * @param colorPalette RGBA float arrays indexed by compact palette index (extruderBambu-1).
      */
     fun recolorByZBands(
         segments: List<com.u1.slicer.bambu.LayerToolSegment>,
-        colorMapping: List<Int>,
         colorPalette: List<FloatArray>
     ) {
         if (segments.isEmpty() || colorPalette.isEmpty()) return

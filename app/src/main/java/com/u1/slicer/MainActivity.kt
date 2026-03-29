@@ -2048,19 +2048,10 @@ fun InlineModelPreview(
                 v.setExtruderColors(extruderColors)
             }
             // F46: Z-band recolour for layer-tool (Hueforge) models
-            Log.i("InlineModelPreview", "LaunchedEffect: layerToolOnly=$layerToolOnly segments=${layerToolSegments?.size ?: "null"} colors=${extruderColors.size} mapping=$colorMapping")
             if (layerToolOnly && layerToolSegments != null && extruderColors.isNotEmpty() && colorMapping != null) {
                 val palette = colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
-                Log.i(
-                    "InlineModelPreview",
-                    "recolorByZBands segments=${layerToolSegments.size} mapping=$colorMapping " +
-                        "extruderColors=$extruderColors paletteSize=${palette.size}"
-                )
-                m.recolorByZBands(
-                    segments = layerToolSegments,
-                    colorMapping = colorMapping,
-                    colorPalette = palette
-                )
+                Log.i("InlineModelPreview", "recolorByZBands segments=${layerToolSegments.size} paletteSize=${palette.size}")
+                m.recolorByZBands(layerToolSegments, palette)
                 v.refreshColors()  // upload recolorByZBands result to GPU without overwriting with recolor()
             } else if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
                 // Apply recolor when we have both mesh and colors (paint-data models)

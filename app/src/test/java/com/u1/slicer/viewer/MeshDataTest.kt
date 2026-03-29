@@ -207,12 +207,11 @@ class MeshDataTest {
             LayerToolSegment(topZ = 0.5f, extruderBambu = 1),  // Z <= 0.5 → extruder 1
             LayerToolSegment(topZ = 1.0f, extruderBambu = 2)   // Z <= 1.0 → extruder 2
         )
-        val colorMapping = listOf(0, 1)  // index 0 = extruder0=0, index 1 = extruder0=1
         val red   = floatArrayOf(1f, 0f, 0f, 1f)
         val green = floatArrayOf(0f, 1f, 0f, 1f)
         val palette = listOf(red, green)
 
-        meshData.recolorByZBands(segments, colorMapping, palette)
+        meshData.recolorByZBands(segments, palette)
 
         // Triangle 0 centroid=0.1: lastOrNull { topZ <= 0.1 } = none → default extruder 1 → extruder0=0 → index 0 → red
         for (v in 0 until 3) {
@@ -236,12 +235,11 @@ class MeshDataTest {
             minX = 0f, minY = 0f, minZ = 0f, maxX = 1f, maxY = 1f, maxZ = 1f
         )
         val segments = listOf(LayerToolSegment(topZ = 1.0f, extruderBambu = 2))
-        val colorMapping = listOf(0, 1)  // extruder 1 → index 0, extruder 2 → index 1
         val blue = floatArrayOf(0f, 0f, 1f, 1f)
         val red  = floatArrayOf(1f, 0f, 0f, 1f)
         val palette = listOf(blue, red)
 
-        meshData.recolorByZBands(segments, colorMapping, palette)
+        meshData.recolorByZBands(segments, palette)
 
         // Z=0 is below topZ=1.0 so no segment matches → default extruder 1 → extruder0=0 → index 0 → blue
         assertEquals(0f, buf.get(6), 0.001f)   // r=0

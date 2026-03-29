@@ -247,9 +247,7 @@ class NativePreparePreviewTest {
             floatArrayOf(1f, 0f, 0f, 1f),
             floatArrayOf(0f, 1f, 0f, 1f)
         )
-        val colorMapping = listOf(0, 1)  // extruder0=0 → palette[0], extruder0=1 → palette[1]
-
-        meshData.recolorByZBands(segments, colorMapping, palette)
+        meshData.recolorByZBands(segments, palette)
 
         // After recolour, check that at least 2 distinct R values appear across triangle vertices
         // (red = 1.0 for extruder 1, green = 0.0 R for extruder 2)

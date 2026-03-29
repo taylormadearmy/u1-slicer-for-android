@@ -190,9 +190,6 @@ class PreparePreviewViewModelTest {
             assertNotNull("MeshData conversion should succeed", meshData)
             meshData!!
 
-            val palette = mapping!!.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
-            }
             // Build a deterministic 2-colour palette: extruder 1 (base) = red, extruder 2 = green
             // so we can assert distinct colours regardless of user filament presets.
             val testPalette = listOf(
@@ -200,7 +197,7 @@ class PreparePreviewViewModelTest {
                 floatArrayOf(0f, 1f, 0f, 1f)   // palette[1]: green (extruderBambu=2)
             )
 
-            meshData.recolorByZBands(info.layerToolSegments!!, mapping, testPalette)
+            meshData.recolorByZBands(info.layerToolSegments!!, testPalette)
 
             val buf = meshData.vertices
             val triCount = meshData.vertexCount / 3
