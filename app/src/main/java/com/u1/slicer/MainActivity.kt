@@ -2060,7 +2060,7 @@ fun InlineModelPreview(
                     colorMapping = colorMapping,
                     colorPalette = palette
                 )
-                v.recolorMesh(palette)  // trigger GL thread VBO re-upload
+                v.refreshColors()  // upload recolorByZBands result to GPU without overwriting with recolor()
             } else if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
                 // Apply recolor when we have both mesh and colors (paint-data models)
                 val palette = if (colorMapping != null) {

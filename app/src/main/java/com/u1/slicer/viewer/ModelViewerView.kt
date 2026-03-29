@@ -65,6 +65,12 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
+    /** Re-upload vertex buffer to GPU without recoloring (use after recolorByZBands). Thread-safe. */
+    fun refreshColors() {
+        renderer.pendingVboRefresh = true
+        requestRender()
+    }
+
     fun setExtruderColors(hexColors: List<String>) {
         renderer.instanceColors = hexColors.map { hex ->
             try {

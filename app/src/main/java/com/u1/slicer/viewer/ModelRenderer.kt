@@ -135,6 +135,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingRecolor: List<FloatArray>? = null
 
+    // Pending VBO refresh: re-uploads vertex buffer without recolor (used after recolorByZBands)
+    @Volatile
+    var pendingVboRefresh: Boolean = false
+
     override fun onDrawFrame(gl: GL10?) {
         if (pendingClearMesh) {
             pendingClearMesh = false
@@ -166,6 +170,12 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     pendingRecolor = null
                 }
             }
+        }
+
+        // Re-upload vertex buffer after recolorByZBands (colors already written, just need VBO sync)
+        if (pendingVboRefresh) {
+            pendingVboRefresh = false
+            meshData?.let { updateColorData(it) }
         }
 
         if (pendingCameraReset) {
