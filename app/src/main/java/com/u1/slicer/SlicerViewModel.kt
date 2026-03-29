@@ -2826,7 +2826,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 usedExtruderIndices = mergedUsedExtruderIndices,
                 hasPaintData = sourceInfo.hasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
-                hasMultiExtruderAssignments = sourceInfo.hasMultiExtruderAssignments,
+                hasMultiExtruderAssignments = if (sourcePlateObjectExtruders.size > 1) true
+                    else if (selectedPlateId != null) false
+                    else sourceInfo.hasMultiExtruderAssignments,
                 objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap },
                 layerToolSegments = sourceInfo.layerToolSegments
             )

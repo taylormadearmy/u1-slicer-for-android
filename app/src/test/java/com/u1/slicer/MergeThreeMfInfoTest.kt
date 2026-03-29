@@ -2,6 +2,7 @@ package com.u1.slicer
 
 import com.u1.slicer.bambu.LayerToolSegment
 import com.u1.slicer.bambu.ThreeMfInfo
+import com.u1.slicer.bambu.ThreeMfPlate
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -595,5 +596,42 @@ class MergeThreeMfInfoTest {
             "Layer tool change models should stay single-filament at slice time",
             buildCompactExtruderRemap(info, listOf(0, 1, 2))
         )
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate clears hasMultiExtruderAssignments for single-object plate`() {
+        // Flippy: whole file has hasMultiExtruderAssignments=true (plates 1-3 have multi-extruder
+        // objects), but plate 4 has only one object assigned to one extruder.
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(
+                ThreeMfPlate(1, "plate1", listOf("3")),
+                ThreeMfPlate(2, "plate2", listOf("4")),
+                ThreeMfPlate(3, "plate3", listOf("2")),
+                ThreeMfPlate(4, "plate4", listOf("5"))
+            ),
+            isBambu = true, isMultiPlate = true,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = true,
+            objectExtruderMap = mapOf("3" to 1, "4" to 1, "2" to 1, "5" to 1),
+            detectedColors = listOf("#161616", "#F4D976"),
+            detectedExtruderCount = 2,
+            layerToolSegments = listOf(
+                LayerToolSegment(1.2f, 2),
+                LayerToolSegment(9.2f, 2)
+            ),
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 4)
+        assertFalse(
+            "Plate 4 has single-object extruder assignment — hasMultiExtruderAssignments should be false",
+            merged.hasMultiExtruderAssignments
+        )
+        assertTrue("Layer tool changes should be preserved", merged.hasLayerToolChanges)
     }
 }
