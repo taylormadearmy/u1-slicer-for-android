@@ -73,6 +73,9 @@ fun PrinterScreen(
     LaunchedEffect(heaterError) {
         heaterError?.let { snackbarHostState.showSnackbar(it); viewModel.clearHeaterError() }
     }
+    LaunchedEffect(status.isPrinting, status.isPaused) {
+        if (!status.isPrinting && !status.isPaused) editingHeater = null
+    }
 
     // Camera feed polling
     var cameraFrame by remember { mutableStateOf<Bitmap?>(null) }
