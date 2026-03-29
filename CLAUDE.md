@@ -51,13 +51,13 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 537 JVM unit tests
+./gradlew testDebugUnitTest                        # 584 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 136 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
-### Unit tests (`app/src/test/`) - 537 tests across 34 classes
+### Unit tests (`app/src/test/`) - 584 tests across 37 classes
 - `gcode/GcodeParserTest.kt` (26) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -65,7 +65,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `viewer/MeshDataTest.kt` (9) — MeshData 10-float vertex format, extruderIndices, recolor(), RGBA values, multi-extruder recolor
 - `viewer/ThreeMfMeshParserTest.kt` (29) - 3MF mesh parsing, per-triangle color extraction, extruderMap, MeshWithContext, SEMM paint_color parsing, multi-object extruder map
 - `network/MakerWorldUtilsTest.kt` (36) — URL parsing, design→instance ID resolution, download response parsing, error classification, cookie sanitization
-- `network/MoonrakerClientTest.kt` (32) — PrinterStatus computed properties, URL normalization, LED state, remoteScreenUrl(), B33 virtual_sdcard progress parsing
+- `network/MoonrakerClientTest.kt` (36) — PrinterStatus computed properties, URL normalization, LED state, remoteScreenUrl(), B33 virtual_sdcard progress parsing, sendGcode network path
 - `data/SliceConfigTest.kt` (25) — Default values match Snapmaker U1 hardware specs, wipe tower bounds clamping
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
 - `data/PlateTypeTest.kt` (21) — PlateType.bedTempFor per-material presets, fromName, case-insensitivity
@@ -85,9 +85,12 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 - `MergeThreeMfInfoTest.kt` (20) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression (color bug fix)
 - `printer/PrinterRepositoryTest.kt` (2) — upload filename sanitization and unique suffix generation
+- `printer/PrinterRepositoryNotificationTest.kt` (9) — printer state transition detection for all event types
+- `AppEventNotifierTest.kt` (13) — notification title/body/channel/navigate-target for all event types
+- `PreviewSummaryMappingTest.kt` (2) — preview summary data class mapping
+- `PreviewColorNormalizationTest.kt` (4) — preview colour normalization
 - `PreparePreviewPlacementTest.kt` (5) — native 3MF wipe tower visibility, object-placement rules, and large-preview fallback state retention
 - `viewer/NativePreviewMeshTest.kt` (2) — preview budget guardrails for very large native meshes
-- iewer/ModelRendererCameraTest.kt (3) — Prepare preview fit distance keeps smaller multi-colour plates readable
 - iewer/ModelViewerViewTest.kt (3) — Prepare selection falls back from face-plane to bed-plane hit-testing when needed
 
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic
