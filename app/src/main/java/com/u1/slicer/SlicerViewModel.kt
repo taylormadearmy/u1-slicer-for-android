@@ -2818,6 +2818,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 detectedColors = filteredColors,
                 detectedExtruderCount = if (layerToolOnly) {
                     maxOf(plateInfo.detectedExtruderCount, filteredColors.size, mergedUsedExtruderIndices.size)
+                } else if (sourceInfo.hasLayerToolChanges && !sourceInfo.hasPaintData &&
+                    selectedPlateId != null && sourcePlateFilamentIndices.size <= 1 &&
+                    sourcePlateObjectExtruders.size <= 1) {
+                    // Hueforge plate: non-layerToolOnly path may filter to 1 color,
+                    // but the UI needs extruderCount > 1 to enter the multi-color branch.
+                    maxOf(filteredColors.size, 2)
                 } else if (filteredColors.isNotEmpty()) {
                     filteredColors.size
                 } else {
@@ -2827,7 +2833,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 hasPaintData = sourceInfo.hasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
                 hasMultiExtruderAssignments = if (sourcePlateObjectExtruders.size > 1) true
-                    else if (selectedPlateId != null) false
+                    else if (selectedPlateId != null && sourcePlateFilamentIndices.size <= 1 &&
+                        sourceInfo.hasLayerToolChanges && !sourceInfo.hasPaintData) false
                     else sourceInfo.hasMultiExtruderAssignments,
                 objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap },
                 layerToolSegments = sourceInfo.layerToolSegments
