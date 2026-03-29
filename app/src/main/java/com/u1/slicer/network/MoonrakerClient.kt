@@ -109,6 +109,16 @@ class MoonrakerClient {
             } catch (_: Exception) { /* keep as-is */ }
             return url.trimEnd('/')
         }
+
+        /**
+         * Build a SET_HEATER_TEMPERATURE G-code string with clamped target.
+         * Bed is clamped to [0, 120]; extruders to [0, 300].
+         */
+        internal fun buildSetHeaterGcode(heater: String, targetC: Int): String {
+            val isBed = heater == "heater_bed"
+            val clamped = targetC.coerceIn(0, if (isBed) 120 else 300)
+            return "SET_HEATER_TEMPERATURE HEATER=$heater TARGET=$clamped"
+        }
     }
 
     private fun url(path: String): String = "$baseUrl$path"
@@ -473,6 +483,28 @@ class MoonrakerClient {
             false
         }
     }
+
+    /**
+     * Send an arbitrary G-code script to the printer via Moonraker's /printer/gcode/script endpoint.
+     */
+    suspend fun sendGcode(gcode: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val body = org.json.JSONObject().put("script", gcode).toString()
+                .toRequestBody("application/json".toMediaType())
+            val response = client.newCall(
+                Request.Builder().url("$baseUrl/printer/gcode/script").post(body).build()
+            ).execute()
+            response.isSuccessful
+        } catch (_: Exception) { false }
+    }
+
+    /**
+     * Set a heater to a target temperature using Klipper's SET_HEATER_TEMPERATURE command.
+     * @param heater  Klipper heater name: "heater_bed", "extruder", "extruder1", etc.
+     * @param targetC Target temperature in Celsius (clamped to safe range).
+     */
+    suspend fun setHeaterTemperature(heater: String, targetC: Int): Boolean =
+        sendGcode(buildSetHeaterGcode(heater, targetC))
 
     private fun postCommand(path: String): Boolean {
         return try {

@@ -346,6 +346,31 @@ class MoonrakerClientTest {
             ?: printStats?.optDouble("progress"))?.toFloat() ?: 0f
         assertEquals("progress is 0 when neither field is present", 0f, progress, 0.001f)
     }
+    // --- F50: buildSetHeaterGcode ---
+
+    @Test
+    fun `setHeaterTemperature builds correct gcode string`() {
+        val cases = listOf(
+            Triple("heater_bed", 60, "SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=60"),
+            Triple("extruder", 200, "SET_HEATER_TEMPERATURE HEATER=extruder TARGET=200"),
+            Triple("extruder1", 215, "SET_HEATER_TEMPERATURE HEATER=extruder1 TARGET=215"),
+        )
+        cases.forEach { (heater, target, expected) ->
+            assertEquals(expected, MoonrakerClient.buildSetHeaterGcode(heater, target))
+        }
+    }
+
+    @Test
+    fun `setHeaterTemperature clamps to safe range`() {
+        assertEquals("SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
+            MoonrakerClient.buildSetHeaterGcode("heater_bed", -10))
+        assertEquals("SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=120",
+            MoonrakerClient.buildSetHeaterGcode("heater_bed", 999))
+        assertEquals("SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0",
+            MoonrakerClient.buildSetHeaterGcode("extruder", -5))
+        assertEquals("SET_HEATER_TEMPERATURE HEATER=extruder TARGET=300",
+            MoonrakerClient.buildSetHeaterGcode("extruder", 999))
+    }
 }
 
 // MoonrakerClientTestHelper removed — tests now use MoonrakerClient.normalizeUrl() directly.
