@@ -965,6 +965,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 // Check for multi-color from 3MF parsing
                 val mfInfo = _threeMfInfo.value
+                Log.i("SlicerVM", "loadNativeModel mfInfo: extruderCount=${mfInfo?.detectedExtruderCount} layerTools=${mfInfo?.hasLayerToolChanges} paint=${mfInfo?.hasPaintData} multiExtruder=${mfInfo?.hasMultiExtruderAssignments} colors=${mfInfo?.detectedColors?.size}")
                 if (mfInfo != null && mfInfo.detectedExtruderCount > 1) {
                     val layerToolOnly = mfInfo.hasLayerToolChanges &&
                         !mfInfo.hasPaintData &&
@@ -2818,7 +2819,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 detectedColors = filteredColors,
                 detectedExtruderCount = if (layerToolOnly) {
                     maxOf(plateInfo.detectedExtruderCount, filteredColors.size, mergedUsedExtruderIndices.size)
-                } else if (sourceInfo.hasLayerToolChanges && !sourceInfo.hasPaintData &&
+                } else if (sourceInfo.hasLayerToolChanges && !plateInfo.hasPaintData &&
                     selectedPlateId != null && sourcePlateFilamentIndices.size <= 1 &&
                     sourcePlateObjectExtruders.size <= 1) {
                     // Hueforge plate: non-layerToolOnly path may filter to 1 color,
@@ -2830,11 +2831,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceInfo.detectedExtruderCount
                 },
                 usedExtruderIndices = mergedUsedExtruderIndices,
-                hasPaintData = sourceInfo.hasPaintData,
+                hasPaintData = if (selectedPlateId != null) plateInfo.hasPaintData else sourceInfo.hasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
                 hasMultiExtruderAssignments = if (sourcePlateObjectExtruders.size > 1) true
                     else if (selectedPlateId != null && sourcePlateFilamentIndices.size <= 1 &&
-                        sourceInfo.hasLayerToolChanges && !sourceInfo.hasPaintData) false
+                        sourceInfo.hasLayerToolChanges && !plateInfo.hasPaintData) false
                     else sourceInfo.hasMultiExtruderAssignments,
                 objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap },
                 layerToolSegments = sourceInfo.layerToolSegments
