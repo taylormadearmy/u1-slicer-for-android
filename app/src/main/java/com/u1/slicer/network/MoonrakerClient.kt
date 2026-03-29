@@ -488,14 +488,20 @@ class MoonrakerClient {
      * Send an arbitrary G-code script to the printer via Moonraker's /printer/gcode/script endpoint.
      */
     suspend fun sendGcode(gcode: String): Boolean = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank()) return@withContext false
         try {
             val body = org.json.JSONObject().put("script", gcode).toString()
                 .toRequestBody("application/json".toMediaType())
             val response = client.newCall(
                 Request.Builder().url("$baseUrl/printer/gcode/script").post(body).build()
             ).execute()
-            response.isSuccessful
-        } catch (_: Exception) { false }
+            val ok = response.isSuccessful
+            response.close()
+            ok
+        } catch (e: Exception) {
+            Log.w(TAG, "sendGcode failed: ${e.message}")
+            false
+        }
     }
 
     /**

@@ -360,6 +360,30 @@ class MoonrakerClientTest {
         }
     }
 
+    // --- sendGcode MockWebServer tests ---
+
+    @Test
+    fun `sendGcode returns true on 200 response`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        server.start()
+        val client = MoonrakerClient().also { it.baseUrl = server.url("/").toString().trimEnd('/') }
+        val result = client.sendGcode("G28")
+        assertTrue("200 response should return true", result)
+        server.shutdown()
+    }
+
+    @Test
+    fun `sendGcode returns false on non-2xx response`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(500).setBody("error"))
+        server.start()
+        val client = MoonrakerClient().also { it.baseUrl = server.url("/").toString().trimEnd('/') }
+        val result = client.sendGcode("G28")
+        assertFalse("500 response should return false", result)
+        server.shutdown()
+    }
+
     @Test
     fun `setHeaterTemperature clamps to safe range`() {
         assertEquals("SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
