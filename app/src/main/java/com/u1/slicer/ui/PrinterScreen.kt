@@ -432,7 +432,15 @@ fun PrinterScreen(
                             color = MaterialTheme.colorScheme.primary)
                         HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
 
-                        TempTile(label = "Bed", actual = status.bedTemp, target = status.bedTarget)
+                        val canEdit = status.isPrinting || status.isPaused
+                        TempTile(
+                            label = "Bed", actual = status.bedTemp, target = status.bedTarget,
+                            isEditing = editingHeater == "heater_bed",
+                            editingValue = if (editingHeater == "heater_bed") editingValue else "",
+                            onEditStart = if (canEdit) {{ editingHeater = "heater_bed"; editingValue = status.bedTarget.toInt().toString() }} else null,
+                            onEditValueChange = { editingValue = it },
+                            onEditDone = { val v = editingValue.toIntOrNull(); if (v != null) viewModel.setHeaterTemperature("heater_bed", v); editingHeater = null }
+                        )
 
                         val extruders = status.extruders.ifEmpty {
                             if (status.nozzleTemp > 0 || status.nozzleTarget > 0)
@@ -446,11 +454,17 @@ fun PrinterScreen(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     row.forEach { ext ->
+                                        val heaterKey = if (ext.index == 0) "extruder" else "extruder${ext.index}"
                                         TempTile(
                                             label = "E${ext.index + 1}",
                                             actual = ext.temp,
                                             target = ext.target,
-                                            modifier = Modifier.weight(1f)
+                                            modifier = Modifier.weight(1f),
+                                            isEditing = editingHeater == heaterKey,
+                                            editingValue = if (editingHeater == heaterKey) editingValue else "",
+                                            onEditStart = if (canEdit) {{ editingHeater = heaterKey; editingValue = ext.target.toInt().toString() }} else null,
+                                            onEditValueChange = { editingValue = it },
+                                            onEditDone = { val v = editingValue.toIntOrNull(); if (v != null) viewModel.setHeaterTemperature(heaterKey, v); editingHeater = null }
                                         )
                                     }
                                     if (row.size == 1) Spacer(Modifier.weight(1f))
@@ -499,65 +513,6 @@ fun PrinterScreen(
                         }
                     }
 
-                    Spacer(Modifier.height(12.dp))
-                    Text("Temperatures", style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(horizontal = 16.dp))
-                    Spacer(Modifier.height(4.dp))
-
-                    val heaters = buildList {
-                        add(Triple("heater_bed", "Bed", status.bedTarget))
-                        status.extruders.forEachIndexed { i, ext ->
-                            val key = if (i == 0) "extruder" else "extruder$i"
-                            add(Triple(key, "E${i + 1}", ext.target))
-                        }
-                        if (status.extruders.isEmpty() && (status.nozzleTemp > 0 || status.nozzleTarget > 0)) {
-                            add(Triple("extruder", "E1", status.nozzleTarget))
-                        }
-                    }
-
-                    heaters.forEach { (heaterKey, label, currentTarget) ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(label, modifier = Modifier.width(40.dp),
-                                style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.weight(1f))
-                            if (editingHeater == heaterKey) {
-                                BasicTextField(
-                                    value = editingValue,
-                                    onValueChange = { editingValue = it.filter { c -> c.isDigit() } },
-                                    keyboardOptions = KeyboardOptions(
-                                        keyboardType = KeyboardType.Number,
-                                        imeAction = ImeAction.Done
-                                    ),
-                                    keyboardActions = KeyboardActions(onDone = {
-                                        val v = editingValue.toIntOrNull()
-                                        if (v != null) viewModel.setHeaterTemperature(heaterKey, v)
-                                        editingHeater = null
-                                    }),
-                                    singleLine = true,
-                                    modifier = Modifier
-                                        .width(64.dp)
-                                        .border(1.dp, MaterialTheme.colorScheme.primary,
-                                            MaterialTheme.shapes.small)
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            } else {
-                                Text(
-                                    text = "→ ${currentTarget.toInt()}°C",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.clickable {
-                                        editingHeater = heaterKey
-                                        editingValue = currentTarget.toInt().toString()
-                                    }
-                                )
-                            }
-                        }
-                    }
                 }
             }
 
@@ -875,7 +830,12 @@ private fun TempTile(
     label: String,
     actual: Float,
     target: Float,
-    modifier: Modifier = Modifier.fillMaxWidth()
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    isEditing: Boolean = false,
+    editingValue: String = "",
+    onEditStart: (() -> Unit)? = null,
+    onEditValueChange: ((String) -> Unit)? = null,
+    onEditDone: (() -> Unit)? = null,
 ) {
     val atTemp = target > 0 && kotlin.math.abs(actual - target) < 5f
     val heating = target > 0 && !atTemp
@@ -895,15 +855,52 @@ private fun TempTile(
         shape = RoundedCornerShape(10.dp),
         color = tileColor
     ) {
-        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-            Text("%.0f\u00B0C".format(actual),
-                fontWeight = FontWeight.Bold, fontSize = 18.sp, color = textColor)
-            Text("\u2192 %.0f\u00B0C".format(target),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+        Box(modifier = Modifier.padding(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                Text("%.0f\u00B0C".format(actual),
+                    fontWeight = FontWeight.Bold, fontSize = 18.sp, color = textColor)
+                if (isEditing) {
+                    BasicTextField(
+                        value = editingValue,
+                        onValueChange = { onEditValueChange?.invoke(it.filter { c -> c.isDigit() }) },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { onEditDone?.invoke() }),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.labelSmall.copy(
+                            color = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier
+                            .width(56.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                } else {
+                    Text("\u2192 %.0f\u00B0C".format(target),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                }
+            }
+            if (onEditStart != null && !isEditing) {
+                IconButton(
+                    onClick = onEditStart,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(24.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "Edit target temperature",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    )
+                }
+            }
         }
     }
 }
