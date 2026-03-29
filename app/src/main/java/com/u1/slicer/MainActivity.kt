@@ -810,6 +810,7 @@ fun PrepareScreen(
                                 cameraState = sharedPreviewCameraState,
                                 onCameraStateChange = onSharedPreviewCameraStateChange,
                                 onViewerReady = { captureViewer = it },
+                                onResetView = { captureViewer?.resetView() },
                                 layerToolOnly = layerToolOnly,
                                 layerToolSegments = threeMfInfo?.layerToolSegments
                             )
@@ -1953,6 +1954,7 @@ fun InlineModelPreview(
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
     onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
     onViewerReady: ((com.u1.slicer.viewer.ModelViewerView?) -> Unit)? = null,
+    onResetView: (() -> Unit)? = null,
     // F46: layer-tool (Hueforge) Z-band recolour
     layerToolOnly: Boolean = false,
     layerToolSegments: List<com.u1.slicer.bambu.LayerToolSegment>? = null
@@ -2191,6 +2193,25 @@ fun InlineModelPreview(
                 IconButton(onClick = onFullScreen) {
                     Icon(Icons.Default.Fullscreen, "Full screen",
                         tint = Color.White.copy(alpha = 0.8f))
+                }
+            }
+            // Reset-view button (bottom-end, only when mesh is loaded)
+            if (mesh != null && onResetView != null) {
+                androidx.compose.material3.IconButton(
+                    onClick = { onResetView.invoke() },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .background(
+                            color = Color.Black.copy(alpha = 0.4f),
+                            shape = androidx.compose.foundation.shape.CircleShape
+                        )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FilterCenterFocus,
+                        contentDescription = "Reset view",
+                        tint = Color.White
+                    )
                 }
             }
             // Placement mode indicator
