@@ -2854,7 +2854,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceInfo.detectedExtruderCount
                 },
                 usedExtruderIndices = mergedUsedExtruderIndices,
-                hasPaintData = if (selectedPlateId != null) plateInfo.hasPaintData else sourceInfo.hasPaintData,
+                hasPaintData = sourceInfo.hasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
                 hasMultiExtruderAssignments = if (sourcePlateObjectExtruders.size > 1) true
                     else if (isHueforgePlate) false
