@@ -8,6 +8,7 @@ class U1SlicerApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AppForegroundTracker.register()
         container = AppContainer(this)
     }
 }
