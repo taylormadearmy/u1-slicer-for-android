@@ -142,6 +142,85 @@ class PreparePreviewViewModelTest {
         }
     }
 
+    @Test
+    fun flippy_layerToolOnly_hasSegments_andRecolorByZBandsProducesMultipleColours() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("flippy+flappy+mini.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("flippy plate selector visible") {
+                viewModel.showPlateSelector.value
+            }
+
+            viewModel.selectPlate(4)
+
+            waitUntil("flippy loaded with layer-tool mapping", timeoutMs = 60_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.layerToolOnly.value
+            }
+
+            val info = viewModel.threeMfInfo.value
+            assertNotNull("threeMfInfo should be non-null after flippy load", info)
+            info!!
+
+            assertTrue("flippy should have hasLayerToolChanges=true", info.hasLayerToolChanges)
+            assertNotNull("flippy layerToolSegments should survive merge into threeMfInfo", info.layerToolSegments)
+            assertTrue(
+                "flippy layerToolSegments should be non-empty, got ${info.layerToolSegments?.size}",
+                (info.layerToolSegments?.size ?: 0) >= 2
+            )
+
+            assertTrue("layerToolOnly StateFlow should be true for flippy", viewModel.layerToolOnly.value)
+
+            val mapping = viewModel.colorMapping.value
+            val colors = viewModel.activeExtruderColors.value
+            assertNotNull("colorMapping should be non-null for flippy", mapping)
+            assertTrue("activeExtruderColors should be non-empty for flippy", colors.isNotEmpty())
+
+            // Verify recolorByZBands would produce distinct colours on the native preview
+            val lib = NativeLibrary()
+            assertTrue(lib.loadModel(modelFile.absolutePath))
+            val preview = lib.getPreparePreviewMesh()
+            assertNotNull("Native preview mesh should be available for flippy", preview)
+            preview!!
+            val meshData = preview.toMeshData()
+            assertNotNull("MeshData conversion should succeed", meshData)
+            meshData!!
+
+            val palette = mapping!!.map { slot ->
+                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
+            }
+            // Build a deterministic 2-colour palette: extruder 1 (base) = red, extruder 2 = green
+            // so we can assert distinct colours regardless of user filament presets.
+            val testPalette = listOf(
+                floatArrayOf(1f, 0f, 0f, 1f),  // palette[0]: red (extruderBambu=1, base)
+                floatArrayOf(0f, 1f, 0f, 1f)   // palette[1]: green (extruderBambu=2)
+            )
+
+            meshData.recolorByZBands(info.layerToolSegments!!, mapping, testPalette)
+
+            val buf = meshData.vertices
+            val triCount = meshData.vertexCount / 3
+            // Check G channel: red has G=0, green has G=1 — should see both
+            val gValues = mutableSetOf<Float>()
+            for (tri in 0 until triCount) {
+                val gOffset = tri * 3 * 10 + 7  // G is at offset 7 per vertex
+                gValues.add(buf.get(gOffset))
+                if (gValues.size >= 2) break
+            }
+            assertTrue(
+                "recolorByZBands through full ViewModel path should produce at least 2 distinct G values for flippy (red base + green band), got $gValues",
+                gValues.size >= 2
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
     private fun copyAssetToCache(assetName: String): File {
         val outFile = File(targetContext.cacheDir, assetName.replace("/", "_"))
         assetContext.assets.open(assetName).use { input ->

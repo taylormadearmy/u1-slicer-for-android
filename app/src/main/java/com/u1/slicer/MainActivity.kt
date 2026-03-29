@@ -2048,6 +2048,7 @@ fun InlineModelPreview(
                 v.setExtruderColors(extruderColors)
             }
             // F46: Z-band recolour for layer-tool (Hueforge) models
+            Log.i("InlineModelPreview", "LaunchedEffect: layerToolOnly=$layerToolOnly segments=${layerToolSegments?.size ?: "null"} colors=${extruderColors.size} mapping=$colorMapping")
             if (layerToolOnly && layerToolSegments != null && extruderColors.isNotEmpty() && colorMapping != null) {
                 val palette = colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
                 Log.i(

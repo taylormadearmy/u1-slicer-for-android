@@ -1000,7 +1000,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                         // F46: signal that InlineModelPreview should use recolorByZBands
                         _layerToolOnly.value = true
-                        Log.i("SlicerVM", "Applied layer-tool preview mapping only: colors=${initialMapping.size}, previewSlots=$previewSlots")
+                        val segs = _threeMfInfo.value?.layerToolSegments
+                        Log.i("SlicerVM", "Applied layer-tool preview mapping only: colors=${initialMapping.size}, previewSlots=$previewSlots, layerToolSegments=${segs?.size ?: "null"}")
                     } else {
                         // Compact extruder count: use the smaller of detected colors and
                         // physical extruders (Snapmaker U1 has 4).  Compact mode slices as

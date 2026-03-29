@@ -83,9 +83,9 @@ data class MeshData(
 
             // Last segment whose topZ ≤ zCentroid; if none, default to extruder 1 (base colour)
             val extruderBambu = segments.lastOrNull { it.topZ <= zCentroid }?.extruderBambu ?: 1
-            val extruder0 = extruderBambu - 1  // convert to 0-based
-            val compactIndex = colorMapping.indexOf(extruder0).takeIf { it >= 0 } ?: 0
-            val safeIndex = compactIndex.coerceAtMost(colorPalette.size - 1)
+            // extruderBambu is 1-based index into the layer-tool colour sequence.
+            // Convert directly to compact palette index (extruder 1 → palette[0], extruder 2 → palette[1]).
+            val safeIndex = (extruderBambu - 1).coerceIn(0, colorPalette.size - 1)
             val color = colorPalette[safeIndex]
             val r = color[0]; val g = color[1]; val b = color[2]; val a = color[3]
 
