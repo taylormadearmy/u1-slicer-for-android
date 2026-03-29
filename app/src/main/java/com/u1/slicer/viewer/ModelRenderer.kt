@@ -110,16 +110,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         resetCameraToDefaultView()
     }
 
-    private fun resetCameraToDefaultView() {
+    internal fun resetCameraToDefaultView() {
         camera.setTarget(135f, 135f, 0f)
         camera.distance = 500f
-        camera.elevation = 62f
-        camera.azimuth = -90f
-    }
-
-    private fun resetCameraToMesh(mesh: MeshData) {
-        camera.setTarget(mesh.centerX, mesh.centerY, 0f)
-        camera.distance = computePreviewFitDistance(mesh.sizeX, mesh.sizeY, mesh.sizeZ)
         camera.elevation = 62f
         camera.azimuth = -90f
     }
@@ -179,10 +172,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
 
         if (pendingCameraReset) {
-            val mesh = meshData
-            if (mesh != null) {
+            if (meshData != null) {
                 pendingCameraReset = false
-                resetCameraToMesh(mesh)
+                resetCameraToDefaultView()
                 camera.panX = 0f
                 camera.panY = 0f
                 camera.updateProjectionMatrix(viewportWidth, viewportHeight)
@@ -282,19 +274,6 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             mesh.vertices
         )
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
-    }
-
-    companion object {
-        internal fun computePreviewFitDistance(
-            sizeX: Float,
-            sizeY: Float,
-            sizeZ: Float
-        ): Float {
-            val footprint = maxOf(sizeX, sizeY).coerceAtLeast(10f)
-            val height = sizeZ.coerceAtLeast(0f)
-            // Frame smaller plates closer so distinct preview colours remain readable.
-            return (footprint * 1.8f + height * 1.1f).coerceIn(90f, 500f)
-        }
     }
 
     private fun drawModel(mesh: MeshData, color: FloatArray = modelColorDefault) {
