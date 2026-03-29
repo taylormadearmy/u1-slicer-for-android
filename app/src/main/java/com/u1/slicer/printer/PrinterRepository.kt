@@ -110,6 +110,8 @@ class PrinterRepository(
 
     suspend fun getLedState(): Boolean? = client.getLedState()
     suspend fun setLed(on: Boolean): Boolean = client.setLed(on)
+    suspend fun setHeaterTemperature(heater: String, targetC: Int): Boolean =
+        client.setHeaterTemperature(heater, targetC)
 
     companion object {
         internal fun buildPrinterUploadFilename(sourceName: String, nowMillis: Long = System.currentTimeMillis()): String {

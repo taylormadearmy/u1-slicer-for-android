@@ -54,6 +54,11 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     private val _remoteScreenAvailable = MutableStateFlow(false)
     val remoteScreenAvailable: StateFlow<Boolean> = _remoteScreenAvailable.asStateFlow()
 
+    private val _heaterError = MutableStateFlow<String?>(null)
+    val heaterError: StateFlow<String?> = _heaterError.asStateFlow()
+
+    fun clearHeaterError() { _heaterError.value = null }
+
     sealed class ConnectionState {
         object Unknown : ConnectionState()
         object Testing : ConnectionState()
@@ -249,6 +254,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     fun cancelPrint() {
         viewModelScope.launch(Dispatchers.IO) { printerRepo.cancelPrint() }
+    }
+
+    fun setHeaterTemperature(heater: String, targetC: Int) {
+        viewModelScope.launch {
+            val ok = printerRepo.setHeaterTemperature(heater, targetC)
+            if (!ok) _heaterError.value = "Could not update temperature"
+        }
     }
 
     fun clearSendingState() {
