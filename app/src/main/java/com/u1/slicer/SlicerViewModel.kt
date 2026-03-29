@@ -304,6 +304,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 refreshMappedPreviewColors(presets)
             }
         }
+
+        viewModelScope.launch {
+            var prevState: SlicerState = SlicerState.Idle
+            state.collect { newState ->
+                val ctx = getApplication<android.app.Application>()
+                when {
+                    prevState is SlicerState.Loading && newState is SlicerState.ModelLoaded -> {
+                        val filename = (newState as SlicerState.ModelLoaded).info.filename
+                        AppEventNotifier.notify(ctx, AppEventNotifier.Event.ModelLoaded(filename))
+                    }
+                    prevState is SlicerState.Slicing && newState is SlicerState.SliceComplete -> {
+                        val filename = currentModelFile?.name ?: "model"
+                        AppEventNotifier.notify(ctx, AppEventNotifier.Event.SliceComplete(filename))
+                    }
+                    prevState is SlicerState.Slicing && newState is SlicerState.Error -> {
+                        AppEventNotifier.notify(ctx, AppEventNotifier.Event.SliceFailed(
+                            (newState as SlicerState.Error).message))
+                    }
+                }
+                prevState = newState
+            }
+        }
     }
 
     private fun refreshMappedPreviewColors(presets: List<ExtruderPreset>) {

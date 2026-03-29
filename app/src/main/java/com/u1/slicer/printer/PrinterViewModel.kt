@@ -241,6 +241,12 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             }
             val ok = printerRepo.uploadOnly(file, file.name)
             _sendingState.value = if (ok) SendingState.UploadComplete else SendingState.Error("Upload failed")
+            if (ok) {
+                com.u1.slicer.AppEventNotifier.notify(
+                    getApplication(),
+                    com.u1.slicer.AppEventNotifier.Event.UploadComplete(file.name)
+                )
+            }
         }
     }
 
