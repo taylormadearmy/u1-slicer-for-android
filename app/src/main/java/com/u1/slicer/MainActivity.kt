@@ -487,7 +487,8 @@ class MainActivity : ComponentActivity() {
                             onShareGcode = { viewModel.shareGcode() },
                             onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") },
                             sharedPreviewCameraState = sharedPreviewCameraState,
-                            onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it }
+                            onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it },
+                            onResetPreviewCamera = { sharedPreviewCameraState = null }
                         )
                     },
                     printerContent = {
@@ -1062,7 +1063,8 @@ fun PreviewScreen(
     onShareGcode: () -> Unit,
     onSaveGcode: () -> Unit,
     sharedPreviewCameraState: com.u1.slicer.viewer.CameraViewState?,
-    onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit
+    onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit,
+    onResetPreviewCamera: (() -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsState()
     val coreVersion by viewModel.coreVersion.collectAsState()
@@ -1132,7 +1134,8 @@ fun PreviewScreen(
                             slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D,
                             cameraState = sharedPreviewCameraState,
-                            onCameraStateChange = onSharedPreviewCameraStateChange
+                            onCameraStateChange = onSharedPreviewCameraStateChange,
+                            onResetView = onResetPreviewCamera
                         )
                     }
                     SliceCompleteSummaryCard(
@@ -2774,7 +2777,8 @@ fun InlineGcodePreview(
     slicerLayerCount: Int = 0,
     onExpand: () -> Unit,
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
-    onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null
+    onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
+    onResetView: (() -> Unit)? = null
 ) {
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
     var viewerLoading by remember(parsedGcode) { mutableStateOf(true) }
@@ -2842,6 +2846,17 @@ fun InlineGcodePreview(
                 Row(
                     modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp)
                 ) {
+                    if (onResetView != null) {
+                        IconButton(onClick = {
+                            onResetView.invoke()
+                        }) {
+                            Icon(
+                                Icons.Default.FilterCenterFocus,
+                                "Reset view",
+                                tint = Color.White.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
                     IconButton(onClick = {
                         showTravel = !showTravel
                         viewerView?.setShowTravel(showTravel)
