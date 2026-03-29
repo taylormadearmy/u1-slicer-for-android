@@ -6,6 +6,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +28,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -59,6 +64,15 @@ fun PrinterScreen(
     val webcamCandidates by viewModel.webcamCandidates.collectAsState()
     val remoteScreenAvailable by viewModel.remoteScreenAvailable.collectAsState()
     val context = LocalContext.current
+
+    var editingHeater by remember { mutableStateOf<String?>(null) }
+    var editingValue by remember { mutableStateOf("") }
+    val heaterError by viewModel.heaterError.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(heaterError) {
+        heaterError?.let { snackbarHostState.showSnackbar(it); viewModel.clearHeaterError() }
+    }
 
     // Camera feed polling
     var cameraFrame by remember { mutableStateOf<Bitmap?>(null) }
@@ -141,6 +155,7 @@ fun PrinterScreen(
                 onNavigateSettings = onNavigateSettings
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(
@@ -417,6 +432,66 @@ fun PrinterScreen(
                             Icon(Icons.Default.Stop, null)
                             Spacer(Modifier.width(4.dp))
                             Text("Cancel")
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Text("Temperatures", style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp))
+                    Spacer(Modifier.height(4.dp))
+
+                    val heaters = buildList {
+                        add(Triple("heater_bed", "Bed", status.bedTarget))
+                        status.extruders.forEachIndexed { i, ext ->
+                            val key = if (i == 0) "extruder" else "extruder$i"
+                            add(Triple(key, "E${i + 1}", ext.target))
+                        }
+                        if (status.extruders.isEmpty() && (status.nozzleTemp > 0 || status.nozzleTarget > 0)) {
+                            add(Triple("extruder", "E1", status.nozzleTarget))
+                        }
+                    }
+
+                    heaters.forEach { (heaterKey, label, currentTarget) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(label, modifier = Modifier.width(40.dp),
+                                style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.weight(1f))
+                            if (editingHeater == heaterKey) {
+                                BasicTextField(
+                                    value = editingValue,
+                                    onValueChange = { editingValue = it.filter { c -> c.isDigit() } },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = editingValue.toIntOrNull()
+                                        if (v != null) viewModel.setHeaterTemperature(heaterKey, v)
+                                        editingHeater = null
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier
+                                        .width(64.dp)
+                                        .border(1.dp, MaterialTheme.colorScheme.primary,
+                                            MaterialTheme.shapes.small)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = "→ ${currentTarget.toInt()}°C",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable {
+                                        editingHeater = heaterKey
+                                        editingValue = currentTarget.toInt().toString()
+                                    }
+                                )
+                            }
                         }
                     }
                 }
