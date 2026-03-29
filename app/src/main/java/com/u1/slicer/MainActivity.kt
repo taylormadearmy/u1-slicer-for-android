@@ -463,7 +463,8 @@ class MainActivity : ComponentActivity() {
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
                             sharedPreviewCameraState = sharedPreviewCameraState,
-                            onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it }
+                            onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it },
+                            onResetPreviewCamera = { sharedPreviewCameraState = null },
                         )
                     },
                     previewContent = {
@@ -639,7 +640,8 @@ fun PrepareScreen(
     onNavigateJobs: () -> Unit,
     onNavigateModelViewer: () -> Unit,
     sharedPreviewCameraState: com.u1.slicer.viewer.CameraViewState?,
-    onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit
+    onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit,
+    onResetPreviewCamera: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsState()
     val config by viewModel.config.collectAsState()
@@ -810,7 +812,7 @@ fun PrepareScreen(
                                 cameraState = sharedPreviewCameraState,
                                 onCameraStateChange = onSharedPreviewCameraStateChange,
                                 onViewerReady = { captureViewer = it },
-                                onResetView = { captureViewer?.resetView() },
+                                onResetView = { captureViewer?.resetView(); onResetPreviewCamera?.invoke() },
                                 layerToolOnly = layerToolOnly,
                                 layerToolSegments = threeMfInfo?.layerToolSegments
                             )
