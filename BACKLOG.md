@@ -15,16 +15,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Fixed: changed to `Icons.Default.Lightbulb` (yellow when on, dimmed when off) — clearly a physical light, not a UI theme toggle
 - There is no app-level light/dark theme switch; the app is dark-only
 
-### B18: OOM on large/complex 3MF files (GitHub #17)
-- Reproduce with: `C:\Users\kevin\Downloads\test-data\2026+F1+CALENDAR+-+DATES+&+TRACK+NAMES+(P_X+SERIES).3mf`
-- This file is ~103 MB compressed and contains a `3D/Objects/object_9.model` entry that expands to ~680 MB
-- Also reproduced via MakerWorld WebView download: `super clean.3mf` (58 MB compressed, native tried to allocate 331 MB → OOM with 187 MB free)
-- Investigate memory usage across import, sanitize, embed, and native load for giant component-model files
-- Mitigations landed in `v1.4.27-dev`:
-  - Prepare now falls back to a simplified top-down bed preview for large models so model footprints and the wipe tower can still be moved when the full mesh preview is skipped
-  - 3MF imports now preflight ZIP entry sizes and reject obviously oversized embedded component archives before sanitize/embed/native load
-  - Manual batch coverage now includes `2026+F1+CALENDAR+-+DATES+&+TRACK+NAMES+(P_X+SERIES).3mf` and `super clean.3mf` as the two large-file regressions that should keep being checked on-device
-- Still open: genuinely large-but-not-rejected archives may still pressure memory during sanitize or native load, so the issue is reduced but not fully closed
+### B18: OOM on large/complex 3MF files (GitHub #17) — FIXED v1.4.27
+- ZIP entry size preflight rejects obviously oversized archives before sanitize/embed/native load
+- Large models fall back to simplified top-down bed preview instead of crashing
+- Both known repros (F1 calendar 103 MB, super clean.3mf 58 MB) verified fixed on Pixel 8a
+- Issue #17 closed.
 
 ### B31: First slip/slide slice can hit a native Clipper range crash — FIXED v1.4.20
 - Root cause: ARM64 FCVTZS saturation producing INT64_MIN/MAX in Clipper `IntersectPoint` vertical-edge paths and `Round<int64_t>()` for large-but-finite doubles
@@ -36,11 +31,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Status messages during MakerWorld import were confusing (e.g. "Loading Downloading from MakerWorld……")
 - Fixed: each loading state now provides a complete display message ("Downloading from MakerWorld…", "Loading model.3mf…", "Preparing model…")
 
-### B39: Plus/home screen shown during slow model load, causing confusion and double-loads (GitHub #30)
-- On large files or slower devices, the plus screen remains visible while the model loads in the background
-- Users see no feedback that the file was accepted and tap to select again, causing duplicate loads or unexpected state
-- Fix: emit a loading/in-progress state immediately on file selection so the plus screen is replaced before native load completes
-- Track: [`#30`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/30)
+### B39: Plus/home screen shown during slow model load, causing confusion and double-loads (GitHub #30) — FIXED v1.5.13
+- On large files or slower devices, the plus screen remained visible while the model loaded in the background
+- Fix: `setLoadingFromPicker()` emits `SlicerState.Loading` immediately on file selection before filename resolution
+- Issue #30 closed.
 
 ### B37: Hueforge filament pauses / colour changes are dropped when sliced in-app (GitHub #21) — FIXED v1.5.x
 - Root cause: layer-tool pause injection pipeline was not implemented; `custom_gcode_per_layer.xml` layer-change data was ignored
@@ -49,24 +43,22 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Cleanup
 
-### C1: Remove dead warm-reload and upgrade-guard machinery
-- `shouldWarmReloadAfterUpgrade()` now always returns false (disabled in v1.4.24)
-- Partial cleanup landed in `v1.4.27-dev`:
-  - removed dead `shouldWarmReloadAfterUpgrade()` helpers from `SlicerViewModel`
-  - removed dead `warmReloadNativeModelAfterUpgrade()` path
-  - removed the obsolete warm-reload test
-- Code to remove or simplify:
-  - `post_upgrade_slice_settled` guard settling logic in slice path — now diagnostics-only, audit if still worth keeping
-  - `sessionHasPostUpgradeGuard` in `DiagnosticsStore` — now diagnostics-only, audit if anything else depends on it
-  - `clipperRetryAttempted` and `clipper_recovery_restart` machinery — may still be needed for non-upgrade Clipper errors, audit before removing
-- **Caution**: `clipperRetryAttempted` may protect against Clipper edge cases unrelated to upgrades — verify before removing
+### C1: Remove dead warm-reload and upgrade-guard machinery — FIXED v1.5.13
+- Removed `sessionHasPostUpgradeGuard`, `firstSliceAfterUpgradeRecorded`, `markSliceSucceeded()`, and `post_upgrade_slice_settled` event from `DiagnosticsStore`
+- `clipperRetryAttempted` left untouched — still active for non-upgrade Clipper errors
+- Issue #19 closed.
 
 ## Open Features
 
-### F46: Prepare preview colours for layer-tool / Hueforge models (GitHub #26)
-- Extruder colour chips and `_activeExtruderColors` are populated for layer-tool models (v1.5.1), so the colour swatches on the Prepare screen show the correct palette
-- Remaining gap: the 3D mesh preview renders as single-colour (model slices as 1-extruder; per-layer colour segmentation in the 3D view is not implemented)
-- Track: [`#26`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/26)
+### F49: Reset-view button on Prepare and Preview 3D viewers (GitHub #31) — FIXED v1.5.15
+- FilterCenterFocus icon at bottom-end of both Prepare and Preview 3D viewers
+- Clears shared camera state to reset to default view
+- Issue #31 closed.
+
+### F46: Prepare preview colours for layer-tool / Hueforge models (GitHub #26) — FIXED v1.5.13
+- 3D mesh preview now recoloured by Z-band using `MeshData.recolorByZBands()` when `layerToolOnly=true`
+- `parseLayerToolSegments()` shared parser extracted to `LayerToolCustomGcodeXml.kt`; `LayerToolPauseInjector` delegates to it
+- Issue #26 closed.
 
 ### F47: Slice summary filament usage for layer-tool / pause-based prints (GitHub #27) — FIXED v1.5.x
 - `GcodeParser` accepts `colorSegmentsByPausePrint=true` which assigns filament mm to extruder indices by counting `PAUSE_PRINT` markers instead of T commands
@@ -93,6 +85,25 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Blocked**: upstream was v0.9.4 alpha as of 2026-03-12, untested on real hardware
 - Wait for v1.0 / hardware-verified release before porting
 - Requires native .so rebuild
+
+### F50: Printer temperature control during printing (GitHub #22) — FIXED v1.5.15
+- Inline temperature editing on TempTile — tap edit icon to adjust bed/extruder temps mid-print
+- Sends Moonraker `SET_HEATER_TEMPERATURE` G-code; clamped to safe ranges (bed 0-120°C, extruders 0-300°C)
+- Issue #22 closed.
+
+### F51: Fullscreen printer camera feed (GitHub #23) — FIXED v1.5.15
+- Fullscreen button on camera feed opens a Dialog filling the screen; MJPEG polling continues uninterrupted
+- Issue #23 closed.
+
+### F52: Colour-by-layer swaps preview for single-colour prints (GitHub #24)
+- On the Preview screen, show colour changes for single-colour prints that use layer swaps (manual filament swap at layer)
+- Related to the layer-tool pipeline but for single-extruder machines
+- Track: [`#24`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/24)
+
+### F53: Expanded notification coverage (GitHub #13) — FIXED v1.5.15
+- 9 event types: slice complete/failed, upload complete, print started/paused/complete/failed, printer offline
+- Background-only gating via ProcessLifecycleOwner; deep-link navigation to relevant tab on tap
+- Issue #13 closed.
 
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
