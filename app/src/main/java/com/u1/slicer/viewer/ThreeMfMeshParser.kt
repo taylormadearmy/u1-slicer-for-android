@@ -541,8 +541,13 @@ object ThreeMfMeshParser {
         }
         if (totalTris == 0) return null
 
-        val buf = MeshData.allocateBuffer(totalTris)
-        val extruderIdxArray = GrowableByteArray(totalTris)
+        val stride = if (totalTris > NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+            (totalTris + NativePreviewMesh.MAX_DECIMATED_TRIANGLES - 1) / NativePreviewMesh.MAX_DECIMATED_TRIANGLES
+        else 1
+        val effectiveTris = if (stride > 1) (totalTris + stride - 1) / stride else totalTris
+
+        val buf = MeshData.allocateBuffer(effectiveTris)
+        val extruderIdxArray = GrowableByteArray(effectiveTris)
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
         var minZ = Float.MAX_VALUE
@@ -581,6 +586,7 @@ object ThreeMfMeshParser {
             extruderIdxArray.add(extruderIdx)
         }
 
+        var globalTriIndex = 0
         for (meshCtx in mergedMeshes) {
             val mesh = meshCtx.mesh
             val t = meshCtx.transform
@@ -590,6 +596,7 @@ object ThreeMfMeshParser {
             val tris = mesh.tris
 
             for (i in 0 until mesh.triCount) {
+                if (globalTriIndex++ % stride != 0) continue
                 val a = tris[i * 3] * 3
                 val b = tris[i * 3 + 1] * 3
                 val c = tris[i * 3 + 2] * 3
