@@ -69,9 +69,9 @@ Java_com_u1_slicer_NativeLibrary_getModelInfo(JNIEnv* env, jobject) {
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_u1_slicer_NativeLibrary_getPreparePreviewMesh(JNIEnv* env, jobject) {
+Java_com_u1_slicer_NativeLibrary_getPreparePreviewMesh(JNIEnv* env, jobject, jint maxTriangles) {
     if (!g_engine) return nullptr;
-    sapil::PreviewMesh mesh = g_engine->getPreparePreviewMesh();
+    sapil::PreviewMesh mesh = g_engine->getPreparePreviewMesh(static_cast<int>(maxTriangles));
     if (mesh.extruder_indices.empty()) return nullptr;
     return sapil::previewMeshToJava(env, mesh);
 }

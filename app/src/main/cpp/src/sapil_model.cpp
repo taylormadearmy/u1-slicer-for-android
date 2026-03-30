@@ -247,11 +247,19 @@ ModelInfo SlicerEngine::getModelInfo() const {
 static void appendItsPreviewMesh(
     PreviewMesh& out,
     const indexed_triangle_set& its,
-    uint8_t extruder_index
+    uint8_t extruder_index,
+    int stride
 ) {
     bool logged_invalid_index = false;
     bool logged_invalid_vertex = false;
+    int tri_counter = 0;
     for (const auto& tri : its.indices) {
+        // Stride decimation: only emit every stride-th valid triangle
+        if (tri_counter % stride != 0) {
+            ++tri_counter;
+            continue;
+        }
+
         bool valid = true;
         for (int i = 0; i < 3; ++i) {
             const int vertex_index = tri[i];
@@ -268,7 +276,10 @@ static void appendItsPreviewMesh(
                 break;
             }
         }
-        if (!valid) continue;
+        if (!valid) {
+            ++tri_counter;
+            continue;
+        }
 
         const size_t start_size = out.triangle_positions.size();
         for (int i = 0; i < 3; ++i) {
@@ -290,9 +301,11 @@ static void appendItsPreviewMesh(
         }
         if (!valid) {
             out.triangle_positions.resize(start_size);
+            ++tri_counter;
             continue;
         }
         out.extruder_indices.push_back(extruder_index);
+        ++tri_counter;
     }
 }
 
@@ -313,11 +326,37 @@ static void compactPreviewIndices(PreviewMesh& mesh) {
     }
 }
 
-PreviewMesh SlicerEngine::getPreparePreviewMesh() const {
+PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     PreviewMesh out;
     if (!g_model_loaded) {
         return out;
     }
+
+    // Count total triangles across all printable volumes to compute stride
+    int total_tris = 0;
+    for (const auto* object : g_model.objects) {
+        if (object == nullptr || !object->printable) continue;
+        if (object->instances.empty()) continue;
+        for (const auto* volume : object->volumes) {
+            if (volume == nullptr || !volume->is_model_part()) continue;
+            if (!volume->mmu_segmentation_facets.empty()) {
+                std::vector<indexed_triangle_set> facets_per_type;
+                volume->mmu_segmentation_facets.get_facets(*volume, facets_per_type);
+                for (const auto& its : facets_per_type) {
+                    total_tris += static_cast<int>(its.indices.size());
+                }
+            } else {
+                total_tris += static_cast<int>(volume->mesh().its.indices.size());
+            }
+        }
+    }
+
+    const int effective_max = (max_triangles > 0) ? max_triangles : 100000;
+    const int stride = (total_tris > effective_max)
+        ? ((total_tris + effective_max - 1) / effective_max)
+        : 1;
+
+    SAPIL_LOGI("getPreparePreviewMesh: total_tris=%d max=%d stride=%d", total_tris, effective_max, stride);
 
     size_t object_index = 0;
     for (const auto* object : g_model.objects) {
@@ -353,13 +392,13 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh() const {
                         const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-                        appendItsPreviewMesh(out, its, extruder_index);
+                        appendItsPreviewMesh(out, its, extruder_index, stride);
                     }
                 } else {
                     auto its = volume->mesh().its;
                     its_transform(its, volume->get_matrix(), true);
                     its_transform(its, instance_matrix, true);
-                    appendItsPreviewMesh(out, its, fallback_index);
+                    appendItsPreviewMesh(out, its, fallback_index, stride);
                 }
                 ++volume_index;
             }

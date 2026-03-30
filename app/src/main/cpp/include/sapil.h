@@ -128,7 +128,7 @@ public:
     // Model operations
     bool loadModel(const std::string& filepath);
     ModelInfo getModelInfo() const;
-    PreviewMesh getPreparePreviewMesh() const;
+    PreviewMesh getPreparePreviewMesh(int max_triangles = 100000) const;
     void clearModel();
 
     // Slicing
