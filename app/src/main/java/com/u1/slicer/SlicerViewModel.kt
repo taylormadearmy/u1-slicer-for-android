@@ -2835,12 +2835,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     "plateInfo.usedExtruders=${plateInfo.usedExtruderIndices} mergedUsedExtruders=$mergedUsedExtruderIndices " +
                     "filteredColors=$filteredColors"
             )
-            // Hueforge plate: single object, single filament, layer-tool changes, no paint.
+            // Hueforge plate: single object, single filament, layer-tool changes, no paint,
+            // and no per-object extruder diversity in the source file.
             // The UI needs extruderCount > 1 and hasMultiExtruderAssignments=false to activate
             // the layerToolOnly recolor path.
+            val sourceObjectExtruderDiversity = sourceInfo.objectExtruderMap.values.toSet().size
             val isHueforgePlate = selectedPlateId != null &&
                 sourceInfo.hasLayerToolChanges && !sourceInfo.hasPaintData &&
-                sourcePlateObjectExtruders.size <= 1 && sourcePlateFilamentIndices.size <= 1
+                sourcePlateObjectExtruders.size <= 1 && sourcePlateFilamentIndices.size <= 1 &&
+                sourceObjectExtruderDiversity <= 1
             return plateInfo.copy(
                 isBambu = sourceInfo.isBambu,
                 detectedColors = filteredColors,
