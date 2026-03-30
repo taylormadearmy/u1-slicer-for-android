@@ -2839,9 +2839,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // and no per-object extruder diversity in the source file.
             // The UI needs extruderCount > 1 and hasMultiExtruderAssignments=false to activate
             // the layerToolOnly recolor path.
+            // Use plate-level paint detection: plateInfo is parsed from the extracted
+            // single-plate file, so hasPaintData reflects only THIS plate's objects.
+            // sourceInfo.hasPaintData is file-level and would block Hueforge classification
+            // for non-painted plates in a file where other plates have paint data.
+            val plateHasPaintData = plateInfo.hasPaintData
             val sourceObjectExtruderDiversity = sourceInfo.objectExtruderMap.values.toSet().size
             val isHueforgePlate = selectedPlateId != null &&
-                sourceInfo.hasLayerToolChanges && !sourceInfo.hasPaintData &&
+                sourceInfo.hasLayerToolChanges && !plateHasPaintData &&
                 sourcePlateObjectExtruders.size <= 1 && sourcePlateFilamentIndices.size <= 1 &&
                 sourceObjectExtruderDiversity <= 1
             return plateInfo.copy(
@@ -2857,7 +2862,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceInfo.detectedExtruderCount
                 },
                 usedExtruderIndices = mergedUsedExtruderIndices,
-                hasPaintData = sourceInfo.hasPaintData,
+                hasPaintData = plateHasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
                 hasMultiExtruderAssignments = if (sourcePlateObjectExtruders.size > 1) true
                     else if (isHueforgePlate) false

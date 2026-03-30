@@ -677,8 +677,8 @@ class MergeThreeMfInfoTest {
     }
 
     @Test
-    fun `mergeThreeMfInfoForPlate is NOT Hueforge when source has paint data`() {
-        // SEMM file with layer-tool changes: hasPaintData=true overrides isHueforgePlate.
+    fun `mergeThreeMfInfoForPlate is NOT Hueforge when plate has paint data`() {
+        // SEMM plate with layer-tool changes: plate-level hasPaintData=true overrides isHueforgePlate.
         val sourceInfo = ThreeMfInfo(
             objects = emptyList(),
             plates = listOf(
@@ -695,12 +695,52 @@ class MergeThreeMfInfoTest {
         val plateInfo = ThreeMfInfo(
             objects = emptyList(), plates = emptyList(),
             isBambu = false, isMultiPlate = false,
+            hasPaintData = true,  // this plate's extracted file has paint data
             usedExtruderIndices = setOf(1, 2)
         )
         val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 1)
-        assertTrue("Paint data must be preserved from source", merged.hasPaintData)
+        assertTrue("Paint data must be preserved from plate", merged.hasPaintData)
         // hasPaintData=true means isHueforgePlate=false, so hasMultiExtruderAssignments
         // should come from sourceInfo, not be forced false
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate IS Hueforge when plate has no paint but source does`() {
+        // Mixed file: source has paint data (from another plate), but THIS plate is layer-tool only.
+        // Like flippy-with-painted where plate 5 has paint but plate 4 is layer-tool.
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(
+                ThreeMfPlate(4, "Dual Colour", listOf("5"))
+            ),
+            isBambu = true, isMultiPlate = true,
+            hasLayerToolChanges = true,
+            hasPaintData = true,  // source-level: another plate has paint
+            objectExtruderMap = mapOf("5" to 1),  // all same extruder
+            detectedColors = listOf("#161616", "#F4D976"),
+            detectedExtruderCount = 2,
+            layerToolSegments = listOf(
+                LayerToolSegment(1.6f, 2)
+            ),
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            hasPaintData = false,  // THIS plate's extracted file has no paint
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 4)
+        assertFalse(
+            "Plate without paint data should have hasPaintData=false even if source has paint",
+            merged.hasPaintData
+        )
+        assertFalse(
+            "Layer-tool plate without paint should have hasMultiExtruderAssignments=false (Hueforge path)",
+            merged.hasMultiExtruderAssignments
+        )
+        assertTrue(merged.hasLayerToolChanges)
+        assertTrue("Hueforge plate needs extruderCount >= 2", merged.detectedExtruderCount >= 2)
     }
 
     @Test
