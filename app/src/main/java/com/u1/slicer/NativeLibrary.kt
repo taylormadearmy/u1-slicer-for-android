@@ -33,7 +33,7 @@ class NativeLibrary {
     external fun loadModel(path: String): Boolean
     external fun clearModel()
     external fun getModelInfo(): ModelInfo?
-    external fun getPreparePreviewMesh(): NativePreviewMesh?
+    external fun getPreparePreviewMesh(maxTriangles: Int = NativePreviewMesh.MAX_DECIMATED_TRIANGLES): NativePreviewMesh?
 
     // ---- Slicing ----
     external fun slice(config: SliceConfig): SliceResult?
