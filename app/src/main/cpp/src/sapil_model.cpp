@@ -248,11 +248,15 @@ ModelInfo SlicerEngine::getModelInfo() const {
 static void appendItsPreviewMesh(
     PreviewMesh& out,
     const indexed_triangle_set& its,
-    uint8_t extruder_index
+    uint8_t extruder_index,
+    int stride,
+    int& tri_counter
 ) {
     bool logged_invalid_index = false;
     bool logged_invalid_vertex = false;
     for (const auto& tri : its.indices) {
+        if (stride > 1 && (tri_counter % stride != 0)) { ++tri_counter; continue; }
+        ++tri_counter;
         bool valid = true;
         for (int i = 0; i < 3; ++i) {
             const int vertex_index = tri[i];
@@ -341,9 +345,15 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
 
     const int effective_max = (max_triangles > 0) ? max_triangles : 100000;
     const bool needs_decimation = total_tris > effective_max;
+    // QEM is O(n log n) and memory-intensive. For very large meshes (>2M tris) it can take
+    // minutes and OOM on device. Fall back to stride decimation for those cases.
+    const bool use_qem = needs_decimation && total_tris <= 2000000;
+    const int stride = (!use_qem && needs_decimation)
+        ? ((total_tris + effective_max - 1) / effective_max)
+        : 1;
 
-    SAPIL_LOGI("getPreparePreviewMesh: total_tris=%d max=%d qem=%s",
-        total_tris, effective_max, needs_decimation ? "yes" : "no");
+    SAPIL_LOGI("getPreparePreviewMesh: total_tris=%d max=%d qem=%s stride=%d",
+        total_tris, effective_max, use_qem ? "yes" : "no", stride);
 
     size_t object_index = 0;
     for (const auto* object : g_model.objects) {
@@ -371,33 +381,37 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                 if (!volume->mmu_segmentation_facets.empty()) {
                     std::vector<indexed_triangle_set> facets_per_type;
                     volume->mmu_segmentation_facets.get_facets(*volume, facets_per_type);
+                    int tri_counter = 0;
                     for (size_t state_idx = 0; state_idx < facets_per_type.size(); ++state_idx) {
                         auto its = facets_per_type[state_idx];
                         if (its.indices.empty()) continue;
                         its_transform(its, volume->get_matrix(), true);
                         its_transform(its, instance_matrix, true);
-                        if (needs_decimation) {
+                        if (use_qem) {
                             const uint32_t target = static_cast<uint32_t>(
-                                std::max(1, static_cast<int>(its.indices.size()) * effective_max / total_tris));
-                            if (static_cast<int>(its.indices.size()) > target)
+                                std::max(INT64_C(1),
+                                    static_cast<int64_t>(its.indices.size()) * effective_max / total_tris));
+                            if (its.indices.size() > target)
                                 Slic3r::its_quadric_edge_collapse(its, target);
                         }
                         const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-                        appendItsPreviewMesh(out, its, extruder_index);
+                        appendItsPreviewMesh(out, its, extruder_index, stride, tri_counter);
                     }
                 } else {
                     auto its = volume->mesh().its;
                     its_transform(its, volume->get_matrix(), true);
                     its_transform(its, instance_matrix, true);
-                    if (needs_decimation) {
+                    if (use_qem) {
                         const uint32_t target = static_cast<uint32_t>(
-                            std::max(1, static_cast<int>(its.indices.size()) * effective_max / total_tris));
-                        if (static_cast<int>(its.indices.size()) > target)
+                            std::max(INT64_C(1),
+                                static_cast<int64_t>(its.indices.size()) * effective_max / total_tris));
+                        if (its.indices.size() > target)
                             Slic3r::its_quadric_edge_collapse(its, target);
                     }
-                    appendItsPreviewMesh(out, its, fallback_index);
+                    int tri_counter = 0;
+                    appendItsPreviewMesh(out, its, fallback_index, stride, tri_counter);
                 }
                 ++volume_index;
             }

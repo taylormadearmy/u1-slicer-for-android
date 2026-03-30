@@ -65,10 +65,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Set automatically in `SlicerViewModel` when layer-tool pause injection ran — summary correctly shows per-extruder breakdown for Hueforge prints
 - Issue #27 closed.
 
-### F48: Better Prepare preview for very large 3MF models (GitHub #29)
-- Very large models fall back to a simplified top-down bed footprint preview (loses 3D perspective and colour detail)
-- Investigate: LOD/mesh decimation for a lower-poly 3D preview, budget-aware simplification on import, or streaming coarse-then-refine
-- Must not regress B18 OOM protections
+### F48: Better Prepare preview for very large 3MF models (GitHub #29) — PARTIALLY DONE v1.5.17
+- Native C++ path now uses QEM (`its_quadric_edge_collapse`) to simplify to ≤100K triangles — clean geometry, no holes
+- Kotlin path (painted/SEMM models) still uses stride decimation; cap raised to 500K so typical painted models pass through untouched
+- **Remaining work (F48-kotlin-qem):**
+  - Painted models >500K triangles will still show broken geometry (stride decimation)
+  - Long-term fix: either route painted model preview through the native C++ path (avoids Kotlin stride entirely), or port a proper simplification algorithm to Kotlin
+  - Native path: QEM runs in world-space after transform — may produce suboptimal results for models with very large coordinates; investigate running QEM in local object space before transform
 - Track: [`#29`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/29)
 
 ### F45: Bambu printer support (GitHub #16)
@@ -118,6 +121,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Potentially 10-17x faster for very large models; G-code slightly less accurate (small surface details lost)
 - UI must clearly label output as draft; not suitable for final production slices
 - Track: [`#34`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/34)
+
+### F56: Show loading indicator / warning when a very large model is detected (GitHub #35)
+- Models with millions of triangles cause the Prepare screen to appear frozen with no feedback
+- Triangle count is available immediately after `loadModel()` — show a toast or inline notice (e.g. "Large model — preview may take a moment") when count exceeds ~500K
+- Optionally: progress spinner in 3D viewport while preview mesh is being built
+- Track: [`#35`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/35)
 
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)

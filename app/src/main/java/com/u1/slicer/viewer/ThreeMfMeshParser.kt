@@ -541,8 +541,8 @@ object ThreeMfMeshParser {
         }
         if (totalTris == 0) return null
 
-        val stride = if (totalTris > NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
-            (totalTris + NativePreviewMesh.MAX_DECIMATED_TRIANGLES - 1) / NativePreviewMesh.MAX_DECIMATED_TRIANGLES
+        val stride = if (totalTris > NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES)
+            (totalTris + NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES - 1) / NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES
         else 1
         val effectiveTris = if (stride > 1) (totalTris + stride - 1) / stride else totalTris
 
