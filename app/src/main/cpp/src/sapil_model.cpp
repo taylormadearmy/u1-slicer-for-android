@@ -15,6 +15,7 @@
 #include "libslic3r/Format/STEP.hpp"
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/TriangleSelector.hpp"
+#include "libslic3r/QuadricEdgeCollapse.hpp"
 
 // miniz for direct ZIP extraction of project_settings.config
 #include "miniz.h"
@@ -247,19 +248,11 @@ ModelInfo SlicerEngine::getModelInfo() const {
 static void appendItsPreviewMesh(
     PreviewMesh& out,
     const indexed_triangle_set& its,
-    uint8_t extruder_index,
-    int stride
+    uint8_t extruder_index
 ) {
     bool logged_invalid_index = false;
     bool logged_invalid_vertex = false;
-    int tri_counter = 0;
     for (const auto& tri : its.indices) {
-        // Stride decimation: only emit every stride-th valid triangle
-        if (tri_counter % stride != 0) {
-            ++tri_counter;
-            continue;
-        }
-
         bool valid = true;
         for (int i = 0; i < 3; ++i) {
             const int vertex_index = tri[i];
@@ -276,10 +269,7 @@ static void appendItsPreviewMesh(
                 break;
             }
         }
-        if (!valid) {
-            ++tri_counter;
-            continue;
-        }
+        if (!valid) continue;
 
         const size_t start_size = out.triangle_positions.size();
         for (int i = 0; i < 3; ++i) {
@@ -301,11 +291,9 @@ static void appendItsPreviewMesh(
         }
         if (!valid) {
             out.triangle_positions.resize(start_size);
-            ++tri_counter;
             continue;
         }
         out.extruder_indices.push_back(extruder_index);
-        ++tri_counter;
     }
 }
 
@@ -352,11 +340,10 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     }
 
     const int effective_max = (max_triangles > 0) ? max_triangles : 100000;
-    const int stride = (total_tris > effective_max)
-        ? ((total_tris + effective_max - 1) / effective_max)
-        : 1;
+    const bool needs_decimation = total_tris > effective_max;
 
-    SAPIL_LOGI("getPreparePreviewMesh: total_tris=%d max=%d stride=%d", total_tris, effective_max, stride);
+    SAPIL_LOGI("getPreparePreviewMesh: total_tris=%d max=%d qem=%s",
+        total_tris, effective_max, needs_decimation ? "yes" : "no");
 
     size_t object_index = 0;
     for (const auto* object : g_model.objects) {
@@ -389,16 +376,28 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                         if (its.indices.empty()) continue;
                         its_transform(its, volume->get_matrix(), true);
                         its_transform(its, instance_matrix, true);
+                        if (needs_decimation) {
+                            const uint32_t target = static_cast<uint32_t>(
+                                std::max(1, static_cast<int>(its.indices.size()) * effective_max / total_tris));
+                            if (static_cast<int>(its.indices.size()) > target)
+                                Slic3r::its_quadric_edge_collapse(its, target);
+                        }
                         const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-                        appendItsPreviewMesh(out, its, extruder_index, stride);
+                        appendItsPreviewMesh(out, its, extruder_index);
                     }
                 } else {
                     auto its = volume->mesh().its;
                     its_transform(its, volume->get_matrix(), true);
                     its_transform(its, instance_matrix, true);
-                    appendItsPreviewMesh(out, its, fallback_index, stride);
+                    if (needs_decimation) {
+                        const uint32_t target = static_cast<uint32_t>(
+                            std::max(1, static_cast<int>(its.indices.size()) * effective_max / total_tris));
+                        if (static_cast<int>(its.indices.size()) > target)
+                            Slic3r::its_quadric_edge_collapse(its, target);
+                    }
+                    appendItsPreviewMesh(out, its, fallback_index);
                 }
                 ++volume_index;
             }

@@ -111,6 +111,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Scope TBD: region segmentation approach, on-device vs cloud inference, user control (accept/reject/edit), output format (per-triangle extruder assignment compatible with existing SEMM pipeline)
 - Track: [`#33`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/33)
 
+### F55: Draft slice mode — slice with simplified mesh for fast iteration (GitHub #34)
+- Large models (1M+ triangles) can take a long time to slice; for iterative workflows the user does not need full precision
+- Add a "Draft" toggle on the Prepare screen: when enabled, model is simplified to ~100K triangles using `its_quadric_edge_collapse` (QEM — same algorithm as the F48 preview fix) before slicing
+- Non-destructive: original mesh untouched; simplification applied transiently per-slice
+- Potentially 10-17x faster for very large models; G-code slightly less accurate (small surface details lost)
+- UI must clearly label output as draft; not suitable for final production slices
+- Track: [`#34`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/34)
+
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
 - Should document: submodule pin process, our Android-specific patches that must be re-applied (`#ifdef __ANDROID__` diagnostics, initializer fixes, build fixes for clipper.hpp/Brim.cpp/CutSurface.cpp), SAPIL JNI interface contract, config key differences, native rebuild workflow
