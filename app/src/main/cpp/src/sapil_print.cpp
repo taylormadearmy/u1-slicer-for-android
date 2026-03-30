@@ -434,7 +434,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
     try {
         diagnostics_clear_trace_buffer();
-        ::ClipperLib::diagnostics_clear_trace_buffer();
+        // diagnostics_clear_trace_buffer is defined in sapil.h (not in Clipper namespace for orca backend)
         diagnostics_trace_native_event(
             "native_trace_slice_start",
             std::string("{") +
