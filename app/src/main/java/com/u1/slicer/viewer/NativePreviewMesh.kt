@@ -111,14 +111,13 @@ data class NativePreviewMesh(
 
         // Safety-net threshold for LargePreviewFallback — effectively unreachable after decimation.
         // Kept at a high value (not deleted) to preserve B18 regression test coverage.
-        private const val ESTIMATED_BYTES_PER_TRIANGLE = 157L
         const val MAX_SAFE_TRIANGLES = 50_000_000
-        const val MAX_SAFE_PREVIEW_BYTES = 188L * 1024L * 1024L
 
         fun wouldExceedSafePreviewBudget(triangleCount: Int): Boolean {
             if (triangleCount <= 0) return false
-            if (triangleCount > MAX_SAFE_TRIANGLES) return true
-            return triangleCount.toLong() * ESTIMATED_BYTES_PER_TRIANGLE > MAX_SAFE_PREVIEW_BYTES
+            // After F48 decimation, native export caps at MAX_DECIMATED_TRIANGLES (100K).
+            // This threshold is a last-resort OOM guard only.
+            return triangleCount > MAX_SAFE_TRIANGLES
         }
     }
 }

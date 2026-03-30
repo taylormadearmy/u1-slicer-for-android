@@ -546,7 +546,7 @@ object ThreeMfMeshParser {
         else 1
         val effectiveTris = if (stride > 1) (totalTris + stride - 1) / stride else totalTris
 
-        val buf = MeshData.allocateBuffer(effectiveTris)
+        val buf = MeshData.allocateBuffer(totalTris)
         val extruderIdxArray = GrowableByteArray(effectiveTris)
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE

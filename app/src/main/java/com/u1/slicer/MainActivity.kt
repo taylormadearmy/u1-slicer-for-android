@@ -2023,7 +2023,7 @@ fun InlineModelPreview(
     var towerX by remember(wipeTowerX) { mutableFloatStateOf(wipeTowerX) }
     var towerY by remember(wipeTowerY) { mutableFloatStateOf(wipeTowerY) }
 
-    LaunchedEffect(modelFilePath, extruderMap, colorMapping?.size, previewTooLarge) {
+    LaunchedEffect(modelFilePath, extruderMap, colorMapping?.size) {
         val requestId = parseRequestId + 1
         parseRequestId = requestId
         viewerLoading = true
