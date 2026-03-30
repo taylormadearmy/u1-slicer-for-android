@@ -51,13 +51,13 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 584 JVM unit tests
+./gradlew testDebugUnitTest                        # 587 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 136 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
-### Unit tests (`app/src/test/`) - 584 tests across 37 classes
+### Unit tests (`app/src/test/`) - 587 tests across 37 classes
 - `gcode/GcodeParserTest.kt` (26) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -83,7 +83,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `model/CopyArrangeCalculatorTest.kt` (18) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
-- `MergeThreeMfInfoTest.kt` (20) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression (color bug fix)
+- `MergeThreeMfInfoTest.kt` (23) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, paint data, uniform extruder)
 - `printer/PrinterRepositoryTest.kt` (2) — upload filename sanitization and unique suffix generation
 - `printer/PrinterRepositoryNotificationTest.kt` (9) — printer state transition detection for all event types
 - `AppEventNotifierTest.kt` (13) — notification title/body/channel/navigate-target for all event types
