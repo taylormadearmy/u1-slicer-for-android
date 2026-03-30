@@ -35,13 +35,36 @@ class NativePreviewMeshTest {
     }
 
     @Test
-    fun `wouldExceedSafePreviewBudget rejects giant previews`() {
+    fun `wouldExceedSafePreviewBudget safety net threshold is effectively unreachable`() {
+        // After F48 decimation, post-decimate counts stay at MAX_DECIMATED_TRIANGLES (100K),
+        // well below any budget threshold. The 50M triangle hard-cap is a last-resort OOM guard.
         assertFalse(NativePreviewMesh.wouldExceedSafePreviewBudget(100_000))
-        assertTrue(
-            NativePreviewMesh.wouldExceedSafePreviewBudget(
-                NativePreviewMesh.MAX_SAFE_TRIANGLES + 1
-            )
-        )
-        assertTrue(NativePreviewMesh.wouldExceedSafePreviewBudget(1_260_000))
+        assertFalse(NativePreviewMesh.wouldExceedSafePreviewBudget(500_000))
+        assertTrue(NativePreviewMesh.wouldExceedSafePreviewBudget(NativePreviewMesh.MAX_SAFE_TRIANGLES + 1))
+    }
+
+    @Test
+    fun `MAX_DECIMATED_TRIANGLES is 100000`() {
+        assertEquals(100_000, NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+    }
+
+    @Test
+    fun `toMeshData on subsampled NativePreviewMesh produces correct vertex count`() {
+        // Simulate a model with 300K triangles decimated to 100K (stride=3)
+        // by constructing a NativePreviewMesh with exactly 100K triangles.
+        val triCount = 100_000
+        val positions = FloatArray(triCount * 9) { idx ->
+            // Alternate between two non-degenerate triangles
+            when (idx % 9) {
+                0 -> 0f; 1 -> 0f; 2 -> 0f
+                3 -> 1f; 4 -> 0f; 5 -> 0f
+                6 -> 0f; 7 -> 1f; else -> 0f
+            }
+        }
+        val indices = ByteArray(triCount) { (it % 4).toByte() }
+        val preview = NativePreviewMesh(positions, indices)
+        val mesh = preview.toMeshData()
+        assertNotNull(mesh)
+        assertEquals(triCount * 3, mesh!!.vertexCount)
     }
 }
