@@ -2030,10 +2030,6 @@ fun InlineModelPreview(
         mesh = null
         lastSetMesh = null
         viewerView?.clearMesh()
-        if (previewTooLarge) {
-            viewerLoading = false
-            return@LaunchedEffect
-        }
         val parsedMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val file = java.io.File(modelFilePath)
