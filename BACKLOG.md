@@ -105,6 +105,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Background-only gating via ProcessLifecycleOwner; deep-link navigation to relevant tab on tap
 - Issue #13 closed.
 
+### F54: AI colouring for single colour prints (GitHub #33)
+- Automatically generate multi-colour designs from single-colour STL/3MF models using AI
+- When a user loads a single-colour model, offer an option to generate colour assignments (per-face or per-region)
+- Scope TBD: region segmentation approach, on-device vs cloud inference, user control (accept/reject/edit), output format (per-triangle extruder assignment compatible with existing SEMM pipeline)
+- Track: [`#33`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/33)
+
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
 - Should document: submodule pin process, our Android-specific patches that must be re-applied (`#ifdef __ANDROID__` diagnostics, initializer fixes, build fixes for clipper.hpp/Brim.cpp/CutSurface.cpp), SAPIL JNI interface contract, config key differences, native rebuild workflow
