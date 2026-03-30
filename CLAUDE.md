@@ -51,13 +51,13 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 588 JVM unit tests
+./gradlew testDebugUnitTest                        # 590 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 136 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
-### Unit tests (`app/src/test/`) - 588 tests across 37 classes
+### Unit tests (`app/src/test/`) - 590 tests across 37 classes
 - `gcode/GcodeParserTest.kt` (26) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -90,7 +90,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `PreviewSummaryMappingTest.kt` (2) — preview summary data class mapping
 - `PreviewColorNormalizationTest.kt` (4) — preview colour normalization
 - `PreparePreviewPlacementTest.kt` (5) — native 3MF wipe tower visibility, object-placement rules, and large-preview fallback state retention
-- `viewer/NativePreviewMeshTest.kt` (2) — preview budget guardrails for very large native meshes
+- `viewer/NativePreviewMeshTest.kt` (5) — preview budget guardrails, MAX_DECIMATED_TRIANGLES constant, F48 subsampled mesh vertex count
 - iewer/ModelViewerViewTest.kt (3) — Prepare selection falls back from face-plane to bed-plane hit-testing when needed
 
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic
