@@ -264,4 +264,22 @@ class NativePreparePreviewTest {
             rValues.size >= 2
         )
     }
+
+    @Test
+    fun getPreparePreviewMesh_triangleCountRespectsCap_forDualColor3mf() {
+        copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh(maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+
+        assertNotNull(preview)
+        preview!!
+        val triCount = preview.extruderIndices.size
+        assertTrue(
+            "Triangle count $triCount should be ≤ MAX_DECIMATED_TRIANGLES (${NativePreviewMesh.MAX_DECIMATED_TRIANGLES})",
+            triCount <= NativePreviewMesh.MAX_DECIMATED_TRIANGLES
+        )
+        assertTrue(preview.trianglePositions.isNotEmpty())
+        assertTrue(preview.extruderIndices.size * 9 == preview.trianglePositions.size)
+    }
 }
