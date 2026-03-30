@@ -399,7 +399,7 @@ class BambuPipelineIntegrationTest {
         val plateInfo = ThreeMfParser.parse(plateFile)
 
         // mergeThreeMfInfoForPlate should still produce >= 2 colors/extruders
-        val result = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, mergedInfo)
+        val result = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, mergedInfo, selectedPlateId = 5)
 
         assertTrue(
             "After mergeThreeMfInfoForPlate, detectedColors must be >= 2 (was ${result.detectedColors.size})",
@@ -408,6 +408,12 @@ class BambuPipelineIntegrationTest {
         assertTrue(
             "After mergeThreeMfInfoForPlate, detectedExtruderCount must be >= 2 (was ${result.detectedExtruderCount})",
             result.detectedExtruderCount >= 2
+        )
+        // Shashibo has per-object extruder diversity (objects mapped to extruders 1 and 2).
+        // Must NOT be classified as Hueforge — hasMultiExtruderAssignments must stay true.
+        assertTrue(
+            "Shashibo plate 5 must have hasMultiExtruderAssignments=true (per-object extruder diversity)",
+            result.hasMultiExtruderAssignments
         )
     }
 
@@ -513,6 +519,16 @@ class BambuPipelineIntegrationTest {
             "G-code should contain T1 — multi-extruder plate must have tool changes",
             hasT1
         )
+        val cpToolchangeCount = gcode.lines().count { "; CP TOOLCHANGE" in it }
+        assertTrue(
+            "Shashibo plate 5 should have CP TOOLCHANGE > 400 (was $cpToolchangeCount)",
+            cpToolchangeCount > 400
+        )
+        val pausePrintCount = gcode.lines().count { "PAUSE_PRINT" in it }
+        assertEquals(
+            "Shashibo plate 5 must have PAUSE_PRINT=0 (was $pausePrintCount — misclassified as Hueforge?)",
+            0, pausePrintCount
+        )
         assertGcodeWithinBedBounds(gcode, "Shashibo plate 5 identity path")
     }
 
@@ -562,6 +578,16 @@ class BambuPipelineIntegrationTest {
             "Re-embedded G-code should contain T1 — multi-extruder plate must have tool changes",
             hasT1
         )
+        val cpToolchangeCount = gcode.lines().count { "; CP TOOLCHANGE" in it }
+        assertTrue(
+            "Re-embedded Shashibo plate 5 should have CP TOOLCHANGE > 400 (was $cpToolchangeCount)",
+            cpToolchangeCount > 400
+        )
+        val pausePrintCount = gcode.lines().count { "PAUSE_PRINT" in it }
+        assertEquals(
+            "Re-embedded Shashibo plate 5 must have PAUSE_PRINT=0 (was $pausePrintCount)",
+            0, pausePrintCount
+        )
         // NOTE: bounds check skipped for re-embed path — native slicer produces garbage
         // X coordinates (~3.4e18) for this non-canonical pipeline path. The correct pipeline
         // (below) passes bounds check. Filed as known issue.
@@ -605,6 +631,16 @@ class BambuPipelineIntegrationTest {
         assertTrue(
             "Correct-pipeline G-code must contain T1 — if this fails the bug is in BambuSanitizer/Embedder",
             hasT1
+        )
+        val cpToolchangeCount = gcode.lines().count { "; CP TOOLCHANGE" in it }
+        assertTrue(
+            "Correct-pipeline Shashibo plate 5 should have CP TOOLCHANGE > 400 (was $cpToolchangeCount)",
+            cpToolchangeCount > 400
+        )
+        val pausePrintCount = gcode.lines().count { "PAUSE_PRINT" in it }
+        assertEquals(
+            "Correct-pipeline Shashibo plate 5 must have PAUSE_PRINT=0 (was $pausePrintCount)",
+            0, pausePrintCount
         )
 
         // Regression: wipe tower at (0, 210) caused skirt to extend beyond bed boundary
