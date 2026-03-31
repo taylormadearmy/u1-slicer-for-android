@@ -821,6 +821,7 @@ fun PrepareScreen(
                                 extruderColors = extruderColors,
                                 extruderMap = viewModel.buildExtruderMap(),
                                 colorMapping = colorMapping,
+                                hasPaintData = threeMfInfo?.hasPaintData == true,
                                 objectPositions = positions,
                                 modelSizeX = loadedInfo?.sizeX ?: 0f,
                                 modelSizeY = loadedInfo?.sizeY ?: 0f,
@@ -1968,6 +1969,10 @@ fun InlineModelPreview(
     extruderColors: List<String> = emptyList(),
     extruderMap: Map<Int, Byte>? = null,
     colorMapping: List<Int>? = null,
+    // Use Kotlin ThreeMfMeshParser only for painted/SEMM models (hasPaintData=true).
+    // All other 3MF files use the native getPreparePreviewMesh() path (QEM decimation).
+    // Avoids parsing giant uncompressed XML streams for large multi-colour models (F1 calendar).
+    hasPaintData: Boolean = false,
     // Placement mode
     objectPositions: FloatArray? = null,
     modelSizeX: Float = 0f,
@@ -2037,7 +2042,12 @@ fun InlineModelPreview(
                     modelFilePath.endsWith(".stl", ignoreCase = true) ->
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
-                        if (colorMapping != null || extruderMap != null) {
+                        // Use Kotlin ThreeMfMeshParser only for painted/SEMM models — these
+                        // store per-triangle color in paint_color/mmu_segmentation XML attributes
+                        // that the native path does not expose. All other 3MF files (including
+                        // large multi-colour models like the F1 calendar) use the native path
+                        // which applies QEM decimation and avoids parsing multi-hundred-MB XML.
+                        if (hasPaintData && (colorMapping != null || extruderMap != null)) {
                             com.u1.slicer.viewer.ThreeMfMeshParser.parse(
                                 file = file,
                                 extruderMap = extruderMap,
