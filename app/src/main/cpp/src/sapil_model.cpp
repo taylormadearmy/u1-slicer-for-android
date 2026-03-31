@@ -398,6 +398,11 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     std::vector<indexed_triangle_set> facets_per_type;
                     volume->mmu_segmentation_facets.get_facets(*volume, facets_per_type);
                     int tri_counter = 0;
+                    // On flat models, QEM on a near-planar surface creates arbitrarily large
+                    // spanning triangles that render as a solid fill, hiding detail underneath.
+                    // Use stride decimation for all mmu groups on flat models — stride preserves
+                    // connectivity (no giant merged triangles) and is fast. QEM is reserved for
+                    // non-flat models where curvature guides meaningful edge collapses.
                     for (size_t state_idx = 0; state_idx < facets_per_type.size(); ++state_idx) {
                         auto its = facets_per_type[state_idx];
                         if (its.indices.empty()) continue;
@@ -405,6 +410,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                         its_transform(its, instance_matrix, true);
                         const int vol_tris = static_cast<int>(its.indices.size());
                         const bool can_qem = needs_decimation && !qem_budget_exceeded
+                            && !is_flat_model
                             && vol_tris <= QEM_PER_VOLUME_MAX;
                         if (can_qem) {
                             const uint32_t target = static_cast<uint32_t>(
