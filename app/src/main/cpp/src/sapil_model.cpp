@@ -251,13 +251,13 @@ static void appendItsPreviewMesh(
     const indexed_triangle_set& its,
     uint8_t extruder_index,
     int stride,
-    int& tri_counter
+    int& tri_counter,
+    bool upward_only = false
 ) {
     bool logged_invalid_index = false;
     bool logged_invalid_vertex = false;
     for (const auto& tri : its.indices) {
-        if (stride > 1 && (tri_counter % stride != 0)) { ++tri_counter; continue; }
-        ++tri_counter;
+        // Validate indices before counting toward stride
         bool valid = true;
         for (int i = 0; i < 3; ++i) {
             const int vertex_index = tri[i];
@@ -276,28 +276,45 @@ static void appendItsPreviewMesh(
         }
         if (!valid) continue;
 
-        const size_t start_size = out.triangle_positions.size();
-        for (int i = 0; i < 3; ++i) {
-            const auto& vertex = its.vertices[tri[i]];
-            if (!std::isfinite(vertex.x()) || !std::isfinite(vertex.y()) || !std::isfinite(vertex.z())) {
+        const auto& v0 = its.vertices[tri[0]];
+        const auto& v1 = its.vertices[tri[1]];
+        const auto& v2 = its.vertices[tri[2]];
+
+        // Check finite
+        for (const auto* vp : {&v0, &v1, &v2}) {
+            if (!std::isfinite(vp->x()) || !std::isfinite(vp->y()) || !std::isfinite(vp->z())) {
                 if (!logged_invalid_vertex) {
                     SAPIL_LOGW(
                         "preview triangle skipped: non-finite vertex [%.3f,%.3f,%.3f]",
-                        vertex.x(), vertex.y(), vertex.z()
+                        vp->x(), vp->y(), vp->z()
                     );
                     logged_invalid_vertex = true;
                 }
                 valid = false;
                 break;
             }
-            out.triangle_positions.push_back(static_cast<float>(vertex.x()));
-            out.triangle_positions.push_back(static_cast<float>(vertex.y()));
-            out.triangle_positions.push_back(static_cast<float>(vertex.z()));
         }
-        if (!valid) {
-            out.triangle_positions.resize(start_size);
-            continue;
-        }
+        if (!valid) continue;
+
+        // Skip degenerate (zero/near-zero area) triangles before counting toward stride.
+        // This ensures stride distributes evenly over real geometry, not sliver walls.
+        const Eigen::Vector3f e1 = v1 - v0;
+        const Eigen::Vector3f e2 = v2 - v0;
+        const Eigen::Vector3f cross = e1.cross(e2);
+        if (cross.squaredNorm() < 1e-12f) continue;
+
+        // For flat models, skip side-wall triangles — keep only upward-facing faces.
+        // This gives a clean top-down silhouette of raised elements (tracks, text)
+        // instead of a wall-dominated view that renders as an opaque mass.
+        if (upward_only && cross.z() <= 0.0f) continue;
+
+        // Stride over valid non-degenerate triangles
+        if (stride > 1 && (tri_counter % stride != 0)) { ++tri_counter; continue; }
+        ++tri_counter;
+
+        out.triangle_positions.push_back(v0.x()); out.triangle_positions.push_back(v0.y()); out.triangle_positions.push_back(v0.z());
+        out.triangle_positions.push_back(v1.x()); out.triangle_positions.push_back(v1.y()); out.triangle_positions.push_back(v1.z());
+        out.triangle_positions.push_back(v2.x()); out.triangle_positions.push_back(v2.y()); out.triangle_positions.push_back(v2.z());
         out.extruder_indices.push_back(extruder_index);
     }
 }
@@ -427,15 +444,18 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
                         const int vol_stride = (can_qem || !needs_decimation) ? 1 : stride;
-                        appendItsPreviewMesh(out, its, extruder_index, vol_stride, tri_counter);
+                        appendItsPreviewMesh(out, its, extruder_index, vol_stride, tri_counter, is_flat_model && vol_stride > 1);
                     }
                 } else {
                     auto its = volume->mesh().its;
                     its_transform(its, volume->get_matrix(), true);
                     its_transform(its, instance_matrix, true);
                     const int vol_tris = static_cast<int>(its.indices.size());
-                    const bool can_qem = needs_decimation && !qem_budget_exceeded
-                        && vol_tris <= QEM_PER_VOLUME_MAX;
+                    // No per-volume size cap for QEM — rely solely on time budget.
+                    // Large volumes (e.g. 7.6M tri embossed calendars) QEM well under
+                    // budget and produce correct previews; stride on such models creates
+                    // opaque blanket coverage hiding the underlying geometry.
+                    const bool can_qem = needs_decimation && !qem_budget_exceeded;
                     if (can_qem) {
                         const uint32_t target = static_cast<uint32_t>(
                             std::max(INT64_C(1),
@@ -449,7 +469,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     }
                     const int vol_stride = (can_qem || !needs_decimation) ? 1 : stride;
                     int tri_counter = 0;
-                    appendItsPreviewMesh(out, its, fallback_index, vol_stride, tri_counter);
+                    appendItsPreviewMesh(out, its, fallback_index, vol_stride, tri_counter, is_flat_model && vol_stride > 1);
                 }
                 ++volume_index;
             }
