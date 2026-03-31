@@ -175,6 +175,15 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             if (meshData != null) {
                 pendingCameraReset = false
                 resetCameraToDefaultView()
+                // Flat models (calendars, plaques): use near-top-down view so the
+                // rectangular surface is clearly visible and any construction volumes
+                // underneath are occluded by the main plate.
+                meshData?.let { mesh ->
+                    val footprint = maxOf(mesh.sizeX, mesh.sizeY)
+                    if (footprint > 0f && mesh.sizeZ / footprint < 0.05f) {
+                        camera.elevation = 82f
+                    }
+                }
                 camera.panX = 0f
                 camera.panY = 0f
                 camera.updateProjectionMatrix(viewportWidth, viewportHeight)

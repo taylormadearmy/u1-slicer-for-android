@@ -403,6 +403,16 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
             for (const auto* volume : object->volumes) {
                 if (volume == nullptr || !volume->is_model_part()) continue;
 
+                // Skip tiny construction volumes (e.g. base pads, alignment prisms)
+                // that add no visual value when the model has many larger volumes.
+                const int vol_tri_count = volume->mmu_segmentation_facets.empty()
+                    ? static_cast<int>(volume->mesh().its.indices.size())
+                    : 0;  // mmu volumes always rendered
+                if (vol_tri_count > 0 && vol_tri_count < 100 && total_tris > 100000) {
+                    ++volume_index;
+                    continue;
+                }
+
                 int fallback_extruder = volume->extruder_id();
                 if (preview_extruders != nullptr && volume_index < preview_extruders->size() &&
                     (*preview_extruders)[volume_index] > 0) {
