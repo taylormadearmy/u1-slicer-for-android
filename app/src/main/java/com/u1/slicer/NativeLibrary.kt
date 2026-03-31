@@ -33,7 +33,8 @@ class NativeLibrary {
     external fun loadModel(path: String): Boolean
     external fun clearModel()
     external fun getModelInfo(): ModelInfo?
-    external fun getPreparePreviewMesh(maxTriangles: Int = NativePreviewMesh.MAX_DECIMATED_TRIANGLES): NativePreviewMesh?
+    // Pass 0 to let native auto-select budget (flat models get 500K, others get 100K).
+    external fun getPreparePreviewMesh(maxTriangles: Int = 0): NativePreviewMesh?
 
     // ---- Slicing ----
     external fun slice(config: SliceConfig): SliceResult?

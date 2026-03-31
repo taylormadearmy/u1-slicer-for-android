@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <regex>
+#include <chrono>
 
 // PrusaSlicer includes
 #include "libslic3r/Model.hpp"
@@ -343,17 +344,32 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
         }
     }
 
-    const int effective_max = (max_triangles > 0) ? max_triangles : 100000;
+    // Flat models (height < 5% of footprint) carry nearly all their geometry as surface
+    // detail — text, track outlines, raised features. The standard 100K budget collapses
+    // this detail to nothing. Use 500K for flat models so fine features survive QEM.
+    // F1 calendar: 210×250×6mm → height_ratio = 6/250 = 0.024 → flat → 500K budget.
+    const float height_ratio = (g_model_info.size_x > 0 && g_model_info.size_y > 0)
+        ? g_model_info.size_z / std::max(g_model_info.size_x, g_model_info.size_y)
+        : 1.0f;
+    const bool is_flat_model = height_ratio < 0.05f;
+    const int default_max = is_flat_model ? 500000 : 100000;
+    const int effective_max = (max_triangles > 0) ? max_triangles : default_max;
     const bool needs_decimation = total_tris > effective_max;
-    // QEM is O(n log n) and memory-intensive. For very large meshes (>2M tris) it can take
-    // minutes and OOM on device. Fall back to stride decimation for those cases.
-    const bool use_qem = needs_decimation && total_tris <= 2000000;
-    const int stride = (!use_qem && needs_decimation)
+    // QEM per-volume: apply QEM to any volume that is ≤2M triangles on its own.
+    // This handles large models composed of many smaller volumes (e.g. F1 calendar:
+    // 8M total tris across 7 volumes of ~1M each — global check would force stride,
+    // but per-volume check allows QEM on each piece for clean geometry).
+    // A 10-second wall-clock budget prevents pathological cases: if QEM is taking
+    // too long, remaining volumes fall back to stride decimation.
+    const int QEM_PER_VOLUME_MAX = 2000000;
+    const int stride = needs_decimation
         ? ((total_tris + effective_max - 1) / effective_max)
         : 1;
+    const auto qem_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    bool qem_budget_exceeded = false;
 
-    SAPIL_LOGI("getPreparePreviewMesh: total_tris=%d max=%d qem=%s stride=%d",
-        total_tris, effective_max, use_qem ? "yes" : "no", stride);
+    SAPIL_LOGI("getPreparePreviewMesh: total_tris=%d max=%d stride=%d flat=%s height_ratio=%.3f",
+        total_tris, effective_max, stride, is_flat_model ? "yes" : "no", height_ratio);
 
     size_t object_index = 0;
     for (const auto* object : g_model.objects) {
@@ -387,31 +403,47 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                         if (its.indices.empty()) continue;
                         its_transform(its, volume->get_matrix(), true);
                         its_transform(its, instance_matrix, true);
-                        if (use_qem) {
+                        const int vol_tris = static_cast<int>(its.indices.size());
+                        const bool can_qem = needs_decimation && !qem_budget_exceeded
+                            && vol_tris <= QEM_PER_VOLUME_MAX;
+                        if (can_qem) {
                             const uint32_t target = static_cast<uint32_t>(
                                 std::max(INT64_C(1),
-                                    static_cast<int64_t>(its.indices.size()) * effective_max / total_tris));
+                                    static_cast<int64_t>(vol_tris) * effective_max / total_tris));
                             if (its.indices.size() > target)
                                 Slic3r::its_quadric_edge_collapse(its, target);
+                            if (std::chrono::steady_clock::now() > qem_deadline) {
+                                qem_budget_exceeded = true;
+                                SAPIL_LOGW("getPreparePreviewMesh: QEM time budget exceeded, switching to stride");
+                            }
                         }
                         const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-                        appendItsPreviewMesh(out, its, extruder_index, stride, tri_counter);
+                        const int vol_stride = (can_qem || !needs_decimation) ? 1 : stride;
+                        appendItsPreviewMesh(out, its, extruder_index, vol_stride, tri_counter);
                     }
                 } else {
                     auto its = volume->mesh().its;
                     its_transform(its, volume->get_matrix(), true);
                     its_transform(its, instance_matrix, true);
-                    if (use_qem) {
+                    const int vol_tris = static_cast<int>(its.indices.size());
+                    const bool can_qem = needs_decimation && !qem_budget_exceeded
+                        && vol_tris <= QEM_PER_VOLUME_MAX;
+                    if (can_qem) {
                         const uint32_t target = static_cast<uint32_t>(
                             std::max(INT64_C(1),
-                                static_cast<int64_t>(its.indices.size()) * effective_max / total_tris));
+                                static_cast<int64_t>(vol_tris) * effective_max / total_tris));
                         if (its.indices.size() > target)
                             Slic3r::its_quadric_edge_collapse(its, target);
+                        if (std::chrono::steady_clock::now() > qem_deadline) {
+                            qem_budget_exceeded = true;
+                            SAPIL_LOGW("getPreparePreviewMesh: QEM time budget exceeded, switching to stride");
+                        }
                     }
+                    const int vol_stride = (can_qem || !needs_decimation) ? 1 : stride;
                     int tri_counter = 0;
-                    appendItsPreviewMesh(out, its, fallback_index, stride, tri_counter);
+                    appendItsPreviewMesh(out, its, fallback_index, vol_stride, tri_counter);
                 }
                 ++volume_index;
             }
