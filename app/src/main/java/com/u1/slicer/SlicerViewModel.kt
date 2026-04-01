@@ -611,8 +611,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val filename = normalizeIncomingFilename(getDisplayName(context, uri) ?: "model.stl")
                 currentModelName = filename
-                _state.value = SlicerState.Loading("Loading $filename…")
                 val file = File(workspaceDir, filename)
+                _state.value = SlicerState.Loading(loadingMessageFor(filename, file.length()))
                 // Copy via temp file to avoid self-referential truncation
                 // when the source URI points to our own FileProvider
                 val tmpFile = File(transientCacheDir(), "import_${System.currentTimeMillis()}")
@@ -788,7 +788,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val filename = normalizeIncomingFilename(file.name)
                 currentModelName = filename
-                _state.value = SlicerState.Loading("Loading $filename…")
+                _state.value = SlicerState.Loading(loadingMessageFor(filename, file.length()))
 
                 val sourceFile = if (file.parentFile?.absolutePath == workspaceDir.absolutePath) {
                     file
@@ -990,6 +990,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 lastModelInfo = info
                 _modelInfo.value = info
                 _modelScale.value = ModelScale()  // reset to 1× on each new load
+                if (isLargeTriangleCount(info.triangleCount)) {
+                    _state.value = SlicerState.Loading("Large model — preview may take a moment…")
+                }
                 _state.value = SlicerState.ModelLoaded(info)
 
                 // Check for multi-color from 3MF parsing
