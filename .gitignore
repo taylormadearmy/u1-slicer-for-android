@@ -62,3 +62,6 @@ diagnostics_pulls/
 /_*.zip
 /_embedded_*_unzipped/
 app/.cmake-orca-arm64/
+
+# Git worktrees
+.worktrees/
