@@ -829,7 +829,7 @@ fun PrepareScreen(
                                 wipeTowerX = config.wipeTowerX,
                                 wipeTowerY = config.wipeTowerY,
                                 wipeTowerWidth = config.wipeTowerWidth,
-                                wipeTowerDepth = config.wipeTowerWidth,
+                                wipeTowerDepth = com.u1.slicer.data.WipeTowerDepthEstimator.estimateDepth(loadedInfo?.sizeZ ?: 0f),
                                 onPositionsChanged = { pos, towerPos ->
                                     viewModel.applyPlacementPositions(pos, towerPos)
                                 },
