@@ -123,6 +123,7 @@ data class SlicingOverrides(
                 true
             else
                 res(primeTower, base.wipeTowerEnabled, "primeTower"),
+            wipeTowerWidth = res(primeTowerWidth, base.wipeTowerWidth, "primeTowerWidth"),
         )
     }
 
