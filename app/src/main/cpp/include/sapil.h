@@ -128,7 +128,8 @@ public:
     // Model operations
     bool loadModel(const std::string& filepath);
     ModelInfo getModelInfo() const;
-    PreviewMesh getPreparePreviewMesh(int max_triangles = 100000) const;
+    // Pass 0 (default) to auto-select budget: flat models get 500K, others 100K.
+    PreviewMesh getPreparePreviewMesh(int max_triangles = 0) const;
     void clearModel();
 
     // Slicing

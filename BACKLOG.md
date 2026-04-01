@@ -65,13 +65,15 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Set automatically in `SlicerViewModel` when layer-tool pause injection ran — summary correctly shows per-extruder breakdown for Hueforge prints
 - Issue #27 closed.
 
-### F48: Better Prepare preview for very large 3MF models (GitHub #29) — PARTIALLY DONE v1.5.17
-- Native C++ path now uses QEM (`its_quadric_edge_collapse`) to simplify to ≤100K triangles — clean geometry, no holes
-- Kotlin path (painted/SEMM models) still uses stride decimation; cap raised to 500K so typical painted models pass through untouched
-- **Remaining work (F48-kotlin-qem):**
-  - Painted models >500K triangles will still show broken geometry (stride decimation)
-  - Long-term fix: either route painted model preview through the native C++ path (avoids Kotlin stride entirely), or port a proper simplification algorithm to Kotlin
-  - Native path: QEM runs in world-space after transform — may produce suboptimal results for models with very large coordinates; investigate running QEM in local object space before transform
+### F48: Better Prepare preview for very large 3MF models (GitHub #29) — DONE v1.5.22
+- Native C++ per-volume QEM decimation with 10-second time budget — large volumes get QEM'd until deadline, then remaining fall back to stride
+- Small volumes (<1000 tris) pass through untouched — preserves base plates, frames, and other low-poly construction geometry
+- Degenerate triangle filter: zero-area triangles skipped before stride counting so spatial sampling is even
+- Flat model detection (height/footprint <5%): auto-selects 500K triangle budget (vs 100K default)
+- Preview mesh caching: result cached after first computation, returned instantly on tab switch; invalidated on model load/clear/scale/instances change
+- F1 calendar (8M triangles): loads in ~90s, QEM preview ~500K tris with visible track outlines and text
+- Kotlin path (painted/SEMM models) still uses stride decimation; cap at 500K so typical painted models pass through untouched
+- **Remaining (low priority):** painted models >500K tris still use stride; could route through native path long-term
 - Track: [`#29`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/29)
 
 ### F45: Bambu printer support (GitHub #16)

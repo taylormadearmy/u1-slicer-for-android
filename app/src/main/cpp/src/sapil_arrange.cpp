@@ -13,6 +13,7 @@ namespace sapil {
 // Forward declarations from sapil_model.cpp
 extern Slic3r::Model& getGlobalModel();
 extern bool isModelLoaded();
+extern void invalidatePreviewMeshCache();
 
 bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>& positions) {
     if (!isModelLoaded()) {
@@ -88,6 +89,7 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
         }
     }
 
+    invalidatePreviewMeshCache();
     SAPIL_LOGI("Set %d instance(s) across %d object(s)",
         (int)positions.size(), (int)model.objects.size());
     return true;
@@ -129,6 +131,7 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
             ));
         }
     }
+    invalidatePreviewMeshCache();
     SAPIL_LOGI("Set model scale: %.3f, %.3f, %.3f (center: %.1f, %.1f, %.1f)",
         x, y, z, center.x(), center.y(), center.z());
     return true;

@@ -34,6 +34,8 @@ static ModelInfo g_model_info;
 static bool g_model_loaded = false;
 static std::string g_files_dir;  // App files directory, derived from model path
 static std::vector<std::vector<int>> g_model_preview_extruders;
+static PreviewMesh g_cached_preview_mesh;
+static bool g_preview_mesh_valid = false;
 
 static int locateZipEntry(mz_zip_archive& zip, const char* exact_path)
 {
@@ -227,6 +229,7 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
         g_model_info.is_manifold = all_manifold;
 
         g_model_loaded = true;
+        g_preview_mesh_valid = false;
 
         SAPIL_LOGI("Model loaded: %s (%s) — %.1f x %.1f x %.1f mm, %d triangles",
             g_model_info.filename.c_str(), ext.c_str(),
@@ -251,8 +254,7 @@ static void appendItsPreviewMesh(
     const indexed_triangle_set& its,
     uint8_t extruder_index,
     int stride,
-    int& tri_counter,
-    bool upward_only = false
+    int& tri_counter
 ) {
     bool logged_invalid_index = false;
     bool logged_invalid_vertex = false;
@@ -303,11 +305,6 @@ static void appendItsPreviewMesh(
         const Eigen::Vector3f cross = e1.cross(e2);
         if (cross.squaredNorm() < 1e-12f) continue;
 
-        // For flat models, skip side-wall triangles — keep only upward-facing faces.
-        // This gives a clean top-down silhouette of raised elements (tracks, text)
-        // instead of a wall-dominated view that renders as an opaque mass.
-        if (upward_only && cross.z() <= 0.0f) continue;
-
         // Stride over valid non-degenerate triangles
         if (stride > 1 && (tri_counter % stride != 0)) { ++tri_counter; continue; }
         ++tri_counter;
@@ -340,6 +337,13 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     PreviewMesh out;
     if (!g_model_loaded) {
         return out;
+    }
+
+    // Return cached result if available — avoids expensive re-decimation on tab switch
+    if (g_preview_mesh_valid) {
+        SAPIL_LOGI("getPreparePreviewMesh: returning cached result (%zu tris)",
+            g_cached_preview_mesh.extruder_indices.size());
+        return g_cached_preview_mesh;
     }
 
     // Count total triangles across all printable volumes to compute stride
@@ -378,7 +382,6 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     // but per-volume check allows QEM on each piece for clean geometry).
     // A 10-second wall-clock budget prevents pathological cases: if QEM is taking
     // too long, remaining volumes fall back to stride decimation.
-    const int QEM_PER_VOLUME_MAX = 2000000;
     const int stride = needs_decimation
         ? ((total_tris + effective_max - 1) / effective_max)
         : 1;
@@ -403,16 +406,6 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
             for (const auto* volume : object->volumes) {
                 if (volume == nullptr || !volume->is_model_part()) continue;
 
-                // Skip tiny construction volumes (e.g. base pads, alignment prisms)
-                // that add no visual value when the model has many larger volumes.
-                const int vol_tri_count = volume->mmu_segmentation_facets.empty()
-                    ? static_cast<int>(volume->mesh().its.indices.size())
-                    : 0;  // mmu volumes always rendered
-                if (vol_tri_count > 0 && vol_tri_count < 100 && total_tris > 100000) {
-                    ++volume_index;
-                    continue;
-                }
-
                 int fallback_extruder = volume->extruder_id();
                 if (preview_extruders != nullptr && volume_index < preview_extruders->size() &&
                     (*preview_extruders)[volume_index] > 0) {
@@ -425,20 +418,16 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     std::vector<indexed_triangle_set> facets_per_type;
                     volume->mmu_segmentation_facets.get_facets(*volume, facets_per_type);
                     int tri_counter = 0;
-                    // On flat models, QEM on a near-planar surface creates arbitrarily large
-                    // spanning triangles that render as a solid fill, hiding detail underneath.
-                    // Use stride decimation for all mmu groups on flat models — stride preserves
-                    // connectivity (no giant merged triangles) and is fast. QEM is reserved for
-                    // non-flat models where curvature guides meaningful edge collapses.
                     for (size_t state_idx = 0; state_idx < facets_per_type.size(); ++state_idx) {
                         auto its = facets_per_type[state_idx];
                         if (its.indices.empty()) continue;
                         its_transform(its, volume->get_matrix(), true);
                         its_transform(its, instance_matrix, true);
                         const int vol_tris = static_cast<int>(its.indices.size());
-                        const bool can_qem = needs_decimation && !qem_budget_exceeded
-                            && !is_flat_model
-                            && vol_tris <= QEM_PER_VOLUME_MAX;
+                        // Same logic as non-MMU: skip small groups, rely on time budget
+                        const int MIN_DECIMATION_TRIS_MMU = 1000;
+                        const bool vol_needs_dec = needs_decimation && vol_tris > MIN_DECIMATION_TRIS_MMU;
+                        const bool can_qem = vol_needs_dec && !qem_budget_exceeded;
                         if (can_qem) {
                             const uint32_t target = static_cast<uint32_t>(
                                 std::max(INT64_C(1),
@@ -453,19 +442,20 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                         const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-                        const int vol_stride = (can_qem || !needs_decimation) ? 1 : stride;
-                        appendItsPreviewMesh(out, its, extruder_index, vol_stride, tri_counter, is_flat_model && vol_stride > 1);
+                        const int vol_stride = (can_qem || !vol_needs_dec) ? 1 : stride;
+                        appendItsPreviewMesh(out, its, extruder_index, vol_stride, tri_counter);
                     }
                 } else {
                     auto its = volume->mesh().its;
                     its_transform(its, volume->get_matrix(), true);
                     its_transform(its, instance_matrix, true);
                     const int vol_tris = static_cast<int>(its.indices.size());
-                    // No per-volume size cap for QEM — rely solely on time budget.
-                    // Large volumes (e.g. 7.6M tri embossed calendars) QEM well under
-                    // budget and produce correct previews; stride on such models creates
-                    // opaque blanket coverage hiding the underlying geometry.
-                    const bool can_qem = needs_decimation && !qem_budget_exceeded;
+                    // Only decimate volumes with enough triangles to be worth it.
+                    // Small volumes (base plates, frames) must pass through unchanged
+                    // so their shape is preserved. QEM uses a time budget, not a size cap.
+                    const int MIN_DECIMATION_TRIS = 1000;
+                    const bool vol_needs_decimation = needs_decimation && vol_tris > MIN_DECIMATION_TRIS;
+                    const bool can_qem = vol_needs_decimation && !qem_budget_exceeded;
                     if (can_qem) {
                         const uint32_t target = static_cast<uint32_t>(
                             std::max(INT64_C(1),
@@ -477,9 +467,9 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                             SAPIL_LOGW("getPreparePreviewMesh: QEM time budget exceeded, switching to stride");
                         }
                     }
-                    const int vol_stride = (can_qem || !needs_decimation) ? 1 : stride;
+                    const int vol_stride = (can_qem || !vol_needs_decimation) ? 1 : stride;
                     int tri_counter = 0;
-                    appendItsPreviewMesh(out, its, fallback_index, vol_stride, tri_counter, is_flat_model && vol_stride > 1);
+                    appendItsPreviewMesh(out, its, fallback_index, vol_stride, tri_counter);
                 }
                 ++volume_index;
             }
@@ -488,11 +478,21 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     }
 
     compactPreviewIndices(out);
+
+    // Cache for instant return on tab switch
+    g_cached_preview_mesh = out;
+    g_preview_mesh_valid = true;
+
     return out;
 }
 
 // Accessor for sapil_print.cpp to get the app files directory
 std::string getFilesDir() { return g_files_dir; }
+
+// Called by sapil_arrange.cpp when instances/scale change to invalidate cached preview
+void invalidatePreviewMeshCache() {
+    g_preview_mesh_valid = false;
+}
 
 void SlicerEngine::clearModel() {
     const size_t old_object_count = g_model.objects.size();
@@ -501,6 +501,8 @@ void SlicerEngine::clearModel() {
     g_model_config = Slic3r::DynamicPrintConfig();
     g_model_info = ModelInfo();
     g_model_loaded = false;
+    g_preview_mesh_valid = false;
+    g_cached_preview_mesh = PreviewMesh();
     g_model_preview_extruders.clear();
     g_files_dir.clear();
     std::ostringstream payload;

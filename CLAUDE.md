@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.5.22` (`versionCode 188`)
+Current release: `v1.5.23` (`versionCode 189`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -52,7 +52,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 590 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 136 instrumented tests (uses Orchestrator)
+./gradlew connectedDebugAndroidTest                # 139 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -95,7 +95,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic
 
-### Instrumented tests (`app/src/androidTest/`) - 136 tests across 14 classes
+### Instrumented tests (`app/src/androidTest/`) - 139 tests across 14 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
