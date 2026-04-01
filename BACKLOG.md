@@ -124,11 +124,16 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - UI must clearly label output as draft; not suitable for final production slices
 - Track: [`#34`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/34)
 
-### F56: Show loading indicator / warning when a very large model is detected (GitHub #35)
-- Models with millions of triangles cause the Prepare screen to appear frozen with no feedback
-- Triangle count is available immediately after `loadModel()` — show a toast or inline notice (e.g. "Large model — preview may take a moment") when count exceeds ~500K
-- Optionally: progress spinner in 3D viewport while preview mesh is being built
+### F56: Show loading indicator / warning when a very large model is detected (GitHub #35) — DONE v1.5.24
+- "Large model — this may take a moment…" shown when file >50MB; "Large model — preview may take a moment…" shown after load when triangle count >500K
 - Track: [`#35`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/35)
+
+### F57: Rotate model on build plate (all axes) + rotate prime tower (GitHub #37)
+- Allow rotating the loaded model on all three axes (X, Y, Z) from the Prepare screen, with live 3D preview update
+- Rotation state must persist through to the slice (passed as geometry transform to native engine)
+- Separate control to rotate the prime tower independently on the build plate
+- Consider rotation snapping (e.g. 45° increments) vs. free rotation
+- Track: [`#37`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/37)
 
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
@@ -138,6 +143,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **F56/F#35**: Large model loading warning — "Large model — this may take a moment…" on file >50MB; "preview may take a moment…" on triangle count >500K — DONE v1.5.24
+- **F#36**: Prime tower footprint accuracy — Prepare preview now shows correct rectangular wipe tower (estimated depth via OrcaSlicer height→depth heuristic) instead of square — DONE v1.5.24
+- **B#37 regression**: Wipe tower Y-clamp mismatch introduced in v1.5.24 — pre-slice clamp and drag clamp now both use `WipeTowerDepthEstimator.estimateDepth()` for the Y axis; auto-placement `computeWipeTowerPosition()` uses correct rectangular footprint — FIXED v1.5.25
+- **F#38**: Reset & Retry after Clipper slicing error — error card now shows "Reset & Retry" button which reloads the native model without requiring the user to re-pick the file — DONE v1.5.25
 - **F44**: Print progress notifications — printer polling now updates an ongoing Android notification for active and paused prints with current progress, without needing a separate foreground polling service — DONE v1.4.27-dev
 - **Backup import skirt regression**: importing an older settings backup could restore stale `skirtLoops=1` into the live in-memory config for the current session, causing unexpected skirts despite the repository default being forced to 0; imports are now normalized and covered by a regression test — FIXED v1.4.26
 - **F41/F42/F43**: Added Reduce Infill Retraction toggle, Wall Generator + Seam Position overrides, native fallback/profile-key support, and inline embedded 3MF file values on Prepare override rows via `sourceConfig` threading — DONE v1.4.26
