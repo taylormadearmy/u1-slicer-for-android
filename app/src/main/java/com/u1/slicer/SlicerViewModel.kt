@@ -612,7 +612,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val filename = normalizeIncomingFilename(getDisplayName(context, uri) ?: "model.stl")
                 currentModelName = filename
                 val file = File(workspaceDir, filename)
-                _state.value = SlicerState.Loading(loadingMessageFor(filename, file.length()))
+                val uriSizeBytes = context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: 0L
+                _state.value = SlicerState.Loading(loadingMessageFor(filename, uriSizeBytes))
                 // Copy via temp file to avoid self-referential truncation
                 // when the source URI points to our own FileProvider
                 val tmpFile = File(transientCacheDir(), "import_${System.currentTimeMillis()}")
