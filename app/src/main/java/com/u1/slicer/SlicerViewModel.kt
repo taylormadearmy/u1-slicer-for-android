@@ -191,6 +191,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _modelScale = MutableStateFlow(ModelScale())
     val modelScale: StateFlow<ModelScale> = _modelScale.asStateFlow()
 
+    data class ModelRotation(val x: Float = 0f, val y: Float = 0f, val z: Float = 0f)
+    private val _modelRotation = MutableStateFlow(ModelRotation())
+    val modelRotation: StateFlow<ModelRotation> = _modelRotation.asStateFlow()
+
     // Custom object positions set from PlacementViewer (null = use auto grid)
     // Flat array [x0,y0,x1,y1,...] in mm
     private var customObjectPositions: FloatArray? = null
@@ -1005,6 +1009,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 lastModelInfo = info
                 _modelInfo.value = info
                 _modelScale.value = ModelScale()  // reset to 1× on each new load
+                _modelRotation.value = ModelRotation()
                 if (isLargeTriangleCount(info.triangleCount)) {
                     _state.value = SlicerState.Loading("Large model — preview may take a moment…")
                     kotlinx.coroutines.delay(0)
@@ -1267,6 +1272,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun setModelScale(scale: ModelScale) {
         _modelScale.value = scale
         customObjectPositions = null // reset positions — re-center for new scaled size
+    }
+
+    fun setModelRotation(rotation: ModelRotation) {
+        _modelRotation.value = rotation
+        customObjectPositions = null // reset positions — re-center for rotated footprint
     }
 
     fun setCopyCount(count: Int) {
@@ -1784,6 +1794,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
                     native.setModelScale(scale.x, scale.y, scale.z)
                     Log.i("SlicerVM", "Applied model scale: ${scale.x}×${scale.y}×${scale.z}")
+                }
+                val rot = _modelRotation.value
+                if (rot.x != 0f || rot.y != 0f || rot.z != 0f) {
+                    native.setModelRotation(rot.x, rot.y, rot.z)
                 }
 
                 val copies = _copyCount.value
