@@ -250,7 +250,7 @@ class CopyArrangeCalculatorTest {
         assertTrue(resultSquare.first >= 0f && resultSquare.first <= 210f)
         assertTrue(resultSquare.second >= 0f && resultSquare.second <= 210f)
         assertTrue(resultRect.first >= 0f && resultRect.first <= 210f)
-        assertTrue(resultRect.second >= 0f && resultRect.second <= 250f)  // 270-20
+        assertTrue(resultRect.second >= 0f && resultRect.second <= 240f)  // 270-20-10 (edgeMargin)
     }
 
     @Test
