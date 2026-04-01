@@ -149,6 +149,10 @@ public:
     // Scale the loaded model (applied per instance, before setModelInstances)
     bool setModelScale(float x, float y, float z);
 
+    // Rotate the loaded model (Euler angles in degrees, applied per instance).
+    // Call after setModelScale and before setModelInstances.
+    bool setModelRotation(float rx_deg, float ry_deg, float rz_deg);
+
 private:
     struct Impl;
     Impl* pImpl;
