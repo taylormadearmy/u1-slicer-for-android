@@ -47,6 +47,13 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 
+internal fun loadingMessageFor(filename: String, fileSizeBytes: Long): String =
+    if (fileSizeBytes > 50 * 1024 * 1024L) "Large model — this may take a moment…"
+    else "Loading $filename…"
+
+internal fun isLargeTriangleCount(triangleCount: Int): Boolean =
+    triangleCount > com.u1.slicer.viewer.NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES
+
 class SlicerViewModel(application: Application) : AndroidViewModel(application) {
 
     private data class SliceOutputValidation(
