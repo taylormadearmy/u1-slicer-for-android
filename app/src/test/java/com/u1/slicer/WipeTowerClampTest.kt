@@ -23,7 +23,7 @@ class WipeTowerClampTest {
             towerWidth = towerWidth, towerDepth = estimatedDepth
         )
         assertEquals(bedSize - towerWidth, maxX, 0.01f)   // X uses width
-        assertEquals(bedSize - estimatedDepth, maxY, 0.01f) // Y uses depth (20mm, not 30mm)
+        assertEquals(bedSize - estimatedDepth, maxY, 0.01f) // Y uses depth (20mm, not width 60mm)
     }
 
     @Test fun `maxY uses estimated depth for tall model`() {

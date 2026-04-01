@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 590 JVM unit tests
+./gradlew testDebugUnitTest                        # 593 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 139 instrumented tests (uses Orchestrator)
 ```
 
