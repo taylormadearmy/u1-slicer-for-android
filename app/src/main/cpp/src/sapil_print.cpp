@@ -621,6 +621,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "prime_tower_brim_width",
                     "wipe_tower_x",
                     "wipe_tower_y",
+                    "wipe_tower_rotation_angle",
                     // Extruder offsets (per-extruder, must match extruder count)
                     "extruder_offset",
                     // Tool change / wipe tower filament handling (from printer+filament profile)

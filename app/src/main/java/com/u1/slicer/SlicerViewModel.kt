@@ -3063,6 +3063,8 @@ internal fun buildProfileOverridesImpl(
     val primeTowerBrimWidth = resolve(ov.primeTowerBrimWidth, 3f, "primeTowerBrimWidth")
     val primeTowerBrimChamfer = resolve(ov.primeTowerBrimChamfer, true, "primeTowerBrimChamfer")
     val primeTowerChamferMaxWidth = resolve(ov.primeTowerChamferMaxWidth, 5f, "primeTowerChamferMaxWidth")
+    val primeTowerWidth = resolve(ov.primeTowerWidth, cfg.wipeTowerWidth, "primeTowerWidth")
+    val wipeTowerRotationAngle = resolve(ov.wipeTowerRotationAngle, 0f, "wipeTowerRotationAngle")
 
     val result = mutableMapOf<String, Any>(
         "layer_height" to layerHeight.toString(),
@@ -3091,13 +3093,14 @@ internal fun buildProfileOverridesImpl(
         // to prevent skirt generation even if some other config path sets loops>0
         "skirt_height" to if (skirtLoops > 0) "1" else "0",
         "enable_prime_tower" to if (primeTower) "1" else "0",
-        "prime_tower_width" to cfg.wipeTowerWidth.toString(),
+        "prime_tower_width" to primeTowerWidth.toString(),
         "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
         "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() },
         "prime_volume" to primeVolume.toString(),
         "prime_tower_brim_width" to primeTowerBrimWidth.toString(),
         "prime_tower_brim_chamfer" to if (primeTowerBrimChamfer) "1" else "0",
-        "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString()
+        "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString(),
+        "wipe_tower_rotation_angle" to wipeTowerRotationAngle.toString()
     )
 
     // sparse_infill_speed: 0 means "auto" — only emit when the user has overridden to a
