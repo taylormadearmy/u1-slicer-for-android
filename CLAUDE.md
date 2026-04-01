@@ -57,7 +57,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
-### Unit tests (`app/src/test/`) - 590 tests across 37 classes
+### Unit tests (`app/src/test/`) - 593 tests across 38 classes
 - `gcode/GcodeParserTest.kt` (26) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -94,6 +94,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - iewer/ModelViewerViewTest.kt (3) — Prepare selection falls back from face-plane to bed-plane hit-testing when needed
 
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic
+- `WipeTowerClampTest.kt` (3) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width
 
 ### Instrumented tests (`app/src/androidTest/`) - 139 tests across 14 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count

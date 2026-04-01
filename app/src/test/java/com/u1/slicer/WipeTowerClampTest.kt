@@ -8,7 +8,7 @@ import org.junit.Test
  * Verifies that wipeTowerClampBounds() uses estimated depth (not width) for the Y axis.
  *
  * The regression: depth is 20mm for short models (≤100mm), but pre-slice clamp was
- * using wipeTowerWidth (30mm) for both axes, creating a 10mm discrepancy with the
+ * using wipeTowerWidth (60mm) for both axes, creating a 40mm discrepancy with the
  * drag clamp in the UI.
  */
 class WipeTowerClampTest {

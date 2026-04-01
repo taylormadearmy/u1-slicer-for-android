@@ -29,6 +29,7 @@ import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.PlateType
 import com.u1.slicer.data.SettingsBackup
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
@@ -1848,7 +1849,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
                     if (cfg.wipeTowerEnabled) {
-                        val estimatedDepth = com.u1.slicer.data.WipeTowerDepthEstimator.estimateDepth(lastModelInfo?.sizeZ ?: 0f)
+                        val estimatedDepth = WipeTowerDepthEstimator.estimateDepth(lastModelInfo?.sizeZ ?: 0f)
                         val (maxX, maxY) = wipeTowerClampBounds(cfg.bedSizeX, cfg.bedSizeY, cfg.wipeTowerWidth, estimatedDepth)
                         val clampedX = cfg.wipeTowerX.coerceIn(0f, maxX)
                         val clampedY = cfg.wipeTowerY.coerceIn(0f, maxY)

@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.u1.slicer.data.ModelInfo
+import com.u1.slicer.data.WipeTowerDepthEstimator
 
 private const val BED_MM = 270f
 private val OBJECT_COLORS = listOf(
@@ -121,6 +122,7 @@ fun PlacementViewerScreen(
                     modifier = Modifier.size(minOf(maxWidth, maxHeight)),
                     modelSizeX = modelInfo.sizeX,
                     modelSizeY = modelInfo.sizeY,
+                    towerDepthMm = WipeTowerDepthEstimator.estimateDepth(modelInfo.sizeZ),
                     copyCount = copyCount,
                     wipeTowerEnabled = wipeTowerEnabled,
                     wipeTowerWidthMm = wipeTowerWidthMm,
@@ -170,6 +172,7 @@ fun SimplifiedPlacementBed(
     modifier: Modifier = Modifier,
     modelSizeX: Float,
     modelSizeY: Float,
+    towerDepthMm: Float,
     copyCount: Int,
     wipeTowerEnabled: Boolean,
     wipeTowerWidthMm: Float,
@@ -191,7 +194,7 @@ fun SimplifiedPlacementBed(
         contentAlignment = Alignment.Center
     ) {
         val canvasSize = minOf(maxWidth, maxHeight)
-        val towerDepthMm = wipeTowerWidthMm
+        // towerDepthMm is passed in directly (estimated from model height by caller)
 
         Box(modifier = Modifier.size(canvasSize), contentAlignment = Alignment.Center) {
             Canvas(
