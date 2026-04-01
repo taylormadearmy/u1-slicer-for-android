@@ -799,6 +799,7 @@ fun PrepareScreen(
                         ErrorCard(
                             (state as SlicerViewModel.SlicerState.Error).message,
                             onPickFile,
+                            onResetAndRetry = { viewModel.recoverFromClipperError() },
                             onRestart = { viewModel.restartApp() },
                             onShareDiagnostics = { viewModel.shareDiagnostics() }
                         )
@@ -2269,6 +2270,7 @@ fun InlineModelPreview(
                     triangleCount = modelTriangleCount,
                     modelSizeX = modelSizeX * modelScale.x,
                     modelSizeY = modelSizeY * modelScale.y,
+                    wipeTowerDepth = wipeTowerDepth,
                     objectPositions = objPositions.copyOf(),
                     wipeTowerVisible = placementConfig.wipeTowerVisible,
                     wipeTowerWidth = wipeTowerWidth,
@@ -2341,6 +2343,7 @@ private fun LargePreviewFallback(
     triangleCount: Int,
     modelSizeX: Float,
     modelSizeY: Float,
+    wipeTowerDepth: Float,
     objectPositions: FloatArray,
     wipeTowerVisible: Boolean,
     wipeTowerWidth: Float,
@@ -2360,6 +2363,7 @@ private fun LargePreviewFallback(
             modifier = Modifier.fillMaxSize(),
             modelSizeX = modelSizeX,
             modelSizeY = modelSizeY,
+            towerDepthMm = wipeTowerDepth,
             copyCount = objPositions.size / 2,
             wipeTowerEnabled = wipeTowerVisible,
             wipeTowerWidthMm = wipeTowerWidth,

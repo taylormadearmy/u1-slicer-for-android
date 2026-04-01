@@ -2323,6 +2323,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * Reload the model from the already-processed file and return to ModelLoaded state.
+     * Called when the user taps "Reset & Retry" after a Clipper slicing failure.
+     *
+     * All Kotlin model state (lastModelInfo, _threeMfInfo, color mapping) is already intact —
+     * only the native model was cleared. Re-running loadNativeModel() restores the JNI state
+     * without requiring the user to pick the file again.
+     */
+    fun recoverFromClipperError() {
+        val file = currentModelFile ?: return
+        viewModelScope.launch {
+            _state.value = SlicerState.Loading("Reloading model…")
+            loadNativeModel(file)
+        }
+    }
+
+    /**
      * Nuclear option: clear transient cache, reset native state, and exit the current process.
      * The user can reopen the app manually to get a fresh JNI/native init.
      */
