@@ -973,7 +973,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _threeMfInfo.value = null
     }
 
-    private fun loadNativeModel(file: File) {
+    private suspend fun loadNativeModel(file: File) {
         val firstModelLoadThisLaunch = diagnostics.markFirstModelLoad()
         val success = native.loadModel(file.absolutePath)
         diagnostics.recordEvent(
@@ -993,11 +993,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 _modelScale.value = ModelScale()  // reset to 1× on each new load
                 if (isLargeTriangleCount(info.triangleCount)) {
                     _state.value = SlicerState.Loading("Large model — preview may take a moment…")
-                    viewModelScope.launch {
-                        kotlinx.coroutines.delay(0)
-                        _state.value = SlicerState.ModelLoaded(info)
-                    }
-                    return
+                    kotlinx.coroutines.delay(0)
                 }
                 _state.value = SlicerState.ModelLoaded(info)
 
