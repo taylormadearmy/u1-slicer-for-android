@@ -54,6 +54,20 @@ internal fun loadingMessageFor(filename: String, fileSizeBytes: Long): String =
 internal fun isLargeTriangleCount(triangleCount: Int): Boolean =
     triangleCount > com.u1.slicer.viewer.NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES
 
+/**
+ * Returns (maxX, maxY) for wipe tower position clamping.
+ * X uses towerWidth (the tower is wider than it is deep).
+ * Y uses towerDepth (estimated from model height via WipeTowerDepthEstimator).
+ */
+internal fun wipeTowerClampBounds(
+    bedSizeX: Float, bedSizeY: Float,
+    towerWidth: Float, towerDepth: Float
+): Pair<Float, Float> {
+    val maxX = (bedSizeX - towerWidth).coerceAtLeast(0f)
+    val maxY = (bedSizeY - towerDepth).coerceAtLeast(0f)
+    return maxX to maxY
+}
+
 class SlicerViewModel(application: Application) : AndroidViewModel(application) {
 
     private data class SliceOutputValidation(
@@ -1834,8 +1848,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
                     if (cfg.wipeTowerEnabled) {
-                        val maxX = (cfg.bedSizeX - cfg.wipeTowerWidth).coerceAtLeast(0f)
-                        val maxY = (cfg.bedSizeY - cfg.wipeTowerWidth).coerceAtLeast(0f)
+                        val estimatedDepth = com.u1.slicer.data.WipeTowerDepthEstimator.estimateDepth(lastModelInfo?.sizeZ ?: 0f)
+                        val (maxX, maxY) = wipeTowerClampBounds(cfg.bedSizeX, cfg.bedSizeY, cfg.wipeTowerWidth, estimatedDepth)
                         val clampedX = cfg.wipeTowerX.coerceIn(0f, maxX)
                         val clampedY = cfg.wipeTowerY.coerceIn(0f, maxY)
                         if (clampedX != cfg.wipeTowerX || clampedY != cfg.wipeTowerY) {
