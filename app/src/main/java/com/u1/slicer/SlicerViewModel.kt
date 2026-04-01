@@ -1058,8 +1058,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         val extCount = mfInfo.detectedExtruderCount.coerceIn(1, 4)
                         // Compute tower position that avoids the model
                         val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
+                        val estimatedTowerDepth = WipeTowerDepthEstimator.estimateDepth(info.sizeZ)
                         val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
-                            positions, info.sizeX, info.sizeY, _config.value.wipeTowerWidth
+                            positions, info.sizeX, info.sizeY,
+                            towerWidth = _config.value.wipeTowerWidth,
+                            towerDepth = estimatedTowerDepth
                         )
                         _config.value = _config.value.copy(
                             extruderCount = extCount,

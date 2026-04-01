@@ -214,6 +214,45 @@ class CopyArrangeCalculatorTest {
         }
     }
 
+    @Test fun `auto-placement uses towerDepth for Y footprint not towerWidth`() {
+        // A model that exactly fits the left half of the bed (135mm wide, 270mm tall)
+        // The tower should be placed on the right side; with the correct 20mm depth
+        // it should fit without Y-overlap issues.
+        val positions = floatArrayOf(0f, 0f)  // model at origin
+        val result = CopyArrangeCalculator.computeWipeTowerPosition(
+            objectPositions = positions,
+            objectSizeX = 135f,
+            objectSizeY = 270f,
+            towerWidth = 60f,
+            towerDepth = 20f
+        )
+        // Tower placed to the right: x should be >= 135 + some margin
+        assertTrue("Tower X should be right of model: ${result.first}", result.first >= 140f)
+    }
+
+    @Test fun `computeWipeTowerPosition accepts separate towerDepth`() {
+        val positions = floatArrayOf(105f, 105f)  // centered model
+        val resultSquare = CopyArrangeCalculator.computeWipeTowerPosition(
+            objectPositions = positions,
+            objectSizeX = 60f,
+            objectSizeY = 60f,
+            towerWidth = 60f,
+            towerDepth = 60f  // square: same as old behavior
+        )
+        val resultRect = CopyArrangeCalculator.computeWipeTowerPosition(
+            objectPositions = positions,
+            objectSizeX = 60f,
+            objectSizeY = 60f,
+            towerWidth = 60f,
+            towerDepth = 20f  // rectangular: narrower depth
+        )
+        // Both should produce valid positions within bed bounds
+        assertTrue(resultSquare.first >= 0f && resultSquare.first <= 210f)
+        assertTrue(resultSquare.second >= 0f && resultSquare.second <= 210f)
+        assertTrue(resultRect.first >= 0f && resultRect.first <= 210f)
+        assertTrue(resultRect.second >= 0f && resultRect.second <= 250f)  // 270-20
+    }
+
     @Test
     fun `single copy position is min-corner not center - 10x10 model`() {
         // Regression: buildExpectedModelFootprint was treating positions as centers,

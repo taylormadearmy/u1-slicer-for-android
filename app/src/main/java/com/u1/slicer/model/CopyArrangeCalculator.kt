@@ -73,13 +73,14 @@ object CopyArrangeCalculator {
 
     /**
      * Compute a wipe tower position that avoids overlapping the model(s).
-     * Tries the four corners of the bed (with margin), picks the one with
+     * Tries eight candidate positions around the bed perimeter, picks the one with
      * the most clearance from all object bounding boxes.
      *
      * @param objectPositions flat [x0,y0,x1,y1,...] model positions (min-corner, mm)
      * @param objectSizeX model bounding box X
      * @param objectSizeY model bounding box Y
-     * @param towerWidth wipe tower width (square footprint assumed)
+     * @param towerWidth wipe tower width (X dimension)
+     * @param towerDepth wipe tower depth (Y dimension); defaults to towerWidth for backward compat
      * @param bedSizeX bed X dimension
      * @param bedSizeY bed Y dimension
      * @return Pair(towerX, towerY) in mm
@@ -89,6 +90,7 @@ object CopyArrangeCalculator {
         objectSizeX: Float,
         objectSizeY: Float,
         towerWidth: Float = 60f,
+        towerDepth: Float = towerWidth,
         bedSizeX: Float = 270f,
         bedSizeY: Float = 270f
     ): Pair<Float, Float> {
@@ -97,14 +99,14 @@ object CopyArrangeCalculator {
         // + 1 skirt loop (~0.5mm) ≈ 9.5mm. Use 10mm to be safe.
         val edgeMargin = 10f
         val candidates = listOf(
-            edgeMargin to edgeMargin,                                                       // bottom-left
-            bedSizeX - towerWidth - edgeMargin to edgeMargin,                               // bottom-right
-            edgeMargin to bedSizeY - towerWidth - edgeMargin,                               // top-left
-            bedSizeX - towerWidth - edgeMargin to bedSizeY - towerWidth - edgeMargin,       // top-right
-            bedCenter - towerWidth / 2f to edgeMargin,                                      // bottom-center
-            bedCenter - towerWidth / 2f to bedSizeY - towerWidth - edgeMargin,              // top-center
-            edgeMargin to bedCenter - towerWidth / 2f,                                      // left-center
-            bedSizeX - towerWidth - edgeMargin to bedCenter - towerWidth / 2f               // right-center
+            edgeMargin to edgeMargin,                                                        // bottom-left
+            bedSizeX - towerWidth - edgeMargin to edgeMargin,                                // bottom-right
+            edgeMargin to bedSizeY - towerDepth - edgeMargin,                                // top-left
+            bedSizeX - towerWidth - edgeMargin to bedSizeY - towerDepth - edgeMargin,        // top-right
+            bedCenter - towerWidth / 2f to edgeMargin,                                       // bottom-center
+            bedCenter - towerWidth / 2f to bedSizeY - towerDepth - edgeMargin,               // top-center
+            edgeMargin to bedCenter - towerDepth / 2f,                                       // left-center
+            bedSizeX - towerWidth - edgeMargin to bedCenter - towerDepth / 2f                // right-center
         )
 
         // Build list of object bounding boxes [minX, minY, maxX, maxY]
@@ -121,7 +123,7 @@ object CopyArrangeCalculator {
 
         for ((cx, cy) in candidates) {
             val tMinX = cx; val tMinY = cy
-            val tMaxX = cx + towerWidth; val tMaxY = cy + towerWidth
+            val tMaxX = cx + towerWidth; val tMaxY = cy + towerDepth
             var minDist = Float.MAX_VALUE
 
             for (box in objectBoxes) {
