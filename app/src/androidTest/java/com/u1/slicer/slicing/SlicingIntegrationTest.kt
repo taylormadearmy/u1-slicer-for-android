@@ -109,6 +109,23 @@ class SlicingIntegrationTest {
     }
 
     @Test
+    fun tetrahedron_stl_slicesSuccessfully_withRotation() {
+        // tetrahedron.stl is the smallest bundled asset (~4 triangles)
+        val file = asset("tetrahedron.stl")
+        assertTrue("Model should load", lib.loadModel(file.absolutePath))
+
+        // Rotate 90° on X — model stands upright; should still produce valid G-code
+        assertTrue("setModelRotation should succeed", lib.setModelRotation(90f, 0f, 0f))
+
+        val result = lib.slice(DEFAULT_CONFIG)
+        assertNotNull("Slice result should not be null", result)
+        assertTrue("Slice should succeed after rotation", result!!.success)
+        assertTrue("G-code path should be non-empty", result.gcodePath.isNotEmpty())
+        assertTrue("G-code file should be non-empty",
+            File(result.gcodePath).length() > 0)
+    }
+
+    @Test
     fun tetrahedron_stl_singleExtruderHasNoToolChanges() {
         val (success, gcode) = sliceAsset("tetrahedron.stl")
         assertTrue(success)
