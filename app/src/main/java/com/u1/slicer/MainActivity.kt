@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -683,6 +684,7 @@ fun PrepareScreen(
     val extruderPresets by viewModel.extruderPresets.collectAsState()
     val copyCount by viewModel.copyCount.collectAsState()
     val modelScale by viewModel.modelScale.collectAsState()
+    val modelRotation by viewModel.modelRotation.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
@@ -837,6 +839,7 @@ fun PrepareScreen(
                                 },
                                 onInfoClick = { showInfoDialog = true },
                                 modelScale = modelScale,
+                                modelRotation = modelRotation,
                                 cameraState = sharedPreviewCameraState,
                                 onCameraStateChange = onSharedPreviewCameraStateChange,
                                 onViewerReady = { captureViewer = it },
@@ -880,7 +883,9 @@ fun PrepareScreen(
                             scale = modelScale,
                             onScaleChange = { viewModel.setModelScale(it) },
                             copyCount = copyCount,
-                            onSetCopyCount = viewModel::setCopyCount
+                            onSetCopyCount = viewModel::setCopyCount,
+                            rotation = modelRotation,
+                            onRotationChange = { viewModel.setModelRotation(it) }
                         )
                         // Single-color extruder picker (hidden for multi-color models)
                         if (colorMapping == null && state is SlicerViewModel.SlicerState.ModelLoaded) {
@@ -1987,6 +1992,7 @@ fun InlineModelPreview(
     onPositionsChanged: ((FloatArray, Pair<Float, Float>) -> Unit)? = null,
     onInfoClick: (() -> Unit)? = null,
     modelScale: SlicerViewModel.ModelScale = SlicerViewModel.ModelScale(),
+    modelRotation: SlicerViewModel.ModelRotation = SlicerViewModel.ModelRotation(),
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
     onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
     onViewerReady: ((com.u1.slicer.viewer.ModelViewerView?) -> Unit)? = null,
@@ -2304,6 +2310,29 @@ fun InlineModelPreview(
                     color = Color.White
                 )
             }
+            val isRotated = modelRotation.x != 0f || modelRotation.y != 0f || modelRotation.z != 0f
+            if (isRotated) {
+                val rotText = buildString {
+                    val parts = listOf("X" to modelRotation.x, "Y" to modelRotation.y, "Z" to modelRotation.z)
+                        .filter { (_, v) -> v != 0f }
+                    if (parts.size == 1) {
+                        append("${parts[0].first}: %.0f°".format(parts[0].second))
+                    } else {
+                        append(parts.joinToString(" ") { (ax, v) -> "$ax:%.0f°".format(v) })
+                    }
+                }
+                Text(
+                    rotText,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 8.dp, bottom = 36.dp)
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
         }
     }
 }
@@ -2540,6 +2569,7 @@ fun PrintSetupSection(
     if (!showSection) return
 
     val mapping = remember(colorMapping) { colorMapping?.toMutableStateList() ?: mutableStateListOf() }
+    var expanded by remember { mutableStateOf(true) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2547,14 +2577,29 @@ fun PrintSetupSection(
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Print Setup", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Print Setup", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
             }
 
-            if (isMultiColor) {
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (isMultiColor) {
                 if (onAutoMap != null) {
                     OutlinedButton(
                         onClick = onAutoMap,
@@ -2669,19 +2714,32 @@ fun PrintSetupSection(
                 }
                 Switch(checked = wipeTowerEnabled, onCheckedChange = { onToggleWipeTower() })
             }
+                } // end AnimatedVisibility Column
+            } // end AnimatedVisibility
         }
     }
 }
+
+private data class RotAxis(
+    val label: String,
+    val value: Float,
+    val range: ClosedFloatingPointRange<Float>,
+    val steps: Int
+)
 
 @Composable
 fun ScaleSection(
     scale: SlicerViewModel.ModelScale,
     onScaleChange: (SlicerViewModel.ModelScale) -> Unit,
     copyCount: Int = 1,
-    onSetCopyCount: (Int) -> Unit = {}
+    onSetCopyCount: (Int) -> Unit = {},
+    rotation: SlicerViewModel.ModelRotation = SlicerViewModel.ModelRotation(),
+    onRotationChange: (SlicerViewModel.ModelRotation) -> Unit = {}
 ) {
     var uniformMode by remember { mutableStateOf(true) }
     var uniformValue by remember(scale) { mutableFloatStateOf(scale.uniform) }
+    var expanded by remember { mutableStateOf(true) }
+    var selectedTab by remember { mutableIntStateOf(0) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2689,8 +2747,11 @@ fun ScaleSection(
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Header row — tappable to collapse/expand
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -2698,67 +2759,121 @@ fun ScaleSection(
                     Icon(Icons.Default.OpenWith, null, tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Scale & Copies", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("Scale, Copies & Rotation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Uniform", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                    Spacer(Modifier.width(4.dp))
-                    Switch(checked = uniformMode, onCheckedChange = { uniformMode = it })
-                }
-            }
-
-            // Copies
-            Text("Copies: $copyCount", style = MaterialTheme.typography.labelMedium)
-            Slider(
-                value = copyCount.toFloat(),
-                onValueChange = { v -> onSetCopyCount(v.toInt()) },
-                valueRange = 1f..16f,
-                steps = 14
-            )
-
-            Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-
-            if (uniformMode) {
-                val pct = "%.0f%%".format(uniformValue * 100)
-                Text("Scale: $pct", style = MaterialTheme.typography.labelMedium)
-                Slider(
-                    value = uniformValue,
-                    onValueChange = { v ->
-                        uniformValue = v
-                        onScaleChange(SlicerViewModel.ModelScale(v, v, v))
-                    },
-                    valueRange = 0.1f..3f,
-                    steps = 28
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
-            } else {
-                listOf("X" to scale.x, "Y" to scale.y, "Z" to scale.z).forEach { (axis, v) ->
-                    Text("$axis: ${"%.0f%%".format(v * 100)}", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = v,
-                        onValueChange = { nv ->
-                            val ns = when (axis) {
-                                "X" -> scale.copy(x = nv)
-                                "Y" -> scale.copy(y = nv)
-                                else -> scale.copy(z = nv)
-                            }
-                            onScaleChange(ns)
-                        },
-                        valueRange = 0.1f..3f,
-                        steps = 28
-                    )
-                }
             }
 
-            if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
-                TextButton(
-                    onClick = {
-                        uniformValue = 1f
-                        onScaleChange(SlicerViewModel.ModelScale())
-                    },
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text("Reset to 100%", style = MaterialTheme.typography.labelSmall)
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TabRow(selectedTabIndex = selectedTab) {
+                        Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 },
+                            text = { Text("Scale") })
+                        Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 },
+                            text = { Text("Rotation") })
+                    }
+
+                    if (selectedTab == 0) {
+                        // --- Scale tab ---
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Copies: $copyCount", style = MaterialTheme.typography.labelMedium)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Uniform", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                Spacer(Modifier.width(4.dp))
+                                Switch(checked = uniformMode, onCheckedChange = { uniformMode = it })
+                            }
+                        }
+                        Slider(
+                            value = copyCount.toFloat(),
+                            onValueChange = { v -> onSetCopyCount(v.toInt()) },
+                            valueRange = 1f..16f,
+                            steps = 14
+                        )
+                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                        if (uniformMode) {
+                            val pct = "%.0f%%".format(uniformValue * 100)
+                            Text("Scale: $pct", style = MaterialTheme.typography.labelMedium)
+                            Slider(
+                                value = uniformValue,
+                                onValueChange = { v ->
+                                    uniformValue = v
+                                    onScaleChange(SlicerViewModel.ModelScale(v, v, v))
+                                },
+                                valueRange = 0.1f..3f,
+                                steps = 28
+                            )
+                        } else {
+                            listOf("X" to scale.x, "Y" to scale.y, "Z" to scale.z).forEach { (axis, v) ->
+                                Text("$axis: ${"%.0f%%".format(v * 100)}", style = MaterialTheme.typography.labelMedium)
+                                Slider(
+                                    value = v,
+                                    onValueChange = { nv ->
+                                        val ns = when (axis) {
+                                            "X" -> scale.copy(x = nv)
+                                            "Y" -> scale.copy(y = nv)
+                                            else -> scale.copy(z = nv)
+                                        }
+                                        onScaleChange(ns)
+                                    },
+                                    valueRange = 0.1f..3f,
+                                    steps = 28
+                                )
+                            }
+                        }
+                        if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
+                            TextButton(
+                                onClick = {
+                                    uniformValue = 1f
+                                    onScaleChange(SlicerViewModel.ModelScale())
+                                },
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("Reset to 100%", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    } else {
+                        // --- Rotation tab ---
+                        val axes = listOf(
+                            RotAxis("Tilt (X)", rotation.x, -180f..180f, 35),
+                            RotAxis("Tilt (Y)", rotation.y, -180f..180f, 35),
+                            RotAxis("Rotate on bed (Z)", rotation.z, 0f..360f, 71)
+                        )
+                        axes.forEachIndexed { idx, ax ->
+                            Text("${ax.label}: ${"%.0f°".format(ax.value)}",
+                                style = MaterialTheme.typography.labelMedium)
+                            Slider(
+                                value = ax.value,
+                                onValueChange = { nv ->
+                                    onRotationChange(when (idx) {
+                                        0 -> rotation.copy(x = nv)
+                                        1 -> rotation.copy(y = nv)
+                                        else -> rotation.copy(z = nv)
+                                    })
+                                },
+                                valueRange = ax.range,
+                                steps = ax.steps
+                            )
+                        }
+                        if (rotation.x != 0f || rotation.y != 0f || rotation.z != 0f) {
+                            TextButton(
+                                onClick = { onRotationChange(SlicerViewModel.ModelRotation()) },
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("Reset to 0°", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
                 }
             }
         }
