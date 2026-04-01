@@ -2331,7 +2331,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * without requiring the user to pick the file again.
      */
     fun recoverFromClipperError() {
-        val file = currentModelFile ?: return
+        val file = currentModelFile ?: run {
+            _state.value = SlicerState.Error("No model file to reload")
+            return
+        }
+        clipperRetryAttempted = false  // grant fresh auto-recovery on next slice attempt
         viewModelScope.launch {
             _state.value = SlicerState.Loading("Reloading model…")
             loadNativeModel(file)
