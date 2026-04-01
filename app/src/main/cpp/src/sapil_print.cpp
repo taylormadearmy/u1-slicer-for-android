@@ -619,6 +619,8 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "prime_tower_width",
                     "prime_volume",
                     "prime_tower_brim_width",
+                    "prime_tower_brim_chamfer",
+                    "prime_tower_brim_chamfer_max_width",
                     "wipe_tower_x",
                     "wipe_tower_y",
                     // Extruder offsets (per-extruder, must match extruder count)
