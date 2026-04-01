@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.core.content.pm.PackageInfoCompat
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.SliceResult
+import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
@@ -829,7 +830,7 @@ fun PrepareScreen(
                                 wipeTowerX = config.wipeTowerX,
                                 wipeTowerY = config.wipeTowerY,
                                 wipeTowerWidth = config.wipeTowerWidth,
-                                wipeTowerDepth = com.u1.slicer.data.WipeTowerDepthEstimator.estimateDepth(loadedInfo?.sizeZ ?: 0f),
+                                wipeTowerDepth = WipeTowerDepthEstimator.estimateDepth(loadedInfo?.sizeZ ?: 0f),
                                 onPositionsChanged = { pos, towerPos ->
                                     viewModel.applyPlacementPositions(pos, towerPos)
                                 },
