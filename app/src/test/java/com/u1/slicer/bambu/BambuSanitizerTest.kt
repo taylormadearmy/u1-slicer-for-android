@@ -680,6 +680,60 @@ class BambuSanitizerTest {
         assertTrue("object 99 after block intact", result.contains("""id="99""""))
     }
 
+    @Test
+    fun `clampScalarPosition - clamps list values not just scalars`() {
+        // Regression test for b39: buildProfileOverrides writes wipe_tower_y as a List,
+        // which the old implementation silently skipped. Fixed to clamp each element.
+        fun clampScalarPosition(config: MutableMap<String, Any>, key: String, min: Float, max: Float) {
+            val raw = config[key] ?: return
+            if (raw is List<*>) {
+                config[key] = raw.map { element ->
+                    val v = element?.toString()?.toFloatOrNull() ?: return@map element
+                    if (v < min || v > max) "%.3f".format(v.coerceIn(min, max)) else element
+                }
+                return
+            }
+            val value = raw.toString().toFloatOrNull() ?: return
+            if (value < min || value > max) {
+                config[key] = "%.3f".format(value.coerceIn(min, max))
+            }
+        }
+
+        // Simulate wipe_tower_y=240 written as a per-extruder list (2-extruder model).
+        // maxPos for tower_width=60, brim=3, extraMargin=6 on 270mm bed = 231.
+        val config = mutableMapOf<String, Any>(
+            "wipe_tower_y" to mutableListOf("240.000", "240.000")
+        )
+        clampScalarPosition(config, "wipe_tower_y", 39f, 231f)
+
+        @Suppress("UNCHECKED_CAST")
+        val clamped = config["wipe_tower_y"] as List<*>
+        assertEquals("Both list elements clamped to maxPos", "231.000", clamped[0])
+        assertEquals("Both list elements clamped to maxPos", "231.000", clamped[1])
+    }
+
+    @Test
+    fun `clampScalarPosition - scalar still clamped after list fix`() {
+        fun clampScalarPosition(config: MutableMap<String, Any>, key: String, min: Float, max: Float) {
+            val raw = config[key] ?: return
+            if (raw is List<*>) {
+                config[key] = raw.map { element ->
+                    val v = element?.toString()?.toFloatOrNull() ?: return@map element
+                    if (v < min || v > max) "%.3f".format(v.coerceIn(min, max)) else element
+                }
+                return
+            }
+            val value = raw.toString().toFloatOrNull() ?: return
+            if (value < min || value > max) {
+                config[key] = "%.3f".format(value.coerceIn(min, max))
+            }
+        }
+
+        val config = mutableMapOf<String, Any>("wipe_tower_y" to "240.000")
+        clampScalarPosition(config, "wipe_tower_y", 39f, 231f)
+        assertEquals("Scalar value clamped", "231.000", config["wipe_tower_y"])
+    }
+
     // Helper: simplified INI parser matching BambuSanitizer's logic
     private fun parseTestIniConfig(content: String): MutableMap<String, Any> {
         val config = mutableMapOf<String, Any>()

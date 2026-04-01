@@ -1229,8 +1229,13 @@ $componentRefs    </components>
 
     private fun clampScalarPosition(config: MutableMap<String, Any>, key: String, min: Float, max: Float) {
         val raw = config[key] ?: return
-        // Only clamp scalar values, not per-plate arrays
-        if (raw is List<*>) return
+        if (raw is List<*>) {
+            config[key] = raw.map { element ->
+                val v = element?.toString()?.toFloatOrNull() ?: return@map element
+                if (v < min || v > max) "%.3f".format(v.coerceIn(min, max)) else element
+            }
+            return
+        }
         val value = raw.toString().toFloatOrNull() ?: return
         if (value < min || value > max) {
             config[key] = "%.3f".format(value.coerceIn(min, max))

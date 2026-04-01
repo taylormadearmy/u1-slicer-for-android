@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.5.25` (`versionCode 191`)
+Current release: `v1.5.26` (`versionCode 192`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -51,13 +51,13 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 595 JVM unit tests
+./gradlew testDebugUnitTest                        # 597 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 139 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
-### Unit tests (`app/src/test/`) - 595 tests across 38 classes
+### Unit tests (`app/src/test/`) - 597 tests across 38 classes
 - `gcode/GcodeParserTest.kt` (26) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -72,7 +72,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `data/SlicingOverridesTest.kt` (67) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, B24 stale config, B31 brim_type, F30/F31 plus F41/F42/F43 override/file-value coverage
 - `data/SettingsBackupTest.kt` (16) — Export/import round-trip, version validation, partial restore, filament profile name resolution, stale skirt-loop import normalization
 - `bambu/ThreeMfParserTest.kt` (7) - 3MF data model construction, isMultiPlate detection
-- `bambu/BambuSanitizerTest.kt` (22) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard
+- `bambu/BambuSanitizerTest.kt` (24) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard
 - `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
 - `bambu/LayerToolCustomGcodeXmlTest.kt` (2) — custom_gcode_per_layer.xml colour extraction for type 1 and 2 (parity with pause injector)
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
