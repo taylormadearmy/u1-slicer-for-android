@@ -1,5 +1,9 @@
 package com.u1.slicer
 
+import com.u1.slicer.data.OverrideMode
+import com.u1.slicer.data.OverrideValue
+import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.data.WipeTowerDepthEstimator
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -37,6 +41,24 @@ class WipeTowerClampTest {
         )
         assertEquals(bedSize - towerWidth, maxX, 0.01f)
         assertEquals(bedSize - estimatedDepth, maxY, 0.01f) // 230mm, not 240mm
+    }
+
+    @Test fun `resolveWipeTowerWidth returns override width when override is active`() {
+        val config = SliceConfig(wipeTowerWidth = 60f)
+        val overrides = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.OVERRIDE, 45f))
+        assertEquals(45f, resolveWipeTowerWidth(config, overrides), 0.01f)
+    }
+
+    @Test fun `resolveWipeTowerWidth returns config width when override is USE_FILE`() {
+        val config = SliceConfig(wipeTowerWidth = 60f)
+        val overrides = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.USE_FILE, null))
+        assertEquals(60f, resolveWipeTowerWidth(config, overrides), 0.01f)
+    }
+
+    @Test fun `resolveWipeTowerWidth returns config width when override value is null`() {
+        val config = SliceConfig(wipeTowerWidth = 60f)
+        val overrides = SlicingOverrides()
+        assertEquals(60f, resolveWipeTowerWidth(config, overrides), 0.01f)
     }
 
     @Test fun `clamp moves out-of-bounds tower inside bed`() {
