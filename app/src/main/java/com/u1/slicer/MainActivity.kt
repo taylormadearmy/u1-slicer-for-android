@@ -2128,6 +2128,28 @@ fun InlineModelPreview(
         v.requestRender()
     }
 
+    // Re-fetch preview mesh when rotation changes (non-painted 3MF and STL only).
+    // Painted/SEMM models use ThreeMfMeshParser which is not rotation-aware.
+    LaunchedEffect(modelRotation) {
+        val rot = modelRotation
+        if (rot.x == 0f && rot.y == 0f && rot.z == 0f) return@LaunchedEffect
+        if (modelFilePath.endsWith(".3mf", ignoreCase = true) &&
+            hasPaintData && (colorMapping != null || extruderMap != null)) return@LaunchedEffect
+
+        val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                NativeLibrary().setModelRotation(rot.x, rot.y, rot.z)
+                NativeLibrary().getPreparePreviewMesh()?.toMeshData()
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        if (newMesh != null) {
+            mesh = newMesh
+            lastSetMesh = null  // force setMesh() on the GL thread
+        }
+    }
+
     // Update renderer with placement data
     LaunchedEffect(viewerView, placementEnabled, objPositions, towerX, towerY) {
         val v = viewerView ?: return@LaunchedEffect
