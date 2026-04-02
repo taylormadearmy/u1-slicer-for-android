@@ -1,6 +1,7 @@
 #include "../include/sapil.h"
 #include "sapil_internal.h"
 #include "libslic3r/Model.hpp"
+#include <cmath>
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 
@@ -134,6 +135,27 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
     invalidatePreviewMeshCache();
     SAPIL_LOGI("Set model scale: %.3f, %.3f, %.3f (center: %.1f, %.1f, %.1f)",
         x, y, z, center.x(), center.y(), center.z());
+    return true;
+}
+
+bool SlicerEngine::setModelRotation(float rx_deg, float ry_deg, float rz_deg) {
+    if (!isModelLoaded()) {
+        SAPIL_LOGE("setModelRotation: no model loaded");
+        return false;
+    }
+    Slic3r::Model& model = getGlobalModel();
+    for (auto* obj : model.objects) {
+        for (auto* inst : obj->instances) {
+            const double deg2rad = M_PI / 180.0;
+            inst->set_rotation(Slic3r::Vec3d(
+                static_cast<double>(rx_deg) * deg2rad,
+                static_cast<double>(ry_deg) * deg2rad,
+                static_cast<double>(rz_deg) * deg2rad
+            ));
+        }
+    }
+    invalidatePreviewMeshCache();
+    SAPIL_LOGI("Set model rotation: %.1f, %.1f, %.1f deg", rx_deg, ry_deg, rz_deg);
     return true;
 }
 

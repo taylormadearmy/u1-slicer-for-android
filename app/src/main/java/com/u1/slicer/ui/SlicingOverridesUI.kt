@@ -634,6 +634,38 @@ fun SlicingOverridesAccordion(
                 )
             }
         )
+
+        OverrideRow(
+            label = "Tower Width",
+            override = overrides.primeTowerWidth,
+            defaultHint = "35 mm",
+            onModeChange = { mode -> onOverridesChange(overrides.copy(primeTowerWidth = overrides.primeTowerWidth.copy(mode = mode))) },
+            fileKey = "prime_tower_width",
+            sourceConfig = sourceConfig,
+            valueContent = {
+                OverrideFloatField(
+                    value = overrides.primeTowerWidth.value ?: 35f,
+                    suffix = "mm",
+                    onValueChange = { onOverridesChange(overrides.copy(primeTowerWidth = OverrideValue(OverrideMode.OVERRIDE, it))) }
+                )
+            }
+        )
+
+        OverrideRow(
+            label = "Tower Rotation",
+            override = overrides.wipeTowerRotationAngle,
+            defaultHint = "0°",
+            onModeChange = { mode -> onOverridesChange(overrides.copy(wipeTowerRotationAngle = overrides.wipeTowerRotationAngle.copy(mode = mode))) },
+            fileKey = "wipe_tower_rotation_angle",
+            sourceConfig = sourceConfig,
+            valueContent = {
+                OverrideFloatField(
+                    value = overrides.wipeTowerRotationAngle.value ?: 0f,
+                    suffix = "°",
+                    onValueChange = { onOverridesChange(overrides.copy(wipeTowerRotationAngle = OverrideValue(OverrideMode.OVERRIDE, it))) }
+                )
+            }
+        )
     }
 
     ExpandableOverrideSection(

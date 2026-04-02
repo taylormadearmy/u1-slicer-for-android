@@ -191,6 +191,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _modelScale = MutableStateFlow(ModelScale())
     val modelScale: StateFlow<ModelScale> = _modelScale.asStateFlow()
 
+    data class ModelRotation(val x: Float = 0f, val y: Float = 0f, val z: Float = 0f)
+    private val _modelRotation = MutableStateFlow(ModelRotation())
+    val modelRotation: StateFlow<ModelRotation> = _modelRotation.asStateFlow()
+
     // Custom object positions set from PlacementViewer (null = use auto grid)
     // Flat array [x0,y0,x1,y1,...] in mm
     private var customObjectPositions: FloatArray? = null
@@ -1005,6 +1009,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 lastModelInfo = info
                 _modelInfo.value = info
                 _modelScale.value = ModelScale()  // reset to 1× on each new load
+                _modelRotation.value = ModelRotation()
                 if (isLargeTriangleCount(info.triangleCount)) {
                     _state.value = SlicerState.Loading("Large model — preview may take a moment…")
                     kotlinx.coroutines.delay(0)
@@ -1267,6 +1272,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun setModelScale(scale: ModelScale) {
         _modelScale.value = scale
         customObjectPositions = null // reset positions — re-center for new scaled size
+    }
+
+    fun setModelRotation(rotation: ModelRotation) {
+        _modelRotation.value = rotation
+        customObjectPositions = null // reset positions — re-center for rotated footprint
     }
 
     fun setCopyCount(count: Int) {
@@ -1784,6 +1794,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
                     native.setModelScale(scale.x, scale.y, scale.z)
                     Log.i("SlicerVM", "Applied model scale: ${scale.x}×${scale.y}×${scale.z}")
+                }
+                val rot = _modelRotation.value
+                if (rot.x != 0f || rot.y != 0f || rot.z != 0f) {
+                    native.setModelRotation(rot.x, rot.y, rot.z)
                 }
 
                 val copies = _copyCount.value
@@ -3049,6 +3063,8 @@ internal fun buildProfileOverridesImpl(
     val primeTowerBrimWidth = resolve(ov.primeTowerBrimWidth, 3f, "primeTowerBrimWidth")
     val primeTowerBrimChamfer = resolve(ov.primeTowerBrimChamfer, true, "primeTowerBrimChamfer")
     val primeTowerChamferMaxWidth = resolve(ov.primeTowerChamferMaxWidth, 5f, "primeTowerChamferMaxWidth")
+    val primeTowerWidth = resolve(ov.primeTowerWidth, cfg.wipeTowerWidth, "primeTowerWidth")
+    val wipeTowerRotationAngle = resolve(ov.wipeTowerRotationAngle, 0f, "wipeTowerRotationAngle")
 
     val result = mutableMapOf<String, Any>(
         "layer_height" to layerHeight.toString(),
@@ -3077,13 +3093,14 @@ internal fun buildProfileOverridesImpl(
         // to prevent skirt generation even if some other config path sets loops>0
         "skirt_height" to if (skirtLoops > 0) "1" else "0",
         "enable_prime_tower" to if (primeTower) "1" else "0",
-        "prime_tower_width" to cfg.wipeTowerWidth.toString(),
+        "prime_tower_width" to primeTowerWidth.toString(),
         "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
         "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() },
         "prime_volume" to primeVolume.toString(),
         "prime_tower_brim_width" to primeTowerBrimWidth.toString(),
         "prime_tower_brim_chamfer" to if (primeTowerBrimChamfer) "1" else "0",
-        "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString()
+        "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString(),
+        "wipe_tower_rotation_angle" to wipeTowerRotationAngle.toString()
     )
 
     // sparse_infill_speed: 0 means "auto" — only emit when the user has overridden to a

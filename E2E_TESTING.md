@@ -37,6 +37,18 @@ Use this checklist for final on-device sanity passes before publishing:
 6. Slice successfully
 7. Confirm Preview colours match the intended tool usage
 
+### Manual regression checks (v1.5.26 rotation + prime tower settings — F57/F58)
+
+Run these after any change to the rotation UI, prime tower override fields, or collapsible cards:
+
+- **Model rotation — Z axis (bed spin):** Load `tetrahedron.stl`. In the Scale & Copies card, switch to the Rotation tab. Drag the "Rotate on bed (Z)" slider to ~45°. Confirm the overlay badge on the viewport reads "Z: 45°". Slice; confirm G-code is produced and the slice-result summary shows a non-trivial layer count.
+- **Model rotation — X axis (tilt):** Load `tetrahedron.stl`. Set "Tilt (X)" to 90°. Confirm badge reads "X: 90°". Slice; compare layer count to an unrotated slice of the same model — it should differ.
+- **Rotation reset:** With any non-zero rotation set, tap "Reset to 0°" — all three sliders should snap to 0° and the overlay badge should disappear.
+- **Collapsible cards:** Tap the chevron on the Scale & Copies card — body collapses. Tap again — it expands. Repeat for Print Setup card. Confirm state is not preserved on reload (both default to expanded after navigation away and back).
+- **Prime tower width override:** Load `calib-cube-10-dual-colour-merged.3mf`. In Print Setup overrides, set Prime Tower → Tower Width to 20 mm. Slice. Inspect G-code for `prime_tower_width = 20` or visually smaller tower footprint in preview.
+- **Prime tower rotation override:** Same file; set Tower Rotation to 45°. Slice. Grep G-code for `wipe_tower_rotation_angle = 45` to confirm it was applied.
+- **App-level settings parity:** In the app settings screen, confirm Tower Width and Tower Rotation fields are present in the Prime Tower section. Set values there, return to Prepare; confirm overrides carry through to slice output.
+
 ### Manual regression checks (v1.5.x colour / layer-tool hotfixes)
 
 Run these on at least one multi-colour file from the priority table below when touching Prepare metadata, preview colours, G-code post-processing, or plate merge logic:

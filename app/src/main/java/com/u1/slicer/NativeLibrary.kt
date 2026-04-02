@@ -53,6 +53,10 @@ class NativeLibrary {
     // Apply uniform or per-axis scale to the loaded model. Call before setModelInstances.
     external fun setModelScale(x: Float, y: Float, z: Float): Boolean
 
+    // ---- Rotation ----
+    // Apply Euler rotation (degrees) to the loaded model. Call after setModelScale and before setModelInstances.
+    external fun setModelRotation(x: Float, y: Float, z: Float): Boolean
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)

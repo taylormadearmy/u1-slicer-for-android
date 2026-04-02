@@ -65,6 +65,8 @@ data class SlicingOverrides(
     val primeTowerBrimWidth: OverrideValue<Float> = OverrideValue(),
     val primeTowerBrimChamfer: OverrideValue<Boolean> = OverrideValue(),
     val primeTowerChamferMaxWidth: OverrideValue<Float> = OverrideValue(),
+    val primeTowerWidth: OverrideValue<Float> = OverrideValue(),
+    val wipeTowerRotationAngle: OverrideValue<Float> = OverrideValue(),
     val flowCalibration: Boolean = true
 ) {
     /**
@@ -121,6 +123,7 @@ data class SlicingOverrides(
                 true
             else
                 res(primeTower, base.wipeTowerEnabled, "primeTower"),
+            wipeTowerWidth = res(primeTowerWidth, base.wipeTowerWidth, "primeTowerWidth"),
         )
     }
 
@@ -169,6 +172,8 @@ data class SlicingOverrides(
         putOverride("primeTowerBrimWidth", primeTowerBrimWidth)
         putOverride("primeTowerBrimChamfer", primeTowerBrimChamfer)
         putOverride("primeTowerChamferMaxWidth", primeTowerChamferMaxWidth)
+        putOverride("primeTowerWidth", primeTowerWidth)
+        putOverride("wipeTowerRotationAngle", wipeTowerRotationAngle)
         obj.put("flowCalibration", flowCalibration)
         return obj.toString()
     }
@@ -212,7 +217,9 @@ data class SlicingOverrides(
             "primeVolume" to 45,
             "primeTowerBrimWidth" to 3f,
             "primeTowerBrimChamfer" to true,
-            "primeTowerChamferMaxWidth" to 5f
+            "primeTowerChamferMaxWidth" to 5f,
+            "primeTowerWidth" to 35f,
+            "wipeTowerRotationAngle" to 0f
         )
 
         fun fromJson(json: String): SlicingOverrides {
@@ -264,6 +271,8 @@ data class SlicingOverrides(
                     primeTowerBrimWidth = parseOverride("primeTowerBrimWidth") { (it as Number).toFloat() },
                     primeTowerBrimChamfer = parseOverride("primeTowerBrimChamfer") { it as Boolean },
                     primeTowerChamferMaxWidth = parseOverride("primeTowerChamferMaxWidth") { (it as Number).toFloat() },
+                    primeTowerWidth = parseOverride("primeTowerWidth") { (it as Number).toFloat() },
+                    wipeTowerRotationAngle = parseOverride("wipeTowerRotationAngle") { (it as Number).toFloat() },
                     flowCalibration = obj.optBoolean("flowCalibration", true)
                 )
             } catch (_: Exception) {

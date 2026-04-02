@@ -165,4 +165,12 @@ Java_com_u1_slicer_NativeLibrary_setModelScale(JNIEnv* env, jobject, jfloat x, j
     return result ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_setModelRotation(
+        JNIEnv*, jobject, jfloat rx, jfloat ry, jfloat rz) {
+    if (!g_engine) return JNI_FALSE;
+    bool result = g_engine->setModelRotation(rx, ry, rz);
+    return result ? JNI_TRUE : JNI_FALSE;
+}
+
 } // extern "C"

@@ -830,4 +830,64 @@ class SlicingOverridesTest {
         val temps = result["nozzle_temperature"] as? List<*>
         assertEquals("nozzle_temperature should have 3 entries for 3-extruder SEMM job", 3, temps?.size)
     }
+
+    // --- primeTowerWidth and wipeTowerRotationAngle overrides ---
+
+    @Test
+    fun `primeTowerWidth OVERRIDE resolves into wipeTowerWidth`() {
+        val base = SliceConfig(wipeTowerWidth = 60f)
+        val ov = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.OVERRIDE, 20f))
+        val result = ov.resolveInto(base)
+        assertEquals(20f, result.wipeTowerWidth, 0.001f)
+    }
+
+    @Test
+    fun `primeTowerWidth USE_FILE keeps base wipeTowerWidth`() {
+        val base = SliceConfig(wipeTowerWidth = 60f)
+        val ov = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.USE_FILE))
+        val result = ov.resolveInto(base)
+        assertEquals(60f, result.wipeTowerWidth, 0.001f)
+    }
+
+    @Test
+    fun `primeTowerWidth ORCA_DEFAULT uses 35mm`() {
+        val base = SliceConfig(wipeTowerWidth = 60f)
+        val ov = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.ORCA_DEFAULT))
+        val result = ov.resolveInto(base)
+        assertEquals(35f, result.wipeTowerWidth, 0.001f)
+    }
+
+    @Test
+    fun `wipeTowerRotationAngle round-trips through JSON`() {
+        val ov = SlicingOverrides(wipeTowerRotationAngle = OverrideValue(OverrideMode.OVERRIDE, 45f))
+        val json = ov.toJson()
+        val restored = SlicingOverrides.fromJson(json)
+        assertEquals(OverrideMode.OVERRIDE, restored.wipeTowerRotationAngle.mode)
+        assertEquals(45f, restored.wipeTowerRotationAngle.value!!, 0.001f)
+    }
+
+    @Test
+    fun `primeTowerWidth round-trips through JSON`() {
+        val ov = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.OVERRIDE, 25f))
+        val json = ov.toJson()
+        val restored = SlicingOverrides.fromJson(json)
+        assertEquals(OverrideMode.OVERRIDE, restored.primeTowerWidth.mode)
+        assertEquals(25f, restored.primeTowerWidth.value!!, 0.001f)
+    }
+
+    @Test
+    fun `wipeTowerRotationAngle OVERRIDE emitted in buildProfileOverrides`() {
+        val cfg = SliceConfig(wipeTowerEnabled = true, extruderCount = 2)
+        val ov = SlicingOverrides(wipeTowerRotationAngle = OverrideValue(OverrideMode.OVERRIDE, 45f))
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        assertEquals("45.0", result["wipe_tower_rotation_angle"])
+    }
+
+    @Test
+    fun `primeTowerWidth OVERRIDE emitted in buildProfileOverrides`() {
+        val cfg = SliceConfig(wipeTowerEnabled = true, wipeTowerWidth = 60f, extruderCount = 2)
+        val ov = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.OVERRIDE, 20f))
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        assertEquals("20.0", result["prime_tower_width"])
+    }
 }
