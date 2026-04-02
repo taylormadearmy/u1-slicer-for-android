@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.5.28` (`versionCode 194`)
+Current release: `v1.5.30` (`versionCode 196`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 614 JVM unit tests
+./gradlew testDebugUnitTest                        # 617 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 142 instrumented tests (uses Orchestrator)
 ```
 
@@ -94,7 +94,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - iewer/ModelViewerViewTest.kt (3) — Prepare selection falls back from face-plane to bed-plane hit-testing when needed
 
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic
-- `WipeTowerClampTest.kt` (3) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width
+- `WipeTowerClampTest.kt` (6) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width; resolveWipeTowerWidth: returns active override or config default
 
 ### Instrumented tests (`app/src/androidTest/`) - 142 tests across 14 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count

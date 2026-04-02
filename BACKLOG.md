@@ -140,11 +140,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Travel moves are GL_LINES (always 1px) — may also need attention
 - Track: [`#39`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/39)
 
-### F60: Prepare preview prime tower doesn't reflect settings changes (GitHub #36)
-- Rectangular footprint (width × estimated depth) already fixed in v1.5.24
-- **Remaining**: when `primeTowerWidth` override is changed on the Prepare screen, the preview tower width doesn't update — it always reads `SliceConfig.wipeTowerWidth` (the default), not the active override
-- Fix: pass the resolved override width (from `SlicingOverrides.primeTowerWidth` if set) to `wipeTowerWidth` in the `PrepareScreen` composable call in `MainActivity.kt` line ~835
-- Track: [`#36`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/36)
 
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
@@ -154,6 +149,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **F60/F#36**: Prepare preview prime tower now reacts to primeTowerWidth override — `resolveWipeTowerWidth()` returns active override or config default — DONE v1.5.30
 - **F57/F#37**: Model rotation on all three axes from Prepare screen with live 3D preview; rotation persists to slice; prime tower rotation also included — DONE v1.5.26/v1.5.28
 - **F58/F#38**: Prime tower width (`prime_tower_width`) and rotation angle (`wipe_tower_rotation_angle`) exposed in Prepare screen; threaded through native profile keys pipeline — DONE v1.5.26/v1.5.28
 - **F56/F#35**: Large model loading warning — "Large model — this may take a moment…" on file >50MB; "preview may take a moment…" on triangle count >500K — DONE v1.5.24
