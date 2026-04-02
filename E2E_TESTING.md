@@ -49,6 +49,18 @@ Run these after any change to the rotation UI, prime tower override fields, or c
 - **Prime tower rotation override:** Same file; set Tower Rotation to 45°. Slice. Grep G-code for `wipe_tower_rotation_angle = 45` to confirm it was applied.
 - **App-level settings parity:** In the app settings screen, confirm Tower Width and Tower Rotation fields are present in the Prime Tower section. Set values there, return to Prepare; confirm overrides carry through to slice output.
 
+### Manual regression checks (v1.5.32 — F59/F60/F61: G-code viewer width, Jobs tab re-open)
+
+Run these after any change to the G-code viewer rendering, Jobs tab, or Room schema:
+
+- **F59 — G-code line visibility:** Load `tetrahedron.stl`, slice. Open the G-code viewer. Zoom out to full-bed view. Filament paths should be clearly visible as solid coloured ribbons — not hairline threads. Zoom in and out; confirm lines remain readable at all zoom levels.
+- **F59 — Travel lines:** With "Show travel" toggled on, travel moves should appear as thin grey lines (GL_LINES, always 1px). Confirm they don't obscure the extrusion paths.
+- **F60 — View G-code from Jobs tab:** After a successful slice, navigate to the **Jobs** tab. Confirm the job card shows a **Layers icon** button. Tap it. The G-code viewer should open showing the same output as the viewer accessed immediately after slicing. Layer scrubbing, extruder colours, and travel toggle should all work normally.
+- **F60 — Missing G-code graceful failure:** Not easily reproducible manually, but if you have a job from a prior install whose G-code file was cleared, the Layers button should show a toast ("G-code file not found") rather than crashing.
+- **F61 — Re-open model from Jobs tab (new jobs only):** Slice any file. Navigate to Jobs tab. Job cards for jobs sliced on v1.5.32+ should show an **Edit icon** button alongside the Layers icon. Tap it. The app should navigate to the Prepare screen and reload the original 3MF/STL — same as if you had opened the file fresh from the picker. Confirm the model geometry, colour count, and prime tower all appear correctly.
+- **F61 — Old jobs (no Edit icon):** Jobs sliced before v1.5.32 (i.e. rows with `sourcePath = NULL` in the database) should show **only** the Layers icon — no Edit icon.
+- **F61 — Room migration smoke test:** On a device that had v1.5.31 installed with existing job history, upgrade to v1.5.32. Confirm the app launches without crash, the Jobs tab shows the existing job history intact, and old jobs have only the Layers icon (no Edit icon).
+
 ### Manual regression checks (v1.5.x colour / layer-tool hotfixes)
 
 Run these on at least one multi-colour file from the priority table below when touching Prepare metadata, preview colours, G-code post-processing, or plate merge logic:
@@ -103,6 +115,8 @@ For batch coverage, keep the two large-model regressions above in the manual E2E
 - Very large file load latency and messaging
 - Real-device colour perception on unusual palettes
 - Remap-to-non-default extruder slots (automation does not replace a human eyeball on the full UI flow)
+- G-code viewer line visibility at various zoom levels (F59)
+- Jobs tab re-open flow end-to-end (F60/F61) — requires a real sliced job in history
 
 ---
 

@@ -134,6 +134,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Keys must be threaded through `buildProfileOverrides()` and added to native `profile_keys[]` / `applyConfigToPrusa()` in `sapil_print.cpp`
 - Track: [`#38`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/38)
 
+### F62: G-code viewer — fit camera to content on load
+- Default camera distance is fixed at 500mm regardless of model size — small models (tetrahedron, buttons) appear as tiny specks at default zoom
+- `GcodeRenderer.kt` lines 132/169: `camera.distance = 500f` hardcoded
+- Fix: after G-code is uploaded to GPU, compute the bounding box of all move positions and set `camera.distance` and `camera.target` to frame the content
+- Same issue applies when opening via "View G-code" from Jobs tab (F60)
+- Confirmed by E2E screenshot: tetrahedron visible only as a 2px speck at default zoom after v1.5.32 tube width fix
+
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
 - Should document: submodule pin process, our Android-specific patches that must be re-applied (`#ifdef __ANDROID__` diagnostics, initializer fixes, build fixes for clipper.hpp/Brim.cpp/CutSurface.cpp), SAPIL JNI interface contract, config key differences, native rebuild workflow
