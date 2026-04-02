@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test manifest: enables largeHeap for the instrumentation process so native slicing
+     tests (which call into the OrcaSlicer C++ engine) don't OOM when the full suite runs
+     sequentially. The main app already has largeHeap=true; this ensures the test runner
+     process inherits the same limit. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:largeHeap="true"
+        tools:replace="android:largeHeap" />
+</manifest>
