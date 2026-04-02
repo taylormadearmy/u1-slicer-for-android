@@ -126,6 +126,45 @@ class SlicingIntegrationTest {
     }
 
     @Test
+    fun setModelRotation_multiObject_preservesInterObjectDistances() {
+        // sydney_buttons.3mf has 4 objects (button clusters) spread across the bed.
+        // Rotating as a group must preserve the distances between objects — each
+        // object must orbit the group centre, not spin around its own local origin.
+        val file = asset("sydney_buttons.3mf")
+        assertTrue("sydney_buttons.3mf should load", lib.loadModel(file.absolutePath))
+
+        val beforeOffsets = lib.getInstanceOffsets()
+        // Need at least 2 objects (4 floats) to test inter-object distance
+        assertTrue("Expected at least 2 objects", beforeOffsets.size >= 4)
+
+        assertTrue("setModelRotation should succeed", lib.setModelRotation(0f, 0f, 45f))
+
+        val afterOffsets = lib.getInstanceOffsets()
+        assertEquals("Instance count must not change after rotation",
+            beforeOffsets.size, afterOffsets.size)
+
+        val objectCount = beforeOffsets.size / 2
+
+        // For every pair of objects, verify their distance is preserved within 0.5 mm
+        for (i in 0 until objectCount) {
+            for (j in i + 1 until objectCount) {
+                val beforeDx = beforeOffsets[i * 2] - beforeOffsets[j * 2]
+                val beforeDy = beforeOffsets[i * 2 + 1] - beforeOffsets[j * 2 + 1]
+                val beforeDist = Math.sqrt((beforeDx * beforeDx + beforeDy * beforeDy).toDouble()).toFloat()
+
+                val afterDx = afterOffsets[i * 2] - afterOffsets[j * 2]
+                val afterDy = afterOffsets[i * 2 + 1] - afterOffsets[j * 2 + 1]
+                val afterDist = Math.sqrt((afterDx * afterDx + afterDy * afterDy).toDouble()).toFloat()
+
+                assertEquals(
+                    "Distance between objects $i and $j should be preserved after rotation",
+                    beforeDist, afterDist, 0.5f
+                )
+            }
+        }
+    }
+
+    @Test
     fun tetrahedron_stl_singleExtruderHasNoToolChanges() {
         val (success, gcode) = sliceAsset("tetrahedron.stl")
         assertTrue(success)
