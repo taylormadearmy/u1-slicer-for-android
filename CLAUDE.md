@@ -51,13 +51,13 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 612 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 140 instrumented tests (uses Orchestrator)
+./gradlew testDebugUnitTest                        # 614 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 142 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
-### Unit tests (`app/src/test/`) - 612 tests across 38 classes
+### Unit tests (`app/src/test/`) - 614 tests across 38 classes
 - `gcode/GcodeParserTest.kt` (26) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -96,13 +96,13 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic
 - `WipeTowerClampTest.kt` (3) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width
 
-### Instrumented tests (`app/src/androidTest/`) - 140 tests across 14 classes
+### Instrumented tests (`app/src/androidTest/`) - 142 tests across 14 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (5) — Room DAO insert, ordering, delete
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
-- `slicing/SlicingIntegrationTest.kt` (26) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test
+- `slicing/SlicingIntegrationTest.kt` (28) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation
 - `slicing/BambuPipelineIntegrationTest.kt` (31) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing
 - `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions
 - `slicing/ProfileEmbedderIntegrationTest.kt` (14) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
