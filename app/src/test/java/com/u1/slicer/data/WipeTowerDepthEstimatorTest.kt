@@ -26,4 +26,18 @@ class WipeTowerDepthEstimatorTest {
         assertEquals(40f, WipeTowerDepthEstimator.estimateDepth(300f), 0.01f)
         assertEquals(40f, WipeTowerDepthEstimator.estimateDepth(1000f), 0.01f)
     }
+
+    @Test fun `large primeVolume overrides height-based minimum`() {
+        // height-based min for 50mm model is 20mm; prime volume of 80mm should win
+        assertEquals(80f, WipeTowerDepthEstimator.estimateDepth(50f, 80f), 0.01f)
+    }
+
+    @Test fun `height-based minimum wins over small primeVolume`() {
+        // height-based min for 50mm model is 20mm; prime volume of 5mm loses
+        assertEquals(20f, WipeTowerDepthEstimator.estimateDepth(50f, 5f), 0.01f)
+    }
+
+    @Test fun `zero primeVolume behaves same as no primeVolume`() {
+        assertEquals(WipeTowerDepthEstimator.estimateDepth(175f), WipeTowerDepthEstimator.estimateDepth(175f, 0f), 0.01f)
+    }
 }

@@ -61,6 +61,18 @@ class WipeTowerClampTest {
         assertEquals(60f, resolveWipeTowerWidth(config, overrides), 0.01f)
     }
 
+    @Test fun `resolveWipeTowerDepth uses override prime volume when active`() {
+        val overrides = SlicingOverrides(primeVolume = OverrideValue(OverrideMode.OVERRIDE, 80))
+        val depth = resolveWipeTowerDepth(modelHeightMm = 50f, overrides = overrides)
+        assertEquals(80f, depth, 0.01f)
+    }
+
+    @Test fun `resolveWipeTowerDepth falls back to height-based estimate when USE_FILE`() {
+        val overrides = SlicingOverrides(primeVolume = OverrideValue(OverrideMode.USE_FILE, null))
+        val depth = resolveWipeTowerDepth(modelHeightMm = 50f, overrides = overrides)
+        assertEquals(20f, depth, 0.01f)
+    }
+
     @Test fun `clamp moves out-of-bounds tower inside bed`() {
         val bounds = wipeTowerClampBounds(
             bedSizeX = 270f, bedSizeY = 270f,

@@ -55,6 +55,16 @@ internal fun isLargeTriangleCount(triangleCount: Int): Boolean =
     triangleCount > com.u1.slicer.viewer.NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES
 
 /**
+ * Returns the effective wipe tower depth for the Prepare preview:
+ * uses the active primeVolume override (in mm) if set, otherwise falls back to height-based estimate.
+ */
+internal fun resolveWipeTowerDepth(modelHeightMm: Float, overrides: com.u1.slicer.data.SlicingOverrides): Float {
+    val ov = overrides.primeVolume
+    val primeVolumeMm = if (ov.mode == com.u1.slicer.data.OverrideMode.OVERRIDE && ov.value != null) ov.value.toFloat() else 0f
+    return com.u1.slicer.data.WipeTowerDepthEstimator.estimateDepth(modelHeightMm, primeVolumeMm)
+}
+
+/**
  * Returns the effective wipe tower width for the Prepare preview:
  * uses the active primeTowerWidth override if set, otherwise falls back to config default.
  */

@@ -11,9 +11,12 @@ package com.u1.slicer.data
  * Lookup table matches WipeTower::min_depth_per_height: {100mm → 20mm, 250mm → 40mm}
  */
 object WipeTowerDepthEstimator {
-    fun estimateDepth(modelHeightMm: Float): Float = when {
-        modelHeightMm <= 100f -> 20f
-        modelHeightMm >= 250f -> 40f
-        else -> 20f + (modelHeightMm - 100f) / 150f * 20f
+    fun estimateDepth(modelHeightMm: Float, primeVolumeMm: Float = 0f): Float {
+        val heightBased = when {
+            modelHeightMm <= 100f -> 20f
+            modelHeightMm >= 250f -> 40f
+            else -> 20f + (modelHeightMm - 100f) / 150f * 20f
+        }
+        return maxOf(heightBased, primeVolumeMm)
     }
 }
