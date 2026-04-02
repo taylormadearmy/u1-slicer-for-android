@@ -2132,14 +2132,14 @@ fun InlineModelPreview(
     // Painted/SEMM models use ThreeMfMeshParser which is not rotation-aware.
     LaunchedEffect(modelRotation) {
         val rot = modelRotation
-        if (rot.x == 0f && rot.y == 0f && rot.z == 0f) return@LaunchedEffect
         if (modelFilePath.endsWith(".3mf", ignoreCase = true) &&
             hasPaintData && (colorMapping != null || extruderMap != null)) return@LaunchedEffect
 
         val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
-                NativeLibrary().setModelRotation(rot.x, rot.y, rot.z)
-                NativeLibrary().getPreparePreviewMesh()?.toMeshData()
+                val lib = NativeLibrary()
+                lib.setModelRotation(rot.x, rot.y, rot.z)
+                lib.getPreparePreviewMesh()?.toMeshData()
             } catch (_: Throwable) {
                 null
             }
