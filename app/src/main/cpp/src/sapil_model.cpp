@@ -235,6 +235,7 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
 
         g_model_loaded = true;
         g_preview_mesh_valid = false;
+        g_rotation_base_positions.clear();
 
         SAPIL_LOGI("Model loaded: %s (%s) — %.1f x %.1f x %.1f mm, %d triangles",
             g_model_info.filename.c_str(), ext.c_str(),

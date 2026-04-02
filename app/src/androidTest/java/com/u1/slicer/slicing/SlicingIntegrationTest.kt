@@ -127,11 +127,11 @@ class SlicingIntegrationTest {
 
     @Test
     fun setModelRotation_multiObject_preservesInterObjectDistances() {
-        // sydney_buttons.3mf has 4 objects (button clusters) spread across the bed.
+        // flippy+flappy+mini.3mf has 4 objects spread across the bed.
         // Rotating as a group must preserve the distances between objects — each
         // object must orbit the group centre, not spin around its own local origin.
-        val file = asset("sydney_buttons.3mf")
-        assertTrue("sydney_buttons.3mf should load", lib.loadModel(file.absolutePath))
+        val file = asset("flippy+flappy+mini.3mf")
+        assertTrue("flippy+flappy+mini.3mf should load", lib.loadModel(file.absolutePath))
 
         val beforeOffsets = lib.getInstanceOffsets()
         // Need at least 2 objects (4 floats) to test inter-object distance
