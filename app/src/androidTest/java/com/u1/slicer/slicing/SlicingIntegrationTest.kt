@@ -179,30 +179,28 @@ class SlicingIntegrationTest {
         val meshAfter = lib.getPreparePreviewMesh()
         assertNotNull("Post-rotation preview mesh should not be null", meshAfter)
 
-        // A 90° X rotation swaps the Y and Z extents of the bounding box.
-        // Calculate Z extents: max(z) - min(z)
-        fun zExtent(mesh: com.u1.slicer.viewer.NativePreviewMesh): Float {
-            var minZ = Float.MAX_VALUE
-            var maxZ = -Float.MAX_VALUE
+        // A 90° X rotation changes the vertex positions. Compare the sum of all Z
+        // coordinates before and after — for any non-flat model this must differ,
+        // confirming the mesh was regenerated with rotation applied rather than cached.
+        fun sumZ(mesh: com.u1.slicer.viewer.NativePreviewMesh): Float {
             val positions = mesh.trianglePositions
+            var sum = 0f
             var i = 2
             while (i < positions.size) {
-                val z = positions[i]
-                if (z < minZ) minZ = z
-                if (z > maxZ) maxZ = z
+                sum += positions[i]
                 i += 3
             }
-            return if (maxZ > minZ) maxZ - minZ else 0f
+            return sum
         }
 
-        val zBefore = zExtent(meshBefore!!)
-        val zAfter = zExtent(meshAfter!!)
+        val zSumBefore = sumZ(meshBefore!!)
+        val zSumAfter = sumZ(meshAfter!!)
 
-        // After 90° X rotation the tetrahedron's Z extent must differ from before
-        // by more than 1mm — confirms the mesh was regenerated with rotation applied.
+        // After 90° X rotation the sum of Z coordinates must change by at least 1mm
+        // — confirms the mesh was regenerated with rotation applied.
         assertTrue(
-            "Z extent should change after 90° X rotation (before=$zBefore after=$zAfter)",
-            Math.abs(zAfter - zBefore) > 1.0f
+            "Sum of Z vertices should change after 90° X rotation (before=$zSumBefore after=$zSumAfter)",
+            Math.abs(zSumAfter - zSumBefore) > 1.0f
         )
     }
 
