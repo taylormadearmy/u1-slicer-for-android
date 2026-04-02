@@ -37,6 +37,11 @@ static std::vector<std::vector<int>> g_model_preview_extruders;
 static PreviewMesh g_cached_preview_mesh;
 static bool g_preview_mesh_valid = false;
 
+// Base instance positions captured on first setModelRotation call.
+// Cleared on model load/clear. Used to avoid positional drift across repeated
+// slider calls (each call rotates from the original positions, not current ones).
+static std::vector<Slic3r::Vec3d> g_rotation_base_positions;
+
 static int locateZipEntry(mz_zip_archive& zip, const char* exact_path)
 {
     int idx = mz_zip_reader_locate_file(&zip, exact_path, nullptr, 0);
@@ -504,6 +509,7 @@ void SlicerEngine::clearModel() {
     g_preview_mesh_valid = false;
     g_cached_preview_mesh = PreviewMesh();
     g_model_preview_extruders.clear();
+    g_rotation_base_positions.clear();
     g_files_dir.clear();
     std::ostringstream payload;
     payload << "{"
@@ -512,6 +518,10 @@ void SlicerEngine::clearModel() {
             << "}";
     diagnostics_record_native_event("native_model_cleared", payload.str());
     SAPIL_LOGI("Model cleared");
+}
+
+std::vector<Slic3r::Vec3d>& getRotationBasePositions() {
+    return g_rotation_base_positions;
 }
 
 // Accessor for the global model (used by sapil_print.cpp)

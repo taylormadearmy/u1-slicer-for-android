@@ -173,4 +173,16 @@ Java_com_u1_slicer_NativeLibrary_setModelRotation(
     return result ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_getInstanceOffsets(
+        JNIEnv* env, jobject) {
+    if (!g_engine) return env->NewFloatArray(0);
+    auto offsets = g_engine->getInstanceOffsets();
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(offsets.size()));
+    if (!offsets.empty()) {
+        env->SetFloatArrayRegion(result, 0, static_cast<jsize>(offsets.size()), offsets.data());
+    }
+    return result;
+}
+
 } // extern "C"

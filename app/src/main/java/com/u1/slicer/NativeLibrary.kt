@@ -57,6 +57,10 @@ class NativeLibrary {
     // Apply Euler rotation (degrees) to the loaded model. Call after setModelScale and before setModelInstances.
     external fun setModelRotation(x: Float, y: Float, z: Float): Boolean
 
+    // Returns flat [x0, y0, x1, y1, ...] world-space XY offsets for all instances.
+    // Used by instrumented tests only.
+    external fun getInstanceOffsets(): FloatArray
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)

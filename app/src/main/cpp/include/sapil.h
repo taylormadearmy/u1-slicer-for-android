@@ -153,6 +153,10 @@ public:
     // Call after setModelScale and before setModelInstances.
     bool setModelRotation(float rx_deg, float ry_deg, float rz_deg);
 
+    // Returns flat [x0, y0, x1, y1, ...] world-space XY offsets for all instances
+    // (in object/instance enumeration order). Used by instrumented tests.
+    std::vector<float> getInstanceOffsets() const;
+
 private:
     struct Impl;
     Impl* pImpl;
