@@ -165,6 +165,48 @@ class SlicingIntegrationTest {
     }
 
     @Test
+    fun setModelRotation_invalidatesPreviewMesh_soSubsequentFetchReturnsRotatedGeometry() {
+        // Load tetrahedron, get unrotated mesh, rotate, get new mesh.
+        // The bounding boxes should differ — confirming the preview mesh reflects rotation.
+        val file = asset("tetrahedron.stl")
+        assertTrue("Model should load", lib.loadModel(file.absolutePath))
+
+        val meshBefore = lib.getPreparePreviewMesh()
+        assertNotNull("Initial preview mesh should not be null", meshBefore)
+
+        assertTrue("setModelRotation should succeed", lib.setModelRotation(90f, 0f, 0f))
+
+        val meshAfter = lib.getPreparePreviewMesh()
+        assertNotNull("Post-rotation preview mesh should not be null", meshAfter)
+
+        // A 90° X rotation swaps the Y and Z extents of the bounding box.
+        // Calculate Z extents: max(z) - min(z)
+        fun zExtent(mesh: com.u1.slicer.viewer.NativePreviewMesh): Float {
+            var minZ = Float.MAX_VALUE
+            var maxZ = -Float.MAX_VALUE
+            val positions = mesh.trianglePositions
+            var i = 2
+            while (i < positions.size) {
+                val z = positions[i]
+                if (z < minZ) minZ = z
+                if (z > maxZ) maxZ = z
+                i += 3
+            }
+            return if (maxZ > minZ) maxZ - minZ else 0f
+        }
+
+        val zBefore = zExtent(meshBefore!!)
+        val zAfter = zExtent(meshAfter!!)
+
+        // After 90° X rotation the tetrahedron's Z extent must differ from before
+        // by more than 1mm — confirms the mesh was regenerated with rotation applied.
+        assertTrue(
+            "Z extent should change after 90° X rotation (before=$zBefore after=$zAfter)",
+            Math.abs(zAfter - zBefore) > 1.0f
+        )
+    }
+
+    @Test
     fun tetrahedron_stl_singleExtruderHasNoToolChanges() {
         val (success, gcode) = sliceAsset("tetrahedron.stl")
         assertTrue(success)
