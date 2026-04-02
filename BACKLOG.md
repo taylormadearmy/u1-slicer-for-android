@@ -128,12 +128,23 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - "Large model — this may take a moment…" shown when file >50MB; "Large model — preview may take a moment…" shown after load when triangle count >500K
 - Track: [`#35`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/35)
 
-### F57: Rotate model on build plate (all axes) + rotate prime tower (GitHub #37)
-- Allow rotating the loaded model on all three axes (X, Y, Z) from the Prepare screen, with live 3D preview update
-- Rotation state must persist through to the slice (passed as geometry transform to native engine)
-- Separate control to rotate the prime tower independently on the build plate
-- Consider rotation snapping (e.g. 45° increments) vs. free rotation
-- Track: [`#37`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/37)
+### F58: More prime tower settings (GitHub #38)
+- Expose prime tower width (`prime_tower_width`) and other prime tower options from the Prepare screen
+- Purge volume per extruder and prime tower brim also candidates
+- Keys must be threaded through `buildProfileOverrides()` and added to native `profile_keys[]` / `applyConfigToPrusa()` in `sapil_print.cpp`
+- Track: [`#38`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/38)
+
+### F59: G-code preview filament lines too thin (GitHub #39)
+- Box-tube geometry is physically accurate (0.45mm wide) but visually thin at typical viewing distances on high-DPI screens
+- Simplest fix: scale up `halfWidth` in `GcodeRenderer.kt` to ~1.0–1.5mm for display (OrcaSlicer itself uses inflated widths)
+- Travel moves are GL_LINES (always 1px) — may also need attention
+- Track: [`#39`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/39)
+
+### F60: Prepare preview prime tower accurate size and position (GitHub #36)
+- Wipe tower rendered in Prepare preview does not match configured dimensions/position from `SliceConfig`
+- Source of truth: `SliceConfig.wipeTowerX/Y/Size`; relevant tests: `PreparePreviewPlacementTest`
+- Visual accuracy issue only, not a slicing correctness issue
+- Track: [`#36`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/36)
 
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
@@ -143,6 +154,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **F57/F#37**: Model rotation on all three axes from Prepare screen with live 3D preview; rotation persists to slice; prime tower rotation also included — DONE v1.5.26/v1.5.28
+- **F58/F#38**: Prime tower width (`prime_tower_width`) and rotation angle (`wipe_tower_rotation_angle`) exposed in Prepare screen; threaded through native profile keys pipeline — DONE v1.5.26/v1.5.28
 - **F56/F#35**: Large model loading warning — "Large model — this may take a moment…" on file >50MB; "preview may take a moment…" on triangle count >500K — DONE v1.5.24
 - **F#36**: Prime tower footprint accuracy — Prepare preview now shows correct rectangular wipe tower (estimated depth via OrcaSlicer height→depth heuristic) instead of square — DONE v1.5.24
 - **B#37 regression**: Wipe tower Y-clamp mismatch introduced in v1.5.24 — pre-slice clamp and drag clamp now both use `WipeTowerDepthEstimator.estimateDepth()` for the Y axis; auto-placement `computeWipeTowerPosition()` uses correct rectangular footprint — FIXED v1.5.25
