@@ -2026,12 +2026,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _gcodePreview.value = native.getGcodePreview(50)
                     _parsedGcode.value = outputValidation.parsedGcode
                     settingsRepo.saveSliceConfig(_config.value)
-                    // Save job to history
+                    // Save job to history. Copy source model to durable storage so it can be
+                    // re-opened from the Jobs tab even after the transient workspace is cleared.
                     val cfg = _config.value
-                    sliceJobDao.insert(
+                    val jobId = sliceJobDao.insert(
                         SliceJob(
                             modelName = currentModelName.ifEmpty { "Unknown" },
                             gcodePath = result.gcodePath,
+                            sourcePath = null, // filled in below once we have the rowid
                             totalLayers = result.totalLayers,
                             estimatedTimeSeconds = result.estimatedTimeSeconds,
                             estimatedFilamentMm = result.estimatedFilamentMm,
@@ -2043,6 +2045,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             filamentType = cfg.filamentType
                         )
                     )
+                    val durableSource = copySourceToDurableJobDir(jobId, currentModelFile)
+                    if (durableSource != null) {
+                        sliceJobDao.updateSourcePath(jobId, durableSource.absolutePath)
+                    }
                 } else {
                     val errorMsg = result?.errorMessage ?: "Slicing failed"
                     if (isClipperError(errorMsg)) {
@@ -2472,6 +2478,57 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    // F60: parse saved G-code and set it as the active preview so the viewer can display it.
+    // Returns true if the file existed and parsing was started, false if the file is missing.
+    fun loadJobGcodeForViewer(job: SliceJob, onResult: (success: Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val gcodeFile = File(job.gcodePath)
+            if (!gcodeFile.exists()) {
+                launch(Dispatchers.Main) { onResult(false) }
+                return@launch
+            }
+            try {
+                val parsed = GcodeParser.parse(gcodeFile)
+                _parsedGcode.value = parsed
+                launch(Dispatchers.Main) { onResult(true) }
+            } catch (e: Exception) {
+                Log.e("SlicerVM", "Failed to parse job G-code: ${e.message}")
+                launch(Dispatchers.Main) { onResult(false) }
+            }
+        }
+    }
+
+    // F61: reload the source 3MF/STL saved for a job back into the Prepare screen.
+    // Returns true if the source file existed and loading was started, false if it is missing.
+    fun reopenJobToEdit(job: SliceJob, onMissing: () -> Unit) {
+        val sourcePath = job.sourcePath
+        if (sourcePath == null) {
+            onMissing()
+            return
+        }
+        val sourceFile = File(sourcePath)
+        if (!sourceFile.exists()) {
+            onMissing()
+            return
+        }
+        loadModelFromFile(sourceFile)
+    }
+
+    // Copy the current source model to files/jobs/<jobId>/ for durable storage (F61).
+    private fun copySourceToDurableJobDir(jobId: Long, sourceFile: File?): File? {
+        if (sourceFile == null || !sourceFile.exists()) return null
+        return try {
+            val jobDir = File(getApplication<Application>().filesDir, "jobs/$jobId")
+            jobDir.mkdirs()
+            val dest = File(jobDir, sourceFile.name)
+            sourceFile.copyTo(dest, overwrite = true)
+            dest
+        } catch (e: Exception) {
+            Log.w("SlicerVM", "Failed to copy source to durable job dir: ${e.message}")
+            null
+        }
     }
 
     fun shareDiagnostics() {

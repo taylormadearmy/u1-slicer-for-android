@@ -134,13 +134,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Keys must be threaded through `buildProfileOverrides()` and added to native `profile_keys[]` / `applyConfigToPrusa()` in `sapil_print.cpp`
 - Track: [`#38`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/38)
 
-### F59: G-code preview filament lines too thin (GitHub #39)
-- Box-tube geometry is physically accurate (0.45mm wide) but visually thin at typical viewing distances on high-DPI screens
-- Simplest fix: scale up `halfWidth` in `GcodeRenderer.kt` to ~1.0–1.5mm for display (OrcaSlicer itself uses inflated widths)
-- Travel moves are GL_LINES (always 1px) — may also need attention
-- Track: [`#39`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/39)
-
-
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
 - Should document: submodule pin process, our Android-specific patches that must be re-applied (`#ifdef __ANDROID__` diagnostics, initializer fixes, build fixes for clipper.hpp/Brim.cpp/CutSurface.cpp), SAPIL JNI interface contract, config key differences, native rebuild workflow
@@ -149,6 +142,9 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **F59/F#39**: G-code preview tube width scaled up for visibility (halfWidth 0.225→0.75, halfHeight 0.1→0.2) — DONE v1.5.32
+- **F60/F#40**: Jobs tab "View G-code" icon — parses saved G-code on IO thread, navigates to 3D viewer; graceful toast if file missing — DONE v1.5.32
+- **F61/F#41**: Jobs tab "Re-open model" icon — source 3MF copied to durable `files/jobs/<id>/` at slice time (Room v2 migration adds `sourcePath`); `jobs/` dir protected from upgrade clearing; `reopenJobToEdit()` reloads model to Prepare screen — DONE v1.5.32
 - **F60/F#36**: Prepare preview prime tower now reacts to primeTowerWidth override — `resolveWipeTowerWidth()` returns active override or config default — DONE v1.5.30
 - **F57/F#37**: Model rotation on all three axes from Prepare screen with live 3D preview; rotation persists to slice; prime tower rotation also included — DONE v1.5.26/v1.5.28
 - **F58/F#38**: Prime tower width (`prime_tower_width`) and rotation angle (`wipe_tower_rotation_angle`) exposed in Prepare screen; threaded through native profile keys pipeline — DONE v1.5.26/v1.5.28

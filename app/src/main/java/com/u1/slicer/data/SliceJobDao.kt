@@ -16,4 +16,7 @@ interface SliceJobDao {
 
     @Query("DELETE FROM slice_jobs")
     suspend fun deleteAll()
+
+    @Query("UPDATE slice_jobs SET sourcePath = :path WHERE id = :id")
+    suspend fun updateSourcePath(id: Long, path: String)
 }

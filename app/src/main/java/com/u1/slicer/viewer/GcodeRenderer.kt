@@ -259,8 +259,8 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Allocate tube buffer: 18 vertices per extrusion move (box-tube: top + left + right faces)
         val tubeData = if (useTubes) FloatArray(totalExtrudeMoves * verticesPerTubeMove * tubeFloatsPerVertex) else FloatArray(0)
         var tubeOffset = 0
-        val halfWidth = 0.225f  // 0.45mm extrusion width / 2
-        val halfHeight = 0.1f  // 0.2mm layer height / 2
+        val halfWidth = 0.75f  // display-scaled width (physically ~1.5mm) — actual extrusion is 0.45mm but looks invisible at bed scale
+        val halfHeight = 0.2f  // display-scaled height (physically ~0.4mm) — actual layer is 0.2mm
 
         for ((layerIdx, layer) in gcode.layers.withIndex()) {
             // --- Extrusion pass ---

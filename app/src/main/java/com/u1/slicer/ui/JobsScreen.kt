@@ -24,6 +24,8 @@ fun JobsScreen(
     onDelete: (SliceJob) -> Unit,
     onDeleteAll: () -> Unit,
     onShare: (SliceJob) -> Unit,
+    onViewGcode: (SliceJob) -> Unit = {},
+    onReopenModel: (SliceJob) -> Unit = {},
     onNavigatePrepare: () -> Unit = {},
     onNavigatePreview: () -> Unit = {},
     onNavigatePrinter: () -> Unit = {},
@@ -107,7 +109,9 @@ fun JobsScreen(
                     JobCard(
                         job = job,
                         onDelete = { onDelete(job) },
-                        onShare = { onShare(job) }
+                        onShare = { onShare(job) },
+                        onViewGcode = { onViewGcode(job) },
+                        onReopenModel = { onReopenModel(job) }
                     )
                 }
             }
@@ -119,7 +123,9 @@ fun JobsScreen(
 private fun JobCard(
     job: SliceJob,
     onDelete: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onViewGcode: () -> Unit,
+    onReopenModel: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM d, yyyy HH:mm", Locale.getDefault()) }
 
@@ -165,8 +171,27 @@ private fun JobCard(
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                // View G-code in 3D viewer (F60)
+                IconButton(onClick = onViewGcode) {
+                    Icon(
+                        Icons.Default.Layers,
+                        contentDescription = "View G-code",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                // Re-open source model in Prepare screen (F61) — only shown when source was saved
+                if (job.sourcePath != null) {
+                    IconButton(onClick = onReopenModel) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Re-open model",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
                 TextButton(onClick = onShare) {
                     Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))

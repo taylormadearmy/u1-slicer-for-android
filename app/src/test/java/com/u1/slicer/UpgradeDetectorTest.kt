@@ -172,6 +172,10 @@ class UpgradeDetectorTest {
         val scratch = File(dir, "scratch").apply { mkdirs() }
         File(scratch, "nested.tmp").createNewFile()
 
+        val jobs = File(dir, "jobs").apply { mkdirs() }
+        File(jobs, "1").apply { mkdirs() }
+        File(File(jobs, "1"), "model.3mf").createNewFile()
+
         val files = UpgradeDetector.upgradeTransientFiles(dir)
         val names = files.map { it.name }.toSet()
 
@@ -182,6 +186,8 @@ class UpgradeDetectorTest {
         assertTrue("scratch directory should be cleared", "scratch" in names)
         assertFalse("datastore must be preserved", "datastore" in names)
         assertFalse("diagnostics must be preserved", "diagnostics" in names)
+        assertFalse("jobs directory must be preserved (durable source models)", "jobs" in names)
+        assertFalse("job source model must be preserved", "model.3mf" in names)
     }
 
     @Test

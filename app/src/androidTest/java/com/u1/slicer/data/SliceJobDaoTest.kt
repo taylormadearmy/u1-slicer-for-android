@@ -101,6 +101,7 @@ class SliceJobDaoTest {
 
         assertEquals("test.stl", job.modelName)
         assertEquals("/data/test.gcode", job.gcodePath)
+        assertNull(job.sourcePath)
         assertEquals(100, job.totalLayers)
         assertEquals(1800f, job.estimatedTimeSeconds, 0.001f)
         assertEquals(3000f, job.estimatedFilamentMm, 0.001f)
@@ -110,5 +111,29 @@ class SliceJobDaoTest {
         assertEquals(60, job.bedTemp)
         assertFalse(job.supportEnabled)
         assertEquals("PLA", job.filamentType)
+    }
+
+    @Test
+    fun sourcePathNullByDefault() = runTest {
+        val id = dao.insert(testJob())
+        val job = dao.getAll().first()[0]
+        assertNull(job.sourcePath)
+    }
+
+    @Test
+    fun sourcePathRoundTrip() = runTest {
+        val jobWithSource = testJob().copy(sourcePath = "/data/user/0/com.u1.slicer.orca/files/jobs/1/model.3mf")
+        dao.insert(jobWithSource)
+        val job = dao.getAll().first()[0]
+        assertEquals("/data/user/0/com.u1.slicer.orca/files/jobs/1/model.3mf", job.sourcePath)
+    }
+
+    @Test
+    fun updateSourcePath() = runTest {
+        val id = dao.insert(testJob())
+        assertNull(dao.getAll().first()[0].sourcePath)
+
+        dao.updateSourcePath(id, "/data/jobs/1/model.3mf")
+        assertEquals("/data/jobs/1/model.3mf", dao.getAll().first()[0].sourcePath)
     }
 }

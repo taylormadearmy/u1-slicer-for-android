@@ -531,11 +531,27 @@ class MainActivity : ComponentActivity() {
                     },
                     jobsContent = {
                         val jobs by viewModel.sliceJobs.collectAsState(initial = emptyList())
+                        val ctx = LocalContext.current
                         JobsScreen(
                             jobs = jobs,
                             onDelete = { viewModel.deleteJob(it) },
                             onDeleteAll = { viewModel.deleteAllJobs() },
                             onShare = { viewModel.shareJobGcode(it) },
+                            onViewGcode = { job ->
+                                viewModel.loadJobGcodeForViewer(job) { success ->
+                                    if (success) {
+                                        navController.navigate(Routes.GCODE_VIEWER_3D)
+                                    } else {
+                                        android.widget.Toast.makeText(ctx, "G-code file not found — it may have been cleared on upgrade.", android.widget.Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            onReopenModel = { job ->
+                                viewModel.reopenJobToEdit(job, onMissing = {
+                                    android.widget.Toast.makeText(ctx, "Source model not found — it may have been cleared on upgrade.", android.widget.Toast.LENGTH_LONG).show()
+                                })
+                                navigateTab(Routes.PREPARE)
+                            },
                             onNavigatePrepare = { navigateTab(Routes.PREPARE) },
                             onNavigatePreview = { navigateTab(Routes.PREVIEW) },
                             onNavigatePrinter = { navigateTab(Routes.PRINTER) },

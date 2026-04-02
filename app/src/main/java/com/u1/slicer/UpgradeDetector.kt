@@ -56,7 +56,7 @@ class UpgradeDetector {
     }
 
     companion object {
-        private val protectedDirectoryNames = setOf("datastore", "diagnostics")
+        private val protectedDirectoryNames = setOf("datastore", "diagnostics", "jobs")
 
         /** Matches all intermediate 3MF files created by the sanitize/embed/plate pipeline. */
         fun intermediateFiles(filesDir: File): List<File> {

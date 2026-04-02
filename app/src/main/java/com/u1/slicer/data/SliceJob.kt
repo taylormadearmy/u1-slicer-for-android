@@ -8,6 +8,9 @@ data class SliceJob(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val modelName: String,
     val gcodePath: String,
+    /** Absolute path to the durable copy of the source 3MF/STL in files/jobs/<id>/. Null for jobs
+     *  saved before this column was added (schema v2). */
+    val sourcePath: String? = null,
     val totalLayers: Int,
     val estimatedTimeSeconds: Float,
     val estimatedFilamentMm: Float,
