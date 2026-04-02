@@ -140,10 +140,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Travel moves are GL_LINES (always 1px) — may also need attention
 - Track: [`#39`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/39)
 
-### F60: Prepare preview prime tower accurate size and position (GitHub #36)
-- Wipe tower rendered in Prepare preview does not match configured dimensions/position from `SliceConfig`
-- Source of truth: `SliceConfig.wipeTowerX/Y/Size`; relevant tests: `PreparePreviewPlacementTest`
-- Visual accuracy issue only, not a slicing correctness issue
+### F60: Prepare preview prime tower doesn't reflect settings changes (GitHub #36)
+- Rectangular footprint (width × estimated depth) already fixed in v1.5.24
+- **Remaining**: when `primeTowerWidth` override is changed on the Prepare screen, the preview tower width doesn't update — it always reads `SliceConfig.wipeTowerWidth` (the default), not the active override
+- Fix: pass the resolved override width (from `SlicingOverrides.primeTowerWidth` if set) to `wipeTowerWidth` in the `PrepareScreen` composable call in `MainActivity.kt` line ~835
 - Track: [`#36`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/36)
 
 ### D1: Document slicer engine upgrade process
