@@ -87,6 +87,21 @@ internal fun wipeTowerClampBounds(
     return maxX to maxY
 }
 
+/**
+ * Synthesize a [SliceResult] from a [SliceJob] DB row so the Preview tab can enter
+ * [SlicerViewModel.SlicerState.SliceComplete] when a saved G-code is loaded for viewing
+ * (B40 — kill+reopen from Jobs tab used to leave state as Idle).
+ */
+internal fun sliceResultFromJob(job: SliceJob) = SliceResult(
+    success = true,
+    errorMessage = "",
+    gcodePath = job.gcodePath,
+    totalLayers = job.totalLayers,
+    estimatedTimeSeconds = job.estimatedTimeSeconds,
+    estimatedFilamentMm = job.estimatedFilamentMm,
+    estimatedFilamentGrams = 0f
+)
+
 class SlicerViewModel(application: Application) : AndroidViewModel(application) {
 
     private data class SliceOutputValidation(
@@ -2498,6 +2513,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val parsed = GcodeParser.parse(gcodeFile)
                 _parsedGcode.value = parsed
+                // B40: synthesize SliceComplete so the Preview tab renders the viewer after
+                // kill+reopen (previously state stayed Idle and the tab showed "No slice results").
+                _state.value = SlicerState.SliceComplete(sliceResultFromJob(job))
                 launch(Dispatchers.Main) { onResult(true) }
             } catch (e: Exception) {
                 Log.e("SlicerVM", "Failed to parse job G-code: ${e.message}")
