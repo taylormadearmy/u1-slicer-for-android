@@ -3,6 +3,7 @@ package com.u1.slicer
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.data.SliceJob
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,8 +20,10 @@ class LoadJobGcodeViewModelTest {
 
     private val targetContext get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    // Regression: B40 — loadJobGcodeForViewer previously set _parsedGcode but left _state = Idle,
+    // causing Preview tab to show "No slice results" after kill+reopen
     @Test
-    fun loadJobGcodeForViewer_setsSliceCompleteState() {
+    fun loadJobGcodeForViewer_setsSliceCompleteState_notIdle() {
         val application = targetContext.applicationContext as U1SlicerApplication
         val viewModel = SlicerViewModel(application)
 
@@ -45,6 +48,7 @@ class LoadJobGcodeViewModelTest {
             totalLayers = 1,
             estimatedTimeSeconds = 60f,
             estimatedFilamentMm = 100f,
+            estimatedFilamentGrams = 0f,
             layerHeight = 0.2f,
             fillDensity = 15f,
             nozzleTemp = 200,
@@ -69,6 +73,8 @@ class LoadJobGcodeViewModelTest {
                 "state should be SliceComplete after loadJobGcodeForViewer, was ${viewModel.state.value}",
                 viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete
             )
+            val result = (viewModel.state.value as SlicerViewModel.SlicerState.SliceComplete).result
+            assertEquals(gcodeFile.absolutePath, result.gcodePath)
         } finally {
             gcodeFile.delete()
         }

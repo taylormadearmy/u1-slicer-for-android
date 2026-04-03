@@ -99,7 +99,7 @@ internal fun sliceResultFromJob(job: SliceJob) = SliceResult(
     totalLayers = job.totalLayers,
     estimatedTimeSeconds = job.estimatedTimeSeconds,
     estimatedFilamentMm = job.estimatedFilamentMm,
-    estimatedFilamentGrams = 0f
+    estimatedFilamentGrams = job.estimatedFilamentGrams
 )
 
 class SlicerViewModel(application: Application) : AndroidViewModel(application) {
@@ -2052,6 +2052,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             totalLayers = result.totalLayers,
                             estimatedTimeSeconds = result.estimatedTimeSeconds,
                             estimatedFilamentMm = result.estimatedFilamentMm,
+                            estimatedFilamentGrams = result.estimatedFilamentGrams,
                             layerHeight = cfg.layerHeight,
                             fillDensity = cfg.fillDensity,
                             nozzleTemp = cfg.nozzleTemp,

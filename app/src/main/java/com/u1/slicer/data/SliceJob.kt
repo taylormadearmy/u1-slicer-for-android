@@ -14,6 +14,7 @@ data class SliceJob(
     val totalLayers: Int,
     val estimatedTimeSeconds: Float,
     val estimatedFilamentMm: Float,
+    val estimatedFilamentGrams: Float = 0f,
     val layerHeight: Float,
     val fillDensity: Float,
     val nozzleTemp: Int,

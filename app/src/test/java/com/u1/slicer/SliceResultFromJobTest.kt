@@ -20,6 +20,7 @@ class SliceResultFromJobTest {
         totalLayers = 120,
         estimatedTimeSeconds = 3600f,
         estimatedFilamentMm = 4200f,
+        estimatedFilamentGrams = 12.5f,
         layerHeight = 0.2f,
         fillDensity = 15f,
         nozzleTemp = 200,
@@ -36,6 +37,7 @@ class SliceResultFromJobTest {
         assertEquals(sampleJob.totalLayers, result.totalLayers)
         assertEquals(sampleJob.estimatedTimeSeconds, result.estimatedTimeSeconds, 0.01f)
         assertEquals(sampleJob.estimatedFilamentMm, result.estimatedFilamentMm, 0.01f)
+        assertEquals(sampleJob.estimatedFilamentGrams, result.estimatedFilamentGrams, 0.01f)
     }
 
     @Test fun `sliceResultFromJob is marked success`() {
