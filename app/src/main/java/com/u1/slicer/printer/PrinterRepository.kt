@@ -28,6 +28,15 @@ class PrinterRepository(
     @Volatile
     private var rapidPollCyclesRemaining = 0
 
+    /**
+     * Number of consecutive "disconnected" results from the printer.
+     * PrinterOffline is only fired after OFFLINE_GRACE_FAILURES consecutive
+     * failures, suppressing transient WiFi blips.
+     */
+    @Volatile
+    private var consecutiveFailures = 0
+
+
     init {
         // Load saved printer URL
         CoroutineScope(Dispatchers.IO).launch {
@@ -64,12 +73,19 @@ class PrinterRepository(
                 val latestStatus = client.getStatus()
                 _status.value = latestStatus
                 PrintProgressNotifier.update(appContext, latestStatus)
+                // Grace-period logic: only surface "disconnected" to detectTransition
+                // after OFFLINE_GRACE_FAILURES consecutive failures, so transient WiFi
+                // blips don't immediately trigger a PrinterOffline notification.
+                val (effectiveState, newFailures) = applyGracePeriod(
+                    latestStatus.state, prevState, consecutiveFailures
+                )
+                consecutiveFailures = newFailures
                 val event = detectTransition(
-                    prevState, latestStatus.state,
+                    prevState, effectiveState,
                     latestStatus.filename, latestStatus.progressPercent
                 )
                 event?.let { AppEventNotifier.notify(appContext, it) }
-                prevState = latestStatus.state
+                prevState = effectiveState
                 val interval = if (rapidPollCyclesRemaining > 0) {
                     rapidPollCyclesRemaining--
                     500L
@@ -122,6 +138,33 @@ class PrinterRepository(
         client.setHeaterTemperature(heater, targetC)
 
     companion object {
+        /** Number of consecutive "disconnected" polls required before PrinterOffline fires. */
+        internal const val OFFLINE_GRACE_FAILURES = 3
+
+        /**
+         * Applies the grace-period rule to a raw poll result.
+         *
+         * Returns a pair of (effectiveState, updatedConsecutiveFailures).
+         * If the printer reports "disconnected" but the failure count has not yet
+         * reached [OFFLINE_GRACE_FAILURES], [prevState] is returned as the effective
+         * state so that [detectTransition] does not fire [AppEventNotifier.Event.PrinterOffline].
+         * Once the threshold is met the true "disconnected" state is passed through.
+         * A non-disconnected result resets the failure counter to 0.
+         */
+        internal fun applyGracePeriod(
+            rawState: String,
+            prevState: String,
+            consecutiveFailures: Int
+        ): Pair<String, Int> {
+            return if (rawState == "disconnected") {
+                val newCount = consecutiveFailures + 1
+                val effectiveState = if (newCount >= OFFLINE_GRACE_FAILURES) rawState else prevState
+                Pair(effectiveState, newCount)
+            } else {
+                Pair(rawState, 0)
+            }
+        }
+
         internal fun detectTransition(
             prev: String,
             curr: String,
