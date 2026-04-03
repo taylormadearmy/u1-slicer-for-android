@@ -42,8 +42,10 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     private var lastGcode: ParsedGcode? = null
     private var useFeatureColors = false
-    // Track travel visibility to detect toggle requests
+    // Track state to avoid redundant JNI calls per frame
     private var lastShowTravel = false
+    private var lastMinLayer = -1
+    private var lastMaxLayer = -1
 
     fun setExtruderColors(hexColors: List<String>) {
         toolColors = VGCodeNative.packToolColors(hexColors)
@@ -135,7 +137,11 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (vgcodePtr != 0L && totalLayers > 0) {
             val min = minLayer.coerceIn(0, totalLayers - 1)
             val max = maxLayer.coerceIn(0, totalLayers - 1)
-            VGCodeNative.setLayersViewRange(vgcodePtr, min, max)
+            if (min != lastMinLayer || max != lastMaxLayer) {
+                VGCodeNative.setLayersViewRange(vgcodePtr, min, max)
+                lastMinLayer = min
+                lastMaxLayer = max
+            }
             VGCodeNative.render(vgcodePtr, camera.viewMatrix, camera.projectionMatrix)
         }
 
@@ -152,6 +158,14 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (totalLayers == 0 || vgcodePtr == 0L) return
 
         VGCodeNative.loadGcode(vgcodePtr, gcode, toolColors)
+
+        // Use libvgcode's layer count — it may differ from our parsed layer count
+        // because libvgcode creates layers from sequential layer_id values in PathVertex
+        val vgcodeLayers = VGCodeNative.getLayersCount(vgcodePtr).toInt()
+        android.util.Log.i("GcodeRenderer", "uploadGcode: parsed ${gcode.layers.size} layers, " +
+            "totalMoves=${gcode.totalMoves}, libvgcode reports $vgcodeLayers layers")
+        totalLayers = vgcodeLayers
+        maxLayer = totalLayers - 1
 
         // Apply current view type
         val viewType = if (useFeatureColors) VGCodeNative.VIEW_TYPE_FEATURE else VGCodeNative.VIEW_TYPE_TOOL

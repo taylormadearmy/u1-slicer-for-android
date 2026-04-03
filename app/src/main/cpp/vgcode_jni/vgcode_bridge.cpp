@@ -96,7 +96,23 @@ Java_com_u1_slicer_viewer_VGCodeNative_load(JNIEnv* env, jclass /*clazz*/, jlong
     env->ReleaseIntArrayElements(layerIds, lid, JNI_ABORT);
 
     LOGI("Loading %d vertices, %d tool colors", (int)vertexCount, (int)colorCount);
+
+    // Debug: log first/last few vertices
+    if (data.vertices.size() > 0) {
+        auto& first = data.vertices[0];
+        auto& last = data.vertices.back();
+        LOGI("First vertex: pos=(%.1f,%.1f,%.1f) type=%d role=%d layer=%d ext=%d h=%.2f w=%.2f",
+            first.position[0], first.position[1], first.position[2],
+            (int)first.type, (int)first.role, first.layer_id, first.extruder_id,
+            first.height, first.width);
+        LOGI("Last vertex: pos=(%.1f,%.1f,%.1f) type=%d role=%d layer=%d ext=%d h=%.2f w=%.2f",
+            last.position[0], last.position[1], last.position[2],
+            (int)last.type, (int)last.role, last.layer_id, last.extruder_id,
+            last.height, last.width);
+    }
+
     ref->viewer.load(std::move(data));
+    LOGI("After load: %zu layers", ref->viewer.get_layers_count());
 }
 
 JNIEXPORT void JNICALL
