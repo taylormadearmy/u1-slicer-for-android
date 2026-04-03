@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 628 JVM unit tests
+./gradlew testDebugUnitTest                        # 634 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 151 instrumented tests (uses Orchestrator)
 ```
 
@@ -59,7 +59,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.
 
-### Unit tests (`app/src/test/`) - 612 tests across 38 classes
+### Unit tests (`app/src/test/`) - 618 tests across 39 classes
 - `gcode/GcodeParserTest.kt` (26) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (41) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -98,6 +98,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic
 - `WipeTowerClampTest.kt` (8) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width; resolveWipeTowerWidth/resolveWipeTowerDepth: return active override or config default
 - `data/WipeTowerDepthEstimatorTest.kt` (8) — height-based depth lookup table; primeVolume override wins when larger than height-based minimum
+- `viewer/VGCodeDataMappingTest.kt` (6) — libvgcode JNI data mapping: FeatureType→Role, MoveType→EMoveType, tool color packing
 
 ### Instrumented tests (`app/src/androidTest/`) - 147 tests across 14 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
@@ -127,6 +128,7 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 - **Network**: OkHttp (Moonraker printer API)
 - **Native**: Snapmaker Orca C++ via JNI (`app/src/main/cpp/`) — pre-built `.so` in `jniLibs/`
 - **3D**: OpenGL ES 3.0 via GLSurfaceView (`viewer/` package)
+- **G-code Preview**: libvgcode (PrusaSlicer, AGPLv3) via JNI — instanced tube rendering for toolpaths (`app/src/main/cpp/libvgcode/`)
 
 ## Key Conventions
 
