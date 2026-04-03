@@ -2045,7 +2045,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             filamentType = cfg.filamentType
                         )
                     )
-                    val durableSource = copySourceToDurableJobDir(jobId, currentModelFile)
+                    // Store the original (pre-embed) source file for F61 re-open.
+                    // rawInputFile is the sanitized-but-not-embedded copy — reloading it via
+                    // loadModelFromFile() applies a fresh embed and correctly restores colour data.
+                    // currentModelFile is the profile-embedded file; reloading it causes the
+                    // sanitizer to strip project_settings.config before the colour parse, which can
+                    // collapse multi-colour models to single-colour on re-open.
+                    val durableSource = copySourceToDurableJobDir(jobId, rawInputFile ?: sourceModelFile ?: currentModelFile)
                     if (durableSource != null) {
                         sliceJobDao.updateSourcePath(jobId, durableSource.absolutePath)
                     }

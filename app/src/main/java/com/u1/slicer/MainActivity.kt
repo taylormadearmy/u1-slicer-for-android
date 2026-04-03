@@ -540,7 +540,7 @@ class MainActivity : ComponentActivity() {
                             onViewGcode = { job ->
                                 viewModel.loadJobGcodeForViewer(job) { success ->
                                     if (success) {
-                                        navController.navigate(Routes.GCODE_VIEWER_3D)
+                                        navigateTab(Routes.PREVIEW)
                                     } else {
                                         android.widget.Toast.makeText(ctx, "G-code file not found — it may have been cleared on upgrade.", android.widget.Toast.LENGTH_LONG).show()
                                     }
