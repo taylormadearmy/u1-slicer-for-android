@@ -1175,6 +1175,12 @@ fun PreviewScreen(
                 is SlicerViewModel.SlicerState.SliceComplete -> {
                     // Inline 3D G-code preview (auto-downsampled for large models)
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
+                        // key() forces Compose to discard and recreate InlineGcodePreview when
+                        // the gcode path changes (e.g. Jobs tab "View G-code" while a different
+                        // model is already shown). ParsedGcode contains List<GcodeLayer> so Compose
+                        // treats it as unstable and may skip recomposition, leaving the LaunchedEffect
+                        // inside InlineGcodePreview with the old key and the wrong gcode on screen.
+                        key(s.result.gcodePath) {
                         InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
@@ -1185,6 +1191,7 @@ fun PreviewScreen(
                             onCameraStateChange = onSharedPreviewCameraStateChange,
                             onResetView = onResetPreviewCamera
                         )
+                        }
                     }
                     SliceCompleteSummaryCard(
                         result = s.result,
