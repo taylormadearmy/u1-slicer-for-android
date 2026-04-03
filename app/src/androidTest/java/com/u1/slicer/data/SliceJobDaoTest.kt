@@ -136,4 +136,14 @@ class SliceJobDaoTest {
         dao.updateSourcePath(id, "/data/jobs/1/model.3mf")
         assertEquals("/data/jobs/1/model.3mf", dao.getAll().first()[0].sourcePath)
     }
+
+    @Test
+    fun updateGcodePath_persistsNewPath() = runTest {
+        val id = dao.insert(testJob())
+
+        dao.updateGcodePath(id, "/new/path.gcode")
+
+        val job = dao.getAll().first()[0]
+        assertEquals("/new/path.gcode", job.gcodePath)
+    }
 }
