@@ -4,15 +4,17 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B40: F60 Jobs tab G-code viewer shows "No slice results" after kill + reopen (GitHub #44)
-- `loadJobGcodeForViewer()` sets `_parsedGcode` but not `_gcodePreview` or `_state`
-- After kill/reopen both reset to empty/`Idle`; Preview screen shows "No slice results" instead of viewer
-- Fix: read gcode file into `_gcodePreview` and synthesise `SliceComplete` state from the `SliceJob` DB row
+### B40: F60 Jobs tab G-code viewer shows "No slice results" after kill + reopen (GitHub #44) — FIXED v1.5.34
+- Root cause: gcode saved to transient path lost on process kill; `_gcodePreview`/`_state` reset to empty
+- Fix: save gcode to durable per-job path `files/jobs/<id>/output.gcode`; delete files on job removal
 
-### B39: Printer offline notification fires on transient WiFi blips during print (GitHub #43)
-- Monitor fires "Printer offline — Lost connection during print" on the **first** failed poll
-- Fix: add a grace-period counter; only transition to offline state after N consecutive failures (~3, ≈15–30 s)
-- Reset counter to 0 on any successful poll; no change to Moonraker client or printer state model
+### B39: Printer offline notification fires on transient WiFi blips during print (GitHub #43) — FIXED v1.5.34
+- Fix: grace-period counter; only transition to offline after N consecutive failures (~3, ≈15–30 s)
+
+### B41: 3MF files with embedded build-item rotation show wrong orientation in Prepare preview — FIXED v1.5.35
+- Root cause: `setModelRotation(0,0,0)` overwrote the instance's embedded rotation (e.g. 90° Z from F1 calendar 3MF build-item transform)
+- Fix: capture base rotations on first call, compose user rotation on top
+- Also fixed: preview flipping 90° on tab switch (race condition between setModelRotation and getPreparePreviewMesh)
 
 ### B38: Post-upgrade native slicing failure — FIXED v1.5.0
 - Root cause: `Print::m_origin` (Vec3d) uninitialized — on Android `set_plate_origin()` is never called, so release builds read garbage (sometimes `-inf`) for the Y component, corrupting all wipe tower travel moves
@@ -159,7 +161,9 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
-- **F59/F#39**: G-code preview tube width scaled up for visibility (halfWidth 0.225→0.75, halfHeight 0.1→0.2) — DONE v1.5.32
+- **B41**: 3MF embedded rotation preservation + tab-switch preview cache fix — FIXED v1.5.35
+- **B40/B39**: Jobs gcode durable path + printer offline grace period — FIXED v1.5.34
+- **F59/F#39**: G-code preview tube width scaled up for visibility (halfWidth 0.225→0.75, halfHeight 0.1→0.2) — DONE v1.5.32; miter joins, Blinn-Phong lighting, proper 0.42mm proportions — v1.5.35
 - **F60/F#40**: Jobs tab "View G-code" icon — parses saved G-code on IO thread, navigates to 3D viewer; graceful toast if file missing — DONE v1.5.32
 - **F61/F#41**: Jobs tab "Re-open model" icon — source 3MF copied to durable `files/jobs/<id>/` at slice time (Room v2 migration adds `sourcePath`); `jobs/` dir protected from upgrade clearing; `reopenJobToEdit()` reloads model to Prepare screen — DONE v1.5.32
 - **F60/F#36**: Prepare preview prime tower now reacts to primeTowerWidth override — `resolveWipeTowerWidth()` returns active override or config default — DONE v1.5.30
