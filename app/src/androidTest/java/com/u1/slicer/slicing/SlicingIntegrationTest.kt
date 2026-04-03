@@ -193,6 +193,63 @@ class SlicingIntegrationTest {
     }
 
     @Test
+    fun setModelRotation_sameValueSkips_cacheNotInvalidated() {
+        // Regression test for tab-switch performance: calling setModelRotation with the
+        // same rotation value twice should NOT invalidate the preview mesh cache.
+        val file = asset("tetrahedron.stl")
+        assertTrue("Model should load", lib.loadModel(file.absolutePath))
+
+        // First rotation (45° Z) — establishes baseline + cache
+        assertTrue("First rotation should succeed", lib.setModelRotation(0f, 0f, 45f))
+        val mesh1 = lib.getPreparePreviewMesh()
+        assertNotNull("Mesh after first rotation", mesh1)
+
+        // Same rotation again — should skip invalidation, return cached mesh
+        assertTrue("Same rotation should succeed", lib.setModelRotation(0f, 0f, 45f))
+        val mesh2 = lib.getPreparePreviewMesh()
+        assertNotNull("Mesh after second (identical) rotation", mesh2)
+
+        // Verify the mesh data is identical (same cached result)
+        assertArrayEquals(
+            "Identical rotation must return same cached mesh positions",
+            mesh1!!.trianglePositions, mesh2!!.trianglePositions, 0f
+        )
+    }
+
+    @Test
+    fun setModelRotation_preservesEmbedded3mfRotation() {
+        // The F1 calendar 3MF has a 90° Z-rotation in its build-item transform.
+        // setModelRotation(0,0,0) must preserve this embedded rotation — the
+        // preview mesh should match the initial load (not lose the rotation).
+        // Uses calib-cube as a simpler BBS 3MF with known geometry.
+        val file = asset("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue("Model should load", lib.loadModel(file.absolutePath))
+
+        // Get initial mesh (before any setModelRotation call)
+        val info = lib.getModelInfo()
+        assertNotNull("ModelInfo should exist", info)
+
+        // setModelRotation(0,0,0) must not change the mesh — embedded rotation preserved
+        assertTrue("setModelRotation(0,0,0) should succeed", lib.setModelRotation(0f, 0f, 0f))
+        val meshAfterZero = lib.getPreparePreviewMesh()
+        assertNotNull("Mesh after zero rotation", meshAfterZero)
+
+        // Apply additional user rotation and verify mesh changes
+        assertTrue("setModelRotation(0,0,45) should succeed", lib.setModelRotation(0f, 0f, 45f))
+        val meshAfter45 = lib.getPreparePreviewMesh()
+        assertNotNull("Mesh after 45° rotation", meshAfter45)
+
+        val before = meshAfterZero!!.trianglePositions
+        val after = meshAfter45!!.trianglePositions
+        assertEquals("Triangle count must match", before.size, after.size)
+        val anyDiffers = before.indices.any { i -> before[i] != after[i] }
+        assertTrue(
+            "Adding 45° Z rotation on top of embedded rotation must change mesh",
+            anyDiffers
+        )
+    }
+
+    @Test
     fun tetrahedron_stl_singleExtruderHasNoToolChanges() {
         val (success, gcode) = sliceAsset("tetrahedron.stl")
         assertTrue(success)

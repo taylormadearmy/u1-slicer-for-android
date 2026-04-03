@@ -41,6 +41,10 @@ static bool g_preview_mesh_valid = false;
 // Cleared on model load/clear. Used to avoid positional drift across repeated
 // slider calls (each call rotates from the original positions, not current ones).
 static std::vector<Slic3r::Vec3d> g_rotation_base_positions;
+// Original per-instance rotations captured on first setModelRotation call.
+// The user's rotation is composed on top of these base rotations so that
+// embedded 3MF rotations (e.g. 90° Z from build-item transform) are preserved.
+static std::vector<Slic3r::Vec3d> g_rotation_base_rotations;
 
 static int locateZipEntry(mz_zip_archive& zip, const char* exact_path)
 {
@@ -206,7 +210,15 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
         g_model_info.filename = filepath.substr(last_sep + 1);
         g_model_info.format = ext;
 
-        // Calculate bounding box across all objects
+        // Calculate bounding box across all objects.
+        // Invalidate cached bounding boxes first — the 3MF reader may populate them
+        // before instance transforms (rotation, translation) are fully applied, leaving
+        // stale pre-rotation dimensions. Force recomputation so size_x/size_y reflect
+        // the actual world-space footprint (e.g. a 90°-rotated build item has its X/Y swapped).
+        for (auto* obj : g_model.objects) {
+            obj->invalidate_bounding_box();
+        }
+
         Slic3r::BoundingBoxf3 bb;
         int total_triangles = 0;
         int total_volumes = 0;
@@ -236,6 +248,8 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
         g_model_loaded = true;
         g_preview_mesh_valid = false;
         g_rotation_base_positions.clear();
+        g_rotation_base_rotations.clear();
+        { extern void resetLastRotation(); resetLastRotation(); }
 
         SAPIL_LOGI("Model loaded: %s (%s) — %.1f x %.1f x %.1f mm, %d triangles",
             g_model_info.filename.c_str(), ext.c_str(),
@@ -511,6 +525,8 @@ void SlicerEngine::clearModel() {
     g_cached_preview_mesh = PreviewMesh();
     g_model_preview_extruders.clear();
     g_rotation_base_positions.clear();
+    g_rotation_base_rotations.clear();
+    { extern void resetLastRotation(); resetLastRotation(); }
     g_files_dir.clear();
     std::ostringstream payload;
     payload << "{"
@@ -523,6 +539,10 @@ void SlicerEngine::clearModel() {
 
 std::vector<Slic3r::Vec3d>& getRotationBasePositions() {
     return g_rotation_base_positions;
+}
+
+std::vector<Slic3r::Vec3d>& getRotationBaseRotations() {
+    return g_rotation_base_rotations;
 }
 
 // Accessor for the global model (used by sapil_print.cpp)

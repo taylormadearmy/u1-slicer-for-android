@@ -51,6 +51,7 @@ import com.u1.slicer.printer.PrinterViewModel
 import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
+import kotlinx.coroutines.sync.withLock
 
 class MainActivity : ComponentActivity() {
     private val diagnostics by lazy { DiagnosticsStore(this) }
@@ -2073,11 +2074,12 @@ fun InlineModelPreview(
                     modelFilePath.endsWith(".stl", ignoreCase = true) ->
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
-                        // Use Kotlin ThreeMfMeshParser only for painted/SEMM models — these
-                        // store per-triangle color in paint_color/mmu_segmentation XML attributes
-                        // that the native path does not expose. All other 3MF files (including
-                        // large multi-colour models like the F1 calendar) use the native path
-                        // which applies QEM decimation and avoids parsing multi-hundred-MB XML.
+                        // Painted/SEMM models: use Kotlin ThreeMfMeshParser (per-triangle paint_color).
+                        // Non-painted 3MF: return null here — the LaunchedEffect(modelRotation) below
+                        // will call setModelRotation + getPreparePreviewMesh() and owns that fetch.
+                        // Doing it here as well races with the rotation effect (both on Dispatchers.IO),
+                        // causing setModelRotation to mutate instances while getPreparePreviewMesh reads
+                        // them, producing a garbled/90°-rotated preview mesh.
                         if (hasPaintData && (colorMapping != null || extruderMap != null)) {
                             com.u1.slicer.viewer.ThreeMfMeshParser.parse(
                                 file = file,
@@ -2085,7 +2087,7 @@ fun InlineModelPreview(
                                 detectedColorCount = colorMapping?.size ?: 0
                             )
                         } else {
-                            com.u1.slicer.NativeLibrary().getPreparePreviewMesh()?.toMeshData()
+                            null  // rotation effect owns this fetch
                         }
                     else -> null
                 }
@@ -2095,7 +2097,9 @@ fun InlineModelPreview(
         }
         if (parseRequestId == requestId) {
             mesh = parsedMesh
-            if (parsedMesh == null) viewerLoading = false
+            // For non-painted 3MF: null is expected — rotation effect owns the fetch.
+            // Keep viewerLoading=true so the spinner stays until that effect delivers the mesh.
+            if (parsedMesh == null && !nativeThreeMfPreview) viewerLoading = false
         }
     }
 
@@ -2153,18 +2157,22 @@ fun InlineModelPreview(
 
     // Re-fetch preview mesh when rotation changes (non-painted 3MF and STL only).
     // Painted/SEMM models use ThreeMfMeshParser which is not rotation-aware.
+    // Uses previewMutex to serialize against concurrent fetches from other composable instances —
+    // setModelRotation mutates global native state; concurrent getPreparePreviewMesh reads race it.
     LaunchedEffect(modelRotation) {
         val rot = modelRotation
         if (modelFilePath.endsWith(".3mf", ignoreCase = true) &&
             hasPaintData && (colorMapping != null || extruderMap != null)) return@LaunchedEffect
 
         val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                val lib = NativeLibrary()
-                lib.setModelRotation(rot.x, rot.y, rot.z)
-                lib.getPreparePreviewMesh()?.toMeshData()
-            } catch (_: Throwable) {
-                null
+            NativeLibrary.previewMutex.withLock {
+                try {
+                    val lib = NativeLibrary()
+                    lib.setModelRotation(rot.x, rot.y, rot.z)
+                    lib.getPreparePreviewMesh()?.toMeshData()
+                } catch (_: Throwable) {
+                    null
+                }
             }
         }
         if (newMesh != null) {

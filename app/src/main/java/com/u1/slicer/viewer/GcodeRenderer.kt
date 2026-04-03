@@ -259,20 +259,23 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Allocate tube buffer: 18 vertices per extrusion move (box-tube: top + left + right faces)
         val tubeData = if (useTubes) FloatArray(totalExtrudeMoves * verticesPerTubeMove * tubeFloatsPerVertex) else FloatArray(0)
         var tubeOffset = 0
-        val halfWidth = 0.75f  // display-scaled width (physically ~1.5mm) — actual extrusion is 0.45mm but looks invisible at bed scale
-        val halfHeight = 0.2f  // display-scaled height (physically ~0.4mm) — actual layer is 0.2mm
+        val halfWidth = 0.28f  // display-scaled width (physically ~0.56mm) — slightly wider than actual 0.42mm for visibility
+        val halfHeight = 0.18f // display-scaled height (physically ~0.36mm) — close to actual 0.2mm layer height
 
         for ((layerIdx, layer) in gcode.layers.withIndex()) {
             // --- Extrusion pass ---
             val extrudeFirst = lineOffset / floatsPerVertex
             val tubeFirst = tubeOffset / tubeFloatsPerVertex
-            var moveIdx = 0
 
             // Bottom-to-top brightness gradient: dark at bottom, bright at top (like u1-slicer-bridge)
             val layerBrightness = if (totalLayers <= 1) 1.0f
                 else 0.45f + 0.55f * (layerIdx.toFloat() / (totalLayers - 1))
 
-            for (move in layer.moves) {
+            // Collect extrusion moves for this layer (needed for miter look-ahead)
+            val extrudeMoves = if (useTubes) layer.moves.filter { it.type == MoveType.EXTRUDE } else emptyList()
+            var extrudeCounter = 0
+
+            for ((moveIdx, move) in layer.moves.withIndex()) {
                 if (move.type != MoveType.EXTRUDE) continue
                 val baseColor = if (useFeatureColors) {
                     featureTypeColors[move.featureType.toInt().coerceIn(0, featureTypeColors.size - 1)]
@@ -293,89 +296,142 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
                     val len = sqrt((dx * dx + dy * dy).toDouble()).toFloat()
                     if (len < 0.001f) continue  // skip zero-length moves
 
-                    // Perpendicular offset (left/right of move direction)
-                    val px = -dy / len * halfWidth
-                    val py = dx / len * halfWidth
+                    // This move's perpendicular unit vector (pointing right of travel direction)
+                    val ux = -dy / len   // unit perp x
+                    val uy = dx / len    // unit perp y
+
                     val zBot = layer.z - halfHeight
                     val zTop = layer.z + halfHeight
 
                     if (tubeOffset + verticesPerTubeMove * tubeFloatsPerVertex > tubeData.size) break
 
-                    // Side normals: perpendicular to move direction, horizontal
-                    val snx = px / halfWidth  // unit normal pointing right
-                    val sny = py / halfWidth
+                    // --- Miter join at start endpoint ---
+                    // Use incremental counter (O(1)) instead of indexOf (O(n))
+                    val extrudeIdx = extrudeCounter++
+                    val prevMove = if (extrudeIdx > 0) extrudeMoves[extrudeIdx - 1] else null
+                    val startMiter = if (prevMove != null &&
+                        kotlin.math.abs(prevMove.x1 - move.x0) < 0.01f &&
+                        kotlin.math.abs(prevMove.y1 - move.y0) < 0.01f
+                    ) {
+                        val pdx = prevMove.x1 - prevMove.x0
+                        val pdy = prevMove.y1 - prevMove.y0
+                        val pLen = sqrt((pdx * pdx + pdy * pdy).toDouble()).toFloat()
+                        if (pLen > 0.001f) {
+                            val pux = -pdy / pLen
+                            val puy = pdx / pLen
+                            // Miter direction = average of both perp vectors, normalized
+                            val mx = pux + ux
+                            val my = puy + uy
+                            val mLen = sqrt((mx * mx + my * my).toDouble()).toFloat()
+                            if (mLen > 0.001f) {
+                                // Scale so projection onto this perp = halfWidth
+                                val dot = mx / mLen * ux + my / mLen * uy
+                                val scale = if (dot > 0.2f) halfWidth / dot else halfWidth * 2f // clamp spike
+                                floatArrayOf(mx / mLen * scale, my / mLen * scale)
+                            } else floatArrayOf(ux * halfWidth, uy * halfWidth)
+                        } else floatArrayOf(ux * halfWidth, uy * halfWidth)
+                    } else floatArrayOf(ux * halfWidth, uy * halfWidth)
+
+                    // --- Miter join at end endpoint ---
+                    val nextMove = if (extrudeIdx < extrudeMoves.size - 1) extrudeMoves[extrudeIdx + 1] else null
+                    val endMiter = if (nextMove != null &&
+                        kotlin.math.abs(nextMove.x0 - move.x1) < 0.01f &&
+                        kotlin.math.abs(nextMove.y0 - move.y1) < 0.01f
+                    ) {
+                        val ndx = nextMove.x1 - nextMove.x0
+                        val ndy = nextMove.y1 - nextMove.y0
+                        val nLen = sqrt((ndx * ndx + ndy * ndy).toDouble()).toFloat()
+                        if (nLen > 0.001f) {
+                            val nux = -ndy / nLen
+                            val nuy = ndx / nLen
+                            val mx = nux + ux
+                            val my = nuy + uy
+                            val mLen = sqrt((mx * mx + my * my).toDouble()).toFloat()
+                            if (mLen > 0.001f) {
+                                val dot = mx / mLen * ux + my / mLen * uy
+                                val scale = if (dot > 0.2f) halfWidth / dot else halfWidth * 2f
+                                floatArrayOf(mx / mLen * scale, my / mLen * scale)
+                            } else floatArrayOf(ux * halfWidth, uy * halfWidth)
+                        } else floatArrayOf(ux * halfWidth, uy * halfWidth)
+                    } else floatArrayOf(ux * halfWidth, uy * halfWidth)
+
+                    // Perpendicular offsets at start and end (mitered)
+                    val spx = startMiter[0]; val spy = startMiter[1]
+                    val epx = endMiter[0];   val epy = endMiter[1]
+
+                    // Side normal: this segment's perp (not miter-blended, for correct lighting)
+                    val snx = ux
+                    val sny = uy
 
                     // === Top face (normal pointing up: 0,0,1) ===
-                    // BL=x0-px,top  BR=x0+px,top  TR=x1+px,top  TL=x1-px,top
+                    // BL=x0-spx,top  BR=x0+spx,top  TR=x1+epx,top  TL=x1-epx,top
                     // Tri1: BL, BR, TR
-                    tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x0 - spx; tubeData[tubeOffset++] = move.y0 - spy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 1f
-                    tubeData[tubeOffset++] = move.x0 + px; tubeData[tubeOffset++] = move.y0 + py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x0 + spx; tubeData[tubeOffset++] = move.y0 + spy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 1f
-                    tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x1 + epx; tubeData[tubeOffset++] = move.y1 + epy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 1f
                     // Tri2: BL, TR, TL
-                    tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x0 - spx; tubeData[tubeOffset++] = move.y0 - spy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 1f
-                    tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x1 + epx; tubeData[tubeOffset++] = move.y1 + epy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 1f
-                    tubeData[tubeOffset++] = move.x1 - px; tubeData[tubeOffset++] = move.y1 - py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x1 - epx; tubeData[tubeOffset++] = move.y1 - epy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 0f; tubeData[tubeOffset++] = 1f
 
                     // === Right face (normal pointing right: snx, sny, 0) ===
-                    // BotStart=x0+px,bot  TopStart=x0+px,top  TopEnd=x1+px,top  BotEnd=x1+px,bot
                     // Tri1: BotStart, TopStart, TopEnd
-                    tubeData[tubeOffset++] = move.x0 + px; tubeData[tubeOffset++] = move.y0 + py; tubeData[tubeOffset++] = zBot
+                    tubeData[tubeOffset++] = move.x0 + spx; tubeData[tubeOffset++] = move.y0 + spy; tubeData[tubeOffset++] = zBot
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = snx; tubeData[tubeOffset++] = sny; tubeData[tubeOffset++] = 0f
-                    tubeData[tubeOffset++] = move.x0 + px; tubeData[tubeOffset++] = move.y0 + py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x0 + spx; tubeData[tubeOffset++] = move.y0 + spy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = snx; tubeData[tubeOffset++] = sny; tubeData[tubeOffset++] = 0f
-                    tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x1 + epx; tubeData[tubeOffset++] = move.y1 + epy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = snx; tubeData[tubeOffset++] = sny; tubeData[tubeOffset++] = 0f
                     // Tri2: BotStart, TopEnd, BotEnd
-                    tubeData[tubeOffset++] = move.x0 + px; tubeData[tubeOffset++] = move.y0 + py; tubeData[tubeOffset++] = zBot
+                    tubeData[tubeOffset++] = move.x0 + spx; tubeData[tubeOffset++] = move.y0 + spy; tubeData[tubeOffset++] = zBot
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = snx; tubeData[tubeOffset++] = sny; tubeData[tubeOffset++] = 0f
-                    tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x1 + epx; tubeData[tubeOffset++] = move.y1 + epy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = snx; tubeData[tubeOffset++] = sny; tubeData[tubeOffset++] = 0f
-                    tubeData[tubeOffset++] = move.x1 + px; tubeData[tubeOffset++] = move.y1 + py; tubeData[tubeOffset++] = zBot
+                    tubeData[tubeOffset++] = move.x1 + epx; tubeData[tubeOffset++] = move.y1 + epy; tubeData[tubeOffset++] = zBot
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = snx; tubeData[tubeOffset++] = sny; tubeData[tubeOffset++] = 0f
 
                     // === Left face (normal pointing left: -snx, -sny, 0) ===
-                    // BotStart=x0-px,bot  TopStart=x0-px,top  TopEnd=x1-px,top  BotEnd=x1-px,bot
                     // Tri1: BotStart, TopEnd, TopStart (wound CCW from outside)
-                    tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = zBot
+                    tubeData[tubeOffset++] = move.x0 - spx; tubeData[tubeOffset++] = move.y0 - spy; tubeData[tubeOffset++] = zBot
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = -snx; tubeData[tubeOffset++] = -sny; tubeData[tubeOffset++] = 0f
-                    tubeData[tubeOffset++] = move.x1 - px; tubeData[tubeOffset++] = move.y1 - py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x1 - epx; tubeData[tubeOffset++] = move.y1 - epy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = -snx; tubeData[tubeOffset++] = -sny; tubeData[tubeOffset++] = 0f
-                    tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x0 - spx; tubeData[tubeOffset++] = move.y0 - spy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = -snx; tubeData[tubeOffset++] = -sny; tubeData[tubeOffset++] = 0f
                     // Tri2: BotStart, BotEnd, TopEnd
-                    tubeData[tubeOffset++] = move.x0 - px; tubeData[tubeOffset++] = move.y0 - py; tubeData[tubeOffset++] = zBot
+                    tubeData[tubeOffset++] = move.x0 - spx; tubeData[tubeOffset++] = move.y0 - spy; tubeData[tubeOffset++] = zBot
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = -snx; tubeData[tubeOffset++] = -sny; tubeData[tubeOffset++] = 0f
-                    tubeData[tubeOffset++] = move.x1 - px; tubeData[tubeOffset++] = move.y1 - py; tubeData[tubeOffset++] = zBot
+                    tubeData[tubeOffset++] = move.x1 - epx; tubeData[tubeOffset++] = move.y1 - epy; tubeData[tubeOffset++] = zBot
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = -snx; tubeData[tubeOffset++] = -sny; tubeData[tubeOffset++] = 0f
-                    tubeData[tubeOffset++] = move.x1 - px; tubeData[tubeOffset++] = move.y1 - py; tubeData[tubeOffset++] = zTop
+                    tubeData[tubeOffset++] = move.x1 - epx; tubeData[tubeOffset++] = move.y1 - epy; tubeData[tubeOffset++] = zTop
                     tubeData[tubeOffset++] = color[0]; tubeData[tubeOffset++] = color[1]; tubeData[tubeOffset++] = color[2]; tubeData[tubeOffset++] = color[3]
                     tubeData[tubeOffset++] = -snx; tubeData[tubeOffset++] = -sny; tubeData[tubeOffset++] = 0f
                 } else {
                     // Fallback: GL_LINES
-                    if (sampleRate > 1 && moveIdx++ % sampleRate != 0) continue
+                    if (sampleRate > 1 && moveIdx % sampleRate != 0) continue
                     if (lineOffset + floatsPerVertex * 2 > lineData.size) break
                     lineData[lineOffset++] = move.x0; lineData[lineOffset++] = move.y0; lineData[lineOffset++] = layer.z
                     lineData[lineOffset++] = color[0]; lineData[lineOffset++] = color[1]; lineData[lineOffset++] = color[2]; lineData[lineOffset++] = color[3]

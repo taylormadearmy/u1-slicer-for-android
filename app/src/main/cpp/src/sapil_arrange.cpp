@@ -16,6 +16,7 @@ extern Slic3r::Model& getGlobalModel();
 extern bool isModelLoaded();
 extern void invalidatePreviewMeshCache();
 extern std::vector<Slic3r::Vec3d>& getRotationBasePositions();
+extern std::vector<Slic3r::Vec3d>& getRotationBaseRotations();
 
 bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>& positions) {
     if (!isModelLoaded()) {
@@ -139,13 +140,37 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
     return true;
 }
 
+// Last user-requested rotation (degrees). Used to skip redundant calls
+// (e.g. tab switch re-triggers LaunchedEffect with same rotation value).
+static float g_last_rx_deg = 0.f, g_last_ry_deg = 0.f, g_last_rz_deg = 0.f;
+static bool g_last_rotation_set = false;
+
+void resetLastRotation() {
+    g_last_rotation_set = false;
+    g_last_rx_deg = g_last_ry_deg = g_last_rz_deg = 0.f;
+}
+
 bool SlicerEngine::setModelRotation(float rx_deg, float ry_deg, float rz_deg) {
     if (!isModelLoaded()) {
         SAPIL_LOGE("setModelRotation: no model loaded");
         return false;
     }
+
+    // Skip if rotation hasn't changed — avoids invalidating the preview mesh cache
+    // on tab switch where the composable re-fires with the same rotation value.
+    if (g_last_rotation_set &&
+        rx_deg == g_last_rx_deg && ry_deg == g_last_ry_deg && rz_deg == g_last_rz_deg) {
+        SAPIL_LOGI("setModelRotation: unchanged (%.1f, %.1f, %.1f), skipping", rx_deg, ry_deg, rz_deg);
+        return true;
+    }
+    g_last_rx_deg = rx_deg;
+    g_last_ry_deg = ry_deg;
+    g_last_rz_deg = rz_deg;
+    g_last_rotation_set = true;
+
     Slic3r::Model& model = getGlobalModel();
     std::vector<Slic3r::Vec3d>& basePositions = getRotationBasePositions();
+    std::vector<Slic3r::Vec3d>& baseRotations = getRotationBaseRotations();
 
     // Flatten all instances into a list (same order every call: object then instance)
     std::vector<Slic3r::ModelInstance*> allInsts;
@@ -155,10 +180,12 @@ bool SlicerEngine::setModelRotation(float rx_deg, float ry_deg, float rz_deg) {
         }
     }
 
-    // On first call after model load, snapshot current offsets as base positions.
+    // On first call after model load, snapshot current offsets and rotations as base.
+    // The base rotations preserve embedded 3MF rotations (e.g. 90° Z from build item).
     if (basePositions.empty()) {
         for (auto* inst : allInsts) {
             basePositions.push_back(inst->get_offset());
+            baseRotations.push_back(inst->get_rotation());
         }
     }
 
@@ -209,7 +236,18 @@ bool SlicerEngine::setModelRotation(float rx_deg, float ry_deg, float rz_deg) {
             R[1][0] * b.x() + R[1][1] * b.y() + R[1][2] * b.z(),
             R[2][0] * b.x() + R[2][1] * b.y() + R[2][2] * b.z()
         );
-        allInsts[i]->set_rotation(Slic3r::Vec3d(rx, ry, rz));
+        // Compose user rotation on top of the base (embedded) rotation so that
+        // 3MF build-item rotations are preserved when user rotation is zero.
+        // Note: additive Euler angles are only correct for single-axis rotation
+        // (which is all the UI exposes — a Z-axis slider). Multi-axis composition
+        // would need rotation matrix multiplication or quaternions.
+        const Slic3r::Vec3d& base_rot = (i < baseRotations.size())
+            ? baseRotations[i] : Slic3r::Vec3d::Zero();
+        allInsts[i]->set_rotation(Slic3r::Vec3d(
+            base_rot.x() + rx,
+            base_rot.y() + ry,
+            base_rot.z() + rz
+        ));
         allInsts[i]->set_offset(pivot + rotated);
     }
 

@@ -5,6 +5,7 @@ import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.viewer.NativePreviewMesh
+import kotlinx.coroutines.sync.Mutex
 
 /**
  * JNI bridge to the SAPIL (Slicer API Layer) native library.
@@ -13,6 +14,14 @@ import com.u1.slicer.viewer.NativePreviewMesh
 class NativeLibrary {
     companion object {
         private const val TAG = "NativeLibrary"
+
+        /**
+         * Serializes all operations that mutate + read the global native model state
+         * (setModelRotation, getPreparePreviewMesh). Without this, concurrent coroutines
+         * on Dispatchers.IO race: setModelRotation mutates instance transforms while
+         * getPreparePreviewMesh reads them, producing garbled/rotated preview geometry.
+         */
+        val previewMutex = Mutex()
 
         val isLoaded: Boolean = try {
             System.loadLibrary("prusaslicer-jni")

@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.5.33` (`versionCode 199`)
+Current release: `v1.5.35` (`versionCode 201`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -52,7 +52,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 628 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 149 instrumented tests (uses Orchestrator)
+./gradlew connectedDebugAndroidTest                # 151 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -99,13 +99,13 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `WipeTowerClampTest.kt` (8) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width; resolveWipeTowerWidth/resolveWipeTowerDepth: return active override or config default
 - `data/WipeTowerDepthEstimatorTest.kt` (8) — height-based depth lookup table; primeVolume override wins when larger than height-based minimum
 
-### Instrumented tests (`app/src/androidTest/`) - 145 tests across 14 classes
+### Instrumented tests (`app/src/androidTest/`) - 147 tests across 14 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
-- `slicing/SlicingIntegrationTest.kt` (28) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation
+- `slicing/SlicingIntegrationTest.kt` (30) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation
 - `slicing/BambuPipelineIntegrationTest.kt` (31) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing
 - `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions
 - `slicing/ProfileEmbedderIntegrationTest.kt` (14) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
