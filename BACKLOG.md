@@ -4,6 +4,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B40: F60 Jobs tab G-code viewer shows "No slice results" after kill + reopen (GitHub #44)
+- `loadJobGcodeForViewer()` sets `_parsedGcode` but not `_gcodePreview` or `_state`
+- After kill/reopen both reset to empty/`Idle`; Preview screen shows "No slice results" instead of viewer
+- Fix: read gcode file into `_gcodePreview` and synthesise `SliceComplete` state from the `SliceJob` DB row
+
 ### B39: Printer offline notification fires on transient WiFi blips during print (GitHub #43)
 - Monitor fires "Printer offline — Lost connection during print" on the **first** failed poll
 - Fix: add a grace-period counter; only transition to offline state after N consecutive failures (~3, ≈15–30 s)
