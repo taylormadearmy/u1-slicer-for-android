@@ -4,6 +4,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B39: Printer offline notification fires on transient WiFi blips during print (GitHub #43)
+- Monitor fires "Printer offline — Lost connection during print" on the **first** failed poll
+- Fix: add a grace-period counter; only transition to offline state after N consecutive failures (~3, ≈15–30 s)
+- Reset counter to 0 on any successful poll; no change to Moonraker client or printer state model
+
 ### B38: Post-upgrade native slicing failure — FIXED v1.5.0
 - Root cause: `Print::m_origin` (Vec3d) uninitialized — on Android `set_plate_origin()` is never called, so release builds read garbage (sometimes `-inf`) for the Y component, corrupting all wipe tower travel moves
 - Secondary: `Print::m_isBBLPrinter` (bool) uninitialized — release builds sometimes selected the wrong BBL wipe tower
