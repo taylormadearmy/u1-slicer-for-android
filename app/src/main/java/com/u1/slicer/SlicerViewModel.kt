@@ -2516,6 +2516,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // B40: synthesize SliceComplete so the Preview tab renders the viewer after
                 // kill+reopen (previously state stayed Idle and the tab showed "No slice results").
                 _state.value = SlicerState.SliceComplete(sliceResultFromJob(job))
+                // The native preview string isn't available from a job reload; empty string is
+                // correct — the UI uses _parsedGcode for rendering in the jobs viewer path.
+                _gcodePreview.value = ""
                 launch(Dispatchers.Main) { onResult(true) }
             } catch (e: Exception) {
                 Log.e("SlicerVM", "Failed to parse job G-code: ${e.message}")
