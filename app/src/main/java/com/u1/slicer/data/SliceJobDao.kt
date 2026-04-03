@@ -19,4 +19,7 @@ interface SliceJobDao {
 
     @Query("UPDATE slice_jobs SET sourcePath = :path WHERE id = :id")
     suspend fun updateSourcePath(id: Long, path: String)
+
+    @Query("UPDATE slice_jobs SET gcodePath = :path WHERE id = :id")
+    suspend fun updateGcodePath(id: Long, path: String)
 }

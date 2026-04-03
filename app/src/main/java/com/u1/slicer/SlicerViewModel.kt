@@ -2061,6 +2061,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             filamentType = cfg.filamentType
                         )
                     )
+                    // Copy gcode to durable per-job storage so Jobs "View G-code" always reads the
+                    // correct file even after subsequent slices overwrite the transient output.gcode.
+                    val durableGcode = copyGcodeToDurableJobDir(jobId, File(result.gcodePath))
+                    if (durableGcode != null) {
+                        sliceJobDao.updateGcodePath(jobId, durableGcode.absolutePath)
+                        // Also update local state so the current session uses the durable path.
+                        _state.value = SlicerState.SliceComplete(result.copy(gcodePath = durableGcode.absolutePath))
+                    }
                     // Store the original (pre-embed) source file for F61 re-open.
                     // rawInputFile is the sanitized-but-not-embedded copy — reloading it via
                     // loadModelFromFile() applies a fresh embed and correctly restores colour data.
@@ -2473,12 +2481,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteJob(job: SliceJob) {
         viewModelScope.launch(Dispatchers.IO) {
             sliceJobDao.delete(job)
+            File(getApplication<Application>().filesDir, "jobs/${job.id}").deleteRecursively()
         }
     }
 
     fun deleteAllJobs() {
         viewModelScope.launch(Dispatchers.IO) {
             sliceJobDao.deleteAll()
+            File(getApplication<Application>().filesDir, "jobs").deleteRecursively()
         }
     }
 
@@ -2514,11 +2524,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val parsed = GcodeParser.parse(gcodeFile)
                 _parsedGcode.value = parsed
-                // B40: synthesize SliceComplete so the Preview tab renders the viewer after
-                // kill+reopen (previously state stayed Idle and the tab showed "No slice results").
                 _state.value = SlicerState.SliceComplete(sliceResultFromJob(job))
-                // The native preview string isn't available from a job reload; empty string is
-                // correct — the UI uses _parsedGcode for rendering in the jobs viewer path.
                 _gcodePreview.value = ""
                 launch(Dispatchers.Main) { onResult(true) }
             } catch (e: Exception) {
@@ -2542,6 +2548,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         loadModelFromFile(sourceFile)
+    }
+
+    // Copy the sliced gcode to files/jobs/<jobId>/ so Jobs "View G-code" always reads the right
+    // file even after subsequent slices overwrite the transient output.gcode.
+    private fun copyGcodeToDurableJobDir(jobId: Long, gcodeFile: File): File? {
+        if (!gcodeFile.exists()) return null
+        return try {
+            val jobDir = File(getApplication<Application>().filesDir, "jobs/$jobId")
+            jobDir.mkdirs()
+            val dest = File(jobDir, "output.gcode")
+            gcodeFile.copyTo(dest, overwrite = true)
+            dest
+        } catch (e: Exception) {
+            Log.w("SlicerVM", "Failed to copy gcode to durable job dir: ${e.message}")
+            null
+        }
     }
 
     // Copy the current source model to files/jobs/<jobId>/ for durable storage (F61).
