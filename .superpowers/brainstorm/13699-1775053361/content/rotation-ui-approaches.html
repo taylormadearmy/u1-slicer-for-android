@@ -1,0 +1,70 @@
+<h2>Model Rotation UI — Where should it live?</h2>
+<p class="subtitle">The rotation controls need to fit alongside the existing Scale &amp; Copies card on the Prepare screen. Three approaches:</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;padding:12px;font-family:monospace;font-size:12px;color:#e0e0e0">
+        <div style="background:#2a2a4e;border-radius:6px;padding:10px;margin-bottom:8px">
+          <div style="color:#90caf9;font-weight:bold;margin-bottom:6px">⇄ Scale &amp; Copies</div>
+          <div style="color:#aaa;font-size:11px">Uniform ●—————○ 100%</div>
+          <div style="color:#aaa;font-size:11px">Copies: 1 ●——○</div>
+        </div>
+        <div style="background:#2a2a4e;border-radius:6px;padding:10px">
+          <div style="color:#90caf9;font-weight:bold;margin-bottom:6px">↻ Rotation</div>
+          <div style="color:#aaa;font-size:11px">X ○————● 0°</div>
+          <div style="color:#aaa;font-size:11px">Y ○————● 0°</div>
+          <div style="color:#aaa;font-size:11px">Z ○————● 0°</div>
+          <div style="color:#666;font-size:10px;margin-top:4px">[ Reset to 0° ]</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Separate Card</h3>
+      <p>Rotation gets its own card below Scale &amp; Copies, matching the existing card pattern exactly. Three sliders (X/Y/Z), 0–360°. Clean and consistent with ScaleSection.</p>
+      <div style="margin-top:8px;font-size:12px;color:#90caf9">✓ Consistent with existing UI pattern<br>✓ Plenty of room for 3 sliders<br>✗ Adds height to the Prepare sheet</div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;padding:12px;font-family:monospace;font-size:12px;color:#e0e0e0">
+        <div style="background:#2a2a4e;border-radius:6px;padding:10px">
+          <div style="color:#90caf9;font-weight:bold;margin-bottom:6px">⇄ Scale &amp; Copies &amp; Rotation</div>
+          <div style="color:#aaa;font-size:10px;margin-bottom:4px">[ Scale ] [ Rotation ]  ← tabs</div>
+          <div style="background:#1a1a3e;border-radius:4px;padding:8px">
+            <div style="color:#aaa;font-size:11px">X ○————● 0°</div>
+            <div style="color:#aaa;font-size:11px">Y ○————● 0°</div>
+            <div style="color:#aaa;font-size:11px">Z ○————● 0°</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Tabbed inside Scale card</h3>
+      <p>Rotation becomes a second tab inside the existing Scale &amp; Copies card. Keeps the sheet compact — you only see one set of sliders at a time.</p>
+      <div style="margin-top:8px;font-size:12px;color:#90caf9">✓ No extra card height<br>✓ Groups related transforms<br>✗ Hides rotation behind a tab (less discoverable)<br>✗ Modifies existing ScaleSection component</div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;padding:12px;font-family:monospace;font-size:12px;color:#e0e0e0">
+        <div style="background:#2a2a4e;border-radius:6px;padding:10px;margin-bottom:8px">
+          <div style="color:#90caf9;font-weight:bold;margin-bottom:6px">⇄ Scale &amp; Copies</div>
+          <div style="color:#aaa;font-size:11px">Scale ●————○ 100%  Copies ●—○ 1</div>
+          <div style="color:#aaa;font-size:11px;margin-top:4px">Rotation X <input style="width:48px;background:#333;border:1px solid #555;color:#fff;padding:2px;border-radius:3px" value="0"/> Y <input style="width:48px;background:#333;border:1px solid #555;color:#fff;padding:2px;border-radius:3px" value="0"/> Z <input style="width:48px;background:#333;border:1px solid #555;color:#fff;padding:2px;border-radius:3px" value="0"/> °</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Compact row in Scale card</h3>
+      <p>Rotation added as a compact inline row at the bottom of the Scale card — three small numeric fields (X/Y/Z degrees). No sliders. Smallest footprint.</p>
+      <div style="margin-top:8px;font-size:12px;color:#90caf9">✓ Minimal added height<br>✓ Precise degree entry<br>✗ Numeric input less friendly for discovery/exploration<br>✗ Mixes two concerns in one card</div>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:16px">Click to select your preferred approach.</p>

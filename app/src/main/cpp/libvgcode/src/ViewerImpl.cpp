@@ -1051,10 +1051,19 @@ void ViewerImpl::load(GCodeInputData&& gcode_data)
     if (!positions.empty()) {
 #ifdef ENABLE_OPENGL_ES
         m_texture_data.init(positions.size());
-        // create and fill position textures
-        m_texture_data.set_positions(positions);
-        // create and fill height, width and angle textures
-        m_texture_data.set_heights_widths_angles(heights_widths_angles);
+        // Convert Vec4 -> Vec3 for ES texture upload (GL_RGB32F, no padding float)
+        {
+            std::vector<Vec3> pos3(positions.size());
+            for (size_t j = 0; j < positions.size(); ++j)
+                pos3[j] = { positions[j][0], positions[j][1], positions[j][2] };
+            m_texture_data.set_positions(pos3);
+        }
+        {
+            std::vector<Vec3> hwa3(heights_widths_angles.size());
+            for (size_t j = 0; j < heights_widths_angles.size(); ++j)
+                hwa3[j] = { heights_widths_angles[j][0], heights_widths_angles[j][1], heights_widths_angles[j][2] };
+            m_texture_data.set_heights_widths_angles(hwa3);
+        }
 #else
         m_positions_tex_size = positions.size() * sizeof(Vec3);
         m_height_width_angle_tex_size = heights_widths_angles.size() * sizeof(Vec3);
@@ -1807,10 +1816,15 @@ void ViewerImpl::update_color_ranges()
 void ViewerImpl::update_heights_widths()
 {
 #ifdef ENABLE_OPENGL_ES
-    std::vector<Vec3> heights_widths_angles;
-    heights_widths_angles.reserve(m_vertices.size());
-    extract_pos_and_or_hwa(m_vertices, m_travels_radius, m_wipes_radius, m_valid_lines_bitset, nullptr, &heights_widths_angles);
-    m_texture_data.set_heights_widths_angles(heights_widths_angles);
+    {
+        std::vector<Vec4> hwa4;
+        hwa4.reserve(m_vertices.size());
+        extract_pos_and_or_hwa(m_vertices, m_travels_radius, m_wipes_radius, m_valid_lines_bitset, nullptr, &hwa4);
+        std::vector<Vec3> hwa3(hwa4.size());
+        for (size_t j = 0; j < hwa4.size(); ++j)
+            hwa3[j] = { hwa4[j][0], hwa4[j][1], hwa4[j][2] };
+        m_texture_data.set_heights_widths_angles(hwa3);
+    }
 #else
     if (m_heights_widths_angles_buf_id == 0)
         return;

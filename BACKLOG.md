@@ -8,8 +8,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Root cause: gcode saved to transient path lost on process kill; `_gcodePreview`/`_state` reset to empty
 - Fix: save gcode to durable per-job path `files/jobs/<id>/output.gcode`; delete files on job removal
 
-### B39: Printer offline notification fires on transient WiFi blips during print (GitHub #43) — FIXED v1.5.34
-- Fix: grace-period counter; only transition to offline after N consecutive failures (~3, ≈15–30 s)
+### B39: "Lost connection while printing" message still fires incorrectly (GitHub #43) — REOPENED
+- v1.5.34 fix (grace-period counter, N consecutive failures) did not resolve the issue
+- Needs a different approach — grace period alone is insufficient
+- Original symptom: printer offline notification fires on transient WiFi blips during print
 
 ### B41: 3MF files with embedded build-item rotation show wrong orientation in Prepare preview — FIXED v1.5.35
 - Root cause: `setModelRotation(0,0,0)` overwrote the instance's embedded rotation (e.g. 90° Z from F1 calendar 3MF build-item transform)
@@ -52,6 +54,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Root cause: layer-tool pause injection pipeline was not implemented; `custom_gcode_per_layer.xml` layer-change data was ignored
 - Fix: full layer-tool pipeline implemented in v1.5.1–v1.5.11: detects `hasLayerToolChanges`, extracts per-layer extruder assignments from XML, injects `PAUSE_PRINT` + `M109 S{temp} T{n}` at the correct layer heights post-slice
 - Issue #21 closed. Follow-up UX parity (preview colours, summary usage) tracked under F46/F47.
+
+### B42: Prime tower switch does not disable prime tower (GitHub #45)
+- Two ways to disable prime tower: the toggle switch and the slicing override
+- The switch has no effect — prime tower is still generated in the sliced output
+- The override works correctly
+- Need to investigate why the switch value isn't reaching the native slicer
 
 ## Open Cleanup
 
@@ -162,7 +170,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 ## Closed (recent)
 See git log for full history. Most recent fixes:
 - **B41**: 3MF embedded rotation preservation + tab-switch preview cache fix — FIXED v1.5.35
-- **B40/B39**: Jobs gcode durable path + printer offline grace period — FIXED v1.5.34
+- **B40**: Jobs gcode durable path — FIXED v1.5.34
+- **B39**: Printer offline grace period — partial fix v1.5.34, REOPENED (needs different approach)
 - **F59/F#39**: G-code preview tube width scaled up for visibility (halfWidth 0.225→0.75, halfHeight 0.1→0.2) — DONE v1.5.32; miter joins, Blinn-Phong lighting, proper 0.42mm proportions — v1.5.35
 - **F60/F#40**: Jobs tab "View G-code" icon — parses saved G-code on IO thread, navigates to 3D viewer; graceful toast if file missing — DONE v1.5.32
 - **F61/F#41**: Jobs tab "Re-open model" icon — source 3MF copied to durable `files/jobs/<id>/` at slice time (Room v2 migration adds `sourcePath`); `jobs/` dir protected from upgrade clearing; `reopenJobToEdit()` reloads model to Prepare screen — DONE v1.5.32
