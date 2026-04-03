@@ -51,8 +51,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 622 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 145 instrumented tests (uses Orchestrator)
+./gradlew testDebugUnitTest                        # 628 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 149 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
