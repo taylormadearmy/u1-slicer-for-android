@@ -4,6 +4,24 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B42: G-code preview tubes appear as flat rectangles, not rounded tubes (GitHub #46)
+- The instanced tube geometry (v1.5.37) uses a box cross-section (top + left + right faces) which looks rectangular rather than cylindrical when zoomed in
+- SliceBeam/libvgcode use an 8-vertex hexagonal cross-section that looks rounder
+- Consider increasing vertex count per instance (e.g. 6 faces / 36 vertices) or using a diamond cross-section for a rounder appearance
+- Low priority — functional but cosmetic
+
+### B43: G-code preview lighting too dark — models appear almost black (GitHub #47)
+- The instanced tube shader's lighting produces very dark shadows, especially on side faces
+- The `AMBIENT = 0.20` is too low for the small tube geometry — side faces pointing away from lights render nearly black
+- Fix: increase ambient to ~0.35–0.40, or add a hemisphere ambient term
+- Compare with the Prepare tab model viewer which has brighter lighting
+
+### B44: colored_3DBenchy.3mf shows only 3 colours instead of 4 (GitHub #48)
+- The model has 4 paint colours but the slice output only uses 3 extruders
+- Visible in Prepare screen: Color 1 (blue) and Color 2 (red) shown, but the model visually has 4 distinct regions
+- May be an extruder compaction issue where two source colours map to the same physical extruder
+- Needs investigation: check `detectedExtruders`, `extruderRemap`, and paint_color data in the 3MF
+
 ### B40: F60 Jobs tab G-code viewer shows "No slice results" after kill + reopen (GitHub #44) — FIXED v1.5.34
 - Root cause: gcode saved to transient path lost on process kill; `_gcodePreview`/`_state` reset to empty
 - Fix: save gcode to durable per-job path `files/jobs/<id>/output.gcode`; delete files on job removal
