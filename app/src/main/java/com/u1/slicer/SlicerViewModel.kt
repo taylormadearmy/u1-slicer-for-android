@@ -35,6 +35,7 @@ import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.model.CopyArrangeCalculator
 import org.json.JSONObject
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -1788,17 +1789,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         Log.i("SlicerVM", "Re-embedding 3MF ($reason) before slicing")
                         val isSingleExtruderRefresh = profileNeedsReEmbed && remap == null && _config.value.extruderCount <= 1
-                        if (!isSingleExtruderRefresh) {
-                            // Multi-extruder/remap path: clear first to avoid OOM from holding
-                            // two large model instances in native memory during re-load.
-                            native.clearModel()
-                        }
-                        // Single-extruder settings refresh: skip clearModel() — files are small
-                        // (no OOM risk) and clearModel()+loadModel() can corrupt native statics,
-                        // causing "Coordinate outside allowed range" Clipper errors (I2).
                         val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir())
+                        // Acquire previewMutex before touching native model — prevents SIGSEGV
+                        // when getPreparePreviewMesh is concurrently iterating model volumes
+                        // on the preview coroutine while we clear+reload here.
+                        val reloadOk = NativeLibrary.previewMutex.withLock {
+                            if (!isSingleExtruderRefresh) {
+                                // Multi-extruder/remap path: clear first to avoid OOM from holding
+                                // two large model instances in native memory during re-load.
+                                native.clearModel()
+                            }
+                            // Single-extruder settings refresh: skip clearModel() — files are small
+                            // (no OOM risk) and clearModel()+loadModel() can corrupt native statics,
+                            // causing "Coordinate outside allowed range" Clipper errors (I2).
+                            native.loadModel(reembedded.absolutePath)
+                        }
                         currentModelFile = reembedded
-                        val reloadOk = native.loadModel(reembedded.absolutePath)
                         diagnostics.recordEvent(
                             "native_model_reload_before_slice",
                             mapOf(
