@@ -9,7 +9,6 @@
 #include "OpenGLUtils.hpp"
 #include "Utils.hpp"
 
-#include <map>
 #include <assert.h>
 #include <stdexcept>
 #include <cstdio>
@@ -1266,8 +1265,10 @@ void ViewerImpl::update_colors()
     // If some part of the preview should be rendered in dark grey, it is taken
     // care of in update_colors_texture. That is to avoid the need to recalculate
     // the "normal" color on every slider move.
-    for (size_t i = 0; i < m_vertices.size(); ++i)
-        m_vertices_colors[i] = encode_color(get_vertex_color(m_vertices[i]));
+    for (size_t i = 0; i < m_vertices.size(); ++i) {
+        const Color c = get_vertex_color(m_vertices[i]);
+        m_vertices_colors[i] = encode_color(c);
+    }
     
     update_colors_texture();
     m_settings.update_colors = false;
