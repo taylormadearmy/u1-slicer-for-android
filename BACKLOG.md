@@ -4,6 +4,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B45: Prepare preview for painted/SEMM 3MF models looks broken — wireframe/sparse rendering (GitHub #49)
+- colored_3DBenchy and similar H2C/painted models show very sparse, wireframe-like preview on the Prepare tab
+- Triangles appear to be missing, showing gaps through the mesh — model looks "see-through"
+- This is a regression — earlier versions showed these models as solid coloured previews
+- Affects `ThreeMfMeshParser.parse()` path (painted models) or `getPreparePreviewMesh()` path
+- Not related to the gcode viewer instanced tubes change (B42/B43)
+- Needs investigation: compare with v1.5.34 or v1.5.33 to find when it regressed
+
 ### B42: G-code preview tubes appear as flat rectangles, not rounded tubes (GitHub #46)
 - The instanced tube geometry (v1.5.37) uses a box cross-section (top + left + right faces) which looks rectangular rather than cylindrical when zoomed in
 - SliceBeam/libvgcode use an 8-vertex hexagonal cross-section that looks rounder
