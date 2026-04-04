@@ -24,7 +24,8 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     // libvgcode native pointer — 0 means not created
     private var vgcodePtr: Long = 0
-    private var totalLayers = 0
+    private var totalLayers = 0        // UI-facing layer count (from parsed gcode)
+    private var vgcodeLayerCount = 0   // libvgcode's internal layer count (may differ)
 
     var minLayer = 0
         set(value) { field = value.coerceIn(0, (totalLayers - 1).coerceAtLeast(0)) }
@@ -134,9 +135,18 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         bed.draw(camera)
 
         // Render toolpaths via libvgcode
-        if (vgcodePtr != 0L && totalLayers > 0) {
-            val min = minLayer.coerceIn(0, totalLayers - 1)
-            val max = maxLayer.coerceIn(0, totalLayers - 1)
+        if (vgcodePtr != 0L && vgcodeLayerCount > 0) {
+            // Map UI layer range (0..totalLayers-1) to libvgcode range (0..vgcodeLayerCount-1)
+            val min: Int
+            val max: Int
+            if (totalLayers > 0 && totalLayers != vgcodeLayerCount) {
+                val scale = vgcodeLayerCount.toFloat() / totalLayers
+                min = (minLayer * scale).toInt().coerceIn(0, vgcodeLayerCount - 1)
+                max = ((maxLayer + 1) * scale - 1).toInt().coerceIn(0, vgcodeLayerCount - 1)
+            } else {
+                min = minLayer.coerceIn(0, vgcodeLayerCount - 1)
+                max = maxLayer.coerceIn(0, vgcodeLayerCount - 1)
+            }
             if (min != lastMinLayer || max != lastMaxLayer) {
                 VGCodeNative.setLayersViewRange(vgcodePtr, min, max)
                 lastMinLayer = min
@@ -153,23 +163,24 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     fun uploadGcode(gcode: ParsedGcode) {
         lastGcode = gcode
-        totalLayers = gcode.layers.size
+        totalLayers = gcode.layers.size  // UI-facing count (matches slider)
         maxLayer = totalLayers - 1
         if (totalLayers == 0 || vgcodePtr == 0L) return
 
         VGCodeNative.loadGcode(vgcodePtr, gcode, toolColors)
 
-        // Use libvgcode's layer count — it may differ from our parsed layer count
-        // because libvgcode creates layers from sequential layer_id values in PathVertex
-        val vgcodeLayers = VGCodeNative.getLayersCount(vgcodePtr).toInt()
-        android.util.Log.i("GcodeRenderer", "uploadGcode: parsed ${gcode.layers.size} layers, " +
-            "totalMoves=${gcode.totalMoves}, libvgcode reports $vgcodeLayers layers")
-        totalLayers = vgcodeLayers
-        maxLayer = totalLayers - 1
+        vgcodeLayerCount = VGCodeNative.getLayersCount(vgcodePtr).toInt()
+        android.util.Log.i("GcodeRenderer", "uploadGcode: uiLayers=$totalLayers, " +
+            "vgcodeLayers=$vgcodeLayerCount, totalMoves=${gcode.totalMoves}")
+        // Reset layer range tracking so next frame re-sends the range
+        lastMinLayer = -1
+        lastMaxLayer = -1
 
         // Apply current view type
         val viewType = if (useFeatureColors) VGCodeNative.VIEW_TYPE_FEATURE else VGCodeNative.VIEW_TYPE_TOOL
+        android.util.Log.i("GcodeRenderer", "setViewType=$viewType, toolColors=${toolColors.map { "0x${it.toString(16)}" }}")
         VGCodeNative.setViewType(vgcodePtr, viewType)
+        VGCodeNative.setToolColors(vgcodePtr, toolColors)
 
         // Sync travel visibility — after load, libvgcode defaults to travels hidden
         val travelsVisible = VGCodeNative.isOptionVisible(vgcodePtr, VGCodeNative.OPTION_TRAVELS)

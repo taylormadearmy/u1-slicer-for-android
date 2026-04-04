@@ -49,7 +49,7 @@ object VGCodeNative {
     const val VIEW_TYPE_HEIGHT = 1
     const val VIEW_TYPE_WIDTH = 2
     const val VIEW_TYPE_SPEED = 3
-    const val VIEW_TYPE_TOOL = 10
+    const val VIEW_TYPE_TOOL = 11
 
     // --- Option type constants (matches libvgcode EOptionType) ---
     const val OPTION_TRAVELS = 0
