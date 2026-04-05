@@ -155,6 +155,35 @@ object ThreeMfParser {
                         }
                 }
 
+                // Count distinct paint STATES (B44: config files may list fewer colors
+                // than the actual paint states encoded in model triangles).
+                // Each paint spec string encodes a state digit as its first character
+                // (0=none, 1-4=extruders, 5-8=AMS2 folded to 1-4).
+                // We count distinct non-zero first-char states, NOT the number of
+                // unique spec strings (which can be thousands).
+                val paintStateCount = if (hasPaintData) {
+                    val states = mutableSetOf<Int>()
+                    val modelFiles = mutableListOf<java.util.zip.ZipEntry>()
+                    if (modelEntry != null) modelFiles.add(modelEntry)
+                    zip.entries().toList().filterTo(modelFiles) { e ->
+                        e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
+                    }
+                    for (entry in modelFiles) {
+                        for (spec in streamCollectPaintSpecs(zip.getInputStream(entry))) {
+                            val ch = spec.firstOrNull() ?: continue
+                            val state = when (ch) {
+                                in '1'..'9' -> ch - '0'
+                                in 'A'..'Z' -> ch - 'A' + 10
+                                else -> continue
+                            }
+                            // Fold AMS2 states (5-8) back to AMS1 (1-4)
+                            val folded = if (state > 4) ((state - 1) % 4) + 1 else state
+                            states.add(folded)
+                        }
+                    }
+                    states.size
+                } else 0
+
                 // Detect layer tool changes and any per-layer colors embedded in the
                 // custom_gcode_per_layer.xml metadata.  Hueforge-style files often use
                 // this layer G-code instead of object-level color segmentation.
@@ -284,14 +313,20 @@ object ThreeMfParser {
                     1,
                     extruderAssignments.values.maxOrNull() ?: 0,
                     detectedColors.size,
-                    layerToolExtruderCount
+                    layerToolExtruderCount,
+                    paintStateCount  // B44: distinct paint states from model triangles
                 )
 
-                // 5. Synthesize placeholder colors when multi-extruder but no colors detected
-                //    so the dialog always shows assignable rows instead of 0 rows.
+                // 5. Synthesize placeholder colors when multi-extruder but no/insufficient colors detected
+                //    so the dialog always shows assignable rows instead of missing rows.
+                val palette = listOf("#CC3333", "#3399CC", "#33AA55", "#DDAA22")
                 if (detectedColors.isEmpty() && extruderCount > 1) {
-                    val palette = listOf("#CC3333", "#3399CC", "#33AA55", "#DDAA22")
                     repeat(extruderCount) { i -> detectedColors.add(palette[i % palette.size]) }
+                } else if (detectedColors.size < extruderCount) {
+                    // B44: paint specs revealed more extruders than config listed colors — pad
+                    while (detectedColors.size < extruderCount) {
+                        detectedColors.add(palette[detectedColors.size % palette.size])
+                    }
                 }
 
                 ThreeMfInfo(

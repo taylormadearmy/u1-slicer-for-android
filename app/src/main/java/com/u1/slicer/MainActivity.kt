@@ -2086,6 +2086,8 @@ fun InlineModelPreview(
                                 extruderMap = extruderMap,
                                 detectedColorCount = colorMapping?.size ?: 0
                             )
+                        } else if (hasPaintData) {
+                            null  // colorMapping not ready yet — wait for re-fire
                         } else {
                             null  // rotation effect owns this fetch
                         }
@@ -2162,7 +2164,7 @@ fun InlineModelPreview(
     LaunchedEffect(modelRotation) {
         val rot = modelRotation
         if (modelFilePath.endsWith(".3mf", ignoreCase = true) &&
-            hasPaintData && (colorMapping != null || extruderMap != null)) return@LaunchedEffect
+            hasPaintData) return@LaunchedEffect
 
         val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             NativeLibrary.previewMutex.withLock {

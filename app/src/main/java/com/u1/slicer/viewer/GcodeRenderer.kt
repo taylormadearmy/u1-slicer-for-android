@@ -15,7 +15,7 @@ import javax.microedition.khronos.opengles.GL10
 
 /**
  * Renders G-code toolpaths as 3D box-tube geometry via GPU instancing (glDrawArraysInstanced).
- * Each extrusion move is a single instance; the vertex shader generates 18 vertices (box tube)
+ * Each extrusion move is a single instance; the vertex shader generates 36 vertices (hexagonal tube)
  * from gl_VertexID. Travel moves are always GL_LINES.
  *
  * This replaces the previous CPU-expanded tube geometry, dropping per-move memory from 720 to 48
@@ -346,7 +346,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 GLES30.glEnableVertexAttribArray(3)
                 GLES30.glVertexAttribDivisor(3, 1)
 
-                GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLES, 0, 18, r.instanceCount)
+                GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLES, 0, 36, r.instanceCount)
             }
 
             // Reset divisors to avoid polluting other draw calls
