@@ -249,10 +249,12 @@ class BambuPipelineIntegrationTest {
     }
 
     /**
-     * Regression: same as above for a Bambu painted-color file (colored_3DBenchy).
+     * For painted-color files (colored_3DBenchy), process() preserves paint data —
+     * colors are detected from mmu_segmentation attributes, not model_settings.config.
+     * Both origInfo and processedInfo should detect the same paint-derived colors.
      */
     @Test
-    fun process_stripsColorMetadata_origInfoPreservesColors_coloredBenchy() {
+    fun process_preservesPaintColors_coloredBenchy() {
         val input = asset("colored_3DBenchy (1).3mf")
         val origInfo = ThreeMfParser.parse(input)
         val processed = BambuSanitizer.process(input, outDir)
@@ -260,8 +262,8 @@ class BambuPipelineIntegrationTest {
 
         assertTrue("colored_3DBenchy original should detect >= 2 colors",
             origInfo.detectedColors.size >= 2)
-        assertTrue("process() should strip color metadata (processedInfo colors < origInfo colors)",
-            processedInfo.detectedColors.size < origInfo.detectedColors.size)
+        assertTrue("processedInfo should preserve paint-derived colors",
+            processedInfo.detectedColors.size >= 2)
     }
 
     /**
@@ -295,6 +297,7 @@ class BambuPipelineIntegrationTest {
     /**
      * Regression: same as viewModelMergeThreeMfInfo_preservesOrigInfoColors_calibCube but
      * for a Bambu painted-color file (colored_3DBenchy), covering the hasPaintData path.
+     * Paint data is preserved by process(), so processedInfo already has colors.
      */
     @Test
     fun viewModelMergeThreeMfInfo_preservesOrigInfoColors_coloredBenchy() {
@@ -303,14 +306,14 @@ class BambuPipelineIntegrationTest {
         val processed = BambuSanitizer.process(input, outDir)
         val processedInfo = ThreeMfParser.parse(processed)
 
-        assertEquals(
-            "processedInfo should have 0 colors after process() strips filament metadata",
-            0, processedInfo.detectedColors.size
+        assertTrue(
+            "processedInfo should preserve paint-derived colors",
+            processedInfo.detectedColors.size >= 2
         )
 
         val merged = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
 
-        assertTrue("mergeThreeMfInfo should restore >= 2 colors from origInfo",
+        assertTrue("mergeThreeMfInfo should have >= 2 colors",
             merged.detectedColors.size >= 2)
         assertTrue("mergeThreeMfInfo extruderCount should be >= 2",
             merged.detectedExtruderCount >= 2)
