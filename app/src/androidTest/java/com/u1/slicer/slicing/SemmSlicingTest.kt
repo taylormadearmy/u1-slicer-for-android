@@ -149,7 +149,8 @@ class SemmSlicingTest {
         val origInfo = ThreeMfParser.parse(input)
 
         val nColors = origInfo.detectedColors.size
-        assertTrue("Must have >= 2 detected colors", nColors >= 2)
+        // B44 regression guard: colored_3DBenchy has exactly 4 paint states + 4 config colors
+        assertEquals("colored_3DBenchy must detect exactly 4 colors", 4, nColors)
         // Use up to 4 extruders (U1 max), but no more than the file has colors
         val extCount = nColors.coerceIn(2, 4)
 
@@ -176,6 +177,20 @@ class SemmSlicingTest {
         if (extCount >= 3) {
             val t2 = lines.count { it.trimStart().startsWith("T2") }
             assertTrue("$extCount-extruder SEMM must produce T2 tool changes (got $t2)", t2 > 0)
+        }
+        // All 4 extruders must be active. Check SM_PRINT_AUTO_FEED lines in the
+        // resolved start gcode — OrcaSlicer emits these only for is_extruder_used[N]=true.
+        if (extCount >= 4) {
+            val autoFeedExtruders = lines
+                .filter { it.contains("SM_PRINT_AUTO_FEED") }
+                .mapNotNull { Regex("""EXTRUDER=(\d+)""").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+                .toSet()
+            assertEquals(
+                "4-extruder SEMM must use all 4 extruders (SM_PRINT_AUTO_FEED for 0,1,2,3), " +
+                    "got $autoFeedExtruders. If an extruder is missing, paint segmentation " +
+                    "or profile embedding is not configuring all 4 filament slots correctly.",
+                setOf(0, 1, 2, 3), autoFeedExtruders
+            )
         }
     }
 }

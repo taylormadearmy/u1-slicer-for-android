@@ -760,6 +760,30 @@ class BambuPipelineIntegrationTest {
         )
     }
 
+    /**
+     * Regression guard (B44): colored_3DBenchy has 4 distinct paint states (1,2,3,4)
+     * AND 4 filament_colour entries in its project_settings.config.
+     * detectedColors.size must be exactly 4, and detectedExtruderCount must be >= 4.
+     *
+     * Previously regressed when:
+     *  - paint spec STRING count (2519) was used instead of distinct STATE count (4)
+     *  - config-only detection missed paint states not represented in config files
+     * Either failure causes wrong extruder count in the UI and potentially wrong slice output.
+     */
+    @Test
+    fun coloredBenchy_detectedColors_exactlyFour() {
+        val file = asset("colored_3DBenchy (1).3mf")
+        val info = ThreeMfParser.parse(file)
+        assertEquals(
+            "colored_3DBenchy must detect exactly 4 colors (has 4 filament_colour + 4 paint states)",
+            4, info.detectedColors.size
+        )
+        assertTrue(
+            "detectedExtruderCount must be >= 4 (got ${info.detectedExtruderCount})",
+            info.detectedExtruderCount >= 4
+        )
+    }
+
     // ─── Toolchange retraction regression (multi-filament clog prevention) ─────
 
     /**
