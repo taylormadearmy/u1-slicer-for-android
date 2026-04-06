@@ -19,7 +19,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Possible cause: the `colorMapping` itself is wrong — the H2C dual-AMS state→colour mapping in `ThreeMfParser.paintIndexForState()` may produce different indices than the native C++ `state_idx - 1` mapping. If the Kotlin parser detects 7 colours using H2C-aware folding but the native C++ produces 7 indices using raw `state_idx - 1`, the indices may not align with the `colorMapping` entries
 - **Investigation needed**: compare the state→index mapping in `ThreeMfParser.paintIndexForState()` (Kotlin, H2C-aware) with `sapil_model.cpp:464` (C++, raw `state_idx - 1`). If they differ, the `colorMapping` built from the Kotlin parser won't match the native preview indices
 - Test asset: `app/src/androidTest/assets/3DBenchy-H2C-Multi-Color.3mf`
-- User asked to check the sliced G-code for E2 (green/T1) tool usage — if gcode has no T1 commands, the mapping pipeline is dropping the colour before slicing
+- **Confirmed**: sliced G-code (`G:/My Drive/Logs/output (2).gcode`, copy at `c:/tmp/e2e-results/h2c-benchy-missing-green.gcode`) has T0(238), T2(241), T3(241) — **zero T1 commands**. Green/E2 is completely absent from the slice output. This proves the issue is in the colour mapping pipeline, not the viewer
 - Reproduces on: Pixel 8a, Samsung device
 
 ### B47: S-Buttons multi-colour 3MF intermittently loses a colour on first load
