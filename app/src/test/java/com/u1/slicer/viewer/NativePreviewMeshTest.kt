@@ -35,6 +35,26 @@ class NativePreviewMeshTest {
     }
 
     @Test
+    fun `toMeshData preserves raw extruder indices for colorMapping palette`() {
+        // Raw indices from native TS state_idx map directly into the colorMapping
+        // palette (which handles the model-color→extruder mapping). Indices must
+        // NOT be folded — H2C models can have 7+ distinct state indices.
+        val preview = NativePreviewMesh(
+            trianglePositions = FloatArray(5 * 9) { idx ->
+                when (idx % 9) {
+                    0 -> 0f; 1 -> 0f; 2 -> 0f
+                    3 -> 1f; 4 -> 0f; 5 -> 0f
+                    6 -> 0f; 7 -> 1f; else -> 0f
+                }
+            },
+            extruderIndices = byteArrayOf(0, 3, 4, 6, 9)
+        )
+        val mesh = preview.toMeshData()
+        assertNotNull(mesh)
+        assertArrayEquals(byteArrayOf(0, 3, 4, 6, 9), mesh!!.extruderIndices)
+    }
+
+    @Test
     fun `wouldExceedSafePreviewBudget safety net threshold is effectively unreachable`() {
         // After F48 decimation, post-decimate counts stay at MAX_DECIMATED_TRIANGLES (100K),
         // well below any budget threshold. The 50M triangle hard-cap is a last-resort OOM guard.

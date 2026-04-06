@@ -4,6 +4,32 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B48: H2C benchy missing colour 6 (green) in both Prepare and G-code preview
+- `3DBenchy-H2C-Multi-Color.3mf` (now in `androidTest/assets/`) does not show one of its 7 model colours in either the Prepare preview or the sliced G-code preview
+- The missing colour maps to green (E2) by default via auto-mapping
+- **Affects BOTH Prepare preview AND G-code preview** — this rules out a preview-only bug. The issue is in the colour detection/mapping pipeline, not the renderer
+- Key data from logs:
+  - `detectedExtruders=7` — 7 paint states detected from the 3MF
+  - `colorMapping=[2, 0, 3, 2, 0, 1, 0]` — 7 model colours mapped to 4 extruders
+  - Native preview indices: `{0=460441, 1=337805, 2=355028, 3=210429, 4=244610, 5=144680, 6=224482}` — all 7 indices present
+  - `recolor paletteSize=7` — palette has 7 entries
+  - `extruderColors=[#FF0000, #00FF00, #0000FF, #FFFFFF]` — 4 extruder colours
+  - Palette entry 5 maps to slot 1 → `#00FF00` (green). Index 5 has 144K triangles. Green SHOULD be visible but isn't
+- The `colorMapping` maps model-colour-5 → extruder-slot-1 → green. The recolor palette[5] = `staticHexColorToFloatArray(extruderColors[1])` = green. So the palette is correct. The indices are present. The recolor should work. Yet green doesn't show.
+- Possible cause: the `colorMapping` itself is wrong — the H2C dual-AMS state→colour mapping in `ThreeMfParser.paintIndexForState()` may produce different indices than the native C++ `state_idx - 1` mapping. If the Kotlin parser detects 7 colours using H2C-aware folding but the native C++ produces 7 indices using raw `state_idx - 1`, the indices may not align with the `colorMapping` entries
+- **Investigation needed**: compare the state→index mapping in `ThreeMfParser.paintIndexForState()` (Kotlin, H2C-aware) with `sapil_model.cpp:464` (C++, raw `state_idx - 1`). If they differ, the `colorMapping` built from the Kotlin parser won't match the native preview indices
+- Test asset: `app/src/androidTest/assets/3DBenchy-H2C-Multi-Color.3mf`
+- User asked to check the sliced G-code for E2 (green/T1) tool usage — if gcode has no T1 commands, the mapping pipeline is dropping the colour before slicing
+- Reproduces on: Pixel 8a, Samsung device
+
+### B47: S-Buttons multi-colour 3MF intermittently loses a colour on first load
+- Button-for-S-trousers.3mf (4-colour non-painted 3MF) sometimes shows only 3 colours on the Prepare preview after loading
+- Color 4 is missing initially, but loading the file a second time (or switching tabs and returning) shows all 4 colours correctly
+- Likely a race condition where `colorMapping` is not yet populated when the main LaunchedEffect fires
+- The LaunchedEffect keys on `colorMapping?.size` which should re-fire when mapping arrives, but timing between `ThreeMfInfo` parsing, `colorMapping` StateFlow emission, and the composable recomposition may allow a window where the preview renders with an incomplete mapping
+- Intermittent — unable to reproduce reliably after initial observation
+- Not related to B46 painted model fix (this affects non-painted multi-colour 3MF)
+
 ### B45: Prepare preview for painted/SEMM 3MF models looks broken — wireframe/sparse rendering (GitHub #49)
 - colored_3DBenchy and similar H2C/painted models show very sparse, wireframe-like preview on the Prepare tab
 - Triangles appear to be missing, showing gaps through the mesh — model looks "see-through"

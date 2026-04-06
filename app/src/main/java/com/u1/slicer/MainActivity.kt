@@ -2074,23 +2074,12 @@ fun InlineModelPreview(
                     modelFilePath.endsWith(".stl", ignoreCase = true) ->
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
-                        // Painted/SEMM models: use Kotlin ThreeMfMeshParser (per-triangle paint_color).
-                        // Non-painted 3MF: return null here — the LaunchedEffect(modelRotation) below
-                        // will call setModelRotation + getPreparePreviewMesh() and owns that fetch.
-                        // Doing it here as well races with the rotation effect (both on Dispatchers.IO),
-                        // causing setModelRotation to mutate instances while getPreparePreviewMesh reads
-                        // them, producing a garbled/90°-rotated preview mesh.
-                        if (hasPaintData && (colorMapping != null || extruderMap != null)) {
-                            com.u1.slicer.viewer.ThreeMfMeshParser.parse(
-                                file = file,
-                                extruderMap = extruderMap,
-                                detectedColorCount = colorMapping?.size ?: 0
-                            )
-                        } else if (hasPaintData) {
-                            null  // colorMapping not ready yet — wait for re-fire
-                        } else {
-                            null  // rotation effect owns this fetch
-                        }
+                        // B46 fix: ALL 3MF models use the native getPreparePreviewMesh()
+                        // path via the rotation LaunchedEffect below. The Kotlin
+                        // ThreeMfMeshParser created seam artifacts at color boundaries
+                        // and lost color regions for painted/SEMM models. The native path
+                        // produces clean meshes with correct per-state color grouping.
+                        null  // rotation effect owns this fetch for all 3MF
                     else -> null
                 }
             } catch (_: Throwable) {
@@ -2157,14 +2146,16 @@ fun InlineModelPreview(
         v.requestRender()
     }
 
-    // Re-fetch preview mesh when rotation changes (non-painted 3MF and STL only).
-    // Painted/SEMM models use ThreeMfMeshParser which is not rotation-aware.
+    // Re-fetch preview mesh when rotation changes (all 3MF models).
+    // B46 fix: painted/SEMM models also use this native path now — the Kotlin
+    // ThreeMfMeshParser path created seam artifacts and lost color boundaries.
+    // Rotation is not user-adjustable for painted models, but the initial call
+    // (rot=0,0,0) correctly initializes instance transforms via setModelRotation()
+    // before calling getPreparePreviewMesh().
     // Uses previewMutex to serialize against concurrent fetches from other composable instances —
     // setModelRotation mutates global native state; concurrent getPreparePreviewMesh reads race it.
     LaunchedEffect(modelRotation) {
         val rot = modelRotation
-        if (modelFilePath.endsWith(".3mf", ignoreCase = true) &&
-            hasPaintData) return@LaunchedEffect
 
         val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             NativeLibrary.previewMutex.withLock {

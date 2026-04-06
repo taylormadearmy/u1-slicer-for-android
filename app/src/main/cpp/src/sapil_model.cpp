@@ -411,6 +411,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     SAPIL_LOGI("getPreparePreviewMesh: total_tris=%d max=%d stride=%d flat=%s height_ratio=%.3f",
         total_tris, effective_max, stride, is_flat_model ? "yes" : "no", height_ratio);
 
+    bool has_mmu_data = false;  // B46: track if any MMU data present
     size_t object_index = 0;
     for (const auto* object : g_model.objects) {
         if (object == nullptr || !object->printable) continue;
@@ -435,35 +436,36 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                 const uint8_t fallback_index = static_cast<uint8_t>(std::max(0, fallback_extruder - 1));
 
                 if (!volume->mmu_segmentation_facets.empty()) {
+                    has_mmu_data = true;
                     std::vector<indexed_triangle_set> facets_per_type;
                     volume->mmu_segmentation_facets.get_facets(*volume, facets_per_type);
+
+                    // B46: count total MMU triangles.
+                    // Skip QEM entirely — TS-expanded per-state groups are small and
+                    // disconnected, causing QEM timeouts and stride fallback that
+                    // destroys mesh connectivity (spike artifacts).
+                    int mmu_total = 0;
+                    for (const auto& fpt : facets_per_type)
+                        mmu_total += static_cast<int>(fpt.indices.size());
+                    // B46: no decimation for MMU meshes — export all TS-expanded
+                    // triangles. v1.5.0 did this and it worked. 872K tris ≈ 30MB
+                    // vertex buffer, well within mobile GPU limits.
+                    const int mmu_stride = 1;
+                    SAPIL_LOGI("getPreparePreviewMesh MMU: mmu_total=%d mmu_stride=%d",
+                        mmu_total, mmu_stride);
+
                     int tri_counter = 0;
                     for (size_t state_idx = 0; state_idx < facets_per_type.size(); ++state_idx) {
                         auto its = facets_per_type[state_idx];
                         if (its.indices.empty()) continue;
+                        // B46: apply volume transform only (model-local coords).
+                        // Skip instance_matrix — the Kotlin placement system handles
+                        // per-instance bed positioning via drawModelAt().
                         its_transform(its, volume->get_matrix(), true);
-                        its_transform(its, instance_matrix, true);
-                        const int vol_tris = static_cast<int>(its.indices.size());
-                        // Same logic as non-MMU: skip small groups, rely on time budget
-                        const int MIN_DECIMATION_TRIS_MMU = 1000;
-                        const bool vol_needs_dec = needs_decimation && vol_tris > MIN_DECIMATION_TRIS_MMU;
-                        const bool can_qem = vol_needs_dec && !qem_budget_exceeded;
-                        if (can_qem) {
-                            const uint32_t target = static_cast<uint32_t>(
-                                std::max(INT64_C(1),
-                                    static_cast<int64_t>(vol_tris) * effective_max / total_tris));
-                            if (its.indices.size() > target)
-                                Slic3r::its_quadric_edge_collapse(its, target);
-                            if (std::chrono::steady_clock::now() > qem_deadline) {
-                                qem_budget_exceeded = true;
-                                SAPIL_LOGW("getPreparePreviewMesh: QEM time budget exceeded, switching to stride");
-                            }
-                        }
                         const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-                        const int vol_stride = (can_qem || !vol_needs_dec) ? 1 : stride;
-                        appendItsPreviewMesh(out, its, extruder_index, vol_stride, tri_counter);
+                        appendItsPreviewMesh(out, its, extruder_index, mmu_stride, tri_counter);
                     }
                 } else {
                     auto its = volume->mesh().its;
@@ -497,7 +499,12 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
         ++object_index;
     }
 
-    compactPreviewIndices(out);
+    // B46: skip compaction for MMU meshes — the raw state_idx values are needed
+    // by Kotlin's H2C index folding (% 4). Compaction would remap them to dense
+    // 0-based indices, breaking the folding logic.
+    if (!has_mmu_data) {
+        compactPreviewIndices(out);
+    }
 
     // Cache for instant return on tab switch
     g_cached_preview_mesh = out;
