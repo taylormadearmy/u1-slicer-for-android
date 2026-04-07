@@ -30,7 +30,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **G-code preview colours**: tracked separately as B50.
 - Long-term MMU decimation tracked in taylormadearmy/u1-slicer-for-android#50
 
-### B50: G-code preview colours don't match Prepare preview for SEMM models
+### B50: G-code preview colours don't match Prepare preview for SEMM models (GitHub #53)
 - After slicing H2C benchy, the G-code preview shows all 4 colours (red, green, blue, white) but some are swapped compared to the Prepare preview
 - The Prepare preview uses `colorMapping` (model-colour→slot) to assign colours to paint state indices — this matches the Bambu reference
 - The G-code preview uses physical tool indices (T0-T3) which are assigned internally by OrcaSlicer's `multi_material_segmentation_by_painting()`. This mapping is opaque — we don't control which model colour ends up on which physical tool
@@ -43,7 +43,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - `cachedPrepareMesh` on ViewModel + native `g_preview_mesh_valid` cache provide instant reload on tab switch
 - Confirmed fixed on device v1.5.39
 
-### B47: S-Buttons multi-colour 3MF intermittently loses a colour on first load
+### B47: S-Buttons multi-colour 3MF intermittently loses a colour on first load (GitHub #54)
 - Button-for-S-trousers.3mf (4-colour non-painted 3MF) sometimes shows only 3 colours on the Prepare preview after loading
 - Color 4 is missing initially, but loading the file a second time (or switching tabs and returning) shows all 4 colours correctly
 - Likely a race condition where `colorMapping` is not yet populated when the main LaunchedEffect fires

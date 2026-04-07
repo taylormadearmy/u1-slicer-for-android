@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.5.37` (`versionCode 203`)
+Current release: `v1.5.39` (`versionCode 205`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -161,6 +161,8 @@ assertTrue("T1 (green) must be > 0, got ${toolCounts[1]}", toolCounts[1] > 0)
 ## Backlog
 
 Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backlog items unless asked.
+
+**BACKLOG ↔ GitHub issue sync**: Every open bug or feature in BACKLOG.md must have a corresponding GitHub issue, and vice versa. When adding a new bug/feature to either place, always create the matching entry in the other. Include the `(GitHub #N)` reference in the BACKLOG heading.
 
 ## Architecture
 
