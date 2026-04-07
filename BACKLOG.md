@@ -4,6 +4,15 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B52: Crash at end of slicing citystep_A1_274_102.3mf (GitHub #51)
+- App crashes at end of slicing `1873409_citystep_A1_274_102.3mf` (MakerWorld citystep, 8.8MB, 2-plate)
+- Model: 246×238×263mm, 283K triangles, 7 volumes, single extruder
+- Slice produces 115MB G-code (1315 layers, 3.7M moves) — crash likely during post-slice G-code parse/validation OOM
+- Worked on v1.5.38, crashes on v1.5.39
+- Not SEMM/painted (hasPaint=false) — B51 changes shouldn't be related
+- Diagnostics: `G:/My Drive/Logs/clipper_investigation_bundle (6).txt`
+- Test file: `G:/My Drive/tes-data/1873409_citystep_A1_274_102.3mf`
+
 ### ~~B51: SEMM Prepare preview broken — wrong orientation, tiny, split geometry (old.3mf, Korok mask)~~ FIXED
 - **Root cause**: B46 removed `instance_matrix` from the MMU path in `getPreparePreviewMesh()` ("Kotlin handles bed positioning") but kept it in the non-MMU path. This left SEMM volumes in model-local coords while non-MMU volumes were in world coords. old.3mf's instance had a rotation that the missing transform didn't apply, making the model lie flat (Z=21.6mm instead of 126.8mm).
 - **Fix**: restored `its_transform(its, instance_matrix, true)` in the MMU path + reverted B48 manual extraction back to `appendItsPreviewMesh()` for consistency. 
