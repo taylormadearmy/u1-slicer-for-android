@@ -4,6 +4,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B53: Prime tower switch on Prepare screen does not disable prime tower (GitHub #45)
+- Toggling the prime tower switch off on the Prepare screen does not actually disable the prime tower in the sliced output
+- The `enable_prime_tower` override may not be threaded through `buildProfileOverrides()` correctly, or the native side ignores it
+- Needs investigation: check if the override reaches `applyConfigToPrusa()` and whether the slicer respects it
+
 ### B52: Crash at end of slicing citystep_A1_274_102.3mf (GitHub #51)
 - App crashes at end of slicing `1873409_citystep_A1_274_102.3mf` (MakerWorld citystep, 8.8MB, 2-plate)
 - Model: 246×238×263mm, 283K triangles, 7 volumes, single extruder
@@ -207,6 +212,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Fix: after G-code is uploaded to GPU, compute the bounding box of all move positions and set `camera.distance` and `camera.target` to frame the content
 - Same issue applies when opening via "View G-code" from Jobs tab (F60)
 - Confirmed by E2E screenshot: tetrahedron visible only as a 2px speck at default zoom after v1.5.32 tube width fix
+
+### F63: MMU preview triangle cap + long-term QEM colour preservation (GitHub #50)
+- H2C benchy produces 2M triangles from `get_facets()` MMU splitting → 226MB VBO
+- Short-term: add a safe triangle cap (~1M tris) with stride on the interleaved output
+- Long-term: QEM on original volume mesh with per-face colour preservation (centroid matching only recovers indices 0-3 currently)
+- Related to B48 interleaving fix; currently no decimation for MMU meshes
 
 ### D1: Document slicer engine upgrade process
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
