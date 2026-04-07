@@ -213,6 +213,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Same issue applies when opening via "View G-code" from Jobs tab (F60)
 - Confirmed by E2E screenshot: tetrahedron visible only as a 2px speck at default zoom after v1.5.32 tube width fix
 
+### F64: Colour picker for extruder colour chooser (GitHub #52)
+- Add a visual colour picker (wheel/grid/palette) to the Printer screen extruder colour chooser
+- Currently only hex code entry or import-from-printer — no visual picker
+- Hex input should remain as fallback
+
 ### F63: MMU preview triangle cap + long-term QEM colour preservation (GitHub #50)
 - H2C benchy produces 2M triangles from `get_facets()` MMU splitting → 226MB VBO
 - Short-term: add a safe triangle cap (~1M tris) with stride on the interleaved output
