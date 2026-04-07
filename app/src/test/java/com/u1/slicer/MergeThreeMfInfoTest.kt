@@ -3,6 +3,7 @@ package com.u1.slicer
 import com.u1.slicer.bambu.LayerToolSegment
 import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfPlate
+import com.u1.slicer.computeEmbedTargetCount
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
@@ -778,5 +779,59 @@ class MergeThreeMfInfoTest {
             merged.hasMultiExtruderAssignments
         )
         assertTrue("Layer tool changes should be preserved", merged.hasLayerToolChanges)
+    }
+
+    // ── computeEmbedTargetCount tests (B48) ─────────────────────────────────────
+
+    @Test
+    fun `computeEmbedTargetCount uses full colorMapping size for H2C SEMM models`() {
+        // H2C benchy: 7 model colours → 4 distinct physical slots.
+        // All 4 physical extruders used AND more model colours → virtual count (7).
+        val colorMapping = listOf(2, 0, 3, 2, 0, 1, 0)
+        assertEquals(7, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 4))
+    }
+
+    @Test
+    fun `computeEmbedTargetCount uses distinct count for per-object models`() {
+        // Per-object models: targetCount = number of distinct physical slots.
+        val toolRemap = listOf(2, 3)  // E3+E4
+        assertEquals(2, computeEmbedTargetCount(colorMapping = null, hasPaintData = false, toolRemapSlots = toolRemap, fallbackExtCount = 4))
+    }
+
+    @Test
+    fun `computeEmbedTargetCount falls back to extCount when no remap slots`() {
+        assertEquals(4, computeEmbedTargetCount(colorMapping = null, hasPaintData = false, toolRemapSlots = null, fallbackExtCount = 4))
+        assertEquals(1, computeEmbedTargetCount(colorMapping = null, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 1))
+    }
+
+    @Test
+    fun `computeEmbedTargetCount handles 4-colour SEMM identity mapping`() {
+        // Non-H2C SEMM model: 4 paint states mapped 1:1 to 4 extruders.
+        val colorMapping = listOf(0, 1, 2, 3)
+        assertEquals(4, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 4))
+    }
+
+    @Test
+    fun `computeEmbedTargetCount SEMM with duplicate mapping uses distinct count`() {
+        // 4 model colours mapped to 2 physical extruders: [0, 0, 1, 1].
+        // distinct = 2 = physical count needed.
+        val colorMapping = listOf(0, 0, 1, 1)
+        assertEquals(2, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
+    }
+
+    @Test
+    fun `computeEmbedTargetCount old_3mf — 6 colours to 2 slots uses distinct`() {
+        // old.3mf: 6 detected paint colours mapped to 2 physical slots [0,2].
+        // distinct = 2. Matches pre-B48 behaviour.
+        val colorMapping = listOf(0, 2, 0, 2, 0, 2)
+        assertEquals(2, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
+    }
+
+    @Test
+    fun `computeEmbedTargetCount Korok — 5 colours to 3 slots uses distinct`() {
+        // Korok: 5 paint colours mapped to 3 physical slots [0,1,3].
+        // distinct = 3. Matches pre-B48 behaviour.
+        val colorMapping = listOf(0, 0, 1, 1, 3)
+        assertEquals(3, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 3))
     }
 }

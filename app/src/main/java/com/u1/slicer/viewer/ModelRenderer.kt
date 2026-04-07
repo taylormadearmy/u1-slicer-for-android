@@ -140,13 +140,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
 
         pendingMesh?.let { mesh ->
-            uploadMesh(mesh)
-            // Apply any pending recolor immediately to the freshly uploaded mesh
+            // B48: recolor BEFORE uploading when both arrive on the same frame,
+            // so the initial glBufferData gets the recolored vertex data.
             pendingRecolor?.let { palette ->
                 mesh.recolor(palette)
-                updateColorData(mesh)
                 pendingRecolor = null
             }
+            uploadMesh(mesh)
             meshData = mesh
             pendingMesh = null
             pendingCameraReset = !preserveCameraOnNextMeshUpload
@@ -297,7 +297,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
-        GLES30.glUniform1i(useVertexColorLoc, if (mesh.hasPerVertexColor) 1 else 0)
+        GLES30.glUniform1f(useVertexColorLoc, if (mesh.hasPerVertexColor) 1f else 0f)
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
         GLES30.glBindVertexArray(0)
@@ -329,7 +329,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         val color = if (highlighted) floatArrayOf(1f, 0.6f, 0.2f, 1f) else baseColor
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
-        GLES30.glUniform1i(useVertexColorLoc, if (mesh.hasPerVertexColor) 1 else 0)
+        GLES30.glUniform1f(useVertexColorLoc, if (mesh.hasPerVertexColor) 1f else 0f)
 
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
@@ -351,7 +351,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         val color = if (highlighted) floatArrayOf(1f, 0.85f, 0.2f, 1f) else wipeTowerColor
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
-        GLES30.glUniform1i(useVertexColorLoc, 0)
+        GLES30.glUniform1f(useVertexColorLoc, 0f)
         GLES30.glVertexAttrib4f(2, 1f, 1f, 1f, 1f)
 
         GLES30.glEnable(GLES30.GL_BLEND)

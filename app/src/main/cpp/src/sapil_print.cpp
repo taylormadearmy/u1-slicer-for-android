@@ -313,11 +313,21 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(nozzle_diameters));
     dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(filament_diameters));
 
-    // Filament colour — MUST be sized to n_ext.  multi_material_segmentation_by_painting()
-    // uses filament_colour.size()+1 as num_facets_states to dimension per-layer arrays.
-    // Default is a single entry, so with 2+ extruders the segmentation function creates
-    // arrays too small for the paint data's color indices, causing OOB → SIGSEGV.
-    dpc.set_key_value("filament_colour", new Slic3r::ConfigOptionStrings(std::vector<std::string>(n_ext, "#FFFFFF")));
+    // Filament colour — MUST be sized to at least n_ext.
+    // multi_material_segmentation_by_painting() uses filament_colour.size()+1 as
+    // num_facets_states to dimension per-layer arrays.  Default is a single entry,
+    // so with 2+ extruders the segmentation function creates arrays too small for
+    // the paint data's color indices, causing OOB → SIGSEGV.
+    // B48: SEMM models embed filament_colour sized to the virtual extruder count
+    // (model color count > physical extruder count).  Preserve the larger array
+    // when it was already set by the embedded profile.
+    {
+        auto* fc = dpc.option<Slic3r::ConfigOptionStrings>("filament_colour");
+        int current_fc_size = (fc ? (int)fc->values.size() : 0);
+        if (current_fc_size < n_ext) {
+            dpc.set_key_value("filament_colour", new Slic3r::ConfigOptionStrings(std::vector<std::string>(n_ext, "#FFFFFF")));
+        }
+    }
 
     // Extruder offsets — all (0,0) for Snapmaker U1 (firmware handles offsets).
     // MUST be sized to match extruder count; the default is a single entry, and
@@ -446,28 +456,34 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 "\"extruderCount\":" + std::to_string(config.extruder_count) +
             "}"
         );
-        // Build config: defaults → 3MF embedded config → user overrides.
+        // Build config: defaults → embedded profile → user overrides (applyConfigToPrusa).
         // The embedded config (from ProfileEmbedder) contains machine_start_gcode,
         // change_filament_gcode, and all Snapmaker profile settings.  Without this,
         // OrcaSlicer uses its built-in default start G-code which lacks SM_ commands.
+        // applyConfigToPrusa runs LAST so that JNI user settings (wipe tower on/off,
+        // temperatures, layer height, speeds, etc.) override the embedded profile.
         Slic3r::DynamicPrintConfig dpc;
         dpc.apply(Slic3r::FullPrintConfig::defaults());
-        // Only apply G-code template keys from the embedded config.
-        // Applying all 391 keys causes SIGSEGV — many have array sizes, feature flags,
-        // or template macros that conflict with our minimal Print pipeline.
+
+        // Detect whether the embedded config is a Snapmaker profile before applying
+        // any overrides — both applyConfigToPrusa and profile_keys need this flag.
         auto& model_config = getModelConfig();
         bool is_snapmaker_profile = false;
-        int applied = 0;
         if (!model_config.empty()) {
-            // Only apply G-code templates that were embedded by our ProfileEmbedder
-            // (Snapmaker profile).  Raw Bambu 3MFs contain Bambu-specific template
-            // variables (flush_volumetric_speeds, M620, etc.) that cause parse errors.
-            // Snapmaker's machine_start_gcode always begins with "PRINT_START".
             auto* start_opt = model_config.option<Slic3r::ConfigOptionString>("machine_start_gcode");
             if (start_opt && start_opt->value.find("PRINT_START") != std::string::npos) {
                 is_snapmaker_profile = true;
             }
+        }
 
+        // Step 1: Apply whitelisted keys from the embedded profile.
+        // Only apply G-code templates that were embedded by our ProfileEmbedder
+        // (Snapmaker profile).  Raw Bambu 3MFs contain Bambu-specific template
+        // variables (flush_volumetric_speeds, M620, etc.) that cause parse errors.
+        // Applying all 391 keys causes SIGSEGV — many have array sizes, feature flags,
+        // or template macros that conflict with our minimal Print pipeline.
+        int applied = 0;
+        if (!model_config.empty()) {
             if (is_snapmaker_profile) {
                 // Keys safe to apply from the embedded Snapmaker profile.
                 // G-code templates: must come from our profile (not Bambu defaults).
@@ -658,7 +674,91 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 SAPIL_LOGI("Skipping embedded G-code templates (not a Snapmaker profile, %zu keys)", model_config.keys().size());
             }
         }
+
+        // Step 2: Apply Snapmaker hardware defaults + JNI user settings.
+        // Runs AFTER profile_keys so that user-controllable settings (wipe tower,
+        // temperatures, layer height, speeds) from the JNI config override the
+        // embedded profile's values.
         applyConfigToPrusa(dpc, config, is_snapmaker_profile);
+
+        // Step 3: B48 — if the embedded profile set filament_colour to more entries
+        // than config.extruder_count (SEMM models with virtual extruder count > physical),
+        // pad all per-extruder arrays and flush_volumes_matrix to match.  Without this,
+        // ToolOrdering/WipeTower crashes on OOB access when segmentation produces
+        // extruder IDs beyond the original n_ext.
+        {
+            auto* fc = dpc.option<Slic3r::ConfigOptionStrings>("filament_colour");
+            int n_ext = std::max(1, config.extruder_count);
+            if (fc && (int)fc->values.size() > n_ext) {
+                int virtual_ext = (int)fc->values.size();
+                SAPIL_LOGI("B48: filament_colour has %d entries (n_ext=%d) — padding per-extruder arrays", virtual_ext, n_ext);
+
+                // Helper: pad a ConfigOptionFloats to virtual_ext using its last value
+                auto pad_floats = [&](const char* key) {
+                    auto* opt = dpc.option<Slic3r::ConfigOptionFloats>(key);
+                    if (opt && (int)opt->values.size() < virtual_ext) {
+                        double last = opt->values.back();
+                        opt->values.resize(virtual_ext, last);
+                    }
+                };
+                // Helper: pad a ConfigOptionInts
+                auto pad_ints = [&](const char* key) {
+                    auto* opt = dpc.option<Slic3r::ConfigOptionInts>(key);
+                    if (opt && (int)opt->values.size() < virtual_ext) {
+                        int last = opt->values.back();
+                        opt->values.resize(virtual_ext, last);
+                    }
+                };
+
+                pad_floats("nozzle_diameter");
+                pad_floats("filament_diameter");
+                pad_floats("filament_max_volumetric_speed");
+                pad_floats("filament_density");
+                pad_floats("fan_min_speed");
+                pad_floats("fan_max_speed");
+                pad_ints("overhang_fan_speed");
+                pad_floats("slow_down_layer_time");
+                pad_floats("slow_down_min_speed");
+                pad_floats("deretraction_speed");
+                pad_floats("retraction_minimum_travel");
+                pad_floats("filament_unloading_speed");
+                pad_floats("filament_unloading_speed_start");
+                pad_floats("filament_loading_speed");
+                pad_floats("filament_loading_speed_start");
+                pad_ints("filament_cooling_moves");
+                pad_floats("filament_toolchange_delay");
+
+                // Retraction arrays (set by applyConfigToPrusa from JNI config)
+                pad_floats("retract_length");
+                pad_floats("retract_speed");
+                pad_floats("retract_length_toolchange");
+
+                // Extruder offsets
+                auto* eo = dpc.option<Slic3r::ConfigOptionPoints>("extruder_offset");
+                if (eo && (int)eo->values.size() < virtual_ext) {
+                    eo->values.resize(virtual_ext, Slic3r::Vec2d(0, 0));
+                }
+
+                // Wipe tower positions
+                pad_floats("wipe_tower_x");
+                pad_floats("wipe_tower_y");
+
+                // Nozzle/bed temp arrays
+                pad_ints("nozzle_temperature");
+                pad_ints("nozzle_temperature_initial_layer");
+                pad_ints("bed_temperature");
+                pad_ints("bed_temperature_initial_layer");
+
+                // Flush volumes matrix — NxN where N = virtual_ext.
+                // ToolOrdering derives extruder count from sqrt(matrix.size()).
+                // Default purge volume 140mm³ (matches prime_volume default).
+                dpc.set_key_value("flush_volumes_matrix",
+                    new Slic3r::ConfigOptionFloats(std::vector<double>(virtual_ext * virtual_ext, 140.0)));
+                // Flush volumes vector (per-extruder multipliers, one per extruder)
+                dpc.set_key_value("flush_volumes_vector",
+                    new Slic3r::ConfigOptionFloats(std::vector<double>(virtual_ext * 2, 140.0)));
+            }
+        }
 
         if (progress) progress(5, "Preparing print configuration");
 

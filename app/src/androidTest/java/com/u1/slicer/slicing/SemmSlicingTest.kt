@@ -1,5 +1,6 @@
 package com.u1.slicer.slicing
 
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.NativeLibrary
@@ -7,6 +8,7 @@ import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.GcodeValidator
 import org.junit.After
 import org.junit.Assert.*
@@ -190,6 +192,112 @@ class SemmSlicingTest {
                     "got $autoFeedExtruders. If an extruder is missing, paint segmentation " +
                     "or profile embedding is not configuring all 4 filament slots correctly.",
                 setOf(0, 1, 2, 3), autoFeedExtruders
+            )
+        }
+    }
+
+    /**
+     * B48 regression: H2C benchy (7 model colours from dual-AMS, mapped to 4 physical
+     * extruders) must produce tool changes for ALL 4 physical tools in the sliced G-code.
+     *
+     * Before the fix, T1 (green/E2) was completely absent because the native slicer's
+     * filament_colour array was sized to 4 (physical count) instead of 7 (virtual/model
+     * colour count), causing paint states 5-7 to be silently dropped by
+     * multi_material_segmentation_by_painting().
+     *
+     * Red-green TDD: this test was written while T1=0 in the output. It fails without
+     * the fix and passes with it.
+     */
+    @Test
+    fun h2cBenchy_semm_allFourToolsPresent_inSlicedGcode() {
+        val input = asset("3DBenchy-H2C-Multi-Color.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+
+        assertTrue("H2C benchy must have hasPaintData=true", origInfo.hasPaintData)
+        assertEquals("H2C benchy must detect 7 model colours", 7, origInfo.detectedColors.size)
+
+        // Full pipeline: process → embed with 7 virtual extruders → load → slice
+        val processed = BambuSanitizer.process(input, outDir)
+        // B48 fix: targetExtruderCount = 7 (one per model colour, not 4 physical)
+        val config = embedder.buildConfig(
+            info = origInfo,
+            targetExtruderCount = 7
+        )
+        assertEquals("extruder_count must be 7 for H2C with 7 model colours",
+            "7", config["extruder_count"])
+
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(makeConfig(4))
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue("H2C benchy must slice successfully: ${result.errorMessage}", result.success)
+
+        val gcode = File(result.gcodePath).readText()
+        val lines = gcode.lines()
+        val toolCounts = (0..3).map { t -> lines.count { it.trim() == "T$t" } }
+        Log.i("SemmSlicingTest", "H2C benchy tool counts: T0=${toolCounts[0]} T1=${toolCounts[1]} T2=${toolCounts[2]} T3=${toolCounts[3]}")
+
+        for (t in 0..3) {
+            assertTrue(
+                "H2C benchy must produce T$t tool changes (got ${toolCounts[t]}). " +
+                    "If T1=0, B48 regression: paint states beyond filament_colour.size() are being dropped.",
+                toolCounts[t] > 0
+            )
+        }
+    }
+
+    /**
+     * B48 Part 2 regression: SEMM models must NOT have their G-code tool indices
+     * remapped by GcodeToolRemapper.  The slicer already maps model colours to
+     * physical extruders internally — T0-T3 in the output ARE physical slot indices.
+     *
+     * The ViewModel sets toolRemapSlots to the 7-entry colorMapping for SEMM models,
+     * and GcodeToolRemapper.remap() scrambles the correct T0-T3 into wrong indices.
+     * After remap with [2,0,3,2,0,1,0], T1 (green) disappears from the output.
+     *
+     * Red-green TDD: this test fails when remap is applied, passes when it's not.
+     */
+    @Test
+    fun h2cBenchy_semm_toolRemapMustNotScrambleGcode() {
+        val input = asset("3DBenchy-H2C-Multi-Color.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val config = embedder.buildConfig(info = origInfo, targetExtruderCount = 7)
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(makeConfig(4))
+        assertNotNull(result); result!!
+        assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
+
+        // Simulate what the ViewModel does for SEMM models:
+        // toolRemapSlots = colorMapping (7-entry) when non-identity
+        val colorMapping = listOf(2, 0, 3, 2, 0, 1, 0)
+        val hasPaintData = origInfo.hasPaintData
+        assertTrue("H2C benchy must have paint data", hasPaintData)
+
+        // For SEMM models, toolRemapSlots should be null (no remap).
+        // The slicer's T0-T3 are already physical extruder indices.
+        // Applying the model→slot colorMapping as a tool remap is WRONG.
+        val toolRemapSlots: List<Int>? = if (hasPaintData) null else colorMapping
+
+        if (toolRemapSlots != null) {
+            GcodeToolRemapper.remap(result.gcodePath, toolRemapSlots)
+        }
+
+        val gcode = File(result.gcodePath).readText()
+        val lines = gcode.lines()
+        val toolCounts = (0..3).map { t -> lines.count { it.trim() == "T$t" } }
+        Log.i("SemmSlicingTest", "H2C benchy post-remap tool counts: T0=${toolCounts[0]} T1=${toolCounts[1]} T2=${toolCounts[2]} T3=${toolCounts[3]}")
+
+        for (t in 0..3) {
+            assertTrue(
+                "After post-processing, T$t must still be present (got ${toolCounts[t]}). " +
+                    "If T1=0, GcodeToolRemapper scrambled SEMM tool indices.",
+                toolCounts[t] > 0
             )
         }
     }

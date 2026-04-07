@@ -51,6 +51,8 @@ import com.u1.slicer.printer.PrinterViewModel
 import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
+import com.u1.slicer.viewer.MeshData
+import com.u1.slicer.viewer.NativePreviewMesh
 import kotlinx.coroutines.sync.withLock
 
 class MainActivity : ComponentActivity() {
@@ -862,7 +864,9 @@ fun PrepareScreen(
                                 onViewerReady = { captureViewer = it },
                                 onResetView = { captureViewer?.resetView(); onResetPreviewCamera?.invoke() },
                                 layerToolOnly = layerToolOnly,
-                                layerToolSegments = threeMfInfo?.layerToolSegments
+                                layerToolSegments = threeMfInfo?.layerToolSegments,
+                                cachedMesh = viewModel.cachedPrepareMesh,
+                                onMeshCached = { viewModel.cachedPrepareMesh = it }
                             )
                             if (showInfoDialog && loadedInfo != null) {
                                 ModelInfoDialog(
@@ -1120,6 +1124,7 @@ fun PreviewScreen(
     val parsedGcode by viewModel.parsedGcode.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
+    val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val config by viewModel.config.collectAsState()
 
     Scaffold(
@@ -1182,10 +1187,18 @@ fun PreviewScreen(
                         // treats it as unstable and may skip recomposition, leaving the LaunchedEffect
                         // inside InlineGcodePreview with the old key and the wrong gcode on screen.
                         key(s.result.gcodePath) {
+                        // B48: H2C models (>4 model colours) — slicer's T0-T3 are physical
+                        // slot indices. Don't pass model→slot colorMapping to G-code preview.
+                        // Normal painted models (<=4 colours) still need the mapping for
+                        // tool→slot colour remapping.
+                        val isH2c = threeMfInfo?.hasPaintData == true &&
+                            (colorMapping?.distinct()?.size ?: 0) >= 4 &&
+                            (colorMapping?.size ?: 0) > (colorMapping?.distinct()?.size ?: 0)
+                        val gcodeColorMapping = if (isH2c) null else colorMapping
                         InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
-                            colorMapping = colorMapping,
+                            colorMapping = gcodeColorMapping,
                             slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D,
                             cameraState = sharedPreviewCameraState,
@@ -1998,6 +2011,9 @@ fun InlineModelPreview(
     modelTriangleCount: Int = 0,
     onFullScreen: () -> Unit,
     extruderColors: List<String> = emptyList(),
+    // B49: ViewModel-level mesh cache for instant reload on tab switch
+    cachedMesh: MeshData? = null,
+    onMeshCached: ((MeshData) -> Unit)? = null,
     extruderMap: Map<Int, Byte>? = null,
     colorMapping: List<Int>? = null,
     // Use Kotlin ThreeMfMeshParser only for painted/SEMM models (hasPaintData=true).
@@ -2025,7 +2041,8 @@ fun InlineModelPreview(
     layerToolOnly: Boolean = false,
     layerToolSegments: List<com.u1.slicer.bambu.LayerToolSegment>? = null
 ) {
-    var mesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
+    // B49: initialize from ViewModel cache for instant reload on tab switch
+    var mesh by remember { mutableStateOf(cachedMesh) }
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
     var parseRequestId by remember { mutableIntStateOf(0) }
     var viewerLoading by remember(modelFilePath) { mutableStateOf(true) }
@@ -2063,10 +2080,17 @@ fun InlineModelPreview(
     LaunchedEffect(modelFilePath, extruderMap, colorMapping?.size) {
         val requestId = parseRequestId + 1
         parseRequestId = requestId
-        viewerLoading = true
-        mesh = null
-        lastSetMesh = null
-        viewerView?.clearMesh()
+        // B49: don't clear mesh/GL when a ViewModel cache exists and the native
+        // rotation path handles the preview (3MF files).  The parse effect returns
+        // null for 3MF — clearing the mesh here just kills the cached preview and
+        // forces a slow re-fetch from native.
+        val isNativePreviewPath = modelFilePath.endsWith(".3mf", ignoreCase = true)
+        if (cachedMesh == null || !isNativePreviewPath) {
+            viewerLoading = true
+            mesh = null
+            lastSetMesh = null
+            viewerView?.clearMesh()
+        }
         val parsedMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val file = java.io.File(modelFilePath)
@@ -2087,7 +2111,10 @@ fun InlineModelPreview(
             }
         }
         if (parseRequestId == requestId) {
-            mesh = parsedMesh
+            // B49: don't overwrite cached mesh with null from the 3MF native path
+            if (parsedMesh != null || cachedMesh == null) {
+                mesh = parsedMesh
+            }
             // For non-painted 3MF: null is expected — rotation effect owns the fetch.
             // Keep viewerLoading=true so the spinner stays until that effect delivers the mesh.
             if (parsedMesh == null && !nativeThreeMfPreview) viewerLoading = false
@@ -2157,12 +2184,19 @@ fun InlineModelPreview(
     LaunchedEffect(modelRotation) {
         val rot = modelRotation
 
+        // B49: reuse cached mesh if available (instant reload on tab switch).
+        // Still set lastSetMesh=null to force the GL view to receive it.
+        if (mesh != null && cachedMesh != null) {
+            lastSetMesh = null  // force setMesh() on fresh GL view
+            return@LaunchedEffect
+        }
+
         val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             NativeLibrary.previewMutex.withLock {
                 try {
                     val lib = NativeLibrary()
                     lib.setModelRotation(rot.x, rot.y, rot.z)
-                    lib.getPreparePreviewMesh()?.toMeshData()
+                    lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)?.toMeshData()
                 } catch (_: Throwable) {
                     null
                 }
@@ -2170,6 +2204,7 @@ fun InlineModelPreview(
         }
         if (newMesh != null) {
             mesh = newMesh
+            onMeshCached?.invoke(newMesh)  // B49: save to ViewModel cache
             lastSetMesh = null  // force setMesh() on the GL thread
         }
     }

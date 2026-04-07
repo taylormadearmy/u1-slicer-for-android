@@ -51,15 +51,15 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 639 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 151 instrumented tests (uses Orchestrator)
+./gradlew testDebugUnitTest                        # 657 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 157 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.
 
-### Unit tests (`app/src/test/`) - 639 tests across 42 classes
+### Unit tests (`app/src/test/`) - 657 tests across 43 classes
 - `gcode/GcodeParserTest.kt` (29) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
@@ -85,12 +85,12 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `model/CopyArrangeCalculatorTest.kt` (21) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
-- `MergeThreeMfInfoTest.kt` (32) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates)
+- `MergeThreeMfInfoTest.kt` (39) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates)
 - `printer/PrinterRepositoryTest.kt` (2) — upload filename sanitization and unique suffix generation
 - `printer/PrinterRepositoryNotificationTest.kt` (9) — printer state transition detection for all event types
 - `AppEventNotifierTest.kt` (13) — notification title/body/channel/navigate-target for all event types
 - `PreviewSummaryMappingTest.kt` (2) — preview summary data class mapping
-- `PreviewColorNormalizationTest.kt` (4) — preview colour normalization
+- `PreviewColorNormalizationTest.kt` (7) — preview colour normalization
 - `PreparePreviewPlacementTest.kt` (5) — native 3MF wipe tower visibility, object-placement rules, and large-preview fallback state retention
 - `viewer/NativePreviewMeshTest.kt` (4) — preview budget guardrails, MAX_DECIMATED_TRIANGLES constant, F48 subsampled mesh vertex count
 - iewer/ModelViewerViewTest.kt (3) — Prepare selection falls back from face-plane to bed-plane hit-testing when needed
@@ -103,8 +103,9 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `LargeModelLoadingMessageTest.kt` (5) — large model loading state messages
 - `SliceResultFromJobTest.kt` (2) — SliceResult construction from SliceJob
 - `printer/PrintProgressNotifierTest.kt` (3) — print progress notification logic
+- `PreparePreviewCacheTest.kt` (7) — B49 Prepare preview cache state machine: fresh load, tab switch cache hit, GL upload after cache hit, repeated effect dedup, parse effect cache guard
 
-### Instrumented tests (`app/src/androidTest/`) - 151 tests across 14 classes
+### Instrumented tests (`app/src/androidTest/`) - 157 tests across 16 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -112,13 +113,50 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
 - `slicing/SlicingIntegrationTest.kt` (30) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation
 - `slicing/BambuPipelineIntegrationTest.kt` (31) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing
-- `slicing/SemmSlicingTest.kt` (2) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions
+- `slicing/SemmSlicingTest.kt` (4) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard
 - `slicing/ProfileEmbedderIntegrationTest.kt` (14) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
-- `viewer/NativePreparePreviewTest.kt` (5) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation
+- `viewer/NativePreparePreviewTest.kt` (9) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation, H2C benchy full/decimated 7-index preservation + green recolor, layer-tool Z-band recolor, triangle count cap
 - `viewer/ThreeMfMeshParserTest.kt` (4) - 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
-- `PreparePreviewViewModelTest.kt` (2) — Dragon plate 3 end-to-end Prepare state and slice-output colour coverage
+- `PreparePreviewViewModelTest.kt` (4) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification
 - `ui/MakerWorldBrowserUtilsInstrumentedTest.kt` (6) — resolveDownloadFilename with URLUtil, RFC 5987, path traversal sanitization
+
+### Red-green TDD for bug fixes
+
+When fixing visual or pipeline bugs (preview colours, G-code output, colour mapping), use red-green TDD:
+
+1. **Red**: Write a failing instrumented test that reproduces the bug programmatically. The test must fail on the current code and assert the correct behaviour.
+2. **Green**: Fix the code until the test passes.
+3. **Verify**: Run the test on-device (`connectedDebugAndroidTest --tests "..."`) — do not rely on screenshots or manual inspection.
+
+**Why**: Screenshots at default zoom are unreliable. Manual visual checks can't be repeated. Programmatic tests catch regressions automatically.
+
+**Where to add tests**:
+- G-code output bugs → `SemmSlicingTest.kt` or `SlicingIntegrationTest.kt` — load asset, embed profile, slice, grep G-code for tool counts / bounds / temps
+- Prepare preview bugs → `NativePreparePreviewTest.kt` — load asset, get native preview mesh, check `extruderIndices` distribution, apply `recolor()`, verify RGBA values at specific triangle indices
+- Colour mapping bugs → `MergeThreeMfInfoTest.kt` (unit) — test `computeEmbedTargetCount`, `buildCompactExtruderRemap`, `mergeThreeMfInfoForPlate`
+- Gcode preview bugs → `GcodeRendererGeometryTest.kt` (unit) — test instanced tube colour assignment from parsed G-code
+
+**Pattern for preview colour verification**:
+```kotlin
+val preview = lib.getPreparePreviewMesh()
+val mesh = preview!!.toMeshData()
+// Build palette from colorMapping + extruderColors
+val palette = colorMapping.map { slot -> extruderColorFloats[slot] }
+mesh.recolor(palette)
+// Check RGBA at triangle index 5 (green in H2C benchy)
+val rOffset = targetTriIndex * 3 * 10 + 6  // vertex 0, R channel
+assertEquals(0f, mesh.vertices.get(rOffset), 0.01f)       // R=0
+assertEquals(1f, mesh.vertices.get(rOffset + 1), 0.01f)   // G=1
+```
+
+**Pattern for G-code tool count verification**:
+```kotlin
+val result = lib.slice(config)
+val gcode = File(result!!.gcodePath).readText()
+val toolCounts = (0..3).map { t -> gcode.lines().count { it.trim() == "T$t" } }
+assertTrue("T1 (green) must be > 0, got ${toolCounts[1]}", toolCounts[1] > 0)
+```
 
 ## Backlog
 

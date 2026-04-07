@@ -440,32 +440,64 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     std::vector<indexed_triangle_set> facets_per_type;
                     volume->mmu_segmentation_facets.get_facets(*volume, facets_per_type);
 
-                    // B46: count total MMU triangles.
-                    // Skip QEM entirely — TS-expanded per-state groups are small and
-                    // disconnected, causing QEM timeouts and stride fallback that
-                    // destroys mesh connectivity (spike artifacts).
+                    // B48: emit per-state triangles INTERLEAVED (round-robin across
+                    // states) so all paint colours are proportionally represented even
+                    // if the GL VBO truncates large meshes.  No stride decimation
+                    // (which creates holes) and no QEM (which loses per-face colour
+                    // identity).  The interleaved order means the first N triangles
+                    // always contain all 7 colour states proportionally.
+                    //
+                    // Build flat arrays of transformed triangles per state.
+                    struct StateTris {
+                        std::vector<float> positions;  // 9 floats per tri
+                        uint8_t extruder;
+                        size_t count() const { return positions.size() / 9; }
+                    };
+                    std::vector<StateTris> states;
                     int mmu_total = 0;
-                    for (const auto& fpt : facets_per_type)
-                        mmu_total += static_cast<int>(fpt.indices.size());
-                    // B46: no decimation for MMU meshes — export all TS-expanded
-                    // triangles. v1.5.0 did this and it worked. 872K tris ≈ 30MB
-                    // vertex buffer, well within mobile GPU limits.
-                    const int mmu_stride = 1;
-                    SAPIL_LOGI("getPreparePreviewMesh MMU: mmu_total=%d mmu_stride=%d",
-                        mmu_total, mmu_stride);
-
-                    int tri_counter = 0;
                     for (size_t state_idx = 0; state_idx < facets_per_type.size(); ++state_idx) {
                         auto its = facets_per_type[state_idx];
                         if (its.indices.empty()) continue;
-                        // B46: apply volume transform only (model-local coords).
-                        // Skip instance_matrix — the Kotlin placement system handles
-                        // per-instance bed positioning via drawModelAt().
                         its_transform(its, volume->get_matrix(), true);
-                        const uint8_t extruder_index = state_idx == 0
+                        const uint8_t ext = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-                        appendItsPreviewMesh(out, its, extruder_index, mmu_stride, tri_counter);
+                        StateTris st;
+                        st.extruder = ext;
+                        st.positions.reserve(its.indices.size() * 9);
+                        for (const auto& tri : its.indices) {
+                            if (tri[0] < 0 || (size_t)tri[0] >= its.vertices.size()) continue;
+                            if (tri[1] < 0 || (size_t)tri[1] >= its.vertices.size()) continue;
+                            if (tri[2] < 0 || (size_t)tri[2] >= its.vertices.size()) continue;
+                            const auto& v0 = its.vertices[tri[0]];
+                            const auto& v1 = its.vertices[tri[1]];
+                            const auto& v2 = its.vertices[tri[2]];
+                            if (!std::isfinite(v0.x())) continue;
+                            st.positions.push_back(v0.x()); st.positions.push_back(v0.y()); st.positions.push_back(v0.z());
+                            st.positions.push_back(v1.x()); st.positions.push_back(v1.y()); st.positions.push_back(v1.z());
+                            st.positions.push_back(v2.x()); st.positions.push_back(v2.y()); st.positions.push_back(v2.z());
+                        }
+                        mmu_total += static_cast<int>(st.count());
+                        states.push_back(std::move(st));
+                    }
+
+                    // Round-robin interleave: emit 1 triangle from each state in turn
+                    SAPIL_LOGI("getPreparePreviewMesh MMU interleaved: %d tris, %zu states",
+                        mmu_total, states.size());
+                    std::vector<size_t> cursors(states.size(), 0);
+                    bool any_left = true;
+                    while (any_left) {
+                        any_left = false;
+                        for (size_t si = 0; si < states.size(); ++si) {
+                            if (cursors[si] < states[si].count()) {
+                                size_t off = cursors[si] * 9;
+                                for (int k = 0; k < 9; ++k)
+                                    out.triangle_positions.push_back(states[si].positions[off + k]);
+                                out.extruder_indices.push_back(states[si].extruder);
+                                ++cursors[si];
+                                any_left = true;
+                            }
+                        }
                     }
                 } else {
                     auto its = volume->mesh().its;

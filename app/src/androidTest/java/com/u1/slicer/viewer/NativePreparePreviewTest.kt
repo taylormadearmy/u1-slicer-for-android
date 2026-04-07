@@ -8,6 +8,7 @@ import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.bambu.parseLayerToolSegments
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -281,5 +282,113 @@ class NativePreparePreviewTest {
         )
         assertTrue(preview.trianglePositions.isNotEmpty())
         assertTrue(preview.extruderIndices.size * 9 == preview.trianglePositions.size)
+    }
+
+    /**
+     * B48 regression: H2C benchy (7 model colours → 4 physical extruders) must
+     * preserve all 7 native paint state indices in the FULL preview mesh, and after
+     * recolor with the expected colorMapping, index 5 triangles must be green.
+     */
+    @Test
+    fun getPreparePreviewMesh_h2cBenchy_fullMesh_allSevenIndicesPresent() {
+        copyAssetToModelFile("3DBenchy-H2C-Multi-Color.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh()
+        assertNotNull("H2C benchy preview mesh must not be null", preview)
+        preview!!
+
+        val indexCounts = mutableMapOf<Int, Int>()
+        for (b in preview.extruderIndices) {
+            val idx = b.toInt() and 0xFF
+            indexCounts[idx] = (indexCounts[idx] ?: 0) + 1
+        }
+        Log.i("NativePreparePreviewTest", "H2C benchy FULL index distribution: $indexCounts")
+        assertTrue(
+            "Full mesh must have at least 7 distinct indices, got ${indexCounts.keys}",
+            indexCounts.keys.size >= 7
+        )
+    }
+
+    /**
+     * B48 Part 2 regression: the DECIMATED preview mesh (matching the app's actual
+     * rendering path) must preserve all 7 extruder indices AND produce green after
+     * recolor.  The app calls getPreparePreviewMesh(MAX_DECIMATED_TRIANGLES).
+     *
+     * Red-green TDD: this test targets the actual rendering pipeline path.
+     * If indices 4-6 are clamped to 0-3 during decimation, green (index 5)
+     * will be missing — exactly matching the on-screen symptom.
+     */
+    @Test
+    fun getPreparePreviewMesh_h2cBenchy_decimated_allSevenIndicesPreserved_andGreenVisible() {
+        copyAssetToModelFile("3DBenchy-H2C-Multi-Color.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh(
+            maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES
+        )
+        assertNotNull("Decimated H2C benchy preview must not be null", preview)
+        preview!!
+        assertTrue(preview.trianglePositions.isNotEmpty())
+        assertTrue(preview.extruderIndices.size * 9 == preview.trianglePositions.size)
+
+        val triCount = preview.extruderIndices.size
+        Log.i("NativePreparePreviewTest", "H2C benchy decimated triangles=$triCount")
+        // MMU meshes emit all triangles interleaved (no decimation)
+        // to preserve paint colour accuracy.  Check it's reasonable.
+        assertTrue(
+            "MMU mesh should have > 0 triangles",
+            triCount > 0
+        )
+
+        // All 7 paint state indices (0-6) must survive decimation
+        val indexCounts = mutableMapOf<Int, Int>()
+        for (b in preview.extruderIndices) {
+            val idx = b.toInt() and 0xFF
+            indexCounts[idx] = (indexCounts[idx] ?: 0) + 1
+        }
+        Log.i("NativePreparePreviewTest", "H2C benchy DECIMATED index distribution: $indexCounts")
+        assertTrue(
+            "Decimated mesh must preserve all 7 extruder indices (got ${indexCounts.keys}). " +
+                "If indices 4-6 are missing, native decimation is clamping to physical extruder count.",
+            indexCounts.keys.size >= 7
+        )
+
+        // Index 5 must have enough triangles to be visible
+        val index5Count = indexCounts[5] ?: 0
+        assertTrue(
+            "Decimated mesh index 5 (green) must have >100 triangles, got $index5Count",
+            index5Count > 100
+        )
+
+        // Recolor and verify green at index 5
+        val mesh = preview.toMeshData()
+        assertNotNull(mesh)
+        mesh!!
+
+        val extruderColors = listOf(
+            floatArrayOf(1f, 0f, 0f, 1f),  // slot 0: red
+            floatArrayOf(0f, 1f, 0f, 1f),  // slot 1: green
+            floatArrayOf(0f, 0f, 1f, 1f),  // slot 2: blue
+            floatArrayOf(1f, 1f, 1f, 1f)   // slot 3: white
+        )
+        val colorMapping = listOf(2, 0, 3, 2, 0, 1, 0)
+        val palette = colorMapping.map { slot -> extruderColors[slot] }
+
+        mesh.recolor(palette)
+
+        val indices = mesh.extruderIndices!!
+        var greenFound = false
+        for (tri in indices.indices) {
+            if ((indices[tri].toInt() and 0xFF) == 5) {
+                val rOffset = tri * 3 * MeshData.FLOATS_PER_VERTEX + 6
+                assertEquals("Index 5 R must be 0 (green)", 0f, mesh.vertices.get(rOffset), 0.01f)
+                assertEquals("Index 5 G must be 1 (green)", 1f, mesh.vertices.get(rOffset + 1), 0.01f)
+                assertEquals("Index 5 B must be 0 (green)", 0f, mesh.vertices.get(rOffset + 2), 0.01f)
+                greenFound = true
+                break
+            }
+        }
+        assertTrue("Must find index 5 (green) triangle in decimated mesh", greenFound)
     }
 }

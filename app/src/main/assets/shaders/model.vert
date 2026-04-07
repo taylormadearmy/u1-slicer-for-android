@@ -4,7 +4,7 @@ precision mediump float;
 uniform mat4 u_MVPMatrix;
 uniform mat4 u_NormalMatrix;
 uniform vec4 u_Color;
-uniform int u_UseVertexColor;
+uniform float u_UseVertexColor;
 
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec3 a_Normal;
@@ -37,5 +37,5 @@ void main() {
     float intensity = AMBIENT + DIFFUSE_TOP * NdotL_top + DIFFUSE_FRONT * NdotL_front + specular;
     v_Intensity = vec3(intensity);
 
-    v_Color = (u_UseVertexColor == 1) ? a_Color : u_Color;
+    v_Color = (u_UseVertexColor > 0.5) ? a_Color : u_Color;
 }

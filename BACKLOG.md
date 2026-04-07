@@ -4,23 +4,26 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B48: H2C benchy missing colour 6 (green) in both Prepare and G-code preview
-- `3DBenchy-H2C-Multi-Color.3mf` (now in `androidTest/assets/`) does not show one of its 7 model colours in either the Prepare preview or the sliced G-code preview
-- The missing colour maps to green (E2) by default via auto-mapping
-- **Affects BOTH Prepare preview AND G-code preview** — this rules out a preview-only bug. The issue is in the colour detection/mapping pipeline, not the renderer
-- Key data from logs:
-  - `detectedExtruders=7` — 7 paint states detected from the 3MF
-  - `colorMapping=[2, 0, 3, 2, 0, 1, 0]` — 7 model colours mapped to 4 extruders
-  - Native preview indices: `{0=460441, 1=337805, 2=355028, 3=210429, 4=244610, 5=144680, 6=224482}` — all 7 indices present
-  - `recolor paletteSize=7` — palette has 7 entries
-  - `extruderColors=[#FF0000, #00FF00, #0000FF, #FFFFFF]` — 4 extruder colours
-  - Palette entry 5 maps to slot 1 → `#00FF00` (green). Index 5 has 144K triangles. Green SHOULD be visible but isn't
-- The `colorMapping` maps model-colour-5 → extruder-slot-1 → green. The recolor palette[5] = `staticHexColorToFloatArray(extruderColors[1])` = green. So the palette is correct. The indices are present. The recolor should work. Yet green doesn't show.
-- Possible cause: the `colorMapping` itself is wrong — the H2C dual-AMS state→colour mapping in `ThreeMfParser.paintIndexForState()` may produce different indices than the native C++ `state_idx - 1` mapping. If the Kotlin parser detects 7 colours using H2C-aware folding but the native C++ produces 7 indices using raw `state_idx - 1`, the indices may not align with the `colorMapping` entries
-- **Investigation needed**: compare the state→index mapping in `ThreeMfParser.paintIndexForState()` (Kotlin, H2C-aware) with `sapil_model.cpp:464` (C++, raw `state_idx - 1`). If they differ, the `colorMapping` built from the Kotlin parser won't match the native preview indices
-- Test asset: `app/src/androidTest/assets/3DBenchy-H2C-Multi-Color.3mf`
-- **Confirmed**: sliced G-code (`G:/My Drive/Logs/output (2).gcode`, copy at `c:/tmp/e2e-results/h2c-benchy-missing-green.gcode`) has T0(238), T2(241), T3(241) — **zero T1 commands**. Green/E2 is completely absent from the slice output. This proves the issue is in the colour mapping pipeline, not the viewer
-- Reproduces on: Pixel 8a, Samsung device
+### B48: H2C benchy — FIXED (slicer + Prepare preview), G-code preview colours still wrong
+- **Slicer FIXED**: `computeEmbedTargetCount()` uses `colorMapping.size` (7) not `distinct().size` (4). G-code now has T0=120, T1=239, T2=242, T3=121.
+- **Prepare preview FIXED**: shader `uniform int` → `uniform float` (Mali-G715 bug), config order restored (embedded profile → applyConfigToPrusa), MMU triangles interleaved round-robin so all 7 colours survive VBO truncation.
+- **G-code preview colours NOT FIXED**: sliced G-code preview does not show correct per-tool colours. Separate issue.
+- **Prepare preview cache NOT FIXED**: returning to Prepare after viewing G-code shows "preparing preview" for a long time instead of instant cache hit. See B49.
+- Long-term MMU decimation tracked in taylormadearmy/u1-slicer-for-android#50
+
+### B50: G-code preview colours don't match Prepare preview for SEMM models
+- After slicing H2C benchy, the G-code preview shows all 4 colours (red, green, blue, white) but some are swapped compared to the Prepare preview
+- The Prepare preview uses `colorMapping` (model-colour→slot) to assign colours to paint state indices — this matches the Bambu reference
+- The G-code preview uses physical tool indices (T0-T3) which are assigned internally by OrcaSlicer's `multi_material_segmentation_by_painting()`. This mapping is opaque — we don't control which model colour ends up on which physical tool
+- **Root cause**: the slicer's paint-state→tool mapping is different from our Prepare preview's model-colour→slot mapping. The colourMapping describes intent (model colour 5 → extruder slot 1 = green), but the slicer may assign those triangles to T2 instead of T1
+- **Orange leak**: when all extruders set to blue, T0 sometimes shows orange (GcodeRenderer default colour at `GcodeRenderer.kt:68`). Likely `setExtruderColors` receives blank/empty entries that don't override the defaults
+- **Fix needed**: either (a) extract the slicer's actual tool→model-colour mapping from the G-code (e.g. from filament_colour comments) and use it for G-code preview colours, or (b) accept the slicer's mapping and colour the G-code preview based on what's in the G-code
+- Prepare preview is correct — this is only a G-code preview issue
+
+### B49: Prepare preview slow reload after G-code view (FIXED)
+- After slicing and viewing G-code, returning to Prepare preview shows "preparing preview" spinner instead of instant reload from cache
+- Previously this was fast because the native preview mesh was cached (`g_preview_mesh_valid`)
+- Likely cause: slicing or G-code view invalidates the preview cache, forcing a full reload of the 2M-triangle interleaved mesh
 
 ### B47: S-Buttons multi-colour 3MF intermittently loses a colour on first load
 - Button-for-S-trousers.3mf (4-colour non-painted 3MF) sometimes shows only 3 colours on the Prepare preview after loading

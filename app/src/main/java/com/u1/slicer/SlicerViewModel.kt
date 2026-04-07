@@ -240,6 +240,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Null / identity mapping → no post-processing needed.
     private var toolRemapSlots: List<Int>? = null
 
+    // B49: cache the Prepare preview MeshData so returning from G-code view is instant.
+    // The native side caches the raw mesh, but toMeshData() (normal computation + FloatBuffer
+    // allocation) is expensive for large SEMM models (2M tris).  This cache avoids re-conversion.
+    // Invalidated on model load, rotation change, or arrangement change.
+    @Volatile var cachedPrepareMesh: com.u1.slicer.viewer.MeshData? = null
+
+    fun invalidatePrepareMeshCache() {
+        cachedPrepareMesh = null
+    }
+
     // Filament library
     val filaments = filamentDao.getAll()
 
@@ -648,6 +658,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
         }
+        invalidatePrepareMeshCache()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -828,6 +839,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
         }
+        invalidatePrepareMeshCache()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -1165,14 +1177,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // G-code post-processing remaps T-commands to physical slots when non-identity.
         val extCount = usedSlots.size.coerceIn(1, 4)
         // SEMM (paint-based) models: extruderRemap in model_settings.config only affects
-        // per-volume extruder attributes, NOT mmu_segmentation_facets paint state filament
-        // indices.  For these models, use GcodeToolRemapper with the full colorMapping list
-        // as the remap table.  For per-object models, keep the existing compact-slot remap.
+        // B48 fix: SEMM models must NOT remap G-code tool indices.  The slicer maps
+        // model colours → physical extruders internally via multi_material_segmentation.
+        // T0-T3 in the output ARE physical slot indices.  Applying the model→slot
+        // colorMapping as a tool remap scrambles them (T1/green disappears).
+        // Per-object models still need compact-slot remapping (e.g. E3+E4 → T0+T1).
         val hasPaintData = _threeMfInfo.value?.hasPaintData == true
-        toolRemapSlots = if (hasPaintData) {
-            // SEMM: non-identity colorMapping → GcodeToolRemapper handles remap
-            val isColorMappingIdentity = modelColorToExtruder == (0 until modelColorToExtruder.size).toList()
-            if (isColorMappingIdentity) null else modelColorToExtruder
+        // B48: H2C models (>4 model colours) use virtual extruders — the slicer's
+        // T0-T3 are already physical slot indices, no remap needed.
+        // Normal painted models (<= 4 model colours) may have sparse slot indices
+        // (e.g. [0,2,3]) that need compacting to sequential T0,T1,T2.
+        val distinctPhysicalSlots = modelColorToExtruder.distinct().size
+        val isH2cStyle = hasPaintData && distinctPhysicalSlots >= 4 && modelColorToExtruder.size > distinctPhysicalSlots
+        toolRemapSlots = if (isH2cStyle) {
+            null  // H2C: slicer already produces physical tool indices
+        } else if (hasPaintData) {
+            // Normal SEMM: may need compaction of sparse slots
+            val compactSlots = usedSlots.take(extCount)
+            val isIdentity = compactSlots == (0 until extCount).toList()
+            if (isIdentity) null else compactSlots
         } else {
             // Per-object: extruderRemap in 3MF handles non-contiguous / non-identity slot order
             val compactSlots = usedSlots.take(extCount)
@@ -1392,12 +1415,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val extCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
         val colorMapping = _colorMapping.value
-        // Use compact extruder count (= number of unique used slots, up to 4).
-        // When slots are non-contiguous (e.g. E2+E4), we slice as compact N-extruder
-        // and post-process G-code to remap T-commands + SM indices to physical slots.
-        // For SEMM models toolRemapSlots holds the full colorMapping list (may contain
-        // duplicates, e.g. [0,0,1,1,3]) — use distinct count, not raw size.
-        val targetCount = if (usedSlots != null) usedSlots.distinct().size else extCount
+        val targetCount = computeEmbedTargetCount(colorMapping, info.hasPaintData, usedSlots, extCount)
         // No extruder remap in the 3MF — keep compact numbering (1,2,…).
         // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.
         val extruderRemap = buildCompactExtruderRemap(info, colorMapping)
@@ -2690,6 +2708,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearModel() {
         native.clearModel()
+        invalidatePrepareMeshCache()
         rawInputFile = null
         recoveryOrigInfo = null
         recoveryPlateId = -1
@@ -3314,3 +3333,38 @@ internal fun buildCompactExtruderRemap(
 
     return remap.takeIf { it.isNotEmpty() }
 }
+
+/**
+ * Compute the extruder count to embed in the 3MF profile.
+ * - H2C SEMM models (more model colours than physical extruders): use colorMapping.size
+ *   so multi_material_segmentation_by_painting() captures all paint states.
+ * - Normal SEMM models (model colours <= physical extruders): use distinct physical
+ *   slot count from the mapping — same as pre-B48 behaviour.
+ * - Per-object models with tool remap: use distinct slot count from toolRemapSlots.
+ * - Everything else: use the physical extruder count.
+ */
+internal fun computeEmbedTargetCount(
+    colorMapping: List<Int>?,
+    hasPaintData: Boolean,
+    toolRemapSlots: List<Int>?,
+    fallbackExtCount: Int
+): Int {
+    if (hasPaintData && colorMapping != null) {
+        val distinctSlots = colorMapping.distinct().size.coerceAtLeast(1)
+        // B48 H2C: when all 4 physical extruders are used AND there are more model
+        // colours, the slicer needs virtual extruders (one per model colour) so
+        // multi_material_segmentation_by_painting() captures all paint states.
+        // Without this, paint states beyond 4 are silently dropped (T1=0 for H2C).
+        // The native C++ padding block handles arrays sized > physical extruders.
+        // For normal SEMM models (old.3mf: 2 slots, Korok: 3 slots), use the
+        // compact distinct count — matches pre-B48 behaviour.
+        return if (distinctSlots >= 4 && colorMapping.size > distinctSlots) {
+            colorMapping.size
+        } else {
+            distinctSlots
+        }
+    }
+    if (toolRemapSlots != null) return toolRemapSlots.distinct().size
+    return fallbackExtCount
+}
+

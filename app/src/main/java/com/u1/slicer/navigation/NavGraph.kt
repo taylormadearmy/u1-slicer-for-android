@@ -74,13 +74,21 @@ fun U1NavGraph(
             val parsedGcode by viewModel.parsedGcode.collectAsState()
             val extruderColors by viewModel.activeExtruderColors.collectAsState()
             val colorMapping by viewModel.colorMapping.collectAsState()
+            val threeMfInfo by viewModel.threeMfInfo.collectAsState()
             val slicerState by viewModel.state.collectAsState()
             val slicerLayerCount = (slicerState as? com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete)?.result?.totalLayers ?: 0
             if (parsedGcode != null) {
+                // B48: H2C models (>4 model colours) — slicer's T0-T3 are physical
+                // slot indices. Don't pass model→slot colorMapping to G-code preview.
+                // Normal painted models (<=4 colours) still need the mapping.
+                val isH2c = threeMfInfo?.hasPaintData == true &&
+                    (colorMapping?.distinct()?.size ?: 0) >= 4 &&
+                    (colorMapping?.size ?: 0) > (colorMapping?.distinct()?.size ?: 0)
+                val gcodeColorMapping = if (isH2c) null else colorMapping
                 GcodeViewer3DScreen(
                     parsedGcode = parsedGcode!!,
                     extruderColors = extruderColors,
-                    colorMapping = colorMapping,
+                    colorMapping = gcodeColorMapping,
                     slicerLayerCount = slicerLayerCount,
                     onBack = { navController.popBackStack() }
                 )
