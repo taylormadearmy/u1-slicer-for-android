@@ -9,11 +9,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Fix**: restored `its_transform(its, instance_matrix, true)` in the MMU path + reverted B48 manual extraction back to `appendItsPreviewMesh()` for consistency. 
 - **Tests**: 3 new instrumented tests in `NativePreparePreviewTest.kt` — old.3mf bounding box (Z >= 50mm) + Korok mask orientation (Z < 20mm, XY >= 50mm)
 
-### B48: H2C benchy — FIXED (slicer + Prepare preview), G-code preview colours still wrong
+### ~~B48: H2C benchy — slicer + Prepare preview + cache~~ FIXED
 - **Slicer FIXED**: `computeEmbedTargetCount()` uses `colorMapping.size` (7) not `distinct().size` (4). G-code now has T0=120, T1=239, T2=242, T3=121.
 - **Prepare preview FIXED**: shader `uniform int` → `uniform float` (Mali-G715 bug), config order restored (embedded profile → applyConfigToPrusa), MMU triangles interleaved round-robin so all 7 colours survive VBO truncation.
-- **G-code preview colours NOT FIXED**: sliced G-code preview does not show correct per-tool colours. Separate issue.
-- **Prepare preview cache NOT FIXED**: returning to Prepare after viewing G-code shows "preparing preview" for a long time instead of instant cache hit. See B49.
+- **Prepare preview cache FIXED**: `cachedPrepareMesh` on ViewModel + native `g_preview_mesh_valid` provide instant reload on tab switch.
+- **G-code preview colours**: tracked separately as B50.
 - Long-term MMU decimation tracked in taylormadearmy/u1-slicer-for-android#50
 
 ### B50: G-code preview colours don't match Prepare preview for SEMM models
@@ -25,10 +25,9 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Fix needed**: either (a) extract the slicer's actual tool→model-colour mapping from the G-code (e.g. from filament_colour comments) and use it for G-code preview colours, or (b) accept the slicer's mapping and colour the G-code preview based on what's in the G-code
 - Prepare preview is correct — this is only a G-code preview issue
 
-### B49: Prepare preview slow reload after G-code view (FIXED)
-- After slicing and viewing G-code, returning to Prepare preview shows "preparing preview" spinner instead of instant reload from cache
-- Previously this was fast because the native preview mesh was cached (`g_preview_mesh_valid`)
-- Likely cause: slicing or G-code view invalidates the preview cache, forcing a full reload of the 2M-triangle interleaved mesh
+### ~~B49: Prepare preview slow reload after G-code view~~ FIXED v1.5.38
+- `cachedPrepareMesh` on ViewModel + native `g_preview_mesh_valid` cache provide instant reload on tab switch
+- Confirmed fixed on device v1.5.39
 
 ### B47: S-Buttons multi-colour 3MF intermittently loses a colour on first load
 - Button-for-S-trousers.3mf (4-colour non-painted 3MF) sometimes shows only 3 colours on the Prepare preview after loading
@@ -38,31 +37,18 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Intermittent — unable to reproduce reliably after initial observation
 - Not related to B46 painted model fix (this affects non-painted multi-colour 3MF)
 
-### B45: Prepare preview for painted/SEMM 3MF models looks broken — wireframe/sparse rendering (GitHub #49)
-- colored_3DBenchy and similar H2C/painted models show very sparse, wireframe-like preview on the Prepare tab
-- Triangles appear to be missing, showing gaps through the mesh — model looks "see-through"
-- This is a regression — earlier versions showed these models as solid coloured previews
-- Affects `ThreeMfMeshParser.parse()` path (painted models) or `getPreparePreviewMesh()` path
-- Not related to the gcode viewer instanced tubes change (B42/B43)
-- Needs investigation: compare with v1.5.34 or v1.5.33 to find when it regressed
+### ~~B45: Prepare preview for painted/SEMM 3MF models looks broken — wireframe/sparse rendering (GitHub #49)~~ FIXED v1.5.38
+- B46 switched painted models to native `getPreparePreviewMesh()` path with stride=1 (no decimation), producing solid previews
+- E2E confirms solid rendering for colored_3DBenchy, H2C benchy, old.3mf, Korok mask
 
-### B42: G-code preview tubes appear as flat rectangles, not rounded tubes (GitHub #46)
-- The instanced tube geometry (v1.5.37) uses a box cross-section (top + left + right faces) which looks rectangular rather than cylindrical when zoomed in
-- SliceBeam/libvgcode use an 8-vertex hexagonal cross-section that looks rounder
-- Consider increasing vertex count per instance (e.g. 6 faces / 36 vertices) or using a diamond cross-section for a rounder appearance
-- Low priority — functional but cosmetic
+### ~~B42: G-code preview tubes appear as flat rectangles, not rounded tubes (GitHub #46)~~ FIXED v1.5.37
+- Hex cross-section (18 vertices) replaced box cross-section; E2E F59 confirms solid tube rendering
 
-### B43: G-code preview lighting too dark — models appear almost black (GitHub #47)
-- The instanced tube shader's lighting produces very dark shadows, especially on side faces
-- The `AMBIENT = 0.20` is too low for the small tube geometry — side faces pointing away from lights render nearly black
-- Fix: increase ambient to ~0.35–0.40, or add a hemisphere ambient term
-- Compare with the Prepare tab model viewer which has brighter lighting
+### ~~B43: G-code preview lighting too dark — models appear almost black (GitHub #47)~~ FIXED v1.5.37
+- AMBIENT 0.20→0.35, DIFFUSE_TOP 0.65→0.75; E2E confirms visible coloured ribbons
 
-### B44: colored_3DBenchy.3mf shows only 3 colours instead of 4 (GitHub #48)
-- The model has 4 paint colours but the slice output only uses 3 extruders
-- Visible in Prepare screen: Color 1 (blue) and Color 2 (red) shown, but the model visually has 4 distinct regions
-- May be an extruder compaction issue where two source colours map to the same physical extruder
-- Needs investigation: check `detectedExtruders`, `extruderRemap`, and paint_color data in the 3MF
+### ~~B44: colored_3DBenchy.3mf shows only 3 colours instead of 4 (GitHub #48)~~ FIXED v1.5.38
+- `computeEmbedTargetCount()` fixed + TriangleSelector H2C fold; E2E confirms T0=2 T1=5 T2=3 T3=2 (all 4 extruders)
 
 ### B40: F60 Jobs tab G-code viewer shows "No slice results" after kill + reopen (GitHub #44) — FIXED v1.5.34
 - Root cause: gcode saved to transient path lost on process kill; `_gcodePreview`/`_state` reset to empty
