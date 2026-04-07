@@ -4,15 +4,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B51: SEMM Prepare preview broken — wrong orientation, tiny, split geometry (old.3mf, Korok mask)
-- **Regression from v1.5.38**: confirmed working in the release build, broken in current `main`
-- **old.3mf**: Prepare preview shows model lying down, tiny, and broken into two separate pieces. G-code preview (after slicing) is correct — full figure, 1163 layers, correct orientation
-- **Korok mask**: Prepare preview shows mask standing upright instead of lying flat on the bed. G-code preview is correct — 18 layers, flat
-- **Root cause (likely)**: the B48 changes to `sapil_model.cpp` MMU interleaved triangle emission. The round-robin interleaving or the volume transform (`volume->get_matrix()`) may be applying transforms differently than the pre-B48 sequential emission
-- **What changed in B48**: `getPreparePreviewMesh()` MMU path was rewritten from sequential per-state emission with stride to round-robin interleaved emission with flat position arrays. The volume transform is applied per-state before storing positions, but the instance transform is skipped (handled by Kotlin). Something in this new path is producing wrong geometry for non-H2C SEMM models
-- **Key observation**: H2C benchy preview looks correct. old.3mf and Korok mask are broken. The difference may be in how many volumes/objects each has, or how their transforms are structured
-- **Test files**: `old.3mf` and `PrusaSlicer-printables-Korok_mask_4colour.3mf` in `androidTest/assets/`
-- **Screenshots**: `G:\My Drive\Logs\Screenshot (7 Apr 2026 14 35 *.png)` — old.3mf broken prepare + correct gcode
+### ~~B51: SEMM Prepare preview broken — wrong orientation, tiny, split geometry (old.3mf, Korok mask)~~ FIXED
+- **Root cause**: B46 removed `instance_matrix` from the MMU path in `getPreparePreviewMesh()` ("Kotlin handles bed positioning") but kept it in the non-MMU path. This left SEMM volumes in model-local coords while non-MMU volumes were in world coords. old.3mf's instance had a rotation that the missing transform didn't apply, making the model lie flat (Z=21.6mm instead of 126.8mm).
+- **Fix**: restored `its_transform(its, instance_matrix, true)` in the MMU path + reverted B48 manual extraction back to `appendItsPreviewMesh()` for consistency. 
+- **Tests**: 3 new instrumented tests in `NativePreparePreviewTest.kt` — old.3mf bounding box (Z >= 50mm) + Korok mask orientation (Z < 20mm, XY >= 50mm)
 
 ### B48: H2C benchy — FIXED (slicer + Prepare preview), G-code preview colours still wrong
 - **Slicer FIXED**: `computeEmbedTargetCount()` uses `colorMapping.size` (7) not `distinct().size` (4). G-code now has T0=120, T1=239, T2=242, T3=121.

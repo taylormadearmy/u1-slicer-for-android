@@ -440,60 +440,57 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     std::vector<indexed_triangle_set> facets_per_type;
                     volume->mmu_segmentation_facets.get_facets(*volume, facets_per_type);
 
-                    // B48: emit per-state triangles INTERLEAVED (round-robin across
-                    // states) so all paint colours are proportionally represented even
-                    // if the GL VBO truncates large meshes.  No stride decimation
-                    // (which creates holes) and no QEM (which loses per-face colour
-                    // identity).  The interleaved order means the first N triangles
-                    // always contain all 7 colour states proportionally.
+                    // B51: apply both volume AND instance transforms, matching the
+                    // non-MMU path.  B46 removed instance_matrix ("Kotlin handles
+                    // bed positioning") but this left MMU volumes in model-local
+                    // coords while non-MMU volumes are in world coords — causing
+                    // wrong orientation (old.3mf lying flat, Korok upright).
                     //
-                    // Build flat arrays of transformed triangles per state.
-                    struct StateTris {
-                        std::vector<float> positions;  // 9 floats per tri
-                        uint8_t extruder;
-                        size_t count() const { return positions.size() / 9; }
+                    // Emit per-state triangles via appendItsPreviewMesh (proper
+                    // degenerate filtering) into per-state temp buffers, then
+                    // round-robin interleave (B48) so all paint colours are
+                    // proportionally represented even if GL truncates.
+                    struct StateMesh {
+                        std::vector<float> positions;   // 9 floats per tri
+                        std::vector<uint8_t> indices;   // 1 per tri
+                        size_t count() const { return indices.size(); }
                     };
-                    std::vector<StateTris> states;
-                    int mmu_total = 0;
+                    std::vector<StateMesh> state_meshes;
                     for (size_t state_idx = 0; state_idx < facets_per_type.size(); ++state_idx) {
                         auto its = facets_per_type[state_idx];
                         if (its.indices.empty()) continue;
                         its_transform(its, volume->get_matrix(), true);
-                        const uint8_t ext = state_idx == 0
+                        its_transform(its, instance_matrix, true);
+                        const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-                        StateTris st;
-                        st.extruder = ext;
-                        st.positions.reserve(its.indices.size() * 9);
-                        for (const auto& tri : its.indices) {
-                            if (tri[0] < 0 || (size_t)tri[0] >= its.vertices.size()) continue;
-                            if (tri[1] < 0 || (size_t)tri[1] >= its.vertices.size()) continue;
-                            if (tri[2] < 0 || (size_t)tri[2] >= its.vertices.size()) continue;
-                            const auto& v0 = its.vertices[tri[0]];
-                            const auto& v1 = its.vertices[tri[1]];
-                            const auto& v2 = its.vertices[tri[2]];
-                            if (!std::isfinite(v0.x())) continue;
-                            st.positions.push_back(v0.x()); st.positions.push_back(v0.y()); st.positions.push_back(v0.z());
-                            st.positions.push_back(v1.x()); st.positions.push_back(v1.y()); st.positions.push_back(v1.z());
-                            st.positions.push_back(v2.x()); st.positions.push_back(v2.y()); st.positions.push_back(v2.z());
+                        // Emit into a temporary PreviewMesh to get degenerate filtering
+                        PreviewMesh tmp;
+                        int tri_counter = 0;
+                        appendItsPreviewMesh(tmp, its, extruder_index, 1, tri_counter);
+                        if (!tmp.extruder_indices.empty()) {
+                            StateMesh sm;
+                            sm.positions = std::move(tmp.triangle_positions);
+                            sm.indices = std::move(tmp.extruder_indices);
+                            state_meshes.push_back(std::move(sm));
                         }
-                        mmu_total += static_cast<int>(st.count());
-                        states.push_back(std::move(st));
                     }
 
                     // Round-robin interleave: emit 1 triangle from each state in turn
+                    int mmu_total = 0;
+                    for (const auto& sm : state_meshes) mmu_total += static_cast<int>(sm.count());
                     SAPIL_LOGI("getPreparePreviewMesh MMU interleaved: %d tris, %zu states",
-                        mmu_total, states.size());
-                    std::vector<size_t> cursors(states.size(), 0);
+                        mmu_total, state_meshes.size());
+                    std::vector<size_t> cursors(state_meshes.size(), 0);
                     bool any_left = true;
                     while (any_left) {
                         any_left = false;
-                        for (size_t si = 0; si < states.size(); ++si) {
-                            if (cursors[si] < states[si].count()) {
+                        for (size_t si = 0; si < state_meshes.size(); ++si) {
+                            if (cursors[si] < state_meshes[si].count()) {
                                 size_t off = cursors[si] * 9;
                                 for (int k = 0; k < 9; ++k)
-                                    out.triangle_positions.push_back(states[si].positions[off + k]);
-                                out.extruder_indices.push_back(states[si].extruder);
+                                    out.triangle_positions.push_back(state_meshes[si].positions[off + k]);
+                                out.extruder_indices.push_back(state_meshes[si].indices[cursors[si]]);
                                 ++cursors[si];
                                 any_left = true;
                             }

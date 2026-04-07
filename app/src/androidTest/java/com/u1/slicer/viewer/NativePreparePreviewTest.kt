@@ -66,6 +66,24 @@ class NativePreparePreviewTest {
         return floatArrayOf(minX, maxX, minY, maxY)
     }
 
+    /** Returns [minX, maxX, minY, maxY, minZ, maxZ] */
+    private fun previewBounds3D(preview: NativePreviewMesh): FloatArray {
+        var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY; var maxY = Float.NEGATIVE_INFINITY
+        var minZ = Float.POSITIVE_INFINITY; var maxZ = Float.NEGATIVE_INFINITY
+
+        for (i in preview.trianglePositions.indices step 3) {
+            val x = preview.trianglePositions[i]
+            val y = preview.trianglePositions[i + 1]
+            val z = preview.trianglePositions[i + 2]
+            if (x < minX) minX = x; if (x > maxX) maxX = x
+            if (y < minY) minY = y; if (y > maxY) maxY = y
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+        }
+
+        return floatArrayOf(minX, maxX, minY, maxY, minZ, maxZ)
+    }
+
     @Test
     fun getPreparePreviewMesh_returnsDistinctExtruderIndices_forDualColor3mf() {
         copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
@@ -390,5 +408,122 @@ class NativePreparePreviewTest {
             }
         }
         assertTrue("Must find index 5 (green) triangle in decimated mesh", greenFound)
+    }
+
+    /**
+     * B51: H2C benchy paint state indices must be INTERLEAVED (round-robin) so
+     * all 7 colours are proportionally represented in the first portion of the
+     * buffer.  With sequential emission, green (index 5) only appears near the
+     * end — if GL truncates or the VBO is partially uploaded, green disappears.
+     *
+     * This test checks that all 7 indices appear within the first 10% of
+     * triangles.  Sequential emission fails this; round-robin passes.
+     */
+    @Test
+    fun getPreparePreviewMesh_h2cBenchy_allSevenIndicesInFirstTenPercent() {
+        copyAssetToModelFile("3DBenchy-H2C-Multi-Color.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh()
+        assertNotNull("H2C benchy preview mesh must not be null", preview)
+        preview!!
+        assertTrue(preview.trianglePositions.isNotEmpty())
+
+        val totalTris = preview.extruderIndices.size
+        val checkCount = maxOf(totalTris / 10, 1000)  // first 10%, min 1000
+        val earlyIndices = mutableSetOf<Int>()
+        for (i in 0 until minOf(checkCount, totalTris)) {
+            earlyIndices.add(preview.extruderIndices[i].toInt() and 0xFF)
+        }
+        Log.i("NativePreparePreviewTest",
+            "H2C benchy interleaving: total=$totalTris checked=$checkCount " +
+                "earlyIndices=$earlyIndices")
+        assertTrue(
+            "First $checkCount of $totalTris triangles must contain all 7 indices " +
+                "(round-robin interleaving), got $earlyIndices. " +
+                "If <7, emission is sequential — green disappears visually.",
+            earlyIndices.size >= 7
+        )
+    }
+
+    /**
+     * B51 regression: old.3mf Prepare preview is tiny and broken into two pieces.
+     * The model is a full figure (~232mm tall at 1163 layers × 0.2mm).
+     * After volume transform, the bounding box should span reasonable dimensions —
+     * not a tiny sliver.
+     */
+    @Test
+    fun getPreparePreviewMesh_old3mf_boundingBoxIsReasonableSize() {
+        copyAssetToModelFile("old.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh()
+        assertNotNull("old.3mf preview mesh must not be null", preview)
+        preview!!
+        assertTrue(preview.trianglePositions.isNotEmpty())
+        assertTrue(preview.extruderIndices.size * 9 == preview.trianglePositions.size)
+
+        val bounds = previewBounds3D(preview)
+        val spanX = bounds[1] - bounds[0]
+        val spanY = bounds[3] - bounds[2]
+        val spanZ = bounds[5] - bounds[4]
+        Log.i("NativePreparePreviewTest",
+            "old.3mf bounds: X=[${bounds[0]},${bounds[1]}] Y=[${bounds[2]},${bounds[3]}] Z=[${bounds[4]},${bounds[5]}] " +
+                "spans: ${spanX} x ${spanY} x ${spanZ}")
+
+        // A full figure model should be at least 30mm in X and Y, and at least 50mm in Z.
+        // The broken B48 mesh produces a tiny sliver.
+        assertTrue(
+            "old.3mf X span should be >= 30mm, got $spanX",
+            spanX >= 30f
+        )
+        assertTrue(
+            "old.3mf Y span should be >= 30mm, got $spanY",
+            spanY >= 30f
+        )
+        assertTrue(
+            "old.3mf Z span should be >= 50mm, got $spanZ",
+            spanZ >= 50f
+        )
+    }
+
+    /**
+     * B51 regression: Korok mask preview shows wrong orientation (standing upright
+     * instead of lying flat on the bed).  The mask is a flat object — its Z-extent
+     * should be much smaller than its XY footprint.  G-code shows 18 layers ≈ 3.6mm.
+     */
+    @Test
+    fun getPreparePreviewMesh_korokMask_orientationIsFlat() {
+        copyAssetToModelFile("PrusaSlicer-printables-Korok_mask_4colour.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh()
+        assertNotNull("Korok mask preview mesh must not be null", preview)
+        preview!!
+        assertTrue(preview.trianglePositions.isNotEmpty())
+        assertTrue(preview.extruderIndices.size * 9 == preview.trianglePositions.size)
+
+        val bounds = previewBounds3D(preview)
+        val spanX = bounds[1] - bounds[0]
+        val spanY = bounds[3] - bounds[2]
+        val spanZ = bounds[5] - bounds[4]
+        Log.i("NativePreparePreviewTest",
+            "Korok mask bounds: X=[${bounds[0]},${bounds[1]}] Y=[${bounds[2]},${bounds[3]}] Z=[${bounds[4]},${bounds[5]}] " +
+                "spans: ${spanX} x ${spanY} x ${spanZ}")
+
+        // Korok mask is flat: Z should be < 20mm, and XY footprint should be > 50mm each.
+        // If standing upright, Z would be >> XY — the opposite of correct orientation.
+        assertTrue(
+            "Korok mask Z span should be < 20mm (flat), got $spanZ",
+            spanZ < 20f
+        )
+        assertTrue(
+            "Korok mask X span should be >= 50mm, got $spanX",
+            spanX >= 50f
+        )
+        assertTrue(
+            "Korok mask Y span should be >= 50mm, got $spanY",
+            spanY >= 50f
+        )
     }
 }
