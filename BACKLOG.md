@@ -225,13 +225,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - "Large model — this may take a moment…" shown when file >50MB; "Large model — preview may take a moment…" shown after load when triangle count >500K
 - Track: [`#35`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/35)
 
-### F58: More prime tower settings (GitHub #38)
-- Expose prime tower width (`prime_tower_width`) and other prime tower options from the Prepare screen
-- Purge volume per extruder and prime tower brim also candidates
-- Keys must be threaded through `buildProfileOverrides()` and added to native `profile_keys[]` / `applyConfigToPrusa()` in `sapil_print.cpp`
-- Track: [`#38`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/38)
-
-### F62: G-code viewer — fit camera to content on load
+### F62: G-code viewer — fit camera to content on load (GitHub #42)
 - Default camera distance is fixed at 500mm regardless of model size — small models (tetrahedron, buttons) appear as tiny specks at default zoom
 - `GcodeRenderer.kt` lines 132/169: `camera.distance = 500f` hardcoded
 - Fix: after G-code is uploaded to GPU, compute the bounding box of all move positions and set `camera.distance` and `camera.target` to frame the content
@@ -242,6 +236,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Per-extruder colour swatches on the Preview page don't show the material type (PLA, PETG, etc.)
 - Add material label next to each swatch so user can confirm what's being printed before uploading
 - Single-colour: `● PLA`; multi-colour: per-extruder row `E1 ● PETG  E2 ● PLA`
+
+### F66: Split to objects and auto-rotate for placement (GitHub #56)
+- 3MF files exported from generators (e.g. Skadis shelf generator on MakerWorld) output assembled scenes with parts in place — slicing as-is requires heavy supports; user needs to split the assembly into individual objects and auto-orient each for optimal bed placement
+- Split: decompose multi-body 3MF into separate placeable objects
+- Auto-rotate: orient each object to minimise support requirement (largest flat face down, or similar heuristic)
 
 ### F64: Colour picker for extruder colour chooser (GitHub #52)
 - Add a visual colour picker (wheel/grid/palette) to the Printer screen extruder colour chooser
@@ -254,7 +253,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Long-term: QEM on original volume mesh with per-face colour preservation (centroid matching only recovers indices 0-3 currently)
 - Related to B48 interleaving fix; currently no decimation for MMU meshes
 
-### D1: Document slicer engine upgrade process
+### D1: Document slicer engine upgrade process (GitHub #25)
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
 - Should document: submodule pin process, our Android-specific patches that must be re-applied (`#ifdef __ANDROID__` diagnostics, initializer fixes, build fixes for clipper.hpp/Brim.cpp/CutSurface.cpp), SAPIL JNI interface contract, config key differences, native rebuild workflow
 - Include a checklist for testing after an engine upgrade
