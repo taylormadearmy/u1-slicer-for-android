@@ -68,7 +68,7 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 673 JVM unit tests
+./gradlew testDebugUnitTest              # 697 JVM unit tests
 ./gradlew connectedDebugAndroidTest      # 161 instrumented tests (ARM64 device required)
 ```
 

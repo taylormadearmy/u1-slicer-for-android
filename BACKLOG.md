@@ -4,12 +4,27 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B57: Single-color Bambu 3MF with embedded supports=true doesn't generate supports (GitHub #59)
-- Loading a Bambu single-color 3MF that has `enable_support = 1` in its embedded `project_settings.config` (e.g. citystep shoe) and slicing without any manual override produces G-code with no supports. Manually overriding supports to ON fixes it.
-- **Support painting context**: Citystep shoe uses Bambu support painting (`paint_supports="..."` per-triangle attribute = enforcer regions). This attribute **survives** the sanitizer (fast path passes unrecognized attrs through). But OrcaSlicer requires `enable_support = 1` to honour painted enforcers (`Print.cpp:1366-1374`), so the mesh data arrives intact and is silently ignored.
-- **Root cause**: Two mechanisms interact. (1) `buildProfileOverridesImpl` in `SlicerViewModel.kt` omits `enable_support` when `ov.supports.mode == USE_FILE && hasSourceConfig == true` — the B10 fix, intended to let the file's embedded value survive through `ProfileEmbedder`'s preserve path. (2) Single-color Bambu files (`detectedExtruderCount == 1`, no color paint data, no layer tool changes, single plate) don't satisfy `needsPreserve`, so `ProfileEmbedder.buildConfig()` takes the standard path where `sourceConfig` is **never applied** as the config base. Note: `hasPaintData` only checks `paint_color`/`mmu_segmentation`, not `paint_supports`, so support-only painted files never trigger the preserve path. The overrides omit `enable_support` trusting it's in the base; the base has no such key; slicer defaults to disabled.
-- **Unaffected**: STL files (always emit, no sourceConfig), multi-color/painted/multi-plate Bambu (preserve path), files with explicit user override
-- **Affects**: Any single-color Bambu 3MF with embedded `enable_support = 1` sliced without a manual support override
+### B59: Multi-color model Filament label always shows PLA regardless of extruder materials (GitHub #61) — FIXED
+- Dual/multi-color models showed "Filament: PLA" even when all active extruders were PETG; also affected single-color initial load (E1 material ignored) and layer-tool load
+- **Root cause**: B56 only fixed `updateSingleColorExtruder()` (user-tap path); three other paths never called it: (1) single-color initial load, (2) `applyMultiColorAssignments()`, (3) layer-tool branch
+- **Fix**: Extracted `resolveFilamentTypeLabel(usedSlots, presets)` helper — returns single material name if all slots share one type, "Mixed" if they differ. Wired into all three paths.
+- **Tests**: 12 new unit tests in `FilamentTypeLabelTest.kt`
+
+### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60)
+- For `colored_3DBenchy (1).3mf` (4-colour SEMM), the Prepare preview, G-code preview, and desktop OrcaSlicer all show different colours
+- **Prepare screen**: Only 2 colour chips shown; model renders mostly white/gray — 2 of 4 paint zones missing
+- **G-code preview**: More colours visible in toolpath render but different distribution from desktop reference
+- Not a slicing correctness issue (all 4 extruders active in G-code), but gives user a misleading picture
+- **Affects**: All SEMM painted models (`hasPaintData=true`)
+- **When fixed**: restore CP TOOLCHANGE~27 assertion in the `colored_3DBenchy (1).3mf` E2E check (skill file + memory `e2e-testing.md`) — it was suppressed due to this bug
+
+### B57: Single-color Bambu 3MF with embedded support config ignored — no supports, or wrong supports (GitHub #59)
+- Two related symptoms: (a) without override → no supports at all; (b) with manual `enable_support = 1` override → global 45° supports everywhere, ignoring file's `support_threshold_angle` and painted blockers
+- **Support painting context**: Citystep shoe uses `paint_supports="..."` per-triangle attributes (enforcer/blocker regions). This data **survives** both the sanitizer and ProfileEmbedder intact. But OrcaSlicer requires `enable_support = 1` to honour enforcers (`Print.cpp:1366-1374`), and with our forced 45° threshold the painted placement is swamped by global auto-supports.
+- **Root cause (a)**: `buildProfileOverridesImpl` omits all support keys when `ov.supports.mode == USE_FILE && hasSourceConfig == true` (B10 fix), trusting the preserve path will provide them. But single-color Bambu files (`detectedExtruderCount == 1`, no `paint_color`/`mmu_segmentation`, no layer tool changes, single plate) take the standard path in `ProfileEmbedder.buildConfig()` where `sourceConfig` is **never the base**. `hasPaintData` doesn't detect `paint_supports`, so support-painting-only files never trigger `needsPreserve`. Result: no `enable_support` key → slicer defaults to disabled.
+- **Root cause (b)**: When user manually overrides to USE_OVERRIDE, all support keys are emitted but from `cfg` defaults (`supportAngle = 45f`, `supportType = "normal"`, etc.) rather than the file's embedded values. Files designed around painted supports typically set threshold to 88–91° to suppress angle-based generation; forcing 45° generates global supports everywhere.
+- **Underlying gap**: Single-color Bambu 3MF has no code path that uses `sourceConfig` as the config base. The preserve path (multi-color/multi-plate) handles this correctly.
+- **Unaffected**: STL files, multi-color/painted/multi-plate Bambu (preserve path), files with correct manual overrides for all support settings
 
 ### B56: Selecting non-E1 extruder doesn't update filament type for display or slicing (GitHub #58)
 - Selecting E3 (PETG) on the Prepare screen shows "Filament: PLA" in Slice Settings and uses PLA bed-temp defaults
@@ -235,6 +250,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Fix: after G-code is uploaded to GPU, compute the bounding box of all move positions and set `camera.distance` and `camera.target` to frame the content
 - Same issue applies when opening via "View G-code" from Jobs tab (F60)
 - Confirmed by E2E screenshot: tetrahedron visible only as a 2px speck at default zoom after v1.5.32 tube width fix
+
+### F65: Show filament type next to colours on G-code Preview page (GitHub #62)
+- Per-extruder colour swatches on the Preview page don't show the material type (PLA, PETG, etc.)
+- Add material label next to each swatch so user can confirm what's being printed before uploading
+- Single-colour: `● PLA`; multi-colour: per-extruder row `E1 ● PETG  E2 ● PLA`
 
 ### F64: Colour picker for extruder colour chooser (GitHub #52)
 - Add a visual colour picker (wheel/grid/palette) to the Printer screen extruder colour chooser

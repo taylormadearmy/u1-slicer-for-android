@@ -1103,7 +1103,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         customWipeTowerPos = null
                         _config.value = _config.value.copy(
                             extruderCount = 1,
-                            wipeTowerEnabled = false
+                            wipeTowerEnabled = false,
+                            filamentType = resolveFilamentTypeLabelFromMapping(initialMapping, presets)
                         )
                         // F46: signal that InlineModelPreview should use recolorByZBands
                         _layerToolOnly.value = true
@@ -1144,13 +1145,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // forces the prime tower on and produces 2-extruder G-code (B24 fix).
                     toolRemapSlots = null
                     customWipeTowerPos = null
+                    val presets = extruderPresets.value
                     _config.value = _config.value.copy(
                         extruderCount = 1,
-                        wipeTowerEnabled = false
+                        wipeTowerEnabled = false,
+                        filamentType = resolveFilamentTypeForSingleColorLoad(presets)
                     )
                     // Single-color model: set E1's color from current printer slot config so
                     // the 3D model preview shows the correct filament color instead of default orange.
-                    val presets = extruderPresets.value
                     val colors = MutableList(4) { "" }
                     presets.forEach { preset -> if (preset.index in 0..3) colors[preset.index] = preset.color }
                     _activeExtruderColors.value = colors
@@ -1222,6 +1224,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
                 objPos, mi.sizeX, mi.sizeY, _config.value.wipeTowerWidth
             )
+            val filamentLabel = resolveFilamentTypeLabelFromMapping(modelColorToExtruder, extruderPresets)
             _config.value = _config.value.copy(
                 extruderCount = extCount,
                 extruderTemps = temps,
@@ -1229,17 +1232,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
                 wipeTowerEnabled = true,
                 wipeTowerX = towerPos.first,
-                wipeTowerY = towerPos.second
+                wipeTowerY = towerPos.second,
+                filamentType = filamentLabel
             )
             customWipeTowerPos = towerPos
             Log.i("SlicerVM", "Auto-placed wipe tower at (${towerPos.first}, ${towerPos.second})")
         } else {
+            val filamentLabel = resolveFilamentTypeLabelFromMapping(modelColorToExtruder, extruderPresets)
             _config.value = _config.value.copy(
                 extruderCount = extCount,
                 extruderTemps = temps,
                 extruderRetractLength = FloatArray(extCount) { _config.value.retractLength },
                 extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
-                wipeTowerEnabled = extCount > 1
+                wipeTowerEnabled = extCount > 1,
+                filamentType = filamentLabel
             )
         }
         // Store per-extruder colors for G-code viewers, indexed by physical slot.
@@ -3286,6 +3292,46 @@ internal fun buildProfileOverridesImpl(
     }
 
     return result
+}
+
+/**
+ * Derive the filament type label for the Slice Settings card from the active
+ * extruder slots and their preset materials.
+ *
+ * - Single slot (or all slots share the same material) → that material name
+ * - Slots differ → "Mixed"
+ * - Unknown slot / empty inputs → "PLA" (safe default)
+ */
+internal fun resolveFilamentTypeLabel(
+    usedSlots: List<Int>,
+    presets: List<com.u1.slicer.data.ExtruderPreset>
+): String {
+    if (usedSlots.isEmpty()) return "PLA"
+    val materials = usedSlots.map { slot ->
+        presets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+    }
+    val distinct = materials.distinct()
+    return if (distinct.size == 1) distinct.first() else "Mixed"
+}
+
+/**
+ * Wiring helper for single-color initial model load.
+ * A single-color model always prints on slot 0 (E1) initially — uses E1's material.
+ */
+internal fun resolveFilamentTypeForSingleColorLoad(
+    presets: List<com.u1.slicer.data.ExtruderPreset>
+): String = resolveFilamentTypeLabel(listOf(0), presets)
+
+/**
+ * Wiring helper for multi-color and layer-tool model load.
+ * Derives used slots from the colorMapping (distinct, sorted) then resolves label.
+ */
+internal fun resolveFilamentTypeLabelFromMapping(
+    colorMapping: List<Int>,
+    presets: List<com.u1.slicer.data.ExtruderPreset>
+): String {
+    val usedSlots = colorMapping.distinct().sorted()
+    return resolveFilamentTypeLabel(usedSlots, presets)
 }
 
 internal fun buildCompactExtruderRemap(
