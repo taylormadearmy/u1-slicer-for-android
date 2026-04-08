@@ -10,6 +10,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Tests**: 1 new instrumented test in `BambuPipelineIntegrationTest.kt` — verifies config preserves `modifier_part` and native preview has 15,642 tris (model only, modifier excluded)
 - **Affects**: u1-auxiliary-fan-cover-hex_mw.3mf, citystep (any 3MF with modifier/settings-override volumes)
 
+### B55: Crash / freeze when loading new model while large preview QEM is running (GitHub #57)
+- Loading a new model or tapping X while a large model's preview QEM decimation is running (F1 calendar, 8M tris, 30+ seconds) causes SIGSEGV — `clearModel()` frees native memory while `getPreparePreviewMesh` is still iterating
+- **Mitigation (v1.5.41-dev)**: All `clearModel()` / `loadModel()` calls now acquire `previewMutex`, preventing the crash but causing a 30s stall while QEM finishes
+- **Ideal fix**: Add a native cancellation flag (`std::atomic<bool>`) to the QEM loop, expose `cancelPreviewMesh()` via JNI, call it from `clearModel()` before acquiring the mutex so QEM bails out quickly
+
 ### B53: Prime tower switch on Prepare screen does not disable prime tower (GitHub #45)
 - Toggling the prime tower switch off on the Prepare screen does not actually disable the prime tower in the sliced output
 - The `enable_prime_tower` override may not be threaded through `buildProfileOverrides()` correctly, or the native side ignores it

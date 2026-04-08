@@ -647,7 +647,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 Log.i("SlicerVM", "Loading MakerWorld model natively: ${sanitized.name} (${sanitized.length()} bytes)")
                 loadNativeModel(sanitized)
             } catch (e: Throwable) {
-                native.clearModel() // Reset native state to prevent stale Clipper errors on retry
+                NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error(e.message ?: "Import failed")
                 Log.e("SlicerVM", "Shared URL import failed", e)
             }
@@ -789,7 +789,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 currentModelFile = fileToLoad
                 loadNativeModel(fileToLoad)
             } catch (e: Throwable) {
-                native.clearModel() // Reset native state to prevent stale Clipper errors on retry
+                NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error: ${e.message}")
             }
         }
@@ -944,7 +944,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 currentModelFile = fileToLoad
                 loadNativeModel(fileToLoad)
             } catch (e: Throwable) {
-                native.clearModel()
+                NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error: ${e.message}")
             }
         }
@@ -1011,7 +1011,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 currentModelFile = embeddedPlateFile
                 loadNativeModel(embeddedPlateFile)
             } catch (e: Throwable) {
-                native.clearModel() // Reset native state to prevent stale Clipper errors on retry
+                NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error extracting plate: ${e.message}")
             }
         }
@@ -1041,7 +1041,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun loadNativeModel(file: File) {
         val firstModelLoadThisLaunch = diagnostics.markFirstModelLoad()
-        val success = native.loadModel(file.absolutePath)
+        // Acquire previewMutex before touching native model — prevents SIGSEGV when
+        // getPreparePreviewMesh (on the preview coroutine) is iterating model volumes
+        // while we clear+reload here.  Large model QEM decimation can hold the lock for
+        // 30+ seconds; without this, loading a new model while QEM is running crashes.
+        val success = NativeLibrary.previewMutex.withLock {
+            native.loadModel(file.absolutePath)
+        }
         diagnostics.recordEvent(
             "native_model_load",
             mapOf(
@@ -1331,11 +1337,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun setModelScale(scale: ModelScale) {
         _modelScale.value = scale
         customObjectPositions = null // reset positions — re-center for new scaled size
+        invalidatePrepareMeshCache() // B49: force fresh native fetch for new geometry
     }
 
     fun setModelRotation(rotation: ModelRotation) {
         _modelRotation.value = rotation
         customObjectPositions = null // reset positions — re-center for rotated footprint
+        invalidatePrepareMeshCache() // B49: force fresh native fetch for rotated geometry
     }
 
     fun setCopyCount(count: Int) {
@@ -2670,7 +2678,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearModel() {
-        native.clearModel()
+        // Acquire previewMutex before clearing native model — prevents SIGSEGV when
+        // getPreparePreviewMesh is iterating model volumes on the preview coroutine.
+        // For large models (F1 calendar, 8M tris) QEM can hold the lock for 30+ seconds;
+        // clearing here without the lock frees memory the preview thread is reading.
+        // Use tryLock for immediate clear when no preview is running; launch async
+        // clear when the mutex is held (e.g. during QEM decimation).
+        if (NativeLibrary.previewMutex.tryLock()) {
+            try { native.clearModel() } finally { NativeLibrary.previewMutex.unlock() }
+        } else {
+            viewModelScope.launch(Dispatchers.IO) {
+                NativeLibrary.previewMutex.withLock { native.clearModel() }
+            }
+        }
         invalidatePrepareMeshCache()
         rawInputFile = null
         recoveryOrigInfo = null

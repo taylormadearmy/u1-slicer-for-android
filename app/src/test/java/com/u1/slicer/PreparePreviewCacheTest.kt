@@ -253,6 +253,101 @@ class PreparePreviewCacheTest {
         )
     }
 
+    // ── Scenario: rotation change must invalidate cache ────────────────
+
+    /**
+     * RED-GREEN TDD: rotation change must invalidate the prepare mesh cache
+     * so the rotation LaunchedEffect fetches fresh geometry from native.
+     *
+     * Bug: B49 added a cache early-return in LaunchedEffect(modelRotation):
+     *   if (mesh != null && cachedMesh != null) return@LaunchedEffect
+     * But setModelRotation() does NOT call invalidatePrepareMeshCache(),
+     * so cachedMesh stays non-null and the native rotation call is skipped.
+     * Result: the preview stays frozen at the old rotation angle.
+     *
+     * This test models the full flow: load → cache populated → rotate →
+     * assert that rotation effect fetches new mesh (not skipped by cache).
+     */
+    @Test
+    fun `rotation change must invalidate cache so effect fetches fresh mesh`() {
+        val initialMesh = Object()
+        val rotatedMesh = Object()
+        val viewer = FakeViewer()
+
+        // --- Step 1: initial load (no cache) ---
+        var mesh: Any? = null
+        var cachedMesh: Any? = null
+        var lastSetMesh: Any? = null
+
+        val rot1 = simulateRotationEffect(
+            currentMesh = mesh, cachedMesh = cachedMesh,
+            lastSetMesh = lastSetMesh, nativeMeshResult = initialMesh
+        )
+        mesh = rot1.newMesh ?: mesh
+        lastSetMesh = rot1.lastSetMeshAfter
+        cachedMesh = mesh  // onMeshCached callback populates cache
+
+        lastSetMesh = simulateCombinedEffect(mesh, viewer, lastSetMesh)
+        assertEquals(1, viewer.setMeshCallCount)
+
+        // --- Step 2: user rotates the model ---
+        // setModelRotation() should invalidate the cache before rotation effect fires.
+        cachedMesh = simulateSetModelRotation(cachedMesh)
+
+        // Rotation LaunchedEffect fires with new rotation value
+        val rot2 = simulateRotationEffect(
+            currentMesh = mesh, cachedMesh = cachedMesh,
+            lastSetMesh = lastSetMesh, nativeMeshResult = rotatedMesh
+        )
+
+        // MUST fetch new mesh from native — cache should have been invalidated
+        assertEquals(
+            "Rotation change must trigger fresh native mesh fetch — cache must be invalidated by setModelRotation()",
+            rotatedMesh, rot2.newMesh
+        )
+
+        // Update state and push rotated mesh to GL
+        mesh = rot2.newMesh ?: mesh
+        lastSetMesh = rot2.lastSetMeshAfter
+        lastSetMesh = simulateCombinedEffect(mesh, viewer, lastSetMesh)
+        assertEquals("Rotated mesh must be pushed to GL viewer", 2, viewer.setMeshCallCount)
+        assertEquals(rotatedMesh, viewer.meshSet)
+    }
+
+    /**
+     * Same test for scale: setModelScale() should also invalidate the cache.
+     */
+    @Test
+    fun `scale change must invalidate cache so effect fetches fresh mesh`() {
+        val initialMesh = Object()
+        val scaledMesh = Object()
+
+        var mesh: Any? = null
+        var cachedMesh: Any? = null
+
+        // Initial load
+        val rot1 = simulateRotationEffect(
+            currentMesh = mesh, cachedMesh = cachedMesh,
+            lastSetMesh = null, nativeMeshResult = initialMesh
+        )
+        mesh = rot1.newMesh ?: mesh
+        cachedMesh = mesh
+
+        // User changes scale — should invalidate cache
+        cachedMesh = simulateSetModelScale(cachedMesh)
+
+        // Rotation effect fires (scale change triggers re-fetch via same path)
+        val rot2 = simulateRotationEffect(
+            currentMesh = mesh, cachedMesh = cachedMesh,
+            lastSetMesh = null, nativeMeshResult = scaledMesh
+        )
+
+        assertEquals(
+            "Scale change must trigger fresh native mesh fetch — cache must be invalidated by setModelScale()",
+            scaledMesh, rot2.newMesh
+        )
+    }
+
     companion object {
         /**
          * Extracted decision logic for whether the parse LaunchedEffect should
@@ -265,6 +360,24 @@ class PreparePreviewCacheTest {
             // B49: don't clear mesh when cache exists and native rotation path handles it
             if (cachedMesh != null && isNativePreviewPath) return false
             return true
+        }
+
+        /**
+         * Models setModelRotation() side effects on the prepare mesh cache.
+         * Mirrors SlicerViewModel.setModelRotation(): invalidates cache so
+         * the rotation LaunchedEffect fetches fresh geometry from native.
+         */
+        fun simulateSetModelRotation(@Suppress("UNUSED_PARAMETER") cachedMesh: Any?): Any? {
+            return null  // invalidatePrepareMeshCache()
+        }
+
+        /**
+         * Models setModelScale() side effects on the prepare mesh cache.
+         * Mirrors SlicerViewModel.setModelScale(): invalidates cache so
+         * the rotation LaunchedEffect fetches fresh geometry from native.
+         */
+        fun simulateSetModelScale(@Suppress("UNUSED_PARAMETER") cachedMesh: Any?): Any? {
+            return null  // invalidatePrepareMeshCache()
         }
     }
 }

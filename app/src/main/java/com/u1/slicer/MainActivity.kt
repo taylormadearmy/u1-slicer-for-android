@@ -2192,6 +2192,12 @@ fun InlineModelPreview(
     // before calling getPreparePreviewMesh().
     // Uses previewMutex to serialize against concurrent fetches from other composable instances —
     // setModelRotation mutates global native state; concurrent getPreparePreviewMesh reads race it.
+    //
+    // Debounce: the rotation slider emits many intermediate values while dragging.
+    // For large models (F1 calendar, 8M tris), getPreparePreviewMesh takes 30+ seconds.
+    // Without debouncing, each intermediate value cancels the previous LaunchedEffect,
+    // wasting the 30s computation and restarting.  The initial call (rot=0,0,0) skips
+    // the delay so model load isn't slowed.
     LaunchedEffect(modelRotation) {
         val rot = modelRotation
 
@@ -2200,6 +2206,14 @@ fun InlineModelPreview(
         if (mesh != null && cachedMesh != null) {
             lastSetMesh = null  // force setMesh() on fresh GL view
             return@LaunchedEffect
+        }
+
+        // Debounce: skip delay for initial fetch (rot=0,0,0) so model loads instantly.
+        // For user-initiated rotation changes, wait 300ms for the slider to settle.
+        val isInitialFetch = rot.x == 0f && rot.y == 0f && rot.z == 0f
+        if (!isInitialFetch) {
+            viewerLoading = true  // show "Preparing preview…" overlay while re-computing
+            kotlinx.coroutines.delay(300)
         }
 
         val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -2218,6 +2232,7 @@ fun InlineModelPreview(
             onMeshCached?.invoke(newMesh)  // B49: save to ViewModel cache
             lastSetMesh = null  // force setMesh() on the GL thread
         }
+        if (!isInitialFetch) viewerLoading = false
     }
 
     // Update renderer with placement data
