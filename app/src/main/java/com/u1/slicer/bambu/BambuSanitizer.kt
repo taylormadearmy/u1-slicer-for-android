@@ -251,7 +251,11 @@ object BambuSanitizer {
                             Log.w(TAG, "Component files too large to inline " +
                                 "(${totalComponentSize / 1_000_000}MB > 50MB), preserving component refs")
                         }
-                        val objectComponents = if (hasMultiColorComponents) {
+                        val hasModifierVolumes = bambuObjectParts.values.any { objectInfo ->
+                            objectInfo.parts.any { it.subtype != "normal_part" }
+                        }
+                        val needsComponentParsing = hasMultiColorComponents || hasModifierVolumes
+                        val objectComponents = if (needsComponentParsing) {
                             mutableMapOf<String, List<ComponentRef>>().also { components ->
                                 parseMainModelStructure(mainModelContent!!, components, mutableMapOf())
                             }
@@ -259,6 +263,10 @@ object BambuSanitizer {
                             emptyMap()
                         }
                         if (hasMultiColorComponents && !safeToInline) {
+                            attachCompoundComponentIds(bambuObjectParts, objectComponents)
+                        }
+                        // Modifier volumes also need component IDs for OrcaSlicer-format config
+                        if (hasModifierVolumes && !hasMultiColorComponents) {
                             attachCompoundComponentIds(bambuObjectParts, objectComponents)
                         }
 
@@ -336,7 +344,7 @@ object BambuSanitizer {
                     // Inject Slic3r_PE_model.config so PrusaSlicer sees per-object extruder assignments.
                     // After restructuring, bambuObjectParts contains simple object-level extruder values.
                     val needsModelConfig = bambuObjectParts.values.any { objectInfo ->
-                        objectInfo.parts.any { it.extruder > 1 }
+                        objectInfo.parts.any { it.extruder > 1 || it.subtype != "normal_part" }
                     }
                     if (deferredRestructuring && modelSettingsContent != null) {
                         // For multi-plate files where restructuring was deferred, preserve
@@ -382,7 +390,7 @@ object BambuSanitizer {
     /** Per-part info extracted from Bambu model_settings.config.
      *  [meshObjectId] is set after restructuring — it's the inlined mesh object ID used as
      *  the `<part id>` in model_settings.config for compound objects. */
-    private data class PartInfo(val faceCount: Int, val extruder: Int, val meshObjectId: String = "")
+    private data class PartInfo(val faceCount: Int, val extruder: Int, val meshObjectId: String = "", val subtype: String = "normal_part")
     private data class ObjectParts(
         var defaultExtruder: Int = 1,
         val parts: MutableList<PartInfo> = mutableListOf()
@@ -435,6 +443,7 @@ object BambuSanitizer {
             var inPart = false
             var partExtruder = 1
             var partFaceCount = 0
+            var partSubtype = "normal_part"
 
             while (parser.eventType != XmlPullParser.END_DOCUMENT) {
                 when (parser.eventType) {
@@ -448,6 +457,7 @@ object BambuSanitizer {
                             inPart = true
                             partExtruder = objectDefaultExtruder
                             partFaceCount = 0
+                            partSubtype = parser.getAttributeValue(null, "subtype") ?: "normal_part"
                         }
                         "metadata" -> {
                             val key = parser.getAttributeValue(null, "key") ?: ""
@@ -471,7 +481,7 @@ object BambuSanitizer {
                     XmlPullParser.END_TAG -> when (parser.name) {
                         "part" -> {
                             if (inPart && currentObjectId != null) {
-                                objectParts[currentObjectId]?.parts?.add(PartInfo(partFaceCount, partExtruder))
+                                objectParts[currentObjectId]?.parts?.add(PartInfo(partFaceCount, partExtruder, subtype = partSubtype))
                             }
                             inPart = false
                         }
@@ -569,7 +579,7 @@ object BambuSanitizer {
 
             for (part in parts) {
                 if (part.meshObjectId.isNotEmpty()) {
-                    sb.appendLine("""    <part id="${part.meshObjectId}" subtype="normal_part">""")
+                    sb.appendLine("""    <part id="${part.meshObjectId}" subtype="${part.subtype}">""")
                     sb.appendLine("""      <metadata key="name" value=""/>""")
                     sb.appendLine("""      <metadata key="extruder" value="${part.extruder}"/>""")
                     sb.appendLine("""    </part>""")
@@ -661,13 +671,15 @@ object BambuSanitizer {
             for ((idx, component) in components.withIndex()) {
                 val meshId = (nextId++).toString()
                 val extruder = parts[idx].extruder
+                val subtype = parts[idx].subtype
+                val objType = if (subtype == "normal_part") "model" else "other"
 
                 // Inline the mesh as a separate object in <resources>
                 val meshXml = componentFiles[component.path.trimStart('/')]
                     ?.let { extractMeshXml(it, component.objectId) }
 
                 if (meshXml != null) {
-                    meshObjectDefs.append("""  <object id="$meshId" type="model">
+                    meshObjectDefs.append("""  <object id="$meshId" type="$objType">
     $meshXml
   </object>
 """)
@@ -676,7 +688,7 @@ object BambuSanitizer {
                     val tStr = component.transform.joinToString(" ") { "%.9f".format(it) }
                     componentRefs.append("""      <component objectid="$meshId" transform="$tStr"/>
 """)
-                    partInfos.add(PartInfo(faceCount, extruder, meshObjectId = meshId))
+                    partInfos.add(PartInfo(faceCount, extruder, meshObjectId = meshId, subtype = subtype))
                 } else {
                     // Fallback: p:path component reference (preserves original structure)
                     Log.w(TAG, "Could not inline mesh for component ${component.path}/${component.objectId}, using component ref")
@@ -684,7 +696,7 @@ object BambuSanitizer {
                     componentRefs.append("""      <component p:path="${component.path}" objectid="${component.objectId}" transform="$tStr"/>
 """)
                     val faceCount = parts[idx].faceCount
-                    partInfos.add(PartInfo(faceCount, extruder))
+                    partInfos.add(PartInfo(faceCount, extruder, subtype = subtype))
                 }
             }
 

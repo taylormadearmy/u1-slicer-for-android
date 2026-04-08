@@ -32,6 +32,7 @@ import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.GcodeValidator
 import com.u1.slicer.gcode.LayerToolPauseInjector
 import com.u1.slicer.gcode.ParsedGcode
+import com.u1.slicer.gcode.buildSuspiciousModelLineContexts
 import com.u1.slicer.model.CopyArrangeCalculator
 import org.json.JSONObject
 import kotlinx.coroutines.delay
@@ -2276,44 +2277,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 errorMessage = "Slicing produced unreadable G-code output.\n\nTry Reset App State and slice again."
             )
         }
-    }
-
-    private fun buildSuspiciousModelLineContexts(
-        gcodeFile: File,
-        samples: List<GcodeValidator.MoveSample>
-    ): List<Map<String, Any?>> {
-        if (samples.isEmpty() || !gcodeFile.exists()) return emptyList()
-        val lineNumbers = samples
-            .mapNotNull { it.lineNumber.takeIf { line -> line > 0 } }
-            .distinct()
-            .take(3)
-        if (lineNumbers.isEmpty()) return emptyList()
-
-        val lines = try {
-            gcodeFile.readLines()
-        } catch (_: Throwable) {
-            return emptyList()
-        }
-
-        val contexts = mutableListOf<Map<String, Any?>>()
-        for (lineNumber in lineNumbers) {
-            val idx = lineNumber - 1
-            if (idx !in lines.indices) continue
-            val start = maxOf(0, idx - 2)
-            val end = minOf(lines.lastIndex, idx + 2)
-            contexts += mapOf(
-                "lineNumber" to lineNumber,
-                "windowStart" to start + 1,
-                "windowEnd" to end + 1,
-                "lines" to (start..end).map { rawIndex ->
-                    mapOf(
-                        "lineNumber" to rawIndex + 1,
-                        "text" to lines[rawIndex]
-                    )
-                }
-            )
-        }
-        return contexts
     }
 
     private fun buildExpectedModelFootprint(

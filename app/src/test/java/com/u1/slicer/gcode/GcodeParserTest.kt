@@ -473,6 +473,108 @@ class GcodeParserTest {
         assertEquals(1.0f, result.perExtruderFilamentMm[1], 0.0001f)
     }
 
+    // ─── B52: move cap for very large G-code files ──────────────────────────
+
+    @Test
+    fun `parse caps stored moves at maxMoves limit`() {
+        // Generate G-code with 100 extrude moves across 2 layers
+        val sb = StringBuilder()
+        sb.appendLine("G1 Z0.2")
+        sb.appendLine(";LAYER_CHANGE")
+        for (i in 1..50) {
+            sb.appendLine("G1 X${i} Y${i} E${i * 0.1}")
+        }
+        sb.appendLine("G1 Z0.4")
+        sb.appendLine(";LAYER_CHANGE")
+        for (i in 51..100) {
+            sb.appendLine("G1 X${i} Y${i} E${i * 0.1}")
+        }
+        val file = writeGcode(sb.toString())
+
+        // With maxMoves=30, should store at most 30 moves total but still report
+        // correct layer count and total move count via metadata.
+        val result = GcodeParser.parse(file, maxMoves = 30)
+
+        val storedMoves = result.layers.sumOf { it.moves.size }
+        assertTrue("Stored moves ($storedMoves) should be <= 30", storedMoves <= 30)
+        // totalMoves should reflect the ACTUAL number parsed, not the capped count
+        assertEquals("totalMoves should count all 100 moves", 100, result.totalMoves)
+        // Layer count should still be correct
+        assertEquals(2, result.layers.size)
+    }
+
+    @Test
+    fun `parse with maxMoves distributes moves across all layers via stride`() {
+        // 4 layers, 200 moves each = 800 total.  Cap at 200 → stride ~4.
+        // Every layer should have SOME moves — not just the first layer.
+        val sb = StringBuilder()
+        for (layer in 0..3) {
+            val z = 0.2f + layer * 0.2f
+            sb.appendLine("G1 Z$z")
+            sb.appendLine(";LAYER_CHANGE")
+            for (i in 1..200) {
+                sb.appendLine("G1 X${i} Y${layer * 10} E${i * 0.01}")
+            }
+        }
+        val file = writeGcode(sb.toString())
+
+        val result = GcodeParser.parse(file, maxMoves = 200)
+
+        assertEquals(4, result.layers.size)
+        assertEquals(800, result.totalMoves)
+        val storedMoves = result.layers.sumOf { it.moves.size }
+        assertTrue("Stored moves ($storedMoves) should be <= 200", storedMoves <= 200)
+        // Critical: every layer must have at least some moves (stride distributes evenly)
+        for ((idx, layer) in result.layers.withIndex()) {
+            assertTrue(
+                "Layer $idx should have moves (got ${layer.moves.size})",
+                layer.moves.isNotEmpty()
+            )
+        }
+        assertTrue("Preview should be marked as simplified", result.isPreviewSimplified)
+    }
+
+    @Test
+    fun `parse without maxMoves stores all moves`() {
+        val sb = StringBuilder()
+        sb.appendLine("G1 Z0.2")
+        sb.appendLine(";LAYER_CHANGE")
+        for (i in 1..50) {
+            sb.appendLine("G1 X${i} Y${i} E${i * 0.1}")
+        }
+        val file = writeGcode(sb.toString())
+
+        val result = GcodeParser.parse(file)
+
+        val storedMoves = result.layers.sumOf { it.moves.size }
+        assertEquals(50, storedMoves)
+        assertEquals(50, result.totalMoves)
+        assertFalse("Normal file should not be marked simplified", result.isPreviewSimplified)
+    }
+
+    @Test
+    fun `parse with maxMoves still tracks per-extruder filament correctly`() {
+        val sb = StringBuilder()
+        sb.appendLine("G1 Z0.2")
+        sb.appendLine(";LAYER_CHANGE")
+        sb.appendLine("T0")
+        for (i in 1..20) {
+            sb.appendLine("G1 X${i} Y0 E${i * 1.0}")
+        }
+        sb.appendLine("T1")
+        for (i in 21..40) {
+            sb.appendLine("G1 X${i} Y0 E${i * 1.0}")
+        }
+        val file = writeGcode(sb.toString())
+
+        // Cap at 10 moves — but filament tracking should still cover all 40 moves
+        val result = GcodeParser.parse(file, maxMoves = 10)
+
+        assertEquals(2, result.perExtruderFilamentMm.size)
+        assertTrue("T0 filament should be > 0", result.perExtruderFilamentMm[0] > 0f)
+        assertTrue("T1 filament should be > 0", result.perExtruderFilamentMm[1] > 0f)
+    }
+
     // Helper extension
     private fun ParsedGcode.moves(layerIndex: Int) = layers[layerIndex].moves
 }

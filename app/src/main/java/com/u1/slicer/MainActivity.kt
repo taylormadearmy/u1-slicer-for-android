@@ -1179,6 +1179,17 @@ fun PreviewScreen(
                     SlicingProgressCard(s.progress, s.stage, onCancel = { viewModel.cancelSlicing() })
                 }
                 is SlicerViewModel.SlicerState.SliceComplete -> {
+                    // B52: inform user when G-code preview is stride-sampled
+                    if (parsedGcode?.isPreviewSimplified == true) {
+                        val ctx = LocalContext.current
+                        LaunchedEffect(parsedGcode) {
+                            android.widget.Toast.makeText(
+                                ctx,
+                                "Large G-code \u2014 preview simplified",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
                     // Inline 3D G-code preview (auto-downsampled for large models)
                     if (parsedGcode != null && parsedGcode!!.layers.isNotEmpty()) {
                         // key() forces Compose to discard and recreate InlineGcodePreview when

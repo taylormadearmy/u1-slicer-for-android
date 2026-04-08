@@ -43,9 +43,20 @@ data class ParsedGcode(
     val bedHeight: Float = 270f,
     val perExtruderFilamentMm: List<Float> = emptyList(),
     /** Total filament extruded inside prime/wipe tower regions (all extruders, mm). */
-    val wipeTowerFilamentMm: Float = 0f
+    val wipeTowerFilamentMm: Float = 0f,
+    /**
+     * Total move count across all layers — used for OOM guard in 3D preview.
+     * When [GcodeParser] caps stored moves via `maxMoves`, this reflects the
+     * true count parsed from the file, not the truncated stored count.
+     * Default (-1) computes from stored layers.
+     */
+    private val _totalMoves: Int = -1,
+    /**
+     * True when the parser used stride-based sampling to stay within [GcodeParser.DEFAULT_MAX_MOVES].
+     * UI can show an informational toast so the user knows the preview is approximate.
+     */
+    val isPreviewSimplified: Boolean = false
 ) {
-    /** Total move count across all layers — used for OOM guard in 3D preview. */
-    val totalMoves: Int by lazy { layers.sumOf { it.moves.size } }
+    val totalMoves: Int get() = if (_totalMoves >= 0) _totalMoves else layers.sumOf { it.moves.size }
 }
 

@@ -4,19 +4,23 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B54: Modifier volumes rendered as solid geometry in Prepare preview (GitHub #55) — FIXED
+- **Root cause**: `BambuSanitizer.buildOrcaModelConfig()` hardcoded `subtype="normal_part"` for all `<part>` entries, overwriting `"modifier_part"` from the original 3MF. Also `needsModelConfig` only checked `extruder > 1`, so single-colour files with modifiers got no config at all. OrcaSlicer's BBS loader then defaulted all volumes to `MODEL_PART`, making the modifier cube appear as solid geometry.
+- **Fix**: Added `subtype` field to `PartInfo` data class; parse `subtype` attribute from `<part>` elements in `parseModelSettingsExtruders`; preserve through `buildOrcaModelConfig`; expand `needsModelConfig` to trigger when any part has non-normal subtype; attach compound component IDs for modifier files. Also preserves subtype during `restructureForMultiColor` inlining, setting `type="other"` in the 3D model XML for non-model-part volumes.
+- **Tests**: 1 new instrumented test in `BambuPipelineIntegrationTest.kt` — verifies config preserves `modifier_part` and native preview has 15,642 tris (model only, modifier excluded)
+- **Affects**: u1-auxiliary-fan-cover-hex_mw.3mf, citystep (any 3MF with modifier/settings-override volumes)
+
 ### B53: Prime tower switch on Prepare screen does not disable prime tower (GitHub #45)
 - Toggling the prime tower switch off on the Prepare screen does not actually disable the prime tower in the sliced output
 - The `enable_prime_tower` override may not be threaded through `buildProfileOverrides()` correctly, or the native side ignores it
 - Needs investigation: check if the override reaches `applyConfigToPrusa()` and whether the slicer respects it
 
-### B52: Crash at end of slicing citystep_A1_274_102.3mf (GitHub #51)
-- App crashes at end of slicing `1873409_citystep_A1_274_102.3mf` (MakerWorld citystep, 8.8MB, 2-plate)
-- Model: 246×238×263mm, 283K triangles, 7 volumes, single extruder
-- Slice produces 115MB G-code (1315 layers, 3.7M moves) — crash likely during post-slice G-code parse/validation OOM
-- Worked on v1.5.38, crashes on v1.5.39
-- Not SEMM/painted (hasPaint=false) — B51 changes shouldn't be related
-- Diagnostics: `G:/My Drive/Logs/clipper_investigation_bundle (6).txt`
-- Test file: `G:/My Drive/tes-data/1873409_citystep_A1_274_102.3mf`
+### B52: Crash at end of slicing citystep_A1_274_102.3mf (GitHub #51) — FIXED
+- **Root cause**: Two OOM sources in post-slice G-code processing for very large files (115 MB, 3.7M moves):
+  1. `buildSuspiciousModelLineContexts()` called `File.readLines()` loading the entire G-code file into a `List<String>` (~200 MB heap)
+  2. `GcodeParser.parse()` stored all 3.7M `GcodeMove` objects (~220 MB) with no cap
+- **Fix**: (a) Extracted `buildSuspiciousModelLineContexts` to a streaming implementation that reads only the ±2 line windows around suspicious samples; (b) Added `maxMoves` cap (default 2M) to `GcodeParser.parse()` — moves beyond the cap are still counted for summary/validation but not stored, keeping heap under control; layer count and filament tracking remain accurate even when capped
+- **Tests**: 6 new unit tests in `SuspiciousLineContextTest.kt` (streaming correctness, window clamping, large file smoke); 4 new unit tests in `GcodeParserTest.kt` (move cap, stride distribution, uncapped baseline, per-extruder filament tracking with cap)
 
 ### ~~B51: SEMM Prepare preview broken — wrong orientation, tiny, split geometry (old.3mf, Korok mask)~~ FIXED
 - **Root cause**: B46 removed `instance_matrix` from the MMU path in `getPreparePreviewMesh()` ("Kotlin handles bed positioning") but kept it in the non-MMU path. This left SEMM volumes in model-local coords while non-MMU volumes were in world coords. old.3mf's instance had a rotation that the missing transform didn't apply, making the model lie flat (Z=21.6mm instead of 126.8mm).

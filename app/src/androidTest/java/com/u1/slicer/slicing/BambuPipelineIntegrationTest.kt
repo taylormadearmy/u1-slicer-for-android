@@ -1146,6 +1146,62 @@ class BambuPipelineIntegrationTest {
     }
 
     @Test
+    fun auxFan_modifierVolume_preservedAsModifierPart() {
+        // u1-auxiliary-fan-cover-hex_mw.3mf has two parts:
+        //   part id=1 subtype="normal_part"  — the actual fan cover (15642 faces)
+        //   part id=2 subtype="modifier_part" — a Generic-Cube settings modifier (12 faces)
+        // BambuSanitizer must preserve the subtype so OrcaSlicer skips the modifier
+        // in the preview mesh (is_model_part() returns false for PARAMETER_MODIFIER).
+        val file = asset("u1-auxiliary-fan-cover-hex_mw.3mf")
+        val origInfo = ThreeMfParser.parse(file)
+        val processed = BambuSanitizer.process(file, outDir, isBambu = origInfo.isBambu)
+
+        // The processed file must contain SOME config that preserves the modifier subtype.
+        // Check both model_settings.config (OrcaSlicer format) and Slic3r_PE_model.config.
+        val zip = java.util.zip.ZipFile(processed)
+        val orcaConfig = zip.getEntry("Metadata/model_settings.config")
+        val slic3rConfig = zip.getEntry("Metadata/Slic3r_PE_model.config")
+
+        // At least one config format must be present
+        val hasConfig = orcaConfig != null || slic3rConfig != null
+        assertTrue("Processed 3MF must contain model config (modifier volumes need subtype)", hasConfig)
+
+        // If OrcaSlicer-format config is present, it must preserve modifier_part
+        if (orcaConfig != null) {
+            val configXml = zip.getInputStream(orcaConfig).bufferedReader().readText()
+            android.util.Log.i("ModifierTest", "model_settings.config:\n$configXml")
+            assertTrue(
+                "model_settings.config must preserve modifier_part subtype, got:\n$configXml",
+                configXml.contains("modifier_part")
+            )
+            assertTrue(
+                "model_settings.config must have normal_part for the model volume",
+                configXml.contains("normal_part")
+            )
+        }
+
+        zip.close()
+
+        // Full pipeline: load into native and check only model_part volumes in preview.
+        // The modifier cube should be filtered out by is_model_part().
+        val info = ThreeMfParser.parse(processed)
+        val config = embedder.buildConfig(info)
+        val embedded = embedder.embed(processed, config, outDir, info)
+        assertTrue("embed() should succeed", lib.loadModel(embedded.absolutePath))
+        val preview = lib.getPreparePreviewMesh(500_000)
+        assertNotNull("Preview mesh should not be null", preview)
+        // The aux fan has 15642 triangles (model) + 12 (modifier cube).
+        // If the modifier is correctly excluded, triangle count should be ≈15642.
+        // If incorrectly included, it will be ≈15654.
+        val triCount = preview!!.extruderIndices.size
+        android.util.Log.i("ModifierTest", "Preview triangle count: $triCount")
+        assertTrue(
+            "Preview should have ~15642 tris (model only), not ~15654 (model+modifier). Got $triCount",
+            triCount <= 15650
+        )
+    }
+
+    @Test
     fun dragonScale_restructuredPlate_hasPerPartExtruderAssignments() {
         // Dragon Scale compound objects have per-part extruder assignments.
         // After restructuring, each part becomes a separate <object> with its own mesh,

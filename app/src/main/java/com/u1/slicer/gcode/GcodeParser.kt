@@ -7,16 +7,42 @@ import java.io.FileReader
 object GcodeParser {
 
     /**
+     * Default move cap for [parse].  2 million moves ≈ 120 MB of GcodeMove objects
+     * on ART — comfortably within Android heap limits while covering most real-world
+     * G-code files.  The citystep model (3.7 M moves, 115 MB file) exceeded this and
+     * OOMed before B52 introduced the cap.
+     */
+    const val DEFAULT_MAX_MOVES = 2_000_000
+
+    /**
      * @param colorSegmentsByPausePrint When true, assigns extruder indices 0–3 by counting
      *   `; PAUSE_PRINT` markers (layer-change manual swaps) instead of `T` commands.
      *   Used for Hueforge-style models sliced as single-filament G-code.
+     * @param maxMoves Maximum number of moves to store.  Files exceeding this are
+     *   stride-sampled so moves are distributed evenly across all layers.
      */
     @JvmOverloads
-    fun parse(file: File, colorSegmentsByPausePrint: Boolean = false): ParsedGcode {
+    fun parse(
+        file: File,
+        colorSegmentsByPausePrint: Boolean = false,
+        maxMoves: Int = DEFAULT_MAX_MOVES
+    ): ParsedGcode {
+        // Estimate total moves from file size.  Use 16 bytes/line (conservative lower
+        // bound) so we overestimate the move count — this produces a higher stride,
+        // which is the safe direction (stores fewer moves, stays well under maxMoves).
+        val estimatedMoves = file.length() / 16
+        val stride = if (estimatedMoves > maxMoves) {
+            ((estimatedMoves + maxMoves - 1) / maxMoves).toInt().coerceAtLeast(2)
+        } else 1
+        val useStride = stride > 1
+
         val layers = mutableListOf<GcodeLayer>()
         val currentMoves = ArrayList<GcodeMove>(512) // reused across layers, avoids re-allocation
         var currentZ = 0f
         var layerIndex = 0
+        var totalMovesCount = 0
+        var storedMovesCount = 0
+        var hasUnflushedMoves = false
 
         var x = 0f
         var y = 0f
@@ -58,9 +84,10 @@ object GcodeParser {
                         }
                     }
                     if (startsWithAt(l, start, ";LAYER_CHANGE") || startsWithAt(l, start, "; layer_change")) {
-                        if (currentMoves.isNotEmpty()) {
+                        if (currentMoves.isNotEmpty() || hasUnflushedMoves) {
                             layers.add(GcodeLayer(layerIndex++, currentZ, currentMoves.toList()))
                             currentMoves.clear()
+                            hasUnflushedMoves = false
                         }
                     }
                     if (perExtruderMm.isEmpty() && startsWithAt(l, start, "; filament used [mm]")) {
@@ -141,9 +168,10 @@ object GcodeParser {
                         }
 
                         if (newZ != currentZ) {
-                            if (currentMoves.isNotEmpty()) {
+                            if (currentMoves.isNotEmpty() || hasUnflushedMoves) {
                                 layers.add(GcodeLayer(layerIndex++, currentZ, currentMoves.toList()))
                                 currentMoves.clear()
+                                hasUnflushedMoves = false
                             }
                             currentZ = newZ
                         }
@@ -169,14 +197,24 @@ object GcodeParser {
                                     computedPerExtruderMm[moveExtruder] += extrudedMm
                                 }
                             }
-                            currentMoves.add(GcodeMove(
-                                type = if (isExtrude) MoveType.EXTRUDE else MoveType.TRAVEL,
-                                x0 = x, y0 = y, x1 = newX, y1 = newY,
-                                extruder = moveExtruder,
-                                featureType = currentFeatureType,
-                                lineNumber = lineNumber,
-                                featureLabel = currentFeatureLabel
-                            ))
+                            totalMovesCount++
+                            hasUnflushedMoves = true
+                            val shouldStore = if (useStride) {
+                                totalMovesCount % stride == 0 && storedMovesCount < maxMoves
+                            } else {
+                                storedMovesCount < maxMoves
+                            }
+                            if (shouldStore) {
+                                storedMovesCount++
+                                currentMoves.add(GcodeMove(
+                                    type = if (isExtrude) MoveType.EXTRUDE else MoveType.TRAVEL,
+                                    x0 = x, y0 = y, x1 = newX, y1 = newY,
+                                    extruder = moveExtruder,
+                                    featureType = currentFeatureType,
+                                    lineNumber = lineNumber,
+                                    featureLabel = currentFeatureLabel
+                                ))
+                            }
                         }
                         x = newX; y = newY
                         continue
@@ -218,7 +256,7 @@ object GcodeParser {
             wipeTowerE += (lastE - wipeTowerEStart).coerceAtLeast(0f)
         }
 
-        if (currentMoves.isNotEmpty()) {
+        if (currentMoves.isNotEmpty() || hasUnflushedMoves) {
             layers.add(GcodeLayer(layerIndex, currentZ, currentMoves.toList()))
         }
 
@@ -249,7 +287,9 @@ object GcodeParser {
         return ParsedGcode(
             layers = layers,
             perExtruderFilamentMm = finalPerExtruderMm,
-            wipeTowerFilamentMm = wipeTowerE
+            wipeTowerFilamentMm = wipeTowerE,
+            _totalMoves = totalMovesCount,
+            isPreviewSimplified = useStride
         )
     }
 
