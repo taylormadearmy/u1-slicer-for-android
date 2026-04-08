@@ -4,12 +4,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B59: Multi-color model Filament label always shows PLA regardless of extruder materials (GitHub #61) — FIXED
-- Dual/multi-color models showed "Filament: PLA" even when all active extruders were PETG; also affected single-color initial load (E1 material ignored) and layer-tool load
-- **Root cause**: B56 only fixed `updateSingleColorExtruder()` (user-tap path); three other paths never called it: (1) single-color initial load, (2) `applyMultiColorAssignments()`, (3) layer-tool branch
-- **Fix**: Extracted `resolveFilamentTypeLabel(usedSlots, presets)` helper — returns single material name if all slots share one type, "Mixed" if they differ. Wired into all three paths.
-- **Tests**: 12 new unit tests in `FilamentTypeLabelTest.kt`
-
 ### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60)
 - For `colored_3DBenchy (1).3mf` (4-colour SEMM), the Prepare preview, G-code preview, and desktop OrcaSlicer all show different colours
 - **Prepare screen**: Only 2 colour chips shown; model renders mostly white/gray — 2 of 4 paint zones missing
@@ -25,13 +19,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Root cause (b)**: When user manually overrides to USE_OVERRIDE, all support keys are emitted but from `cfg` defaults (`supportAngle = 45f`, `supportType = "normal"`, etc.) rather than the file's embedded values. Files designed around painted supports typically set threshold to 88–91° to suppress angle-based generation; forcing 45° generates global supports everywhere.
 - **Underlying gap**: Single-color Bambu 3MF has no code path that uses `sourceConfig` as the config base. The preserve path (multi-color/multi-plate) handles this correctly.
 - **Unaffected**: STL files, multi-color/painted/multi-plate Bambu (preserve path), files with correct manual overrides for all support settings
-
-### B56: Selecting non-E1 extruder doesn't update filament type for display or slicing (GitHub #58)
-- Selecting E3 (PETG) on the Prepare screen shows "Filament: PLA" in Slice Settings and uses PLA bed-temp defaults
-- **Root cause**: `updateSingleColorExtruder()` in `SlicerViewModel.kt` updates preview color and tool remapping but never copies the selected extruder preset's `materialType` into `config.filamentType`
-- **Fix**: Read `materialType` from the selected `ExtruderPreset` and include `filamentType = material` in the `config.copy()` call
-- **Tests**: 6 new unit tests in `SingleColorExtruderConfigTest.kt` — E1-E4 material propagation, round-trip, missing preset fallback
-- **Affects**: Any single-color model printed on a non-E1 extruder with a non-PLA material
 
 ### B54: Modifier volumes rendered as solid geometry in Prepare preview (GitHub #55) — FIXED
 - **Root cause**: `BambuSanitizer.buildOrcaModelConfig()` hardcoded `subtype="normal_part"` for all `<part>` entries, overwriting `"modifier_part"` from the original 3MF. Also `needsModelConfig` only checked `extruder > 1`, so single-colour files with modifiers got no config at all. OrcaSlicer's BBS loader then defaulted all volumes to `MODEL_PART`, making the modifier cube appear as solid geometry.
@@ -275,6 +262,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **B59**: Multi-color model Filament label always shows PLA regardless of extruder materials — FIXED v1.5.42. `resolveFilamentTypeLabel(usedSlots, presets)` helper wired into all three paths (single-color initial load, `applyMultiColorAssignments`, layer-tool branch); returns "Mixed" when active extruders have different materials.
+- **B56**: Selecting non-E1 extruder doesn't update filament type for display or slicing — FIXED v1.5.41. `updateSingleColorExtruder()` now reads `materialType` from the selected `ExtruderPreset` and includes `filamentType` in `config.copy()`.
 - **B41**: 3MF embedded rotation preservation + tab-switch preview cache fix — FIXED v1.5.35
 - **B40/B39**: Jobs gcode durable path + printer offline grace period — FIXED v1.5.34
 - **F59/F#39**: G-code preview tube width scaled up for visibility (halfWidth 0.225→0.75, halfHeight 0.1→0.2) — DONE v1.5.32; miter joins, Blinn-Phong lighting, proper 0.42mm proportions — v1.5.35
