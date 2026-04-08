@@ -1292,6 +1292,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         colors[0] = resolvedColor  // Put at index 0 since all mesh triangles have extruder index 0
         _activeExtruderColors.value = colors
 
+        // Update filament type from the selected extruder's material
+        val material = presets.firstOrNull { it.index == index }?.materialType ?: "PLA"
+
         // Configure tool remapping: single-color model uses T0 in native slicer,
         // but we want it printed on the selected physical extruder slot.
         if (index == 0) {
@@ -1299,14 +1302,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             toolRemapSlots = null
             _config.value = _config.value.copy(
                 extruderCount = 1,
-                wipeTowerEnabled = false
+                wipeTowerEnabled = false,
+                filamentType = material
             )
         } else {
             // E2/E3/E4 — remap T0 → physical slot
             toolRemapSlots = listOf(index)
             _config.value = _config.value.copy(
                 extruderCount = 1,
-                wipeTowerEnabled = false
+                wipeTowerEnabled = false,
+                filamentType = material
             )
         }
         Log.i("SlicerVM", "Single-color extruder set to E${index + 1}, remap=$toolRemapSlots")

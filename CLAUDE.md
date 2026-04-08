@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 667 JVM unit tests
+./gradlew testDebugUnitTest                        # 673 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 161 instrumented tests (uses Orchestrator)
 ```
 
@@ -59,7 +59,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.
 
-### Unit tests (`app/src/test/`) - 667 tests across 44 classes
+### Unit tests (`app/src/test/`) - 673 tests across 45 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -105,6 +105,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `SliceResultFromJobTest.kt` (2) — SliceResult construction from SliceJob
 - `printer/PrintProgressNotifierTest.kt` (3) — print progress notification logic
 - `PreparePreviewCacheTest.kt` (7) — B49 Prepare preview cache state machine: fresh load, tab switch cache hit, GL upload after cache hit, repeated effect dedup, parse effect cache guard
+- `SingleColorExtruderConfigTest.kt` (6) — B56 single-color extruder selection filamentType propagation: E1-E4 material types, round-trip, missing preset fallback
 
 ### Instrumented tests (`app/src/androidTest/`) - 161 tests across 16 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count

@@ -4,6 +4,20 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B57: Single-color Bambu 3MF with embedded supports=true doesn't generate supports (GitHub #59)
+- Loading a Bambu single-color 3MF that has `enable_support = 1` in its embedded `project_settings.config` (e.g. citystep shoe) and slicing without any manual override produces G-code with no supports. Manually overriding supports to ON fixes it.
+- **Support painting context**: Citystep shoe uses Bambu support painting (`paint_supports="..."` per-triangle attribute = enforcer regions). This attribute **survives** the sanitizer (fast path passes unrecognized attrs through). But OrcaSlicer requires `enable_support = 1` to honour painted enforcers (`Print.cpp:1366-1374`), so the mesh data arrives intact and is silently ignored.
+- **Root cause**: Two mechanisms interact. (1) `buildProfileOverridesImpl` in `SlicerViewModel.kt` omits `enable_support` when `ov.supports.mode == USE_FILE && hasSourceConfig == true` — the B10 fix, intended to let the file's embedded value survive through `ProfileEmbedder`'s preserve path. (2) Single-color Bambu files (`detectedExtruderCount == 1`, no color paint data, no layer tool changes, single plate) don't satisfy `needsPreserve`, so `ProfileEmbedder.buildConfig()` takes the standard path where `sourceConfig` is **never applied** as the config base. Note: `hasPaintData` only checks `paint_color`/`mmu_segmentation`, not `paint_supports`, so support-only painted files never trigger the preserve path. The overrides omit `enable_support` trusting it's in the base; the base has no such key; slicer defaults to disabled.
+- **Unaffected**: STL files (always emit, no sourceConfig), multi-color/painted/multi-plate Bambu (preserve path), files with explicit user override
+- **Affects**: Any single-color Bambu 3MF with embedded `enable_support = 1` sliced without a manual support override
+
+### B56: Selecting non-E1 extruder doesn't update filament type for display or slicing (GitHub #58)
+- Selecting E3 (PETG) on the Prepare screen shows "Filament: PLA" in Slice Settings and uses PLA bed-temp defaults
+- **Root cause**: `updateSingleColorExtruder()` in `SlicerViewModel.kt` updates preview color and tool remapping but never copies the selected extruder preset's `materialType` into `config.filamentType`
+- **Fix**: Read `materialType` from the selected `ExtruderPreset` and include `filamentType = material` in the `config.copy()` call
+- **Tests**: 6 new unit tests in `SingleColorExtruderConfigTest.kt` — E1-E4 material propagation, round-trip, missing preset fallback
+- **Affects**: Any single-color model printed on a non-E1 extruder with a non-PLA material
+
 ### B54: Modifier volumes rendered as solid geometry in Prepare preview (GitHub #55) — FIXED
 - **Root cause**: `BambuSanitizer.buildOrcaModelConfig()` hardcoded `subtype="normal_part"` for all `<part>` entries, overwriting `"modifier_part"` from the original 3MF. Also `needsModelConfig` only checked `extruder > 1`, so single-colour files with modifiers got no config at all. OrcaSlicer's BBS loader then defaulted all volumes to `MODEL_PART`, making the modifier cube appear as solid geometry.
 - **Fix**: Added `subtype` field to `PartInfo` data class; parse `subtype` attribute from `<part>` elements in `parseModelSettingsExtruders`; preserve through `buildOrcaModelConfig`; expand `needsModelConfig` to trigger when any part has non-normal subtype; attach compound component IDs for modifier files. Also preserves subtype during `restructureForMultiColor` inlining, setting `type="other"` in the 3D model XML for non-model-part volumes.
