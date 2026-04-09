@@ -157,9 +157,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _config = MutableStateFlow(SliceConfig())
     val config: StateFlow<SliceConfig> = _config.asStateFlow()
 
-    private val _coreVersion = MutableStateFlow("")
-    val coreVersion: StateFlow<String> = _coreVersion.asStateFlow()
-
     private val _gcodePreview = MutableStateFlow("")
     val gcodePreview: StateFlow<String> = _gcodePreview.asStateFlow()
 
@@ -351,11 +348,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     )?.absolutePath
 
     init {
-        _coreVersion.value = if (NativeLibrary.isLoaded) {
-            "Snapmaker Orca 2.2.4 (Android ARM64)"
-        } else {
-            "Native library not available"
-        }
         configureNativeDiagnosticsIfAvailable()
 
         viewModelScope.launch {
