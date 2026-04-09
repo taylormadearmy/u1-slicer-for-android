@@ -129,7 +129,6 @@ fun SettingsScreen(
                 InfoRow("Model", "Snapmaker U1")
                 InfoRow("Build Volume", "270 x 270 x 270 mm")
                 InfoRow("Extruders", "4")
-                InfoRow("App Version", "v${BuildConfig.VERSION_NAME}")
 
                 // Connection sub-section
                 if (printerViewModel != null) {
@@ -564,7 +563,7 @@ fun SettingsScreen(
                 ) {
                     Text("Version", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        BuildConfig.VERSION_NAME,
+                        "v${BuildConfig.VERSION_NAME}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
@@ -576,10 +575,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clickable {
                             context.startActivity(
-                                android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse(GITHUB_URL)
-                                )
+                                Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_URL))
                             )
                         },
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -599,10 +595,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clickable {
                             context.startActivity(
-                                android.content.Intent(
-                                    android.content.Intent.ACTION_VIEW,
-                                    android.net.Uri.parse(BMAC_URL)
-                                )
+                                Intent(Intent.ACTION_VIEW, Uri.parse(BMAC_URL))
                             )
                         },
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFFFDD00)),
