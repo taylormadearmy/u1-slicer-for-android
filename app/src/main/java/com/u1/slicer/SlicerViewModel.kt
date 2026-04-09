@@ -1271,6 +1271,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "slotColors" to fullColors
             )
         )
+        _sliceStale.value = true
     }
 
     fun dismissMultiColorDialog() {
