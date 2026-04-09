@@ -873,9 +873,7 @@ fun PrepareScreen(
                                     info = loadedInfo,
                                     threeMfInfo = threeMfInfo,
                                     config = config,
-                                    onToggleWipeTower = {
-                                        viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
-                                    },
+                                    onToggleWipeTower = { viewModel.togglePrimeTower() },
                                     onReassign = { viewModel.showMultiColorReassign() },
                                     onDismiss = { showInfoDialog = false }
                                 )
@@ -892,9 +890,7 @@ fun PrepareScreen(
                             onMappingChange = { newMapping ->
                                 viewModel.applyMultiColorAssignments(newMapping, extruderPresets, filaments)
                             },
-                            onToggleWipeTower = {
-                                viewModel.updateConfig { c -> c.copy(wipeTowerEnabled = !c.wipeTowerEnabled) }
-                            },
+                            onToggleWipeTower = { viewModel.togglePrimeTower() },
                             onAutoMap = {
                                 viewModel.reAutoMapColors(extruderPresets, filaments)
                             }
@@ -1126,6 +1122,7 @@ fun PreviewScreen(
     val colorMapping by viewModel.colorMapping.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val config by viewModel.config.collectAsState()
+    val extruderPresets by viewModel.extruderPresets.collectAsState()
 
     Scaffold(
         topBar = {
@@ -1224,7 +1221,8 @@ fun PreviewScreen(
                         wipeTowerFilamentMm = parsedGcode?.wipeTowerFilamentMm ?: 0f,
                         bedTemp = config.bedTemp,
                         extruderColors = extruderColors.filter { it.isNotBlank() },
-                        colorMapping = colorMapping
+                        colorMapping = colorMapping,
+                        extruderPresets = extruderPresets
                     )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -1687,7 +1685,8 @@ fun SliceCompleteSummaryCard(
     wipeTowerFilamentMm: Float = 0f,
     bedTemp: Int = 0,
     extruderColors: List<String> = emptyList(),
-    colorMapping: List<Int>? = null
+    colorMapping: List<Int>? = null,
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset> = emptyList()
 ) {
     val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
         buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
@@ -1752,8 +1751,9 @@ fun SliceCompleteSummaryCard(
                                 }
                                 Spacer(Modifier.width(6.dp))
                                 Column {
+                                    val materialType = resolveExtruderMaterialType(slot, extruderPresets)
                                     Text(
-                                        "E${slot + 1}",
+                                        if (materialType.isNotEmpty()) "E${slot + 1} · $materialType" else "E${slot + 1}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.White.copy(alpha = 0.7f)
                                     )
@@ -1782,6 +1782,13 @@ fun SliceCompleteSummaryCard(
         }
     }
 }
+
+/**
+ * Return the materialType label for an extruder slot, or empty string if the slot is unknown.
+ * Used by SliceCompleteSummaryCard to show material next to each colour swatch (F65).
+ */
+internal fun resolveExtruderMaterialType(slot: Int, presets: List<com.u1.slicer.data.ExtruderPreset>): String =
+    presets.firstOrNull { it.index == slot }?.materialType ?: ""
 
 /**
  * Build a stable display-slot order for per-extruder filament summaries.

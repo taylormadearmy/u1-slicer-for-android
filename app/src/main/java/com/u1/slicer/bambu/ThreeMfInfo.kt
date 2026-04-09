@@ -32,6 +32,7 @@ data class ThreeMfInfo(
     val isBambu: Boolean,
     val isMultiPlate: Boolean,
     val hasPaintData: Boolean = false,
+    val hasPaintSupports: Boolean = false,
     val hasLayerToolChanges: Boolean = false,
     val hasMultiExtruderAssignments: Boolean = false,
     val detectedColors: List<String> = emptyList(),

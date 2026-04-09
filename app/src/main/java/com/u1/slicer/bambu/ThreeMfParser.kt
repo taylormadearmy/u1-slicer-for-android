@@ -155,6 +155,17 @@ object ThreeMfParser {
                         }
                 }
 
+                // B57: Detect support painting — single-color Bambu files with paint_supports
+                // attributes require the preserve path in ProfileEmbedder so embedded
+                // enable_support and support_threshold_angle are not discarded.
+                val hasPaintSupports = if (skipPaintDetection) false else {
+                    (modelEntry != null && zip.getInputStream(modelEntry).use(::streamDetectPaintSupports)) ||
+                        zip.entries().toList().any { e ->
+                            e.name.endsWith(".model") && e.name != "3D/3dmodel.model" &&
+                                streamDetectPaintSupports(zip.getInputStream(e))
+                        }
+                }
+
                 // Count distinct paint STATES (B44: config files may list fewer colors
                 // than the actual paint states encoded in model triangles).
                 // Each paint spec string encodes a state digit as its first character
@@ -335,6 +346,7 @@ object ThreeMfParser {
                     isBambu = isBambu,
                     isMultiPlate = isMultiPlate,
                     hasPaintData = hasPaintData,
+                    hasPaintSupports = hasPaintSupports,
                     hasLayerToolChanges = hasLayerToolChanges,
                     hasMultiExtruderAssignments = hasMultiExtruderAssignments,
                     detectedColors = detectedColors,
@@ -598,6 +610,35 @@ object ThreeMfParser {
                 if (total > maxNeedleLen) {
                     System.arraycopy(buf, total - maxNeedleLen, buf, 0, maxNeedleLen)
                     carry = maxNeedleLen
+                } else {
+                    carry = total
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * Streaming detection for paint_supports attributes — single-color Bambu 3MF files
+     * that use support painting store paint_supports on triangle elements.
+     * Unlike paint_color/mmu_segmentation, this is NOT caught by streamDetectPaintData.
+     * B57: files with paint_supports need the preserve path in ProfileEmbedder.buildConfig()
+     * so the file's embedded enable_support/support_threshold_angle survive.
+     */
+    private fun streamDetectPaintSupports(input: InputStream): Boolean {
+        val needle = "paint_supports".toByteArray()
+        val bufSize = 8192
+        val buf = ByteArray(bufSize + needle.size)
+        var carry = 0
+        input.use {
+            while (true) {
+                val n = it.read(buf, carry, bufSize)
+                if (n <= 0) break
+                val total = carry + n
+                if (containsBytes(buf, total, needle)) return true
+                if (total > needle.size) {
+                    System.arraycopy(buf, total - needle.size, buf, 0, needle.size)
+                    carry = needle.size
                 } else {
                     carry = total
                 }

@@ -45,6 +45,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -637,6 +644,133 @@ private fun ExtruderSlotRow(
     }
 }
 
+// ── HSV colour conversion helpers (F64) ──────────────────────────────────────────
+
+/**
+ * Convert HSV (h∈[0,360), s∈[0,1], v∈[0,1]) to a #RRGGBB hex string.
+ * Pure math — no android.graphics dependency so it is unit-testable on JVM.
+ */
+internal fun hsvToHex(h: Float, s: Float, v: Float): String {
+    val hi = (h / 60f).toInt() % 6
+    val f = h / 60f - (h / 60f).toInt()
+    val p = v * (1f - s)
+    val q = v * (1f - f * s)
+    val t = v * (1f - (1f - f) * s)
+    val (r, g, b) = when (hi) {
+        0 -> Triple(v, t, p)
+        1 -> Triple(q, v, p)
+        2 -> Triple(p, v, t)
+        3 -> Triple(p, q, v)
+        4 -> Triple(t, p, v)
+        else -> Triple(v, p, q)
+    }
+    return "#%02X%02X%02X".format((r * 255).toInt(), (g * 255).toInt(), (b * 255).toInt())
+}
+
+/**
+ * Parse a #RRGGBB hex string to [hue, saturation, value] (FloatArray of size 3).
+ * Input may optionally omit the leading '#'.
+ */
+internal fun hexToHsv(hex: String): FloatArray {
+    val clean = if (hex.startsWith('#')) hex.substring(1) else hex
+    val packed = clean.toLongOrNull(16) ?: return floatArrayOf(0f, 0f, 1f)
+    val r = ((packed shr 16) and 0xFF) / 255f
+    val g = ((packed shr 8) and 0xFF) / 255f
+    val b = (packed and 0xFF) / 255f
+    val max = maxOf(r, g, b)
+    val min = minOf(r, g, b)
+    val delta = max - min
+    val h = when {
+        delta == 0f -> 0f
+        max == r -> 60f * (((g - b) / delta) % 6f)
+        max == g -> 60f * ((b - r) / delta + 2f)
+        else -> 60f * ((r - g) / delta + 4f)
+    }.let { if (it < 0) it + 360f else it }
+    val s = if (max == 0f) 0f else delta / max
+    return floatArrayOf(h, s, max)
+}
+
+// ── HSV Colour Picker composable (F64) ───────────────────────────────────────────
+
+/**
+ * A compact HSV colour picker consisting of:
+ *  - A hue strip (full-width, 24dp tall)
+ *  - A saturation×value box (full-width, square aspect ratio)
+ *
+ * Both are interactive via tap and drag. [onHsvChange] is called on every gesture event.
+ */
+@Composable
+private fun HsvColorPicker(
+    hue: Float,
+    saturation: Float,
+    value: Float,
+    onHsvChange: (h: Float, s: Float, v: Float) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Hue strip
+        val hueBarHeight = 24.dp
+        val hueColors = listOf(
+            Color.Red, Color(0xFFFFFF00), Color.Green,
+            Color.Cyan, Color.Blue, Color(0xFFFF00FF), Color.Red
+        )
+        Box(modifier = Modifier.fillMaxWidth().height(hueBarHeight)) {
+            Canvas(modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures { offset ->
+                        val h = (offset.x / size.width * 360f).coerceIn(0f, 359.9f)
+                        onHsvChange(h, saturation, value)
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectDragGestures { change, _ ->
+                        val h = (change.position.x / size.width * 360f).coerceIn(0f, 359.9f)
+                        onHsvChange(h, saturation, value)
+                    }
+                }
+            ) {
+                drawRect(brush = Brush.horizontalGradient(hueColors))
+                // Thumb indicator
+                val thumbX = hue / 360f * size.width
+                drawCircle(Color.White, radius = 10f, center = Offset(thumbX, size.height / 2f))
+                drawCircle(Color.Black, radius = 10f, center = Offset(thumbX, size.height / 2f), style = Stroke(2f))
+            }
+        }
+
+        // Saturation × Value box
+        val hueColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, 1f)))
+        Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f)) {
+            Canvas(modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures { offset ->
+                        val s = (offset.x / size.width).coerceIn(0f, 1f)
+                        val v = (1f - offset.y / size.height).coerceIn(0f, 1f)
+                        onHsvChange(hue, s, v)
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectDragGestures { change, _ ->
+                        val s = (change.position.x / size.width).coerceIn(0f, 1f)
+                        val v = (1f - change.position.y / size.height).coerceIn(0f, 1f)
+                        onHsvChange(hue, s, v)
+                    }
+                }
+            ) {
+                // Saturation gradient (white → hue colour) left to right
+                drawRect(brush = Brush.horizontalGradient(listOf(Color.White, hueColor)))
+                // Value gradient (transparent → black) top to bottom
+                drawRect(brush = Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
+                // Thumb indicator
+                val thumbX = saturation * size.width
+                val thumbY = (1f - value) * size.height
+                drawCircle(Color.White, radius = 10f, center = Offset(thumbX, thumbY))
+                drawCircle(Color.Black, radius = 10f, center = Offset(thumbX, thumbY), style = Stroke(2f))
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExtruderSlotEditDialog(
@@ -653,14 +787,36 @@ private fun ExtruderSlotEditDialog(
     var linkedProfileId by remember { mutableStateOf(preset.filamentProfileId) }
     val linkedProfile = filaments.firstOrNull { it.id == linkedProfileId }
 
+    // HSV state derived from initial colour; kept in sync with the hex field
+    val initialHsv = remember { hexToHsv(preset.color) }
+    var hue by remember { mutableFloatStateOf(initialHsv[0]) }
+    var sat by remember { mutableFloatStateOf(initialHsv[1]) }
+    var hsv by remember { mutableFloatStateOf(initialHsv[2]) }  // "value" component
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit ${preset.label}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                HsvColorPicker(
+                    hue = hue,
+                    saturation = sat,
+                    value = hsv,
+                    onHsvChange = { h, s, v ->
+                        hue = h; sat = s; hsv = v
+                        color = hsvToHex(h, s, v)
+                    }
+                )
                 OutlinedTextField(
                     value = color,
-                    onValueChange = { color = it },
+                    onValueChange = { newHex ->
+                        color = newHex
+                        // Sync picker when user types a valid hex
+                        val parsed = hexToHsv(newHex)
+                        if (parsed[1] != 0f || parsed[2] != 0f || newHex.trimStart('#').length == 6) {
+                            hue = parsed[0]; sat = parsed[1]; hsv = parsed[2]
+                        }
+                    },
                     label = { Text("Color (#RRGGBB)") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,

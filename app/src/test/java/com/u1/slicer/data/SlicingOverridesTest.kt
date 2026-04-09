@@ -1,6 +1,7 @@
 package com.u1.slicer.data
 
 import com.u1.slicer.buildProfileOverridesImpl
+import com.u1.slicer.computeTogglePrimeTower
 import com.u1.slicer.ui.formatFileValue
 import org.junit.Assert.*
 import org.junit.Test
@@ -889,5 +890,48 @@ class SlicingOverridesTest {
         val ov = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.OVERRIDE, 20f))
         val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
         assertEquals("20.0", result["prime_tower_width"])
+    }
+
+    // --- computeTogglePrimeTower (B53: Prepare screen prime tower switch) ---
+
+    @Test
+    fun `computeTogglePrimeTower USE_FILE true cfg → OVERRIDE false`() {
+        val current = OverrideValue<Boolean>(OverrideMode.USE_FILE)
+        val result = computeTogglePrimeTower(current, cfgWipeTower = true)
+        assertEquals(OverrideMode.OVERRIDE, result.mode)
+        assertEquals(false, result.value)
+    }
+
+    @Test
+    fun `computeTogglePrimeTower USE_FILE false cfg → OVERRIDE true`() {
+        val current = OverrideValue<Boolean>(OverrideMode.USE_FILE)
+        val result = computeTogglePrimeTower(current, cfgWipeTower = false)
+        assertEquals(OverrideMode.OVERRIDE, result.mode)
+        assertEquals(true, result.value)
+    }
+
+    @Test
+    fun `computeTogglePrimeTower OVERRIDE true → OVERRIDE false`() {
+        val current = OverrideValue(OverrideMode.OVERRIDE, true)
+        val result = computeTogglePrimeTower(current, cfgWipeTower = false)
+        assertEquals(OverrideMode.OVERRIDE, result.mode)
+        assertEquals(false, result.value)
+    }
+
+    @Test
+    fun `computeTogglePrimeTower OVERRIDE false → OVERRIDE true`() {
+        val current = OverrideValue(OverrideMode.OVERRIDE, false)
+        val result = computeTogglePrimeTower(current, cfgWipeTower = true)
+        assertEquals(OverrideMode.OVERRIDE, result.mode)
+        assertEquals(true, result.value)
+    }
+
+    @Test
+    fun `buildProfileOverrides enable_prime_tower 0 when OVERRIDE false multi-extruder`() {
+        // After fix, toggling off sets OVERRIDE false — resolvePrimeTower guard is bypassed
+        val cfg = SliceConfig(wipeTowerEnabled = true)
+        val ov = SlicingOverrides(primeTower = OverrideValue(OverrideMode.OVERRIDE, false))
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        assertEquals("enable_prime_tower must be 0 for explicit OVERRIDE false", "0", result["enable_prime_tower"])
     }
 }

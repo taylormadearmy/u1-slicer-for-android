@@ -28,6 +28,32 @@ class ThreeMfParserTest {
         assertFalse(info.hasLayerToolChanges)
         assertEquals(0, info.detectedColors.size)
         assertEquals(1, info.detectedExtruderCount)
+        assertFalse(info.hasPaintSupports)
+    }
+
+    @Test
+    fun `ThreeMfInfo hasPaintSupports defaults to false`() {
+        val info = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false
+        )
+        assertFalse(info.hasPaintSupports)
+    }
+
+    @Test
+    fun `ThreeMfInfo hasPaintSupports=true is preserved`() {
+        val info = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            hasPaintSupports = true
+        )
+        assertTrue(info.hasPaintSupports)
+        // copy() also preserves it
+        assertTrue(info.copy().hasPaintSupports)
     }
 
     @Test

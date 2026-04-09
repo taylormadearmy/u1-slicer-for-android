@@ -1427,6 +1427,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * Toggle the prime tower on/off from the Prepare screen switch.
+     *
+     * B53: Previously only updated SliceConfig.wipeTowerEnabled, leaving primeTower in USE_FILE
+     * mode. For multi-extruder models the resolvePrimeTower guard forced the tower back on.
+     * Fix: always set OVERRIDE mode so the explicit user choice is honoured.
+     */
+    fun togglePrimeTower() {
+        val cfg = _config.value
+        val newOverride = computeTogglePrimeTower(slicingOverrides.value.primeTower, cfg.wipeTowerEnabled)
+        _config.value = cfg.copy(wipeTowerEnabled = newOverride.value ?: cfg.wipeTowerEnabled)
+        saveSlicingOverrides(slicingOverrides.value.copy(primeTower = newOverride))
+    }
+
+    /**
      * Build Snapmaker profile config and embed it into the 3MF file.
      * Replaces BambuSanitizer.process() for the OrcaSlicer backend.
      */
@@ -3292,6 +3306,24 @@ internal fun buildProfileOverridesImpl(
     }
 
     return result
+}
+
+/**
+ * Compute the new prime tower override when the user taps the Prepare screen switch.
+ *
+ * B53: The Prepare screen switch previously only updated SliceConfig.wipeTowerEnabled, leaving
+ * SlicingOverrides.primeTower in USE_FILE mode. For multi-extruder models, resolvePrimeTower()
+ * has a guard that forces true when mode != OVERRIDE, so the toggle was silently ignored.
+ *
+ * Fix: always set OVERRIDE mode so the guard is bypassed. The new value is the inverse of
+ * the current effective state (override value if present, else cfgWipeTower).
+ */
+internal fun computeTogglePrimeTower(
+    current: com.u1.slicer.data.OverrideValue<Boolean>,
+    cfgWipeTower: Boolean
+): com.u1.slicer.data.OverrideValue<Boolean> {
+    val effective = current.value ?: cfgWipeTower
+    return com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, !effective)
 }
 
 /**

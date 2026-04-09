@@ -201,7 +201,8 @@ class ProfileEmbedder(private val context: Context) {
             info.detectedExtruderCount > 1 ||
             info.hasLayerToolChanges ||
             (info.hasPaintData && targetExtruderCount > 1) ||
-            info.isMultiPlate
+            info.isMultiPlate ||
+            info.hasPaintSupports  // B57: single-color with support painting needs embedded config preserved
         )
 
         if (needsPreserve && sourceConfig != null) {
