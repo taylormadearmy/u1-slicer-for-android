@@ -124,7 +124,78 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ---- Printer (top) ----
+            val context = LocalContext.current
+            SettingsSection("About") {
+                // Version row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Version", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "v${BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+
+                // GitHub row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_URL))
+                            )
+                        },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("GitHub", style = MaterialTheme.typography.bodyMedium)
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Open GitHub",
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+
+                // Buy Me a Coffee card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(BMAC_URL))
+                            )
+                        },
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFDD00)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("\u2615", fontSize = 22.sp)
+                        Column {
+                            Text(
+                                "Buy Me a Coffee",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = Color.Black
+                            )
+                            Text(
+                                "buymeacoffee.com/taylormadearmy",
+                                fontSize = 10.sp,
+                                color = Color(0xFF555555)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ---- Printer ----
             SettingsSection("Printer") {
                 InfoRow("Model", "Snapmaker U1")
                 InfoRow("Build Volume", "270 x 270 x 270 mm")
@@ -228,7 +299,6 @@ fun SettingsScreen(
             }
 
             // ---- MakerWorld Cookies ----
-            val context = LocalContext.current
             val cookiesEnabled by viewModel.makerWorldCookiesEnabled.collectAsState()
             val makerWorldCookies by viewModel.makerWorldCookies.collectAsState()
             var cookieInput by remember { mutableStateOf("") }
@@ -554,75 +624,6 @@ fun SettingsScreen(
             }
 
             // ---- About ----
-            SettingsSection("About") {
-                // Version row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Version", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "v${BuildConfig.VERSION_NAME}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                }
-
-                // GitHub row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_URL))
-                            )
-                        },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("GitHub", style = MaterialTheme.typography.bodyMedium)
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Open GitHub",
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                }
-
-                // Buy Me a Coffee card
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(BMAC_URL))
-                            )
-                        },
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFDD00)),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text("\u2615", fontSize = 22.sp)
-                        Column {
-                            Text(
-                                "Buy Me a Coffee",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = Color.Black
-                            )
-                            Text(
-                                "buymeacoffee.com/taylormadearmy",
-                                fontSize = 10.sp,
-                                color = Color(0xFF555555)
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }
