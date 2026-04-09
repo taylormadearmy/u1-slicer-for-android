@@ -834,4 +834,36 @@ class MergeThreeMfInfoTest {
         val colorMapping = listOf(0, 0, 1, 1, 3)
         assertEquals(3, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 3))
     }
+
+    @Test
+    fun `mergeThreeMfInfo preserves hasPaintSupports from origInfo`() {
+        val origInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = true, isMultiPlate = false,
+            hasPaintSupports = true
+        )
+        val processedInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            hasPaintSupports = false  // parsed with skipPaintDetection=true
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+        assertTrue("mergeThreeMfInfo must carry hasPaintSupports from origInfo", merged.hasPaintSupports)
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate preserves hasPaintSupports from sourceInfo`() {
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = true, isMultiPlate = true,
+            hasPaintSupports = true
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            hasPaintSupports = false  // lightweight parse always false
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo)
+        assertTrue("mergeThreeMfInfoForPlate must carry hasPaintSupports from sourceInfo", merged.hasPaintSupports)
+    }
 }
