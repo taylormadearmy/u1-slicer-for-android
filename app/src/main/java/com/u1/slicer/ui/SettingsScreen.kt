@@ -40,7 +40,9 @@ import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.u1.slicer.BMAC_URL
 import com.u1.slicer.BuildConfig
+import com.u1.slicer.GITHUB_URL
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
@@ -550,6 +552,83 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
+            }
+
+            // ---- About ----
+            SettingsSection("About") {
+                // Version row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Version", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        BuildConfig.VERSION_NAME,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+
+                // GitHub row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(GITHUB_URL)
+                                )
+                            )
+                        },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("GitHub", style = MaterialTheme.typography.bodyMedium)
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Open GitHub",
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                }
+
+                // Buy Me a Coffee card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(BMAC_URL)
+                                )
+                            )
+                        },
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFDD00)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("\u2615", fontSize = 22.sp)
+                        Column {
+                            Text(
+                                "Buy Me a Coffee",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = Color.Black
+                            )
+                            Text(
+                                "buymeacoffee.com/taylormadearmy",
+                                fontSize = 10.sp,
+                                color = Color(0xFF555555)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
