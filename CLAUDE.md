@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.5.43` (`versionCode 209`)
+Current release: `v1.5.44` (`versionCode 210`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 720 JVM unit tests
+./gradlew testDebugUnitTest                        # 724 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 161 instrumented tests (uses Orchestrator)
 ```
 
@@ -59,7 +59,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.
 
-### Unit tests (`app/src/test/`) - 720 tests across 48 classes
+### Unit tests (`app/src/test/`) - 724 tests across 49 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -86,11 +86,11 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `model/CopyArrangeCalculatorTest.kt` (21) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
-- `MergeThreeMfInfoTest.kt` (39) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates)
+- `MergeThreeMfInfoTest.kt` (41) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates), B60 hasPaintSupports preservation
 - `printer/PrinterRepositoryTest.kt` (2) — upload filename sanitization and unique suffix generation
 - `printer/PrinterRepositoryNotificationTest.kt` (9) — printer state transition detection for all event types
 - `AppEventNotifierTest.kt` (13) — notification title/body/channel/navigate-target for all event types
-- `PreviewSummaryMappingTest.kt` (6) — preview summary data class mapping, F65 resolveExtruderMaterialType by slot
+- `PreviewSummaryMappingTest.kt` (7) — preview summary data class mapping, F65 resolveExtruderMaterialType by slot, F68 single-colour material label
 - `PreviewColorNormalizationTest.kt` (7) — preview colour normalization
 - `PreparePreviewPlacementTest.kt` (5) — native 3MF wipe tower visibility, object-placement rules, and large-preview fallback state retention
 - `viewer/NativePreviewMeshTest.kt` (4) — preview budget guardrails, MAX_DECIMATED_TRIANGLES constant, F48 subsampled mesh vertex count
@@ -104,11 +104,12 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `LargeModelLoadingMessageTest.kt` (5) — large model loading state messages
 - `SliceResultFromJobTest.kt` (2) — SliceResult construction from SliceJob
 - `printer/PrintProgressNotifierTest.kt` (3) — print progress notification logic
-- `PreparePreviewCacheTest.kt` (7) — B49 Prepare preview cache state machine: fresh load, tab switch cache hit, GL upload after cache hit, repeated effect dedup, parse effect cache guard
+- `PreparePreviewCacheTest.kt` (10) — B49 Prepare preview cache state machine: fresh load, tab switch cache hit, GL upload after cache hit, repeated effect dedup, parse effect cache guard, B59b togglePrimeTower cache invalidation contract
 - `SingleColorExtruderConfigTest.kt` (6) — B56 single-color extruder selection filamentType propagation: E1-E4 material types, round-trip, missing preset fallback
 - `FilamentTypeLabelTest.kt` (12) — B59 resolveFilamentTypeLabel: single-slot, all-same-material, mixed materials, edge cases (unknown slot, empty inputs)
 - `FilamentTypeWiringTest.kt` (11) — B59 wiring: resolveFilamentTypeForSingleColorLoad, resolveFilamentTypeLabelFromMapping for multi-color and layer-tool paths
 - `ui/HsvColorPickerTest.kt` (9) — F64 HSV↔hex color conversion round-trips: hsvToHex, hexToHsv, red/green/blue/white/black, inverse property
+- `SliceStalenessTest.kt` (3) — F67 _sliceStale StateFlow contract: initial false, config mutation sets true, startSlicing resets false
 
 ### Instrumented tests (`app/src/androidTest/`) - 161 tests across 16 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
