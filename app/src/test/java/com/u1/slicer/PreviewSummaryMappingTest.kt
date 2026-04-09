@@ -53,4 +53,19 @@ class PreviewSummaryMappingTest {
     fun `resolveExtruderMaterialType returns empty for empty presets`() {
         assertEquals("", resolveExtruderMaterialType(0, emptyList()))
     }
+
+    // --- F68: single-colour slice must show material type label ---
+
+    @Test
+    fun `single colour slice shows material type label`() {
+        // Single-extruder summary: perExtruderFilamentMm has exactly 1 entry.
+        // The guard condition `size > 1` was suppressing this path — it must be `isNotEmpty()`.
+        val slots = buildPerExtruderDisplaySlots(
+            count = 1,
+            colorMapping = null
+        )
+        assertEquals("single-colour must produce one display slot", 1, slots.size)
+        val materialType = resolveExtruderMaterialType(slots[0], testPresets)
+        assertEquals("single-colour slot 0 must resolve to PLA", "PLA", materialType)
+    }
 }

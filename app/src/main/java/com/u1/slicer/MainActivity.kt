@@ -1715,7 +1715,7 @@ fun SliceCompleteSummaryCard(
             if (bedTemp > 0) {
                 InfoRow("Bed Temp", "${bedTemp}\u00B0C")
             }
-            if (perExtruderFilamentMm.size > 1) {
+            if (perExtruderFilamentMm.isNotEmpty()) {
                 HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
                 Text(
                     "Per Extruder",
