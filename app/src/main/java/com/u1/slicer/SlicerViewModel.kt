@@ -2923,7 +2923,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // compound-object parts into concrete mesh object IDs, which is exactly what
             // the preview parser needs for per-part coloring (for example calicube).
             objectExtruderMap = processedInfo.objectExtruderMap.ifEmpty { origInfo.objectExtruderMap },
-            layerToolSegments = origInfo.layerToolSegments
+            layerToolSegments = origInfo.layerToolSegments,
+            hasPaintSupports = origInfo.hasPaintSupports
         )
 
         /**
@@ -3090,7 +3091,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     else if (isHueforgePlate) false
                     else sourceInfo.hasMultiExtruderAssignments,
                 objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap },
-                layerToolSegments = sourceInfo.layerToolSegments
+                layerToolSegments = sourceInfo.layerToolSegments,
+                hasPaintSupports = sourceInfo.hasPaintSupports
             )
         }
 
