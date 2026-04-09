@@ -4,6 +4,16 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B60: B57 regression — painted supports still not generated (citystep, GitHub #63)
+- v1.5.43 added `hasPaintSupports` detection and `needsPreserve` trigger, but supports still absent after slicing `citystep_A1_274_102.3mf`
+- Manual support enable in overrides also does not produce supports on painted areas
+- **Investigate**: verify `streamDetectPaintSupports()` actually finds the attribute in citystep's structure; verify `enable_support` from embedded config survives the native profile pipeline; check if painted support regions require a separate `support_threshold_angle` pass
+
+### B59b: Prime tower Prepare preview not updated on toggle (GitHub #64)
+- `togglePrimeTower()` correctly updates config + slicing overrides, but the native Prepare preview mesh is not invalidated/refreshed
+- Wipe tower rectangle remains visible in Prepare 3D view until user switches tabs and returns
+- **Fix**: invalidate preview mesh cache + trigger preview rerender when `wipeTowerEnabled` changes
+
 ### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60)
 - For `colored_3DBenchy (1).3mf` (4-colour SEMM), the Prepare preview, G-code preview, and desktop OrcaSlicer all show different colours
 - **Prepare screen**: Only 2 colour chips shown; model renders mostly white/gray — 2 of 4 paint zones missing
@@ -218,6 +228,16 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Fix: after G-code is uploaded to GPU, compute the bounding box of all move positions and set `camera.distance` and `camera.target` to frame the content
 - Same issue applies when opening via "View G-code" from Jobs tab (F60)
 - Confirmed by E2E screenshot: tetrahedron visible only as a 2px speck at default zoom after v1.5.32 tube width fix
+
+### F68: F65 single-colour mode missed — material type label absent (GitHub #65)
+- F65 (v1.5.43) shows material label on Preview extruder swatches for multi-colour models
+- Single-colour mode was not wired up — no label shown for single-extruder prints
+- Fix: thread `resolveExtruderMaterialType` through the single-colour swatch path in `SliceCompleteSummaryCard`
+
+### F67: Preview page shows stale bed temperature from last slice (GitHub #66)
+- After slicing at 65°C, changing bed temp to 100°C in settings, Preview still shows 65°C until re-sliced
+- User expectation: Preview bed temp should reflect current material/settings value (or clearly indicate it's the sliced value vs current setting)
+- User suggestion: "bed temperature should somehow be moved into the material" — consider making the Preview summary's bed temp row show the live config value and flagging when it differs from the last sliced value
 
 ### F66: Split to objects and auto-rotate for placement (GitHub #56)
 - 3MF files exported from generators (e.g. Skadis shelf generator on MakerWorld) output assembled scenes with parts in place — slicing as-is requires heavy supports; user needs to split the assembly into individual objects and auto-orient each for optimal bed placement
