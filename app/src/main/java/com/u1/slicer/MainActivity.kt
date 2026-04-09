@@ -693,7 +693,7 @@ fun PrepareScreen(
     val config by viewModel.config.collectAsState()
     val slicingOverrides by viewModel.slicingOverrides.collectAsState()
     val plateType by viewModel.plateType.collectAsState()
-    val coreVersion by viewModel.coreVersion.collectAsState()
+    val context = LocalContext.current
     val modelInfo by viewModel.modelInfo.collectAsState()
     val showPlateSelector by viewModel.showPlateSelector.collectAsState()
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
@@ -740,9 +740,17 @@ fun PrepareScreen(
                     Column {
                         Text("U1 Slicer", fontWeight = FontWeight.Bold)
                         Text(
-                            coreVersion,
+                            "☕ Support development",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(BMAC_URL)
+                                    )
+                                )
+                            }
                         )
                     }
                 },
@@ -1116,7 +1124,7 @@ fun PreviewScreen(
     onResetPreviewCamera: (() -> Unit)? = null
 ) {
     val state by viewModel.state.collectAsState()
-    val coreVersion by viewModel.coreVersion.collectAsState()
+    val context = LocalContext.current
     val parsedGcode by viewModel.parsedGcode.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
@@ -1132,9 +1140,17 @@ fun PreviewScreen(
                     Column {
                         Text("U1 Slicer", fontWeight = FontWeight.Bold)
                         Text(
-                            coreVersion,
+                            "☕ Support development",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(BMAC_URL)
+                                    )
+                                )
+                            }
                         )
                     }
                 },
