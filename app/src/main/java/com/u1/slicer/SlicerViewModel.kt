@@ -42,6 +42,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -376,6 +377,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             extruderPresets.collect { presets ->
                 refreshMappedPreviewColors(presets)
+            }
+        }
+
+        // Mark slice stale when extruder presets change from the Printer tab
+        // (those writes go through settingsRepo directly, bypassing updateConfig()).
+        viewModelScope.launch {
+            extruderPresets.drop(1).collect {
+                _sliceStale.value = true
             }
         }
 
