@@ -150,6 +150,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _state = MutableStateFlow<SlicerState>(SlicerState.Idle)
     val state: StateFlow<SlicerState> = _state.asStateFlow()
 
+    private val _sliceStale = MutableStateFlow(false)
+    val sliceStale: StateFlow<Boolean> = _sliceStale.asStateFlow()
+
     private val _config = MutableStateFlow(SliceConfig())
     val config: StateFlow<SliceConfig> = _config.asStateFlow()
 
@@ -1349,12 +1352,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _modelScale.value = scale
         customObjectPositions = null // reset positions — re-center for new scaled size
         invalidatePrepareMeshCache() // B49: force fresh native fetch for new geometry
+        _sliceStale.value = true
     }
 
     fun setModelRotation(rotation: ModelRotation) {
         _modelRotation.value = rotation
         customObjectPositions = null // reset positions — re-center for rotated footprint
         invalidatePrepareMeshCache() // B49: force fresh native fetch for rotated geometry
+        _sliceStale.value = true
     }
 
     fun setCopyCount(count: Int) {
@@ -1364,6 +1369,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         else 16
         _copyCount.value = count.coerceIn(1, max)
         customObjectPositions = null // reset custom positions when count changes
+        _sliceStale.value = true
     }
 
     /** Called from inline 3D placement viewer when user drags objects. */
@@ -1389,6 +1395,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateConfig(updater: (SliceConfig) -> SliceConfig) {
         _config.value = updater(_config.value)
+        _sliceStale.value = true
     }
 
     fun saveConfig() {
@@ -1405,6 +1412,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun setPlateType(type: PlateType) {
         val newBedTemp = type.bedTempFor(_config.value.filamentType)
         _config.value = _config.value.copy(bedTemp = newBedTemp)
+        _sliceStale.value = true
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.savePlateType(type)
             settingsRepo.saveSliceConfig(_config.value)
@@ -1414,6 +1422,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     /** Direct bed temp edit — user overrides the plate type preset. */
     fun setBedTemp(temp: Int) {
         _config.value = _config.value.copy(bedTemp = temp)
+        _sliceStale.value = true
         viewModelScope.launch(Dispatchers.IO) {
             settingsRepo.saveSliceConfig(_config.value)
         }
@@ -1439,6 +1448,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _config.value = cfg.copy(wipeTowerEnabled = newOverride.value ?: cfg.wipeTowerEnabled)
         saveSlicingOverrides(slicingOverrides.value.copy(primeTower = newOverride))
         invalidatePrepareMeshCache()
+        _sliceStale.value = true
     }
 
     /**
@@ -1786,6 +1796,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Consume the bitmap atomically before launching so it is cleared even if slicing
         // fails early or throws — avoids leaking a full-resolution screen-capture Bitmap.
         val capturedBitmap = pendingThumbnailBitmap.also { pendingThumbnailBitmap = null }
+        _sliceStale.value = false
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
             try {
@@ -2718,6 +2729,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         invalidatePrepareMeshCache()
+        _sliceStale.value = false
         rawInputFile = null
         recoveryOrigInfo = null
         recoveryPlateId = -1

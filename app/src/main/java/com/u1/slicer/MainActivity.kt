@@ -1123,6 +1123,7 @@ fun PreviewScreen(
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val config by viewModel.config.collectAsState()
     val extruderPresets by viewModel.extruderPresets.collectAsState()
+    val sliceStale by viewModel.sliceStale.collectAsState()
 
     Scaffold(
         topBar = {
@@ -1258,6 +1259,17 @@ fun PreviewScreen(
                     onSendToPrinter = { onSendToPrinter(result.gcodePath) },
                     onUploadOnly = { onUploadOnly(result.gcodePath) }
                 )
+                if (sliceStale) {
+                    StaleSliceBanner(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        onSliceAgain = {
+                            viewModel.startSlicing()
+                            onNavigatePreview()
+                        }
+                    )
+                }
             }
         }
     }
@@ -3248,6 +3260,32 @@ private fun ViewerLoadingOverlay(label: String) {
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+    }
+}
+
+// =============================================================================
+// Stale Slice Banner — shown when settings changed since last slice
+// =============================================================================
+@Composable
+fun StaleSliceBanner(onSliceAgain: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            "Settings changed \u2014 slice again",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(onClick = onSliceAgain) {
+            Text("Slice", color = MaterialTheme.colorScheme.primary)
         }
     }
 }
