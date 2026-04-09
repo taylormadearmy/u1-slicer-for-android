@@ -2243,7 +2243,7 @@ fun InlineModelPreview(
     }
 
     // Update renderer with placement data
-    LaunchedEffect(viewerView, placementEnabled, objPositions, towerX, towerY) {
+    LaunchedEffect(viewerView, placementEnabled, objPositions, towerX, towerY, placementConfig.wipeTowerVisible) {
         val v = viewerView ?: return@LaunchedEffect
         if (placementEnabled) {
             v.placementMode = true
@@ -2257,6 +2257,8 @@ fun InlineModelPreview(
                 v.renderer.wipeTower = com.u1.slicer.viewer.ModelRenderer.WipeTowerInfo(
                     towerX, towerY, wipeTowerWidth, wipeTowerDepth
                 )
+            } else {
+                v.renderer.wipeTower = null
             }
             v.onObjectMoved = { index, dx, dy ->
                 val count = objPositions.size / 2

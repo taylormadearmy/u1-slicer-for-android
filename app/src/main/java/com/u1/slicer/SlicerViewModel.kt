@@ -1438,6 +1438,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val newOverride = computeTogglePrimeTower(slicingOverrides.value.primeTower, cfg.wipeTowerEnabled)
         _config.value = cfg.copy(wipeTowerEnabled = newOverride.value ?: cfg.wipeTowerEnabled)
         saveSlicingOverrides(slicingOverrides.value.copy(primeTower = newOverride))
+        invalidatePrepareMeshCache()
     }
 
     /**
