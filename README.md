@@ -69,7 +69,7 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 
 ```bash
 ./gradlew testDebugUnitTest              # 725 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 161 instrumented tests (ARM64 device required)
+./gradlew connectedDebugAndroidTest      # 162 instrumented tests (ARM64 device required)
 ```
 
 **802 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, and more.

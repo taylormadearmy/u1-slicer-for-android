@@ -55,14 +55,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - `cachedPrepareMesh` on ViewModel + native `g_preview_mesh_valid` cache provide instant reload on tab switch
 - Confirmed fixed on device v1.5.39
 
-### B47: S-Buttons multi-colour 3MF intermittently loses a colour on first load (GitHub #54)
-- Button-for-S-trousers.3mf (4-colour non-painted 3MF) sometimes shows only 3 colours on the Prepare preview after loading
-- Color 4 is missing initially, but loading the file a second time (or switching tabs and returning) shows all 4 colours correctly
-- Likely a race condition where `colorMapping` is not yet populated when the main LaunchedEffect fires
-- The LaunchedEffect keys on `colorMapping?.size` which should re-fire when mapping arrives, but timing between `ThreeMfInfo` parsing, `colorMapping` StateFlow emission, and the composable recomposition may allow a window where the preview renders with an incomplete mapping
-- Intermittent — unable to reproduce reliably after initial observation
-- Not related to B46 painted model fix (this affects non-painted multi-colour 3MF)
-
 ### ~~B45: Prepare preview for painted/SEMM 3MF models looks broken — wireframe/sparse rendering (GitHub #49)~~ FIXED v1.5.38
 - B46 switched painted models to native `getPreparePreviewMesh()` path with stride=1 (no decimation), producing solid previews
 - E2E confirms solid rendering for colored_3DBenchy, H2C benchy, old.3mf, Korok mask
@@ -238,6 +230,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **B47**: S-Buttons multi-colour 3MF intermittently loses a colour on first load — race condition where `_colorMapping` was emitted after `_state = ModelLoaded` in `loadNativeModel`; moved entire multi-color setup block before the ModelLoaded emission so the UI always sees a consistent snapshot — FIXED v1.5.46.
 - **B60**: B57 regression — `hasPaintSupports` dropped by both `mergeThreeMfInfo()` and `mergeThreeMfInfoForPlate()`, causing supports to be disabled for citystep. Fixed by forwarding `origInfo.hasPaintSupports` / `sourceInfo.hasPaintSupports` in both merge functions — FIXED v1.5.44.
 - **B59b**: Prime tower Prepare preview stale after toggle — `togglePrimeTower()` didn't call `invalidatePrepareMeshCache()`; `LaunchedEffect` was missing `wipeTowerVisible` key and had no `else` branch to clear the rect — FIXED v1.5.44.
 - **F68**: Single-colour mode missed by F65 material label — `perExtruderFilamentMm.size > 1` guard in `SliceCompleteSummaryCard` excluded single-extruder prints; changed to `isNotEmpty()` — DONE v1.5.44.

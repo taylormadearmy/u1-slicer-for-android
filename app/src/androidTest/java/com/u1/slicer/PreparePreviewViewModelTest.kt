@@ -2,6 +2,12 @@ package com.u1.slicer
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -213,6 +219,73 @@ class PreparePreviewViewModelTest {
                 gValues.size >= 2
             )
         } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
+     * B47: colorMapping must be set to non-null BEFORE state transitions to ModelLoaded for a
+     * multi-colour 3MF. Previously, _colorMapping was emitted after _state = ModelLoaded in
+     * loadNativeModel, creating a window where the combined LaunchedEffect could fire with
+     * mesh=non-null but colorMapping=null, causing one colour to be missing on first load.
+     *
+     * Uses Dispatchers.Unconfined so StateFlow collect callbacks run inline on the emitting
+     * thread — this faithfully captures the true emission sequence rather than a scheduler-
+     * dependent snapshot.
+     */
+    @Test
+    fun multiColorFile_colorMapping_isSetBeforeStateBecomesModelLoaded() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("calib-cube-10-dual-colour-merged.3mf")
+
+        val events = Channel<Pair<String, Any?>>(Channel.UNLIMITED)
+        val scope = CoroutineScope(Dispatchers.Unconfined)
+        val stateJob = viewModel.state
+            .onEach { events.trySend("state" to it) }
+            .launchIn(scope)
+        val mappingJob = viewModel.colorMapping
+            .onEach { events.trySend("mapping" to it) }
+            .launchIn(scope)
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("model loaded with non-null colorMapping") {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+
+            stateJob.cancel()
+            mappingJob.cancel()
+
+            val recorded = mutableListOf<Pair<String, Any?>>()
+            while (true) {
+                recorded.add(events.tryReceive().getOrNull() ?: break)
+            }
+
+            val firstModelLoadedIdx = recorded.indexOfFirst { (key, value) ->
+                key == "state" && value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            assertTrue("Expected to see a ModelLoaded event", firstModelLoadedIdx >= 0)
+
+            val colorMappingNonNullBeforeModelLoaded = recorded
+                .take(firstModelLoadedIdx)
+                .any { (key, value) -> key == "mapping" && value != null }
+
+            val eventSummary = recorded.joinToString {
+                "${it.first}=${it.second?.let { v ->
+                    if (v is List<*>) "List(${v.size})" else v::class.simpleName
+                } ?: "null"}"
+            }
+            assertTrue(
+                "B47: colorMapping must be non-null before state becomes ModelLoaded. Events: $eventSummary",
+                colorMappingNonNullBeforeModelLoaded
+            )
+        } finally {
+            stateJob.cancel()
+            mappingJob.cancel()
             viewModel.clearModel()
             modelFile.delete()
         }

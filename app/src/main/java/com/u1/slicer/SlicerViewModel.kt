@@ -1080,8 +1080,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _state.value = SlicerState.Loading("Large model — preview may take a moment…")
                     kotlinx.coroutines.delay(0)
                 }
-                _state.value = SlicerState.ModelLoaded(info)
 
+                // B47: set colorMapping and all multi-color config BEFORE emitting ModelLoaded
+                // so the UI sees a consistent snapshot — no race where state=ModelLoaded but
+                // colorMapping=null causes InlineModelPreview to recolor with a single-slot palette.
                 // Check for multi-color from 3MF parsing
                 val mfInfo = _threeMfInfo.value
                 if (mfInfo != null && mfInfo.detectedExtruderCount > 1) {
@@ -1172,6 +1174,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     saveConfig()
                     Log.i("SlicerVM", "Single-color model: set preview colors from slots ${colors}")
                 }
+                _state.value = SlicerState.ModelLoaded(info)
             } else {
                 _state.value = SlicerState.Error("Failed to read model info")
             }
