@@ -12,10 +12,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Affects**: All SEMM painted models (`hasPaintData=true`)
 - **When fixed**: restore CP TOOLCHANGE~27 assertion in the `colored_3DBenchy (1).3mf` E2E check (skill file + memory `e2e-testing.md`) — it was suppressed due to this bug
 
-### B57: Single-color Bambu 3MF with embedded support config ignored — no supports, or wrong supports (GitHub #59) — FIXED
-- **Fix**: Added `hasPaintSupports: Boolean = false` to `ThreeMfInfo`; added `streamDetectPaintSupports()` to `ThreeMfParser` (detects `paint_supports` attribute in model files); extended `needsPreserve` in `ProfileEmbedder.buildConfig()` to trigger when `info.hasPaintSupports`, ensuring single-color Bambu files with support painting use `sourceConfig` as the profile base (so `enable_support=1` and `support_threshold_angle` from the file survive).
-- **Tests**: 3 new unit tests in `ThreeMfParserTest.kt` — hasPaintSupports field default, construction, and copy preservation
-
 ### B54: Modifier volumes rendered as solid geometry in Prepare preview (GitHub #55) — FIXED
 - **Root cause**: `BambuSanitizer.buildOrcaModelConfig()` hardcoded `subtype="normal_part"` for all `<part>` entries, overwriting `"modifier_part"` from the original 3MF. Also `needsModelConfig` only checked `extruder > 1`, so single-colour files with modifiers got no config at all. OrcaSlicer's BBS loader then defaulted all volumes to `MODEL_PART`, making the modifier cube appear as solid geometry.
 - **Fix**: Added `subtype` field to `PartInfo` data class; parse `subtype` attribute from `<part>` elements in `parseModelSettingsExtruders`; preserve through `buildOrcaModelConfig`; expand `needsModelConfig` to trigger when any part has non-normal subtype; attach compound component IDs for modifier files. Also preserves subtype during `restructureForMultiColor` inlining, setting `type="other"` in the 3D model XML for non-model-part volumes.
@@ -26,11 +22,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Loading a new model or tapping X while a large model's preview QEM decimation is running (F1 calendar, 8M tris, 30+ seconds) causes SIGSEGV — `clearModel()` frees native memory while `getPreparePreviewMesh` is still iterating
 - **Mitigation (v1.5.41-dev)**: All `clearModel()` / `loadModel()` calls now acquire `previewMutex`, preventing the crash but causing a 30s stall while QEM finishes
 - **Ideal fix**: Add a native cancellation flag (`std::atomic<bool>`) to the QEM loop, expose `cancelPreviewMesh()` via JNI, call it from `clearModel()` before acquiring the mutex so QEM bails out quickly
-
-### B53: Prime tower switch on Prepare screen does not disable prime tower (GitHub #45)
-- Toggling the prime tower switch off on the Prepare screen does not actually disable the prime tower in the sliced output
-- The `enable_prime_tower` override may not be threaded through `buildProfileOverrides()` correctly, or the native side ignores it
-- Needs investigation: check if the override reaches `applyConfigToPrusa()` and whether the slicer respects it
 
 ### B52: Crash at end of slicing citystep_A1_274_102.3mf (GitHub #51) — FIXED
 - **Root cause**: Two OOM sources in post-slice G-code processing for very large files (115 MB, 3.7M moves):
@@ -228,20 +219,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Same issue applies when opening via "View G-code" from Jobs tab (F60)
 - Confirmed by E2E screenshot: tetrahedron visible only as a 2px speck at default zoom after v1.5.32 tube width fix
 
-### F65: Show filament type next to colours on G-code Preview page (GitHub #62)
-- Per-extruder colour swatches on the Preview page don't show the material type (PLA, PETG, etc.)
-- Add material label next to each swatch so user can confirm what's being printed before uploading
-- Single-colour: `● PLA`; multi-colour: per-extruder row `E1 ● PETG  E2 ● PLA`
-
 ### F66: Split to objects and auto-rotate for placement (GitHub #56)
 - 3MF files exported from generators (e.g. Skadis shelf generator on MakerWorld) output assembled scenes with parts in place — slicing as-is requires heavy supports; user needs to split the assembly into individual objects and auto-orient each for optimal bed placement
 - Split: decompose multi-body 3MF into separate placeable objects
 - Auto-rotate: orient each object to minimise support requirement (largest flat face down, or similar heuristic)
-
-### F64: Colour picker for extruder colour chooser (GitHub #52)
-- Add a visual colour picker (wheel/grid/palette) to the Printer screen extruder colour chooser
-- Currently only hex code entry or import-from-printer — no visual picker
-- Hex input should remain as fallback
 
 ### F63: MMU preview triangle cap + long-term QEM colour preservation (GitHub #50)
 - H2C benchy produces 2M triangles from `get_facets()` MMU splitting → 226MB VBO
@@ -257,6 +238,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **F64**: HSV colour picker (hue strip + saturation/value box) added to extruder colour edit dialog on Printer screen — DONE v1.5.43.
+- **F65**: Material type label (PLA, PETG, etc.) shown next to each extruder swatch on G-code Preview page — DONE v1.5.43.
+- **B53**: Prime tower toggle correctly bypasses multi-extruder guard via `computeTogglePrimeTower()` using OVERRIDE mode — FIXED v1.5.43.
+- **B57**: Single-color Bambu 3MF with support painting uses embedded config (hasPaintSupports triggers needsPreserve in ProfileEmbedder) — FIXED v1.5.43.
 - **B59**: Multi-color model Filament label always shows PLA regardless of extruder materials — FIXED v1.5.42. `resolveFilamentTypeLabel(usedSlots, presets)` helper wired into all three paths (single-color initial load, `applyMultiColorAssignments`, layer-tool branch); returns "Mixed" when active extruders have different materials.
 - **B56**: Selecting non-E1 extruder doesn't update filament type for display or slicing — FIXED v1.5.41. `updateSingleColorExtruder()` now reads `materialType` from the selected `ExtruderPreset` and includes `filamentType` in `config.copy()`.
 - **B41**: 3MF embedded rotation preservation + tab-switch preview cache fix — FIXED v1.5.35
