@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.5.44` (`versionCode 210`)
+Current release: `v1.5.45` (`versionCode 211`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 724 JVM unit tests
+./gradlew testDebugUnitTest                        # 725 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 161 instrumented tests (uses Orchestrator)
 ```
 
@@ -109,7 +109,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `FilamentTypeLabelTest.kt` (12) — B59 resolveFilamentTypeLabel: single-slot, all-same-material, mixed materials, edge cases (unknown slot, empty inputs)
 - `FilamentTypeWiringTest.kt` (11) — B59 wiring: resolveFilamentTypeForSingleColorLoad, resolveFilamentTypeLabelFromMapping for multi-color and layer-tool paths
 - `ui/HsvColorPickerTest.kt` (9) — F64 HSV↔hex color conversion round-trips: hsvToHex, hexToHsv, red/green/blue/white/black, inverse property
-- `SliceStalenessTest.kt` (3) — F67 _sliceStale StateFlow contract: initial false, config mutation sets true, startSlicing resets false
+- `SliceStalenessTest.kt` (4) — F67 _sliceStale StateFlow contract: initial false, config mutation sets true, startSlicing resets false, extruderPresets drop(1) skips startup
 
 ### Instrumented tests (`app/src/androidTest/`) - 161 tests across 16 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
