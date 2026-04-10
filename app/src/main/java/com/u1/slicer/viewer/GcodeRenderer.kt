@@ -125,10 +125,10 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             preserveRestoredCameraOnSurfaceInit = false
         } else {
             // Default camera: plate-centred top-down view matching model viewer
-            camera.setTarget(135f, 135f, 0f)
-            camera.distance = 500f
-            camera.elevation = 62f
-            camera.azimuth = -90f
+            camera.setTarget(135.0, 135.0, 0.0)
+            camera.distance = 500.0
+            camera.elevation = 62.0
+            camera.azimuth = -90.0
         }
     }
 
@@ -162,12 +162,12 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 preserveCameraOnNextUpload = false
             } else {
                 // Auto-frame: plate-centred view matching model viewer
-                camera.setTarget(135f, 135f, 0f)
-                camera.distance = 500f
-                camera.elevation = 62f
-                camera.azimuth = -90f
-                camera.panX = 0f
-                camera.panY = 0f
+                camera.setTarget(135.0, 135.0, 0.0)
+                camera.distance = 500.0
+                camera.elevation = 62.0
+                camera.azimuth = -90.0
+                camera.panX = 0.0
+                camera.panY = 0.0
             }
             pendingContentReadyDispatch = true
         }

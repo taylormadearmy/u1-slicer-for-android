@@ -114,12 +114,12 @@ fun GcodeViewer3DScreen(
                     IconButton(onClick = {
                         val v = viewerView ?: return@IconButton
                         v.renderer.camera.apply {
-                            setTarget(135f, 135f, parsedGcode.layers.lastOrNull()?.z?.div(2) ?: 0f)
-                            distance = 400f
-                            elevation = 35f
-                            azimuth = -45f
-                            panX = 0f
-                            panY = 0f
+                            setTarget(135.0, 135.0, (parsedGcode.layers.lastOrNull()?.z?.div(2) ?: 0f).toDouble())
+                            distance = 400.0
+                            elevation = 35.0
+                            azimuth = -45.0
+                            panX = 0.0
+                            panY = 0.0
                         }
                         v.requestRender()
                     }) {

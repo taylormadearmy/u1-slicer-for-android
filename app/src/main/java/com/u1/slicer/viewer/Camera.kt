@@ -8,27 +8,30 @@ import kotlin.math.sin
  * Orbit camera for 3D model viewing.
  * Orbits around a target point with azimuth/elevation/distance.
  * Uses Z-up convention matching the 3D printer bed (XY bed plane, Z height).
+ *
+ * All scalar fields are Double for precision at zoom extremes; values are downcast
+ * to Float only at shader uniform upload in updateViewMatrix/updateProjectionMatrix.
  */
 data class CameraViewState(
-    val azimuth: Float,
-    val elevation: Float,
-    val distance: Float,
-    val panX: Float,
-    val panY: Float,
-    val targetX: Float,
-    val targetY: Float,
-    val targetZ: Float
+    val azimuth: Double,
+    val elevation: Double,
+    val distance: Double,
+    val panX: Double,
+    val panY: Double,
+    val targetX: Double,
+    val targetY: Double,
+    val targetZ: Double
 )
 
 class Camera {
-    var azimuth = -45f       // horizontal rotation (degrees)
-    var elevation = 45f      // vertical rotation (degrees, 0=horizon, 90=top-down)
-    var distance = 300f      // distance from target
-    var panX = 0f            // pan offset X (bed X direction)
-    var panY = 0f            // pan offset Y (bed Y direction)
-    var targetX = 0f
-    var targetY = 0f
-    var targetZ = 0f
+    @Volatile var azimuth = -45.0       // horizontal rotation (degrees)
+    @Volatile var elevation = 45.0      // vertical rotation (degrees, 0=horizon, 90=top-down)
+    @Volatile var distance = 300.0      // distance from target
+    @Volatile var panX = 0.0            // pan offset X (bed X direction)
+    @Volatile var panY = 0.0            // pan offset Y (bed Y direction)
+    @Volatile var targetX = 0.0
+    @Volatile var targetY = 0.0
+    @Volatile var targetZ = 0.0
 
     val viewMatrix = FloatArray(16)
     val projectionMatrix = FloatArray(16)
@@ -36,7 +39,7 @@ class Camera {
     val normalMatrix = FloatArray(16)
     private val tempMatrix = FloatArray(16)
 
-    fun setTarget(x: Float, y: Float, z: Float) {
+    fun setTarget(x: Double, y: Double, z: Double) {
         targetX = x; targetY = y; targetZ = z
     }
 
@@ -62,49 +65,49 @@ class Camera {
         targetZ = state.targetZ
     }
 
-    fun rotate(dAzimuth: Float, dElevation: Float) {
+    fun rotate(dAzimuth: Double, dElevation: Double) {
         azimuth += dAzimuth
-        elevation = (elevation + dElevation).coerceIn(5f, 89f)
+        elevation = (elevation + dElevation).coerceIn(5.0, 89.0)
     }
 
-    fun zoom(factor: Float) {
-        distance = (distance * factor).coerceIn(10f, 2000f)
+    fun zoom(factor: Double) {
+        distance = (distance * factor).coerceIn(10.0, 2000.0)
     }
 
-    fun pan(dx: Float, dy: Float) {
+    fun pan(dx: Double, dy: Double) {
         // Pan in the camera's local XY plane (projected onto bed).
         // Camera right = forward × worldUp = (-sin(az), cos(az), 0)
         // Camera "up" projected onto XY (perpendicular to right) = (-cos(az), -sin(az), 0)
-        val radAz = Math.toRadians(azimuth.toDouble())
-        val rightX = -sin(radAz).toFloat()
-        val rightY =  cos(radAz).toFloat()
-        val upX = -cos(radAz).toFloat()
-        val upY = -sin(radAz).toFloat()
+        val radAz = Math.toRadians(azimuth)
+        val rightX = -sin(radAz)
+        val rightY =  cos(radAz)
+        val upX = -cos(radAz)
+        val upY = -sin(radAz)
         panX += rightX * dx + upX * dy
         panY += rightY * dx + upY * dy
     }
 
     fun updateViewMatrix() {
-        val radAz = Math.toRadians(azimuth.toDouble())
-        val radEl = Math.toRadians(elevation.toDouble())
+        val radAz = Math.toRadians(azimuth)
+        val radEl = Math.toRadians(elevation)
 
         // Z-up: eye orbits around target in XY plane, Z is height
-        val eyeX = targetX + panX + (distance * cos(radEl) * cos(radAz)).toFloat()
-        val eyeY = targetY + panY + (distance * cos(radEl) * sin(radAz)).toFloat()
-        val eyeZ = targetZ + (distance * sin(radEl)).toFloat()
+        val eyeX = (targetX + panX + distance * cos(radEl) * cos(radAz)).toFloat()
+        val eyeY = (targetY + panY + distance * cos(radEl) * sin(radAz)).toFloat()
+        val eyeZ = (targetZ + distance * sin(radEl)).toFloat()
 
         Matrix.setLookAtM(
             viewMatrix, 0,
             eyeX, eyeY, eyeZ,
-            targetX + panX, targetY + panY, targetZ,
+            (targetX + panX).toFloat(), (targetY + panY).toFloat(), targetZ.toFloat(),
             0f, 0f, 1f  // Z-up
         )
     }
 
     fun updateProjectionMatrix(width: Int, height: Int) {
         val aspect = width.toFloat() / height.toFloat()
-        val near = (distance * 0.01f).coerceAtLeast(0.1f)
-        val far = distance * 10f
+        val near = (distance * 0.01).coerceAtLeast(0.1).toFloat()
+        val far = (distance * 10.0).toFloat()
         Matrix.perspectiveM(projectionMatrix, 0, 45f, aspect, near, far)
     }
 

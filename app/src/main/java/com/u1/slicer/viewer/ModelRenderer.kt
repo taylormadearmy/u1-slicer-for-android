@@ -61,7 +61,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile var highlightIndex: Int = -1
 
     // Model scale (from SlicerViewModel.ModelScale) — applied visually in draw calls
-    // AND used by ModelViewerView.hitTest() for scale-aware hit detection
+    // AND used by ModelViewerView.hitTest() for scale-aware hit detection.
+    // @Volatile covers the reference only — always assign a new FloatArray, never mutate elements in-place.
     @Volatile var modelScale = floatArrayOf(1f, 1f, 1f)
 
     private var viewportWidth = 1
@@ -111,10 +112,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     internal fun resetCameraToDefaultView() {
-        camera.setTarget(135f, 135f, 0f)
-        camera.distance = 500f
-        camera.elevation = 62f
-        camera.azimuth = -90f
+        camera.setTarget(135.0, 135.0, 0.0)
+        camera.distance = 500.0
+        camera.elevation = 62.0
+        camera.azimuth = -90.0
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -132,7 +133,17 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingVboRefresh: Boolean = false
 
+    // Pending camera state: written by main thread (applyCameraState, resetView),
+    // consumed at top of onDrawFrame before matrix math.
+    @Volatile
+    var pendingCameraState: CameraViewState? = null
+
     override fun onDrawFrame(gl: GL10?) {
+        pendingCameraState?.let { state ->
+            camera.restore(state)
+            pendingCameraState = null
+        }
+
         if (pendingClearMesh) {
             pendingClearMesh = false
             meshData = null
@@ -175,8 +186,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             if (meshData != null) {
                 pendingCameraReset = false
                 resetCameraToDefaultView()
-                camera.panX = 0f
-                camera.panY = 0f
+                camera.panX = 0.0
+                camera.panY = 0.0
                 camera.updateProjectionMatrix(viewportWidth, viewportHeight)
             }
         }
@@ -376,19 +387,19 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Build view matrix locally without touching camera's shared arrays
         val radAz = Math.toRadians(camera.azimuth.toDouble())
         val radEl = Math.toRadians(camera.elevation.toDouble())
-        val eyeX = camera.targetX + camera.panX + (camera.distance * cos(radEl) * cos(radAz)).toFloat()
-        val eyeY = camera.targetY + camera.panY + (camera.distance * cos(radEl) * sin(radAz)).toFloat()
-        val eyeZ = camera.targetZ + (camera.distance * sin(radEl)).toFloat()
+        val eyeX = (camera.targetX + camera.panX + camera.distance * cos(radEl) * cos(radAz)).toFloat()
+        val eyeY = (camera.targetY + camera.panY + camera.distance * cos(radEl) * sin(radAz)).toFloat()
+        val eyeZ = (camera.targetZ + camera.distance * sin(radEl)).toFloat()
         val localView = FloatArray(16)
         Matrix.setLookAtM(localView, 0, eyeX, eyeY, eyeZ,
-            camera.targetX + camera.panX, camera.targetY + camera.panY, camera.targetZ,
+            (camera.targetX + camera.panX).toFloat(), (camera.targetY + camera.panY).toFloat(), camera.targetZ.toFloat(),
             0f, 0f, 1f)
 
         // Build projection matrix locally
         val localProj = FloatArray(16)
         val aspect = viewportWidth.toFloat() / viewportHeight.toFloat()
         Matrix.perspectiveM(localProj, 0, 45f, aspect,
-            (camera.distance * 0.01f).coerceAtLeast(0.1f), camera.distance * 10f)
+            (camera.distance * 0.01).coerceAtLeast(0.1).toFloat(), (camera.distance * 10.0).toFloat())
 
         val invertedVP = FloatArray(16)
         val vpMatrix = FloatArray(16)

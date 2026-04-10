@@ -30,7 +30,7 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
     private val scaleDetector = ScaleGestureDetector(context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                camera.zoom(1f / detector.scaleFactor)
+                camera.zoom(1.0 / detector.scaleFactor)
                 markCameraChanged()
                 requestRender()
                 return true
@@ -94,10 +94,10 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
                         val dx = event.x - previousX
                         val dy = event.y - previousY
                         if (isPanMode) {
-                            val panScale = camera.distance * 0.003f
-                            camera.pan(-dx * panScale, dy * panScale)
+                            val panScale = camera.distance * 0.003
+                            camera.pan(-dx.toDouble() * panScale, dy.toDouble() * panScale)
                         } else {
-                            camera.rotate(-dx * 0.3f, dy * 0.3f)
+                            camera.rotate(-dx.toDouble() * 0.3, dy.toDouble() * 0.3)
                         }
                         markCameraChanged()
                         requestRender()
@@ -108,8 +108,8 @@ abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
                         val midY = (event.getY(0) + event.getY(1)) / 2
                         val dx = midX - previousMidX
                         val dy = midY - previousMidY
-                        val panScale = camera.distance * 0.002f
-                        camera.pan(-dx * panScale, dy * panScale)
+                        val panScale = camera.distance * 0.002
+                        camera.pan(-dx.toDouble() * panScale, dy.toDouble() * panScale)
                         markCameraChanged()
                         requestRender()
                         previousMidX = midX

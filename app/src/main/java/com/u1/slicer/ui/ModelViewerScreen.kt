@@ -87,12 +87,12 @@ fun ModelViewerScreen(
                         val v = viewerView ?: return@IconButton
                         val m = mesh ?: return@IconButton
                         v.renderer.camera.apply {
-                            setTarget(m.centerX, m.centerY, m.centerZ)
-                            distance = m.maxDimension * 2f
-                            elevation = 25f
-                            azimuth = -45f
-                            panX = 0f
-                            panY = 0f
+                            setTarget(m.centerX.toDouble(), m.centerY.toDouble(), m.centerZ.toDouble())
+                            distance = m.maxDimension.toDouble() * 2.0
+                            elevation = 25.0
+                            azimuth = -45.0
+                            panX = 0.0
+                            panY = 0.0
                         }
                         v.requestRender()
                     }) {
