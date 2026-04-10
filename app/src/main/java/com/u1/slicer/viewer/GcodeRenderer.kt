@@ -161,13 +161,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             if (preserveCameraOnNextUpload) {
                 preserveCameraOnNextUpload = false
             } else {
-                // Auto-frame: plate-centred view matching model viewer
-                camera.setTarget(135.0, 135.0, 0.0)
-                camera.distance = 500.0
-                camera.elevation = 62.0
-                camera.azimuth = -90.0
-                camera.panX = 0.0
-                camera.panY = 0.0
+                frameContentCamera(gcode)
             }
             pendingContentReadyDispatch = true
         }
@@ -184,6 +178,44 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 mainHandler.post { callback() }
             }
         }
+    }
+
+    /**
+     * Set camera to frame all G-code content (extrusion + travel moves) with padding.
+     * Target is set to the XY centroid of the content bounding box; distance is scaled
+     * so the larger content dimension fills the view comfortably at the default elevation.
+     * At elevation=62° and FOV=45°, distance ≈ content_max_dim * 1.85 fills the view,
+     * so multiplying by ~1.85 gives a tight fit — we use 2.0 for comfortable breathing room.
+     */
+    private fun frameContentCamera(gcode: ParsedGcode) {
+        var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (layer in gcode.layers) {
+            for (move in layer.moves) {
+                if (move.x0 < minX) minX = move.x0; if (move.x0 > maxX) maxX = move.x0
+                if (move.x1 < minX) minX = move.x1; if (move.x1 > maxX) maxX = move.x1
+                if (move.y0 < minY) minY = move.y0; if (move.y0 > maxY) maxY = move.y0
+                if (move.y1 < minY) minY = move.y1; if (move.y1 > maxY) maxY = move.y1
+            }
+        }
+        if (minX == Float.MAX_VALUE) {
+            // No moves — fall back to plate-centred default
+            camera.setTarget(135.0, 135.0, 0.0)
+            camera.distance = 500.0
+        } else {
+            val pad = 20f
+            val cx = ((minX + maxX) / 2f).toDouble()
+            val cy = ((minY + maxY) / 2f).toDouble()
+            val spanX = (maxX - minX + 2 * pad).toDouble()
+            val spanY = (maxY - minY + 2 * pad).toDouble()
+            val dist = maxOf(spanX, spanY) * 2.0
+            camera.setTarget(cx, cy, 0.0)
+            camera.distance = dist.coerceAtLeast(100.0)
+        }
+        camera.elevation = 62.0
+        camera.azimuth = -90.0
+        camera.panX = 0.0
+        camera.panY = 0.0
     }
 
     fun uploadGcode(gcode: ParsedGcode) {
