@@ -238,6 +238,90 @@ class BambuSanitizerTest {
     }
 
     @Test
+    fun `filterModelToPlate p_object_id - virtual positions group-recentred`() {
+        // RED: Priority 2 path currently applies NO recentering.  If items are at
+        // virtual positions, they must be group-shifted to the bed, same as Priority 1.
+        val plateIdRegex = Regex("""p:object_id="(\d+)"""")
+        val itemRegex = Regex("""<item\b[^>]*(?:/>|>.*?</item>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val buildRegex = Regex("""(<build\b[^>]*>)(.*?)(</build>)""", setOf(RegexOption.DOT_MATCHES_ALL))
+        val transformRegex = Regex("""transform="([^"]+)"""")
+
+        fun recenterGroupIfVirtual(items: List<String>): List<String> {
+            val positions = items.map { item ->
+                val parts = transformRegex.find(item)?.groupValues?.get(1)
+                    ?.trim()?.split(Regex("\\s+"))
+                (parts?.getOrNull(9)?.toFloatOrNull() ?: 0f) to
+                    (parts?.getOrNull(10)?.toFloatOrNull() ?: 0f)
+            }
+            if (positions.none { (tx, ty) -> tx > 270f || ty < -10f || ty > 270f }) return items
+            val minX = positions.minOf { it.first }; val maxX = positions.maxOf { it.first }
+            val minY = positions.minOf { it.second }; val maxY = positions.maxOf { it.second }
+            val offsetX = 135f - (minX + maxX) / 2f
+            val offsetY = 135f - (minY + maxY) / 2f
+            fun fmt(v: Float) = "%.4f".format(v).trimEnd('0').trimEnd('.').ifEmpty { "0" }
+            return items.map { item ->
+                transformRegex.replace(item) { match ->
+                    val parts = match.groupValues[1].trim().split(Regex("\\s+"))
+                    if (parts.size >= 12) {
+                        val tx = parts[9].toFloatOrNull() ?: 0f
+                        val ty = parts[10].toFloatOrNull() ?: 0f
+                        val p = parts.toMutableList()
+                        p[9] = fmt(tx + offsetX); p[10] = fmt(ty + offsetY)
+                        """transform="${p.joinToString(" ")}""""
+                    } else match.value
+                }
+            }
+        }
+
+        fun filter(xml: String, targetPlateId: Int): String {
+            val targetIdx = targetPlateId - 1
+            return buildRegex.replace(xml) { m ->
+                val allItems = itemRegex.findAll(m.groupValues[2]).map { it.value }.toList()
+                val kept = allItems.filter { item ->
+                    (plateIdRegex.find(item)?.groupValues?.get(1)?.toIntOrNull() ?: 0) == targetIdx
+                }
+                if (kept.isEmpty()) return@replace m.value
+                val recentered = recenterGroupIfVirtual(kept)
+                val newBody = "\n" + recentered.joinToString("\n") { "    $it" } + "\n  "
+                "${m.groupValues[1]}$newBody${m.groupValues[3]}"
+            }
+        }
+
+        // Plate 1: items at normal bed positions — should be unchanged
+        // Plate 2: items at virtual X positions — must be group-recentred
+        val xml = """<build>
+    <item objectid="1" transform="1 0 0 0 1 0 0 0 1 100 100 0" p:object_id="0"/>
+    <item objectid="2" transform="1 0 0 0 1 0 0 0 1 200 100 0" p:object_id="0"/>
+    <item objectid="4" transform="1 0 0 0 1 0 0 0 1 400 100 0" p:object_id="1"/>
+    <item objectid="5" transform="1 0 0 0 1 0 0 0 1 500 100 0" p:object_id="1"/>
+</build>"""
+
+        // Plate 1 (p:object_id=0): within bed bounds → positions unchanged
+        val p1 = filter(xml, 1)
+        val b1 = p1.substringAfter("<build>").substringBefore("</build>")
+        assertTrue("Plate1 obj1 present", b1.contains("""objectid="1""""))
+        assertTrue("Plate1 obj2 present", b1.contains("""objectid="2""""))
+        assertTrue("Plate1 obj1 XY unchanged", b1.contains("100 100 0"))
+        assertTrue("Plate1 obj2 XY unchanged", b1.contains("200 100 0"))
+
+        // Plate 2 (p:object_id=1): virtual X > 270 → group-shifted to bed centre
+        // bbox centre = (450, 100), offset = (-315, 35)
+        // → obj4(85,135), obj5(185,135)
+        val p2 = filter(xml, 2)
+        val b2 = p2.substringAfter("<build>").substringBefore("</build>")
+        assertTrue("Plate2 obj4 present", b2.contains("""objectid="4""""))
+        assertTrue("Plate2 obj5 present", b2.contains("""objectid="5""""))
+        assertFalse("Plate2: not at virtual positions", b2.contains("400 100 0"))
+        assertTrue("Plate2 obj4 group-shifted to (85,135)", b2.contains("85 135 0"))
+        assertTrue("Plate2 obj5 group-shifted to (185,135)", b2.contains("185 135 0"))
+        // Relative X gap preserved: 100 mm
+        val txs = transformRegex.findAll(b2).map { m ->
+            m.groupValues[1].trim().split(Regex("\\s+")).getOrNull(9)?.toFloatOrNull() ?: 0f
+        }.toList().sorted()
+        assertEquals("Relative X gap preserved", 100f, txs[1] - txs[0], 0.5f)
+    }
+
+    @Test
     fun `filterModelToPlate logic - no p_object_id single item returns unchanged`() {
         // Single build item with no p:object_id — nothing to select, XML stays the same
         val xml = """<build>
@@ -399,21 +483,33 @@ class BambuSanitizerTest {
         val objectIdRegex = Regex("""objectid="(\d+)"""")
         val transformRegex = Regex("""transform="([^"]+)"""")
 
-        fun recenterItemIfVirtual(item: String): String {
-            val parts = transformRegex.find(item)?.groupValues?.get(1)
-                ?.trim()?.split(Regex("\\s+")) ?: return item
-            val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
-            val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
-            if (tx > 270f || ty < -10f || ty > 270f) {
-                return transformRegex.replace(item) { match ->
-                    val p = match.groupValues[1].trim().split(Regex("\\s+"))
-                    if (p.size >= 12) {
-                        val np = p.toMutableList(); np[9] = "135"; np[10] = "135"
-                        """transform="${np.joinToString(" ")}""""
+        // Group recentering: shifts all items by a uniform offset so their
+        // bounding-box centre lands at (135, 135), preserving relative positions.
+        fun recenterGroupIfVirtual(items: List<String>): List<String> {
+            val positions = items.map { item ->
+                val parts = transformRegex.find(item)?.groupValues?.get(1)
+                    ?.trim()?.split(Regex("\\s+"))
+                (parts?.getOrNull(9)?.toFloatOrNull() ?: 0f) to
+                    (parts?.getOrNull(10)?.toFloatOrNull() ?: 0f)
+            }
+            if (positions.none { (tx, ty) -> tx > 270f || ty < -10f || ty > 270f }) return items
+            val minX = positions.minOf { it.first }; val maxX = positions.maxOf { it.first }
+            val minY = positions.minOf { it.second }; val maxY = positions.maxOf { it.second }
+            val offsetX = 135f - (minX + maxX) / 2f
+            val offsetY = 135f - (minY + maxY) / 2f
+            fun fmt(v: Float) = "%.4f".format(v).trimEnd('0').trimEnd('.').ifEmpty { "0" }
+            return items.map { item ->
+                transformRegex.replace(item) { match ->
+                    val parts = match.groupValues[1].trim().split(Regex("\\s+"))
+                    if (parts.size >= 12) {
+                        val tx = parts[9].toFloatOrNull() ?: 0f
+                        val ty = parts[10].toFloatOrNull() ?: 0f
+                        val p = parts.toMutableList()
+                        p[9] = fmt(tx + offsetX); p[10] = fmt(ty + offsetY)
+                        """transform="${p.joinToString(" ")}""""
                     } else match.value
                 }
             }
-            return item
         }
 
         @Suppress("UNUSED_PARAMETER")
@@ -427,7 +523,7 @@ class BambuSanitizerTest {
                         objId in plateObjectIds
                     }
                     if (targetItems.isEmpty()) return@replace m.value
-                    val recentered = targetItems.map { recenterItemIfVirtual(it) }
+                    val recentered = recenterGroupIfVirtual(targetItems)
                     return@replace "${m.groupValues[1]}\n" +
                         recentered.joinToString("\n") { "    $it" } + "\n  ${m.groupValues[3]}"
                 }
@@ -463,7 +559,10 @@ class BambuSanitizerTest {
         // Items at normal bed positions — XY should be unchanged
         assertTrue("Plate1 obj 2 XY preserved", b1.contains("142 116 1"))
 
-        // Plate 2: objects 7,8,9,10 (at virtual X positions — should be recentred)
+        // Plate 2: objects 7,8,9,10 (at virtual X > 270 — group must be recentred together)
+        // Raw: obj7(475,180) obj8(627,186) obj9(477,28) obj10(628,31); Z=1.5
+        // bbox centre=(551.5,107); offset=(-416.5,+28)
+        // → obj7(58.5,208) obj8(210.5,214) obj9(60.5,56) obj10(211.5,59)
         val plate2 = filterWithConfig(xml, 2, setOf("7", "8", "9", "10"))
         val b2 = plate2.substringAfter("<build>").substringBefore("</build>")
         assertTrue("Plate2 has obj 7", b2.contains("""objectid="7""""))
@@ -471,10 +570,17 @@ class BambuSanitizerTest {
         assertTrue("Plate2 has obj 9", b2.contains("""objectid="9""""))
         assertTrue("Plate2 has obj 10", b2.contains("""objectid="10""""))
         assertFalse("Plate2 no obj 2", b2.contains("""objectid="2""""))
-        // Virtual items recentred to 135
-        assertTrue("Plate2 obj 7 recentred", b2.contains("135 135 1.5"))
+        // Group-shifted: relative positions preserved, NOT all collapsed to (135,135)
+        assertFalse("Plate2: objects must not all stack at (135,135)", b2.contains("135 135 1.5"))
+        assertTrue("Plate2 obj7 group-shifted to (58.5,208)", b2.contains("58.5 208 1.5"))
+        assertTrue("Plate2 obj8 group-shifted to (210.5,214)", b2.contains("210.5 214 1.5"))
+        assertTrue("Plate2 obj9 group-shifted to (60.5,56)", b2.contains("60.5 56 1.5"))
+        assertTrue("Plate2 obj10 group-shifted to (211.5,59)", b2.contains("211.5 59 1.5"))
 
-        // Plate 3: objects 20-23 (at negative Y positions — should be recentred)
+        // Plate 3: objects 20-23 (negative Y — group must be recentred together)
+        // Raw: obj20(84,-98) obj21(290,-125) obj22(85,-251) obj23(268,-356); Z=1.5
+        // bbox centre=(187,-227); offset=(-52,+362)
+        // → obj20(32,264) obj21(238,237) obj22(33,111) obj23(216,6)
         val plate3 = filterWithConfig(xml, 3, setOf("20", "21", "22", "23"))
         val b3 = plate3.substringAfter("<build>").substringBefore("</build>")
         assertTrue("Plate3 has obj 20", b3.contains("""objectid="20""""))
@@ -482,7 +588,12 @@ class BambuSanitizerTest {
         assertTrue("Plate3 has obj 22", b3.contains("""objectid="22""""))
         assertTrue("Plate3 has obj 23", b3.contains("""objectid="23""""))
         assertFalse("Plate3 no obj 2", b3.contains("""objectid="2""""))
-        assertTrue("Plate3 obj 20 recentred", b3.contains("135 135 1.5"))
+        // Group-shifted: relative positions preserved
+        assertFalse("Plate3: objects must not all stack at (135,135)", b3.contains("135 135 1.5"))
+        assertTrue("Plate3 obj20 group-shifted to (32,264)", b3.contains("32 264 1.5"))
+        assertTrue("Plate3 obj21 group-shifted to (238,237)", b3.contains("238 237 1.5"))
+        assertTrue("Plate3 obj22 group-shifted to (33,111)", b3.contains("33 111 1.5"))
+        assertTrue("Plate3 obj23 group-shifted to (216,6)", b3.contains("216 6 1.5"))
     }
 
     @Test

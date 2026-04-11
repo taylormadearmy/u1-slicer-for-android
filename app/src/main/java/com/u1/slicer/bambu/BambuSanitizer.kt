@@ -1865,8 +1865,9 @@ $componentRefs    </components>
                     Log.w(TAG, "filterModelToPlate: plate $targetPlateId — no items matched objectIds $plateObjectIds, keeping all")
                     return@replace m.value
                 }
-                // Re-centre items that are at virtual positions (off the 270mm bed)
-                val recentered = targetItems.map { recenterItemIfVirtual(it) }
+                // Re-centre items as a group: shift all by a uniform offset so their
+                // collective bounding-box centre lands at (135, 135), preserving layout.
+                val recentered = recenterGroupIfVirtual(targetItems)
                 Log.i(TAG, "filterModelToPlate: plate $targetPlateId — config-based, kept ${targetItems.size}/${allItems.size} items (objectIds=$plateObjectIds)")
                 val newBody = "\n" + recentered.joinToString("\n") { "    $it" } + "\n  "
                 return@replace "$open$newBody$close"
@@ -1883,8 +1884,9 @@ $componentRefs    </components>
                     Log.w(TAG, "filterModelToPlate: no items for plate $targetPlateId — keeping all")
                     return@replace m.value
                 }
+                val recentered = recenterGroupIfVirtual(targetItems)
                 Log.i(TAG, "filterModelToPlate: plate $targetPlateId — p:object_id, kept ${targetItems.size}/${allItems.size} items")
-                val newBody = "\n" + targetItems.joinToString("\n") { "    $it" } + "\n  "
+                val newBody = "\n" + recentered.joinToString("\n") { "    $it" } + "\n  "
                 return@replace "$open$newBody$close"
             }
 
@@ -1946,17 +1948,49 @@ $componentRefs    </components>
     }
 
     /**
-     * Re-centres an item's XY only if it's at a virtual position (outside the 270mm bed).
-     * Items at normal bed coordinates are returned unchanged.
+     * Re-centres a group of items as a unit when any of them are at virtual positions
+     * (outside the 270 mm bed). Applies a single uniform XY shift to ALL items so their
+     * collective bounding-box centre lands at (135, 135), preserving relative positions.
+     *
+     * This replaces per-item recentering (which collapsed every item to the same point).
+     * For a single item the result is identical to recenterItemXY.
      */
-    private fun recenterItemIfVirtual(item: String): String {
+    private fun recenterGroupIfVirtual(items: List<String>): List<String> {
+        if (items.isEmpty()) return items
         val transformRegex = Regex("""transform="([^"]+)"""")
-        val parts = transformRegex.find(item)?.groupValues?.get(1)
-            ?.trim()?.split(Regex("\\s+")) ?: return item
-        val tx = parts.getOrNull(9)?.toFloatOrNull() ?: 0f
-        val ty = parts.getOrNull(10)?.toFloatOrNull() ?: 0f
-        return if (tx > 270f || ty < -10f || ty > 270f) recenterItemXY(item) else item
+
+        val positions = items.map { item ->
+            val parts = transformRegex.find(item)?.groupValues?.get(1)
+                ?.trim()?.split(Regex("\\s+"))
+            (parts?.getOrNull(9)?.toFloatOrNull() ?: 0f) to
+                (parts?.getOrNull(10)?.toFloatOrNull() ?: 0f)
+        }
+
+        if (positions.none { (tx, ty) -> tx > 270f || ty < -10f || ty > 270f }) return items
+
+        val minX = positions.minOf { it.first };  val maxX = positions.maxOf { it.first }
+        val minY = positions.minOf { it.second }; val maxY = positions.maxOf { it.second }
+        val offsetX = 135f - (minX + maxX) / 2f
+        val offsetY = 135f - (minY + maxY) / 2f
+
+        return items.map { item ->
+            transformRegex.replace(item) { match ->
+                val parts = match.groupValues[1].trim().split(Regex("\\s+"))
+                if (parts.size >= 12) {
+                    val tx = parts[9].toFloatOrNull() ?: 0f
+                    val ty = parts[10].toFloatOrNull() ?: 0f
+                    val newParts = parts.toMutableList()
+                    newParts[9]  = formatCoord(tx + offsetX)
+                    newParts[10] = formatCoord(ty + offsetY)
+                    """transform="${newParts.joinToString(" ")}""""
+                } else match.value
+            }
+        }
     }
+
+    /** Formats a coordinate float as a compact decimal string (no trailing zeros). */
+    private fun formatCoord(v: Float): String =
+        "%.4f".format(v).trimEnd('0').trimEnd('.').ifEmpty { "0" }
 
     /**
      * Resets the XY translation in a build item's `transform` attribute to bed centre (135, 135),
