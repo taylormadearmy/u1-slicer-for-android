@@ -6,6 +6,7 @@ package com.u1.slicer.data
  */
 data class SliceResult(
     @JvmField val success: Boolean,
+    @JvmField val cancelled: Boolean,
     @JvmField val errorMessage: String,
     @JvmField val gcodePath: String,
     @JvmField val totalLayers: Int,

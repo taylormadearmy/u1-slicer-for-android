@@ -783,6 +783,7 @@ fun PrepareScreen(
         // Determine what to show — even during Slicing/SliceComplete, Prepare shows the model
         val modelLoaded = state is SlicerViewModel.SlicerState.ModelLoaded ||
                 state is SlicerViewModel.SlicerState.Slicing ||
+                state is SlicerViewModel.SlicerState.Cancelling ||
                 state is SlicerViewModel.SlicerState.SliceComplete
 
         Box(
@@ -1192,6 +1193,13 @@ fun PreviewScreen(
                 is SlicerViewModel.SlicerState.Slicing -> {
                     SlicingProgressCard(s.progress, s.stage, onCancel = { viewModel.cancelSlicing() })
                 }
+                is SlicerViewModel.SlicerState.Cancelling -> {
+                    SlicingProgressCard(
+                        progress = -1,
+                        stage = "Cancelling\u2026",
+                        onCancel = null
+                    )
+                }
                 is SlicerViewModel.SlicerState.SliceComplete -> {
                     // B52: inform user when G-code preview is stride-sampled
                     if (parsedGcode?.isPreviewSimplified == true) {
@@ -1592,21 +1600,26 @@ fun SlicingProgressCard(progress: Int, stage: String, onCancel: (() -> Unit)? = 
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(80.dp)) {
-                // Indeterminate ring behind the determinate one — always spinning
-                // so user sees motion even when % is "stuck" on a long step.
+                // Indeterminate ring — always spinning so user sees motion.
+                // When cancelling (progress < 0), this is the only indicator.
                 CircularProgressIndicator(
                     modifier = Modifier.size(80.dp),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                    color = if (progress < 0) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                     strokeWidth = 6.dp
                 )
-                CircularProgressIndicator(
-                    progress = { progress / 100f },
-                    modifier = Modifier.size(80.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    strokeWidth = 6.dp
-                )
+                if (progress >= 0) {
+                    CircularProgressIndicator(
+                        progress = { progress / 100f },
+                        modifier = Modifier.size(80.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 6.dp
+                    )
+                }
             }
-            Text("$progress%", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            if (progress >= 0) {
+                Text("$progress%", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            }
             Text(
                 stage,
                 style = MaterialTheme.typography.bodyMedium,
@@ -2507,6 +2520,7 @@ internal fun resolvePreparePreviewModelInfo(
 ): ModelInfo? = when (state) {
     is SlicerViewModel.SlicerState.ModelLoaded -> state.info
     is SlicerViewModel.SlicerState.Slicing -> cachedModelInfo
+    is SlicerViewModel.SlicerState.Cancelling -> cachedModelInfo
     is SlicerViewModel.SlicerState.SliceComplete -> cachedModelInfo
     else -> cachedModelInfo
 }

@@ -138,6 +138,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         data class Loading(val message: String) : SlicerState()
         data class ModelLoaded(val info: ModelInfo) : SlicerState()
         data class Slicing(val progress: Int, val stage: String) : SlicerState()
+        object Cancelling : SlicerState()
         data class SliceComplete(val result: SliceResult) : SlicerState()
         data class Error(val message: String) : SlicerState()
     }
@@ -1780,20 +1781,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Soft-cancel an in-progress slice.  Transitions immediately back to ModelLoaded so the
-     * UI is responsive.  The native slice() call runs to completion in the background but its
-     * result is discarded once it finishes (checked via [sliceCancelled]).
-     *
-     * A native rebuild would allow hard cancellation via a JNI flag; this approach avoids
-     * that while still giving the user an immediate way out.
+     * Hard-cancel an in-progress slice via native Print::cancel().  Transitions to Cancelling
+     * state (shows "Cancelling..." UI). The native pipeline throws CanceledException at the
+     * next checkpoint and returns a result with cancelled=true, which triggers the transition
+     * back to ModelLoaded.
      */
-    @Volatile private var sliceCancelled = false
-
     fun cancelSlicing() {
         if (_state.value is SlicerState.Slicing) {
-            sliceCancelled = true
-            backToModelLoaded()
-            Log.i("SlicerVM", "Slicing cancelled by user (native call will still complete in background)")
+            _state.value = SlicerState.Cancelling
+            viewModelScope.launch(Dispatchers.IO) {
+                native.cancelSlice()
+            }
+            Log.i("SlicerVM", "Slicing cancel requested (native will stop at next checkpoint)")
         }
     }
 
@@ -1831,7 +1830,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     SlicingService.updateProgress(context, maxPct, stage)
                 }
 
-                sliceCancelled = false
                 _state.value = SlicerState.Slicing(0, "Preparing...")
 
                 val firstSliceThisLaunch = diagnostics.markSliceStart()
@@ -2043,9 +2041,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val result = native.slice(sliceConfig)
 
-                // If the user cancelled while the native call was running, discard the result.
-                if (sliceCancelled) {
-                    Log.i("SlicerVM", "Discarding slice result after user cancel")
+                // Native cancel: slice() returned with cancelled=true from CanceledException
+                if (result?.cancelled == true) {
+                    Log.i("SlicerVM", "Slice cancelled — returning to ModelLoaded")
+                    result.gcodePath.let { path ->
+                        if (path.isNotEmpty()) java.io.File(path).delete()
+                    }
+                    backToModelLoaded()
                     return@launch
                 }
 
@@ -2189,7 +2191,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 _state.value = SlicerState.Error(clipperUserMessage("Slicing error: $errorMsg"))
             } finally {
-                sliceCancelled = false
                 diagnostics.clearSliceInProgress()
                 native.progressListener = null
                 SlicingService.stop(context)
@@ -2720,12 +2721,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearModel() {
-        // Acquire previewMutex before clearing native model — prevents SIGSEGV when
-        // getPreparePreviewMesh is iterating model volumes on the preview coroutine.
-        // For large models (F1 calendar, 8M tris) QEM can hold the lock for 30+ seconds;
-        // clearing here without the lock frees memory the preview thread is reading.
-        // Use tryLock for immediate clear when no preview is running; launch async
-        // clear when the mutex is held (e.g. during QEM decimation).
+        // B55: signal QEM to bail out immediately — the cancel flag is checked every
+        // iteration inside its_quadric_edge_collapse, so QEM exits in microseconds.
+        // This releases previewMutex before we try to acquire it below.
+        native.cancelPreviewMesh()
         if (NativeLibrary.previewMutex.tryLock()) {
             try { native.clearModel() } finally { NativeLibrary.previewMutex.unlock() }
         } else {

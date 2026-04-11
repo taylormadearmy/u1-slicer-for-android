@@ -41,6 +41,12 @@ class NativeLibrary {
     // ---- Model ----
     external fun loadModel(path: String): Boolean
     external fun clearModel()
+    // Cancel an in-progress QEM preview decimation. Called from clearModel() before
+    // acquiring previewMutex so QEM bails out immediately.
+    external fun cancelPreviewMesh()
+    // Cancel an in-progress native slice. Triggers CanceledException at the next
+    // OrcaSlicer checkpoint. Called from cancelSlicing().
+    external fun cancelSlice()
     external fun getModelInfo(): ModelInfo?
     // Pass 0 to let native auto-select budget (flat models get 500K, others get 100K).
     external fun getPreparePreviewMesh(maxTriangles: Int = 0): NativePreviewMesh?
