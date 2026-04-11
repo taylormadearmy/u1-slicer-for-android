@@ -3,6 +3,7 @@
 #include "sapil_diagnostics.h"
 #include <fstream>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <regex>
 #include <chrono>
@@ -36,6 +37,7 @@ static std::string g_files_dir;  // App files directory, derived from model path
 static std::vector<std::vector<int>> g_model_preview_extruders;
 static PreviewMesh g_cached_preview_mesh;
 static bool g_preview_mesh_valid = false;
+static std::atomic<bool> g_preview_cancel{false};
 
 // Base instance positions captured on first setModelRotation call.
 // Cleared on model load/clear. Used to avoid positional drift across repeated
@@ -359,6 +361,9 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
         return out;
     }
 
+    // B55: reset cancel flag at start of each preview computation
+    g_preview_cancel.store(false, std::memory_order_release);
+
     // Return cached result if available — avoids expensive re-decimation on tab switch
     if (g_preview_mesh_valid) {
         SAPIL_LOGI("getPreparePreviewMesh: returning cached result (%zu tris)",
@@ -416,6 +421,11 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     for (const auto* object : g_model.objects) {
         if (object == nullptr || !object->printable) continue;
         if (object->instances.empty()) continue;
+        // B55: check cancel flag between objects
+        if (g_preview_cancel.load(std::memory_order_acquire)) {
+            SAPIL_LOGI("getPreparePreviewMesh: cancelled during object iteration");
+            return PreviewMesh();
+        }
         const std::vector<int>* preview_extruders =
             object_index < g_model_preview_extruders.size() ? &g_model_preview_extruders[object_index] : nullptr;
 
@@ -484,6 +494,11 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     std::vector<size_t> cursors(state_meshes.size(), 0);
                     bool any_left = true;
                     while (any_left) {
+                        // B55: check cancel flag during MMU interleave
+                        if (g_preview_cancel.load(std::memory_order_acquire)) {
+                            SAPIL_LOGI("getPreparePreviewMesh: cancelled during MMU interleave");
+                            return PreviewMesh();
+                        }
                         any_left = false;
                         for (size_t si = 0; si < state_meshes.size(); ++si) {
                             if (cursors[si] < state_meshes[si].count()) {
@@ -511,8 +526,15 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                         const uint32_t target = static_cast<uint32_t>(
                             std::max(INT64_C(1),
                                 static_cast<int64_t>(vol_tris) * effective_max / total_tris));
-                        if (its.indices.size() > target)
-                            Slic3r::its_quadric_edge_collapse(its, target);
+                        try {
+                            if (its.indices.size() > target)
+                                Slic3r::its_quadric_edge_collapse(its, target, nullptr,
+                                    [&]() { if (g_preview_cancel.load(std::memory_order_acquire)) throw std::runtime_error("cancelled"); },
+                                    nullptr);
+                        } catch (const std::runtime_error&) {
+                            SAPIL_LOGI("getPreparePreviewMesh: QEM cancelled mid-collapse");
+                            return PreviewMesh();
+                        }
                         if (std::chrono::steady_clock::now() > qem_deadline) {
                             qem_budget_exceeded = true;
                             SAPIL_LOGW("getPreparePreviewMesh: QEM time budget exceeded, switching to stride");
@@ -548,6 +570,11 @@ std::string getFilesDir() { return g_files_dir; }
 // Called by sapil_arrange.cpp when instances/scale change to invalidate cached preview
 void invalidatePreviewMeshCache() {
     g_preview_mesh_valid = false;
+}
+
+void SlicerEngine::cancelPreviewMesh() {
+    g_preview_cancel.store(true, std::memory_order_release);
+    SAPIL_LOGI("cancelPreviewMesh: signalled cancellation");
 }
 
 void SlicerEngine::clearModel() {

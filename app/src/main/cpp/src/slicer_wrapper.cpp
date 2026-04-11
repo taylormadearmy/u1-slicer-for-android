@@ -185,4 +185,15 @@ Java_com_u1_slicer_NativeLibrary_getInstanceOffsets(
     return result;
 }
 
+// ---- Cancellation ----
+JNIEXPORT void JNICALL
+Java_com_u1_slicer_NativeLibrary_cancelPreviewMesh(JNIEnv*, jobject) {
+    sapil::SlicerEngine::cancelPreviewMesh();
+}
+
+JNIEXPORT void JNICALL
+Java_com_u1_slicer_NativeLibrary_cancelSlice(JNIEnv*, jobject) {
+    sapil::SlicerEngine::cancelSlice();
+}
+
 } // extern "C"

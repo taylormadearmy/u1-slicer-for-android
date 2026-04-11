@@ -108,6 +108,7 @@ struct PreviewMesh {
 // ---- Slice Result ----
 struct SliceResult {
     bool success = false;
+    bool cancelled = false;
     std::string error_message;
     std::string gcode_path;
     int total_layers = 0;
@@ -131,6 +132,15 @@ public:
     // Pass 0 (default) to auto-select budget: flat models get 500K, others 100K.
     PreviewMesh getPreparePreviewMesh(int max_triangles = 0) const;
     void clearModel();
+
+    // Cancel an in-progress getPreparePreviewMesh() QEM decimation.
+    // Safe to call from any thread. The QEM loop checks this flag every iteration.
+    static void cancelPreviewMesh();
+
+    // Cancel an in-progress slice(). Calls Print::cancel() which triggers
+    // CanceledException at the next throw_if_canceled() checkpoint.
+    // Safe to call from any thread.
+    static void cancelSlice();
 
     // Slicing
     SliceResult slice(const SliceConfig& config, ProgressCallback progress = nullptr);
