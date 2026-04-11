@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -40,14 +41,26 @@ import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
 import com.u1.slicer.BMAC_URL
 import com.u1.slicer.BuildConfig
 import com.u1.slicer.GITHUB_URL
 import com.u1.slicer.SlicerViewModel
+import com.u1.slicer.network.UpdateChecker
+import kotlinx.coroutines.launch
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.printer.PrinterViewModel
+
+private sealed interface UpdateCheckState {
+    data object Idle : UpdateCheckState
+    data object Checking : UpdateCheckState
+    data class Available(val version: String, val downloadUrl: String) : UpdateCheckState
+    data object UpToDate : UpdateCheckState
+    data class Error(val message: String) : UpdateCheckState
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -125,6 +138,8 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             val context = LocalContext.current
+            val scope = rememberCoroutineScope()
+            var updateState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
             SettingsSection("About") {
                 // Version row
                 Row(
@@ -158,6 +173,82 @@ fun SettingsScreen(
                         contentDescription = "Open GitHub",
                         tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
+                }
+
+                // Check for Updates row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = updateState !is UpdateCheckState.Checking) {
+                            updateState = UpdateCheckState.Checking
+                            scope.launch {
+                                val result = UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
+                                updateState = result.fold(
+                                    onSuccess = { release ->
+                                        if (release != null) UpdateCheckState.Available(release.version, release.downloadUrl)
+                                        else UpdateCheckState.UpToDate
+                                    },
+                                    onFailure = { UpdateCheckState.Error(it.message ?: "Check failed") }
+                                )
+                            }
+                        },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Check for Updates", style = MaterialTheme.typography.bodyMedium)
+                    when (val s = updateState) {
+                        is UpdateCheckState.Idle -> Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "Check for updates",
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                        is UpdateCheckState.Checking -> CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                        is UpdateCheckState.UpToDate -> Text(
+                            "Up to date",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                        is UpdateCheckState.Available -> Text(
+                            "v${s.version} available",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        is UpdateCheckState.Error -> Text(
+                            "Check failed",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+
+                // Download row (only shown when update is available)
+                if (updateState is UpdateCheckState.Available) {
+                    val available = updateState as UpdateCheckState.Available
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(available.downloadUrl))
+                                )
+                            },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Download v${available.version}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Download update",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
 
                 // Buy Me a Coffee card

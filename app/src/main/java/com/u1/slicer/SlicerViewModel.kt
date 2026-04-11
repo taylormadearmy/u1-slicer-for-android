@@ -97,6 +97,7 @@ internal fun wipeTowerClampBounds(
  */
 internal fun sliceResultFromJob(job: SliceJob) = SliceResult(
     success = true,
+    cancelled = false,
     errorMessage = "",
     gcodePath = job.gcodePath,
     totalLayers = job.totalLayers,

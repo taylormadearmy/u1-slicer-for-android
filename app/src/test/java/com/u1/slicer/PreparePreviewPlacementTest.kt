@@ -53,7 +53,7 @@ class PreparePreviewPlacementTest {
         val cached = ModelInfo("cached.3mf", "3mf", 120f, 80f, 40f, 2_000_000, 1, true)
         val resolved = resolvePreparePreviewModelInfo(
             SlicerViewModel.SlicerState.SliceComplete(
-                SliceResult(true, "", "/tmp/out.gcode", 42, 0f, 0f, 0f)
+                SliceResult(true, false, "", "/tmp/out.gcode", 42, 0f, 0f, 0f)
             ),
             cached
         )
