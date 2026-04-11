@@ -197,12 +197,14 @@ class ProfileEmbedder(private val context: Context) {
         val config: MutableMap<String, Any>
 
         // Determine merge strategy based on file type
+        val sourceHasSupports = sourceConfig?.get("enable_support")?.toString() == "1"
         val needsPreserve = info.isBambu && (
             info.detectedExtruderCount > 1 ||
             info.hasLayerToolChanges ||
             (info.hasPaintData && targetExtruderCount > 1) ||
             info.isMultiPlate ||
-            info.hasPaintSupports  // B57: single-color with support painting needs embedded config preserved
+            info.hasPaintSupports ||  // B57: single-color with support painting needs embedded config preserved
+            sourceHasSupports  // B61: single-color file with supports enabled — preserve so processProfile doesn't stomp
         )
 
         if (needsPreserve && sourceConfig != null) {
