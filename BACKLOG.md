@@ -18,10 +18,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Tests**: 1 new instrumented test in `BambuPipelineIntegrationTest.kt` — verifies config preserves `modifier_part` and native preview has 15,642 tris (model only, modifier excluded)
 - **Affects**: u1-auxiliary-fan-cover-hex_mw.3mf, citystep (any 3MF with modifier/settings-override volumes)
 
-### B55: Crash / freeze when loading new model while large preview QEM is running (GitHub #57)
-- Loading a new model or tapping X while a large model's preview QEM decimation is running (F1 calendar, 8M tris, 30+ seconds) causes SIGSEGV — `clearModel()` frees native memory while `getPreparePreviewMesh` is still iterating
-- **Mitigation (v1.5.41-dev)**: All `clearModel()` / `loadModel()` calls now acquire `previewMutex`, preventing the crash but causing a 30s stall while QEM finishes
-- **Ideal fix**: Add a native cancellation flag (`std::atomic<bool>`) to the QEM loop, expose `cancelPreviewMesh()` via JNI, call it from `clearModel()` before acquiring the mutex so QEM bails out quickly
+### B55: Crash / freeze when loading new model while large preview QEM is running (GitHub #57) — FIXED v1.5.49
+- **Root cause**: `clearModel()` acquired `previewMutex` while `getPreparePreviewMesh()` QEM decimation was running (30+ seconds for large models), either causing SIGSEGV or 30-second stall
+- **Fix**: Added `std::atomic<bool> g_preview_cancel` flag checked every QEM iteration via `its_quadric_edge_collapse`'s `throw_on_cancel` callback + volume loop + MMU interleave loop. `cancelPreviewMesh()` JNI method sets the flag; `clearModel()` calls it before acquiring mutex. QEM bails out in microseconds.
+- **Also fixed**: Slice cancellation upgraded from soft cancel (native runs to completion, result discarded) to hard cancel via OrcaSlicer's built-in `Print::cancel()` + `throw_if_canceled()` mechanism. New `SlicerState.Cancelling` shows honest "Cancelling..." UX until native confirms stop. `g_slice_cancel` atomic flag handles cancellation during config setup before `print.process()` starts.
+- **Tests**: 5 unit tests in `SliceCancelTest.kt`, 1 instrumented test in `SlicingIntegrationTest.kt`
 
 ### B52: Crash at end of slicing citystep_A1_274_102.3mf (GitHub #51) — FIXED
 - **Root cause**: Two OOM sources in post-slice G-code processing for very large files (115 MB, 3.7M moves):
@@ -126,6 +127,16 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F70: Check for Updates (GitHub #68) — DONE v1.5.49
+- "Check for Updates" button in Settings About section; queries GitHub Releases API (`/releases/latest`), compares to `BuildConfig.VERSION_NAME`, shows inline result
+- Download link shown when update is available; Idle → Checking → UpToDate/Available/Error state machine
+- Tests: 12 unit tests in `UpdateCheckerTest.kt`
+- Issue #68 closed.
+
+### F69: 3D viewer thread-safety hardening (GitHub #67) — DONE v1.5.47
+- `@Volatile` on all Camera scalar fields; `pendingCameraState` on ModelRenderer consumed in `onDrawFrame`; `resetView()` and `applyCameraState()` routed through GL thread; `modelScale` immutable-array contract documented; Camera scalars converted to `Double` (downcast to Float at shader upload)
+- Issue #67 closed.
+
 ### F49: Reset-view button on Prepare and Preview 3D viewers (GitHub #31) — FIXED v1.5.15
 - FilterCenterFocus icon at bottom-end of both Prepare and Preview 3D viewers
 - Clears shared camera state to reset to default view
@@ -204,12 +215,9 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - "Large model — this may take a moment…" shown when file >50MB; "Large model — preview may take a moment…" shown after load when triangle count >500K
 - Track: [`#35`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/35)
 
-### F62: G-code viewer — fit camera to content on load (GitHub #42)
-- Default camera distance is fixed at 500mm regardless of model size — small models (tetrahedron, buttons) appear as tiny specks at default zoom
-- `GcodeRenderer.kt` lines 132/169: `camera.distance = 500f` hardcoded
-- Fix: after G-code is uploaded to GPU, compute the bounding box of all move positions and set `camera.distance` and `camera.target` to frame the content
-- Same issue applies when opening via "View G-code" from Jobs tab (F60)
-- Confirmed by E2E screenshot: tetrahedron visible only as a 2px speck at default zoom after v1.5.32 tube width fix
+### F62: G-code viewer — fit camera to content on load (GitHub #42) — DONE v1.5.47
+- Camera now computes XY bounding box of all G-code moves (extrusion + travel, including prime towers); targets centroid, distance = max(spanX, spanY) * 2.0 with 20mm padding; falls back to plate-centred 500mm for empty gcode
+- Issue #42 closed.
 
 ### F66: Split to objects and auto-rotate for placement (GitHub #56)
 - 3MF files exported from generators (e.g. Skadis shelf generator on MakerWorld) output assembled scenes with parts in place — slicing as-is requires heavy supports; user needs to split the assembly into individual objects and auto-orient each for optimal bed placement
@@ -230,6 +238,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **B55**: QEM preview crash/freeze + slice cancel upgrade — native `cancelPreviewMesh()` with atomic flag in QEM loop, native `cancelSlice()` via `Print::cancel()` + `throw_if_canceled()`, honest "Cancelling..." UX — FIXED v1.5.49.
+- **F70**: Check for Updates button in Settings — queries GitHub Releases API, shows version comparison inline, download link when update available — DONE v1.5.49.
+- **F69**: 3D viewer thread-safety hardening — `@Volatile` Camera fields, `pendingCameraState` for GL-thread-safe camera mutations, Double-precision scalars — DONE v1.5.47.
+- **F62**: G-code viewer fits camera to content bounding box on load — small models fill the view, prime towers stay in frame — DONE v1.5.47.
 - **B47**: S-Buttons multi-colour 3MF intermittently loses a colour on first load — race condition where `_colorMapping` was emitted after `_state = ModelLoaded` in `loadNativeModel`; moved entire multi-color setup block before the ModelLoaded emission so the UI always sees a consistent snapshot — FIXED v1.5.46.
 - **B60**: B57 regression — `hasPaintSupports` dropped by both `mergeThreeMfInfo()` and `mergeThreeMfInfoForPlate()`, causing supports to be disabled for citystep. Fixed by forwarding `origInfo.hasPaintSupports` / `sourceInfo.hasPaintSupports` in both merge functions — FIXED v1.5.44.
 - **B59b**: Prime tower Prepare preview stale after toggle — `togglePrimeTower()` didn't call `invalidatePrepareMeshCache()`; `LaunchedEffect` was missing `wipeTowerVisible` key and had no `else` branch to clear the rect — FIXED v1.5.44.
