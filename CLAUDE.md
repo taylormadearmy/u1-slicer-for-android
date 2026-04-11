@@ -224,9 +224,31 @@ For clarity: rebuilding the native library is not something to avoid on principl
 
 The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
 
-1. Enable CMake in `build.gradle` (uncomment `externalNativeBuild` blocks)
-2. Run `./gradlew assembleDebug` to configure
-3. Disable CMake, then run `ninja -j1` in `app/.cxx/Debug/<hash>/arm64-v8a/` (OOMs at `-j2`+)
-4. Strip with NDK `llvm-strip --strip-unneeded`
-5. Copy `.so` to `app/src/main/jniLibs/arm64-v8a/`
+> **CRITICAL: Always build with Release optimization.** Debug builds (`-O0`) produce a ~83MB `.so` (vs ~19MB Release) that is 3-5x slower and causes native OOM crashes on heavy multi-colour models. The shipped `.so` must always be Release-optimized.
+
+### Using an existing build directory (preferred — faster)
+
+If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous build:
+
+1. **Ensure Release flags** — check `CMakeCache.txt` in that directory:
+   ```
+   CMAKE_BUILD_TYPE:STRING=Release
+   CMAKE_CXX_FLAGS_RELEASE:STRING=-O2 -DNDEBUG
+   ```
+   If it says `Debug`, change both values and run `cmake .` in that directory to regenerate ninja files.
+2. Run `ninja -j1` in `app/.cxx/Debug/<hash>/arm64-v8a/` (OOMs at `-j2`+)
+3. Strip: `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip --strip-unneeded libprusaslicer-jni.so`
+4. Copy to `app/src/main/jniLibs/arm64-v8a/`
+5. **Verify size**: stripped Release `.so` should be ~19-20MB. If it's 50MB+, you built with Debug — redo with Release flags.
 6. `./gradlew clean installDebug` — incremental builds may cache old APK
+
+### Fresh build (when no existing build dir works)
+
+1. Enable CMake in `build.gradle` (uncomment `externalNativeBuild` blocks)
+2. Run `./gradlew assembleDebug` to configure CMake (will fail at link — that's OK, it generates ninja files)
+3. Disable CMake in `build.gradle` (re-comment)
+4. **Switch to Release** — edit `CMakeCache.txt` in `app/.cxx/Debug/<hash>/arm64-v8a/`:
+   - `CMAKE_BUILD_TYPE:STRING=Release`
+   - `CMAKE_CXX_FLAGS_RELEASE:STRING=-O2 -DNDEBUG`
+5. Run `cmake .` in that directory to regenerate
+6. Follow steps 2-6 from "Using an existing build directory" above
