@@ -188,11 +188,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 resetCameraToDefaultView()
                 camera.panX = 0.0
                 camera.panY = 0.0
-                camera.updateProjectionMatrix(viewportWidth, viewportHeight)
             }
         }
 
         camera.updateViewMatrix()
+        if (viewportWidth > 0 && viewportHeight > 0) {
+            camera.updateProjectionMatrix(viewportWidth, viewportHeight)
+        }
 
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 

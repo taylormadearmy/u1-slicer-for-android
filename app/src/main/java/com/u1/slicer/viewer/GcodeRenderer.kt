@@ -25,6 +25,8 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     val camera = Camera()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var viewportWidth = 0
+    private var viewportHeight = 0
     @Volatile
     var preserveRestoredCameraOnSurfaceInit = false
     @Volatile
@@ -134,6 +136,8 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES30.glViewport(0, 0, width, height)
+        viewportWidth = width
+        viewportHeight = height
         camera.updateProjectionMatrix(width, height)
     }
 
@@ -167,6 +171,9 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
 
         camera.updateViewMatrix()
+        if (viewportWidth > 0 && viewportHeight > 0) {
+            camera.updateProjectionMatrix(viewportWidth, viewportHeight)
+        }
         GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
 
         bed.draw(camera)
@@ -346,7 +353,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val max = maxLayer.coerceIn(0, layerCount - 1)
 
         // Draw extrusion tubes via instanced rendering
-        if (hasInstances && instanceLayerRanges.isNotEmpty()) {
+        if (hasInstances && instanceLayerRanges.isNotEmpty() && instanceVAO != 0) {
             val shader = instancedShader ?: return
             shader.use()
             camera.computeMVP()
@@ -355,6 +362,10 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
             val bytesPerInstance = GcodeInstancePacker.FLOATS_PER_INSTANCE * 4  // 48
 
+            // Bind the instanced VAO — operating on the default VAO 0 causes instanced
+            // draw calls to silently produce no output after camera state changes on
+            // Samsung Xclipse (RDNA-based) GPUs (e.g. S24 Ultra).
+            GLES30.glBindVertexArray(instanceVAO)
             GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, instanceVBO)
 
             for (i in min..max) {
@@ -385,6 +396,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             for (loc in 0..3) {
                 GLES30.glVertexAttribDivisor(loc, 0)
             }
+            GLES30.glBindVertexArray(0)
         }
 
         // Draw travel moves (always GL_LINES via toolpath shader)
