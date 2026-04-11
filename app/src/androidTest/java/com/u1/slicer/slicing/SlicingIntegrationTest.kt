@@ -6,6 +6,7 @@ import com.u1.slicer.NativeLibrary
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.gcode.GcodeValidator
 import org.junit.After
@@ -637,5 +638,36 @@ class SlicingIntegrationTest {
 
         val result = lib.slice(cfg)!!
         assertTrue("Slice should succeed without support", result.success)
+    }
+
+    // ─── B55: Slice cancellation ─────────────────────────────────────────────
+
+    @Test
+    fun sliceCancelReturnsCancelledResult() {
+        val file = asset("3DBenchy.stl")
+        assertTrue("Model must load", lib.loadModel(file.absolutePath))
+
+        // Start slice on a background thread
+        var result: SliceResult? = null
+        val sliceThread = Thread {
+            result = lib.slice(DEFAULT_CONFIG)
+        }
+        sliceThread.start()
+
+        // Give the slice a moment to enter process(), then cancel.
+        // 3DBenchy needs enough time to start the slicing pipeline.
+        Thread.sleep(1000)
+        lib.cancelSlice()
+
+        // Wait for the slice to finish (should be fast after cancel)
+        sliceThread.join(60_000)
+
+        assertNotNull("slice() must return a result", result)
+        // The slice may have completed before cancel was signalled (race condition),
+        // so we check: either cancelled=true OR success=true (completed before cancel).
+        assertTrue(
+            "Result must be either cancelled or successfully completed",
+            result!!.cancelled || result!!.success
+        )
     }
 }

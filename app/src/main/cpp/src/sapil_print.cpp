@@ -33,14 +33,17 @@ namespace sapil {
 // B55: pointer to the in-flight Print object so cancelSlice() can reach it.
 // Only non-null while slice() is running. Cleared on all exit paths.
 static std::atomic<Slic3r::Print*> g_active_print{nullptr};
+// B55: independent cancel flag checked during config setup (before g_active_print is set).
+static std::atomic<bool> g_slice_cancel{false};
 
 void SlicerEngine::cancelSlice() {
+    g_slice_cancel.store(true, std::memory_order_release);
     auto* print = g_active_print.load(std::memory_order_acquire);
     if (print) {
         print->cancel();
-        SAPIL_LOGI("cancelSlice: signalled cancellation to Print");
+        SAPIL_LOGI("cancelSlice: signalled cancellation to Print + flag");
     } else {
-        SAPIL_LOGI("cancelSlice: no active print to cancel");
+        SAPIL_LOGI("cancelSlice: signalled cancel flag (print not yet started)");
     }
 }
 
@@ -450,6 +453,7 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
 SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback progress) {
     SAPIL_LOGI("Starting slice operation...");
     SliceResult result;
+    g_slice_cancel.store(false, std::memory_order_release);
 
     if (!isModelLoaded()) {
         result.success = false;
@@ -833,6 +837,10 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Paint data (paint_color= attributes) is preserved through ProfileEmbedder.
         // See SemmSlicingTest for regression guard.
 
+        // B55: check cancel flag before expensive config apply
+        if (g_slice_cancel.load(std::memory_order_acquire)) {
+            throw Slic3r::CanceledException();
+        }
         if (progress) progress(10, "Applying configuration to model");
 
         // Apply the config to the print
@@ -911,6 +919,10 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             }
         });
 
+        // B55: check cancel flag before starting heavy processing
+        if (g_slice_cancel.load(std::memory_order_acquire)) {
+            throw Slic3r::CanceledException();
+        }
         if (progress) progress(15, "Starting slicing...");
 
         // Process (slice + generate toolpaths)
@@ -936,6 +948,11 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             diagnostics_record_native_event("wipe_tower_y_checkpoint", cp2.str());
         }
 
+        // B55: check cancel flag before G-code export
+        if (g_slice_cancel.load(std::memory_order_acquire)) {
+            g_active_print.store(nullptr, std::memory_order_release);
+            throw Slic3r::CanceledException();
+        }
         if (progress) progress(90, "Generating G-code");
 
         // Checkpoint 3: validate wipe_tower_y right before G-code export
