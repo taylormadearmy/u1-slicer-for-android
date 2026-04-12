@@ -50,6 +50,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     // Layer data
     private var segmentLayerRanges = listOf<SegmentLayerRange>()
     private var hasSegments = false
+    private var maxTexSize = 4096  // updated from GL_MAX_TEXTURE_SIZE in onSurfaceCreated
 
     // Travel lines
     private var travelVAO = 0
@@ -121,6 +122,11 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         toolpathShader = ShaderProgram(context, "shaders/toolpath.vert", "shaders/toolpath.frag")
         bed.setup(context)
         createSegmentTemplate()
+
+        // Query actual GPU texture size limit for computeTexDimensions
+        val buf = IntArray(1)
+        GLES30.glGetIntegerv(GLES30.GL_MAX_TEXTURE_SIZE, buf, 0)
+        if (buf[0] > 0) maxTexSize = buf[0]
 
         if (preserveRestoredCameraOnSurfaceInit) {
             preserveRestoredCameraOnSurfaceInit = false
@@ -287,8 +293,8 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         hasSegments = pack.totalSegments > 0
 
         if (hasSegments) {
-            val (vTexW, vTexH) = GcodeSegmentPacker.computeTexDimensions(pack.totalVertices)
-            val (sTexW, sTexH) = GcodeSegmentPacker.computeTexDimensions(pack.totalSegments)
+            val (vTexW, vTexH) = GcodeSegmentPacker.computeTexDimensions(pack.totalVertices, maxTexSize)
+            val (sTexW, sTexH) = GcodeSegmentPacker.computeTexDimensions(pack.totalSegments, maxTexSize)
 
             deleteTexture(positionTexId);      positionTexId = createDataTexture()
             deleteTexture(hwaTexId);           hwaTexId = createDataTexture()
@@ -313,7 +319,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (!hasSegments) return
         val newPack = GcodeSegmentPacker.pack(gcode, extruderColors, featureTypeColors)
         lastPackResult = newPack
-        val (vTexW, vTexH) = GcodeSegmentPacker.computeTexDimensions(newPack.totalVertices)
+        val (vTexW, vTexH) = GcodeSegmentPacker.computeTexDimensions(newPack.totalVertices, maxTexSize)
         uploadFloatTexture(extruderColorTexId, GLES30.GL_R32F, GLES30.GL_RED, vTexW, vTexH, newPack.extruderColors, 1)
         if (!useFeatureColors) activeColorTexId = extruderColorTexId
     }
@@ -417,6 +423,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
             GLES30.glDrawArraysInstanced(GLES30.GL_TRIANGLES, 0, 24, range.segmentCount)
         }
         GLES30.glBindVertexArray(0)
+        GLES30.glEnable(GLES30.GL_CULL_FACE)
     }
 
     private fun drawTravel() {
