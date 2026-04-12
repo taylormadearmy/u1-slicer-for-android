@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 743 JVM unit tests
+./gradlew testDebugUnitTest                        # 753 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 163 instrumented tests (uses Orchestrator)
 ```
 
@@ -59,7 +59,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.
 
-### Unit tests (`app/src/test/`) - 743 tests across 51 classes
+### Unit tests (`app/src/test/`) - 753 tests across 51 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -99,7 +99,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic
 - `WipeTowerClampTest.kt` (8) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width; resolveWipeTowerWidth/resolveWipeTowerDepth: return active override or config default
 - `data/WipeTowerDepthEstimatorTest.kt` (8) — height-based depth lookup table; primeVolume override wins when larger than height-based minimum
-- `viewer/GcodeRendererGeometryTest.kt` (11) — instanced tube data packing: single move, travel exclusion, zero-length skip, layer ranges, extruder/feature colors, brightness gradient, dimensions, 400k stress test
+- `viewer/GcodeRendererGeometryTest.kt` (21) — segment packer: chain construction, shared vertices, travel breaks, turning angles (90°, straight, caps), z-offset, layer ranges, extruder/feature colors, brightness gradient, color encode/decode round-trip, texture dimensions, 400k stress test
 - `gcode/LayerToolPauseInjectorTest.kt` (9) — PAUSE_PRINT injection for layer-tool colour swaps
 - `LargeModelLoadingMessageTest.kt` (5) — large model loading state messages
 - `SliceResultFromJobTest.kt` (2) — SliceResult construction from SliceJob
