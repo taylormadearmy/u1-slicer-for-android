@@ -3,29 +3,31 @@ package com.u1.slicer.viewer
 import com.u1.slicer.gcode.*
 import org.junit.Assert.*
 import org.junit.Test
+import kotlin.math.PI
+import kotlin.math.abs
 
 class GcodeRendererGeometryTest {
 
-    private val defaultExtruderColors = arrayOf(
+    private val extruderPalette = arrayOf(
         floatArrayOf(1.0f, 0.6f, 0.0f, 1.0f),
         floatArrayOf(0.2f, 0.7f, 1.0f, 1.0f),
         floatArrayOf(0.0f, 0.9f, 0.4f, 1.0f),
         floatArrayOf(0.9f, 0.2f, 0.5f, 1.0f)
     )
 
-    private val defaultFeatureColors = arrayOf(
-        floatArrayOf(1.00f, 0.85f, 0.00f, 1.0f),  // OUTER_WALL
-        floatArrayOf(0.53f, 0.81f, 0.92f, 1.0f),  // INNER_WALL
-        floatArrayOf(0.30f, 0.71f, 0.68f, 1.0f),  // SPARSE_INFILL
-        floatArrayOf(0.40f, 0.73f, 0.42f, 1.0f),  // SOLID_INFILL
-        floatArrayOf(0.00f, 0.74f, 0.83f, 1.0f),  // TOP_SURFACE
-        floatArrayOf(0.00f, 0.59f, 0.53f, 1.0f),  // BOTTOM_SURFACE
-        floatArrayOf(0.67f, 0.28f, 0.74f, 1.0f),  // SUPPORT
-        floatArrayOf(0.81f, 0.58f, 0.85f, 1.0f),  // SUPPORT_INTERFACE
-        floatArrayOf(1.00f, 0.25f, 0.51f, 1.0f),  // PRIME_TOWER
-        floatArrayOf(1.00f, 0.44f, 0.26f, 1.0f),  // BRIDGE
-        floatArrayOf(0.69f, 0.75f, 0.76f, 1.0f),  // SKIRT
-        floatArrayOf(0.62f, 0.62f, 0.62f, 1.0f)   // OTHER
+    private val featurePalette = arrayOf(
+        floatArrayOf(1.00f, 0.85f, 0.00f, 1.0f),
+        floatArrayOf(0.53f, 0.81f, 0.92f, 1.0f),
+        floatArrayOf(0.30f, 0.71f, 0.68f, 1.0f),
+        floatArrayOf(0.40f, 0.73f, 0.42f, 1.0f),
+        floatArrayOf(0.00f, 0.74f, 0.83f, 1.0f),
+        floatArrayOf(0.00f, 0.59f, 0.53f, 1.0f),
+        floatArrayOf(0.67f, 0.28f, 0.74f, 1.0f),
+        floatArrayOf(0.81f, 0.58f, 0.85f, 1.0f),
+        floatArrayOf(1.00f, 0.25f, 0.51f, 1.0f),
+        floatArrayOf(1.00f, 0.44f, 0.26f, 1.0f),
+        floatArrayOf(0.69f, 0.75f, 0.76f, 1.0f),
+        floatArrayOf(0.62f, 0.62f, 0.62f, 1.0f)
     )
 
     private fun makeGcode(vararg layerMoves: List<GcodeMove>): ParsedGcode {
@@ -35,40 +37,138 @@ class GcodeRendererGeometryTest {
         return ParsedGcode(layers)
     }
 
-    private fun pack(gcode: ParsedGcode, useFeature: Boolean = false) =
-        GcodeInstancePacker.pack(gcode, defaultExtruderColors, defaultFeatureColors, useFeature)
+    private fun pack(gcode: ParsedGcode) =
+        GcodeSegmentPacker.pack(gcode, extruderPalette, featurePalette)
+
+    // --- Color encoding ---
 
     @Test
-    fun `single extrude move produces 12 floats`() {
-        val gcode = makeGcode(listOf(
-            GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 10f)
-        ))
-        val result = pack(gcode)
-        assertEquals(1, result.totalInstances)
-        assertEquals(12, result.instanceData.size)
+    fun `encodeColor round-trip preserves RGB`() {
+        val packed = GcodeSegmentPacker.encodeColor(1.0f, 0.5f, 0.0f)
+        val (r, g, b) = GcodeSegmentPacker.decodeColor(packed)
+        assertEquals(255, r)
+        assertEquals(128, g)
+        assertEquals(0, b)
     }
 
     @Test
-    fun `travel moves are excluded`() {
-        val gcode = makeGcode(listOf(
-            GcodeMove(MoveType.TRAVEL, 0f, 0f, 10f, 10f),
-            GcodeMove(MoveType.EXTRUDE, 10f, 10f, 20f, 20f)
-        ))
-        val result = pack(gcode)
-        assertEquals(1, result.totalInstances)
+    fun `encodeColor applies brightness`() {
+        val packed = GcodeSegmentPacker.encodeColor(1.0f, 1.0f, 1.0f, 0.5f)
+        val (r, g, b) = GcodeSegmentPacker.decodeColor(packed)
+        assertEquals(128, r)
+        assertEquals(128, g)
+        assertEquals(128, b)
     }
 
+    // --- Basic packing ---
+
     @Test
-    fun `zero-length moves are skipped`() {
+    fun `single extrude move produces 2 vertices and 1 segment`() {
         val gcode = makeGcode(listOf(
-            GcodeMove(MoveType.EXTRUDE, 5f, 5f, 5f, 5f),
             GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f)
         ))
         val result = pack(gcode)
-        assertEquals(1, result.totalInstances)
-        // Start position of the surviving move
-        assertEquals(0f, result.instanceData[0], 0.001f)
+        assertEquals(2, result.totalVertices)
+        assertEquals(1, result.totalSegments)
+        assertEquals(6, result.positions.size)
+        assertEquals(6, result.heightsWidthsAngles.size)
+        assertEquals(2, result.extruderColors.size)
+        assertEquals(1, result.segmentIndices.size)
+        assertEquals(0, result.segmentIndices[0])
     }
+
+    @Test
+    fun `consecutive extrude moves share vertices`() {
+        val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f),
+            GcodeMove(MoveType.EXTRUDE, 10f, 0f, 20f, 0f),
+            GcodeMove(MoveType.EXTRUDE, 20f, 0f, 30f, 0f)
+        ))
+        val result = pack(gcode)
+        assertEquals(4, result.totalVertices)
+        assertEquals(3, result.totalSegments)
+        assertEquals(0, result.segmentIndices[0])
+        assertEquals(1, result.segmentIndices[1])
+        assertEquals(2, result.segmentIndices[2])
+    }
+
+    @Test
+    fun `travel breaks chain into two`() {
+        val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f),
+            GcodeMove(MoveType.TRAVEL, 10f, 0f, 50f, 50f),
+            GcodeMove(MoveType.EXTRUDE, 50f, 50f, 60f, 50f)
+        ))
+        val result = pack(gcode)
+        assertEquals(4, result.totalVertices)
+        assertEquals(2, result.totalSegments)
+        assertEquals(0, result.segmentIndices[0])
+        assertEquals(2, result.segmentIndices[1])
+    }
+
+    // --- Angles ---
+
+    @Test
+    fun `90 degree turn produces correct angle`() {
+        val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f),
+            GcodeMove(MoveType.EXTRUDE, 10f, 0f, 10f, 10f)
+        ))
+        val result = pack(gcode)
+        val angleAtV1 = result.heightsWidthsAngles[1 * 3 + 2]
+        assertEquals(PI.toFloat() / 2f, angleAtV1, 0.01f)
+    }
+
+    @Test
+    fun `straight path produces zero angle at interior vertex`() {
+        val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f),
+            GcodeMove(MoveType.EXTRUDE, 10f, 0f, 20f, 0f)
+        ))
+        val result = pack(gcode)
+        val angleAtV1 = result.heightsWidthsAngles[1 * 3 + 2]
+        assertEquals(0f, angleAtV1, 0.001f)
+    }
+
+    @Test
+    fun `chain start and end have zero angle`() {
+        val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f),
+            GcodeMove(MoveType.EXTRUDE, 10f, 0f, 10f, 10f)
+        ))
+        val result = pack(gcode)
+        assertEquals(0f, result.heightsWidthsAngles[0 * 3 + 2], 0.001f)
+        assertEquals(0f, result.heightsWidthsAngles[2 * 3 + 2], 0.001f)
+    }
+
+    // --- Positions ---
+
+    @Test
+    fun `positions include z-offset for extrusion centerline`() {
+        val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 1f, 2f, 3f, 4f)
+        ))
+        val result = pack(gcode)
+        val expectedZ = 0.2f - 0.5f * GcodeSegmentPacker.HEIGHT
+        assertEquals(1f, result.positions[0], 0.001f)
+        assertEquals(2f, result.positions[1], 0.001f)
+        assertEquals(expectedZ, result.positions[2], 0.001f)
+        assertEquals(3f, result.positions[3], 0.001f)
+        assertEquals(4f, result.positions[4], 0.001f)
+        assertEquals(expectedZ, result.positions[5], 0.001f)
+    }
+
+    @Test
+    fun `height and width constants stored per vertex`() {
+        val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f)
+        ))
+        val result = pack(gcode)
+        assertEquals(GcodeSegmentPacker.HEIGHT, result.heightsWidthsAngles[0], 0.001f)
+        assertEquals(GcodeSegmentPacker.WIDTH, result.heightsWidthsAngles[1], 0.001f)
+    }
+
+    // --- Layer ranges ---
 
     @Test
     fun `layer ranges tracked correctly`() {
@@ -83,39 +183,49 @@ class GcodeRendererGeometryTest {
         )
         val result = pack(gcode)
         assertEquals(2, result.layerRanges.size)
-        assertEquals(0, result.layerRanges[0].firstInstance)
-        assertEquals(2, result.layerRanges[0].instanceCount)
-        assertEquals(2, result.layerRanges[1].firstInstance)
-        assertEquals(1, result.layerRanges[1].instanceCount)
-        assertEquals(3, result.totalInstances)
+        assertEquals(0, result.layerRanges[0].firstSegment)
+        assertEquals(2, result.layerRanges[0].segmentCount)
+        assertEquals(2, result.layerRanges[1].firstSegment)
+        assertEquals(1, result.layerRanges[1].segmentCount)
     }
 
     @Test
-    fun `colors use extruder index by default`() {
+    fun `layer boundary breaks chain`() {
+        val gcode = makeGcode(
+            listOf(GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f)),
+            listOf(GcodeMove(MoveType.EXTRUDE, 10f, 0f, 20f, 0f))
+        )
+        val result = pack(gcode)
+        assertEquals(4, result.totalVertices)
+        assertEquals(2, result.totalSegments)
+        assertEquals(0, result.segmentIndices[0])
+        assertEquals(2, result.segmentIndices[1])
+    }
+
+    // --- Colors ---
+
+    @Test
+    fun `extruder colors use correct palette entry`() {
         val gcode = makeGcode(listOf(
             GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f, extruder = 1)
         ))
         val result = pack(gcode)
-        // Single layer → brightness = 1.0, so color = extruderColors[1] directly
-        val r = result.instanceData[6]
-        val g = result.instanceData[7]
-        val b = result.instanceData[8]
-        assertEquals(0.2f, r, 0.001f)
-        assertEquals(0.7f, g, 0.001f)
-        assertEquals(1.0f, b, 0.001f)
+        val (r, g, b) = GcodeSegmentPacker.decodeColor(result.extruderColors[0])
+        assertEquals(51, r)
+        assertEquals(179, g)
+        assertEquals(255, b)
     }
 
     @Test
-    fun `feature type colors when enabled`() {
+    fun `feature colors use correct palette entry`() {
         val gcode = makeGcode(listOf(
             GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f, featureType = FeatureType.SUPPORT)
         ))
-        val result = pack(gcode, useFeature = true)
-        // Single layer → brightness 1.0
-        val r = result.instanceData[6]
-        val g = result.instanceData[7]
-        assertEquals(0.67f, r, 0.001f)
-        assertEquals(0.28f, g, 0.001f)
+        val result = pack(gcode)
+        val (r, g, b) = GcodeSegmentPacker.decodeColor(result.featureColors[0])
+        assertEquals(171, r)
+        assertEquals(71, g)
+        assertEquals(190, b)  // 0.74f * 255f + 0.5f rounds to 190 in JVM float32
     }
 
     @Test
@@ -125,22 +235,45 @@ class GcodeRendererGeometryTest {
             listOf(GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f))
         )
         val result = pack(gcode)
-        // Layer 0 brightness = 0.45, Layer 1 brightness = 1.0
-        val layer0R = result.instanceData[6]  // first instance color R
-        val layer1R = result.instanceData[18] // second instance color R (offset 12 + 6)
-        // T0 base color R = 1.0; layer0 = 1.0*0.45=0.45, layer1 = 1.0*1.0=1.0
-        assertEquals(0.45f, layer0R, 0.001f)
-        assertEquals(1.0f, layer1R, 0.001f)
+        val (r0, _, _) = GcodeSegmentPacker.decodeColor(result.extruderColors[0])
+        val (r1, _, _) = GcodeSegmentPacker.decodeColor(result.extruderColors[2])
+        assertTrue("Layer 0 R=$r0 should be ~115", abs(r0 - 115) <= 2)
+        assertEquals(255, r1)
     }
 
+    // --- Filtering ---
+
     @Test
-    fun `halfWidth and halfHeight values correct`() {
+    fun `zero-length moves are skipped`() {
         val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.EXTRUDE, 5f, 5f, 5f, 5f),
             GcodeMove(MoveType.EXTRUDE, 0f, 0f, 10f, 0f)
         ))
         val result = pack(gcode)
-        assertEquals(0.28f, result.instanceData[10], 0.001f) // halfWidth
-        assertEquals(0.18f, result.instanceData[11], 0.001f) // halfHeight
+        assertEquals(2, result.totalVertices)
+        assertEquals(1, result.totalSegments)
+    }
+
+    @Test
+    fun `travel moves are excluded from segments`() {
+        val gcode = makeGcode(listOf(
+            GcodeMove(MoveType.TRAVEL, 0f, 0f, 10f, 10f),
+            GcodeMove(MoveType.EXTRUDE, 10f, 10f, 20f, 20f)
+        ))
+        val result = pack(gcode)
+        assertEquals(2, result.totalVertices)
+        assertEquals(1, result.totalSegments)
+    }
+
+    // --- Edge cases ---
+
+    @Test
+    fun `empty gcode returns empty result`() {
+        val gcode = ParsedGcode(emptyList())
+        val result = pack(gcode)
+        assertEquals(0, result.totalVertices)
+        assertEquals(0, result.totalSegments)
+        assertTrue(result.layerRanges.isEmpty())
     }
 
     @Test
@@ -150,30 +283,23 @@ class GcodeRendererGeometryTest {
         }
         val gcode = makeGcode(moves)
         val result = pack(gcode)
-        assertEquals(400_000, result.totalInstances)
-        assertEquals(400_000 * 12, result.instanceData.size)
+        assertEquals(400_001, result.totalVertices)
+        assertEquals(400_000, result.totalSegments)
+    }
+
+    // --- Texture dimensions ---
+
+    @Test
+    fun `texture dimensions fit vertex count`() {
+        val (w, h) = GcodeSegmentPacker.computeTexDimensions(5000)
+        assertTrue("$w x $h must fit 5000", w * h >= 5000)
+        assertTrue("width <= 4096", w <= 4096)
     }
 
     @Test
-    fun `empty gcode returns empty result`() {
-        val gcode = ParsedGcode(emptyList())
-        val result = pack(gcode)
-        assertEquals(0, result.totalInstances)
-        assertEquals(0, result.instanceData.size)
-        assertTrue(result.layerRanges.isEmpty())
-    }
-
-    @Test
-    fun `start and end positions are packed correctly`() {
-        val gcode = makeGcode(listOf(
-            GcodeMove(MoveType.EXTRUDE, 1f, 2f, 3f, 4f)
-        ))
-        val result = pack(gcode)
-        assertEquals(1f, result.instanceData[0], 0.001f)  // x0
-        assertEquals(2f, result.instanceData[1], 0.001f)  // y0
-        assertEquals(0.2f, result.instanceData[2], 0.001f) // z (layer 0 at 0.2)
-        assertEquals(3f, result.instanceData[3], 0.001f)  // x1
-        assertEquals(4f, result.instanceData[4], 0.001f)  // y1
-        assertEquals(0.2f, result.instanceData[5], 0.001f) // z
+    fun `texture dimensions for zero returns 1x1`() {
+        val (w, h) = GcodeSegmentPacker.computeTexDimensions(0)
+        assertEquals(1, w)
+        assertEquals(1, h)
     }
 }

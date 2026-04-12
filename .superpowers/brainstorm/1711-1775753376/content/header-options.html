@@ -1,0 +1,97 @@
+<h2>Header placement options</h2>
+<p class="subtitle">Both include the Settings row — this is just about the header treatment</p>
+
+<div class="cards">
+
+  <!-- Option A: Coffee icon in actions (right side) -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;overflow:hidden;font-family:sans-serif;">
+        <!-- Top app bar -->
+        <div style="background:#1e1e3a;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a2a4a;">
+          <div>
+            <div style="color:#fff;font-weight:bold;font-size:14px;">U1 Slicer</div>
+            <div style="color:#90CAF9;font-size:10px;">Snapmaker Orca 2.2.4</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:18px;cursor:pointer;opacity:0.8;" title="Buy me a coffee">☕</span>
+          </div>
+        </div>
+        <!-- Tab bar -->
+        <div style="background:#1e1e3a;display:flex;border-bottom:1px solid #2a2a4a;">
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#90CAF9;font-size:9px;border-bottom:2px solid #90CAF9;">Prepare</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Preview</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Printer</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Jobs</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Settings</div>
+        </div>
+        <div style="padding:12px;color:#555;font-size:10px;text-align:center;">— screen content —</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — ☕ icon in actions (right)</h3>
+      <p>Small coffee icon sits in the top-right alongside the existing Clear button. Subtitle stays. Subtle — doesn't change the branding, just adds a discoverable tap target.</p>
+    </div>
+  </div>
+
+  <!-- Option B: Replace subtitle with coffee link -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;overflow:hidden;font-family:sans-serif;">
+        <!-- Top app bar -->
+        <div style="background:#1e1e3a;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a2a4a;">
+          <div>
+            <div style="color:#fff;font-weight:bold;font-size:14px;">U1 Slicer</div>
+            <div style="color:#90CAF9;font-size:10px;cursor:pointer;">☕ buymeacoffee.com/taylormadearmy</div>
+          </div>
+        </div>
+        <!-- Tab bar -->
+        <div style="background:#1e1e3a;display:flex;border-bottom:1px solid #2a2a4a;">
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#90CAF9;font-size:9px;border-bottom:2px solid #90CAF9;">Prepare</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Preview</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Printer</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Jobs</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Settings</div>
+        </div>
+        <div style="padding:12px;color:#555;font-size:10px;text-align:center;">— screen content —</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Replace subtitle with link</h3>
+      <p>Swap "Snapmaker Orca 2.2.4" for a tappable ☕ link. The version info disappears but it adds little value to users anyway. Clean — no extra icon cluttering the right side.</p>
+    </div>
+  </div>
+
+  <!-- Option C: Short "☕ Support" replaces subtitle -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;overflow:hidden;font-family:sans-serif;">
+        <!-- Top app bar -->
+        <div style="background:#1e1e3a;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a2a4a;">
+          <div>
+            <div style="color:#fff;font-weight:bold;font-size:14px;">U1 Slicer</div>
+            <div style="color:#90CAF9;font-size:10px;cursor:pointer;opacity:0.7;">☕ Support development</div>
+          </div>
+        </div>
+        <!-- Tab bar -->
+        <div style="background:#1e1e3a;display:flex;border-bottom:1px solid #2a2a4a;">
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#90CAF9;font-size:9px;border-bottom:2px solid #90CAF9;">Prepare</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Preview</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Printer</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Jobs</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#666;font-size:9px;">Settings</div>
+        </div>
+        <div style="padding:12px;color:#555;font-size:10px;text-align:center;">— screen content —</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — "☕ Support development" replaces subtitle</h3>
+      <p>Shorter than the full URL, slightly dimmed so it doesn't compete with the title. Tappable. Works on all screen widths without truncation. Low-key but always visible.</p>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top:24px;padding:12px;background:#1e2a1e;border-radius:6px;border-left:3px solid #4CAF50;font-family:sans-serif;font-size:12px;color:#aaa;">
+  <strong style="color:#81C784;">Settings row (all options)</strong> — All three options also include a row in an About section at the bottom of Settings alongside the version number and a GitHub link.
+</div>
