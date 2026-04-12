@@ -225,7 +225,7 @@ class GcodeRendererGeometryTest {
         val (r, g, b) = GcodeSegmentPacker.decodeColor(result.featureColors[0])
         assertEquals(171, r)
         assertEquals(71, g)
-        assertEquals(190, b)  // 0.74*255 = 188.7 → 189, but float round-trip shifts +1
+        assertEquals(190, b)  // 0.74f * 255f + 0.5f rounds to 190 in JVM float32
     }
 
     @Test
