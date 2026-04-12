@@ -4,6 +4,31 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B62: H2C SEMM segmentation regression — colours only on top surfaces, not sides (GitHub #69)
+- H2C benchy (`3DBenchy-H2C-Multi-Color.3mf`) slices correctly for colour count (all T0-T3 present, G-code
+  `SemmSlicingTest` passes) but the coloured regions appear only on top surfaces, not on the sides.
+- **v1.5.48** (last good): 6h print time, 89g filament, ~238 multicolour layers — fine per-layer colour transitions visible on sides.
+- **v1.5.49+**: 2h12m, 39g, ~150 multicolour layers — coarser segmentation; colour only appears on tops.
+- **Root cause confirmed: native .so slicing, not renderer or post-processing.** G-code tool-change counts are
+  reduced (438 changes in v1.5.49 G-code vs ~838 in v1.5.48 G-code) — the slicer is producing fewer paint
+  segments per layer, so sides receive far less colour coverage.
+- **Investigation history**:
+  1. B55 .so rebuild (commit f1e44ab6) was accidentally Debug (-O0) — confirmed by file size (~83 MB vs ~19 MB Release). Fixed at 3d96337 (Release rebuild with -O2).
+  2. After Release rebuild the regression persists — so it is NOT the Debug-vs-Release issue.
+  3. The C++ changes introduced between v1.5.48 and v1.5.49 are the suspects:
+     - `345aa207` — TBB serial shims (`extern/tbb_serial/`), Eigen allocator/BLAS changes
+     - `e8be12ea` — "thread-safe SEMM" changes to `multi_material_segmentation_by_painting()` path
+     - `B55` cancel changes (`g_active_print`, `g_slice_cancel` atomics, `throw_if_canceled()` calls)
+  4. The renderer change (libvgcode ribbons) is NOT the cause — it was confirmed separately that the G-code itself has fewer segments, so the renderer just faithfully displays what the slicer produced.
+- **Hypothesis to test**: The TBB serial shims (`extern/tbb_serial/`) or the SEMM thread-safety changes altered
+  the algorithm path for `multi_material_segmentation_by_painting()`, producing coarser segmentation. Consider
+  reverting `e8be12ea` (SEMM thread-safety) in isolation and slicing to compare G-code tool-change counts.
+- **How to diagnose**: Slice `3DBenchy-H2C-Multi-Color.3mf` and count `grep -c "^T[0-9]" output.gcode` — v1.5.48
+  Release had ~838 tool changes; if the count is ~438 the regression is present.
+- **Assets for comparison**: `G:/My Drive/Logs/` contains screenshots of v1.5.48 (rainbow sides) and v1.5.49
+  (red-only sides), and G-code files `output.48.gcode` / `output.49.gcode`.
+- **Does not block release**: Slicing correctness tests pass; only visual quality is degraded.
+
 ### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60)
 - For `colored_3DBenchy (1).3mf` (4-colour SEMM), the Prepare preview, G-code preview, and desktop OrcaSlicer all show different colours
 - **Prepare screen**: Only 2 colour chips shown; model renders mostly white/gray — 2 of 4 paint zones missing
