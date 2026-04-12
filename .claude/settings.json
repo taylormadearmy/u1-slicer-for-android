@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "C:\\Users\\kevin\\.claude\\skills"
+    ],
+    "allow": [
+      "Edit(~/.claude/skills/u1-slicer-confidence-check/**)"
+    ]
+  }
+}

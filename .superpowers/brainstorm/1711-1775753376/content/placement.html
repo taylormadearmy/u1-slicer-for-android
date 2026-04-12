@@ -1,0 +1,73 @@
+<h2>Where should the BMaC link live?</h2>
+<p class="subtitle">3 placement options — pick the one that feels right for your app</p>
+
+<div class="cards">
+
+  <!-- Option A: Settings footer -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;padding:12px;font-family:sans-serif;font-size:13px;color:#fff;">
+        <div style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Settings</div>
+        <div style="background:#252540;border-radius:6px;padding:8px 10px;margin-bottom:5px;color:#ccc;">Temperature</div>
+        <div style="background:#252540;border-radius:6px;padding:8px 10px;margin-bottom:5px;color:#ccc;">Speed &amp; Retraction</div>
+        <div style="background:#252540;border-radius:6px;padding:8px 10px;margin-bottom:5px;color:#ccc;">Filaments</div>
+        <div style="background:#252540;border-radius:6px;padding:8px 10px;margin-bottom:14px;color:#ccc;">Backup / Restore</div>
+        <div style="border-top:1px solid #333;padding-top:10px;display:flex;align-items:center;gap:8px;opacity:0.7;">
+          <span style="font-size:16px">☕</span>
+          <span style="font-size:11px;color:#90CAF9;">Support the developer</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Settings footer link</h3>
+      <p>A small "Support the developer ☕" link pinned at the bottom of the Settings screen. Zero interruption — only seen when the user scrolls to the bottom. Very low friction.</p>
+    </div>
+  </div>
+
+  <!-- Option B: After slice success -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;padding:12px;font-family:sans-serif;font-size:13px;color:#fff;">
+        <div style="background:#1b3a2a;border:1px solid #2e7d52;border-radius:6px;padding:10px;margin-bottom:8px;">
+          <div style="color:#66bb6a;font-size:11px;font-weight:bold;margin-bottom:4px">✓ Slice Complete</div>
+          <div style="color:#aaa;font-size:10px">48 layers · 12m · 4.2g</div>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <div style="flex:1;background:#1565C0;border-radius:4px;padding:6px;text-align:center;font-size:10px">Print</div>
+          <div style="flex:1;background:#252540;border-radius:4px;padding:6px;text-align:center;font-size:10px;color:#aaa">Share</div>
+        </div>
+        <div style="border-top:1px solid #333;padding-top:8px;display:flex;align-items:center;gap:6px;opacity:0.6;">
+          <span style="font-size:12px">☕</span>
+          <span style="font-size:10px;color:#90CAF9;">Enjoying U1 Slicer? Buy me a coffee</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Post-slice nudge</h3>
+      <p>A subtle line below the slice action buttons, shown only when a slice completes. Contextually relevant — the user just got value. Appears every time (or could be once-ever).</p>
+    </div>
+  </div>
+
+  <!-- Option C: About row in Settings -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="background:#1a1a2e;border-radius:8px;padding:12px;font-family:sans-serif;font-size:13px;color:#fff;">
+        <div style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">About</div>
+        <div style="background:#252540;border-radius:6px;padding:8px 10px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#ccc;">Version</span><span style="color:#aaa;font-size:11px">v1.5.45</span>
+        </div>
+        <div style="background:#252540;border-radius:6px;padding:8px 10px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#ccc;">GitHub</span><span style="color:#aaa;font-size:11px">↗</span>
+        </div>
+        <div style="background:#252540;border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#90CAF9;">☕ Buy me a coffee</span><span style="color:#aaa;font-size:11px">↗</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — About section row</h3>
+      <p>A dedicated row in an "About" section at the bottom of Settings, alongside version number and GitHub link. Expected, predictable location — users who look for this will find it immediately.</p>
+    </div>
+  </div>
+
+</div>

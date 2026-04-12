@@ -1,0 +1,61 @@
+<h2>Final design — full picture</h2>
+<p class="subtitle">Two touch points, one URL, zero interruption</p>
+
+<div class="split">
+
+  <div class="mockup">
+    <div class="mockup-header">Header (all screens)</div>
+    <div class="mockup-body">
+      <div style="background:#1a1a2e;border-radius:8px;overflow:hidden;font-family:sans-serif;">
+        <div style="background:#1e1e3a;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a2a4a;">
+          <div>
+            <div style="color:#fff;font-weight:bold;font-size:15px;">U1 Slicer</div>
+            <div style="color:#90CAF9;font-size:10px;opacity:0.7;cursor:pointer;">☕ Support development</div>
+          </div>
+        </div>
+        <div style="background:#1e1e3a;display:flex;border-bottom:1px solid #2a2a4a;">
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#90CAF9;font-size:9px;border-bottom:2px solid #90CAF9;">Prepare</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#555;font-size:9px;">Preview</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#555;font-size:9px;">Printer</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#555;font-size:9px;">Jobs</div>
+          <div style="flex:1;padding:8px 4px;text-align:center;color:#555;font-size:9px;">Settings</div>
+        </div>
+        <div style="padding:24px 12px;color:#444;font-size:10px;text-align:center;">— screen content —</div>
+      </div>
+      <p style="font-size:11px;color:#aaa;margin-top:10px;">Tapping the subtitle opens <strong style="color:#90CAF9;">buymeacoffee.com/taylormadearmy</strong> in the browser. Slightly dimmed so it doesn't compete with the app title.</p>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">Settings → About section</div>
+    <div class="mockup-body">
+      <div style="background:#1a1a2e;border-radius:8px;padding:12px;font-family:sans-serif;">
+        <div style="color:#aaa;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">About</div>
+        <div style="background:#252540;border-radius:6px;padding:10px 12px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#ccc;font-size:12px;">Version</span>
+          <span style="color:#aaa;font-size:11px;">v1.5.45</span>
+        </div>
+        <div style="background:#252540;border-radius:6px;padding:10px 12px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="color:#ccc;font-size:12px;">GitHub</span>
+          <span style="color:#aaa;font-size:11px;">↗</span>
+        </div>
+        <div style="background:#FFDD00;border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;">
+          <span style="font-size:22px;">☕</span>
+          <div>
+            <div style="color:#000;font-weight:bold;font-size:13px;">Buy Me a Coffee</div>
+            <div style="color:#555;font-size:10px;">buymeacoffee.com/taylormadearmy</div>
+          </div>
+        </div>
+      </div>
+      <p style="font-size:11px;color:#aaa;margin-top:10px;">New "About" section at the bottom of Settings. Version + GitHub rows first, then the BMaC card. Tapping the card opens the URL in the browser.</p>
+    </div>
+  </div>
+
+</div>
+
+<div style="margin-top:20px;padding:14px;background:#1e2a1e;border-radius:6px;border-left:3px solid #4CAF50;font-family:sans-serif;font-size:12px;color:#ccc;line-height:1.7;">
+  <strong style="color:#81C784;">Implementation summary</strong><br>
+  • Replace <code style="background:#333;padding:1px 4px;border-radius:3px;">coreVersion</code> subtitle in <code style="background:#333;padding:1px 4px;border-radius:3px;">TopAppBar</code> with a tappable <code style="background:#333;padding:1px 4px;border-radius:3px;">Text("☕ Support development")</code> that calls <code style="background:#333;padding:1px 4px;border-radius:3px;">uriHandler.openUri(BMAC_URL)</code><br>
+  • Add an <strong>About</strong> section to <code style="background:#333;padding:1px 4px;border-radius:3px;">SettingsScreen.kt</code> with Version, GitHub, and the yellow BMaC card<br>
+  • URL constant: <code style="background:#333;padding:1px 4px;border-radius:3px;">https://buymeacoffee.com/taylormadearmy</code>
+</div>
