@@ -217,14 +217,26 @@ class SemmSlicingTest {
         assertEquals("H2C benchy must detect 7 model colours", 7, origInfo.detectedColors.size)
 
         // Full pipeline: process → embed with 7 virtual extruders → load → slice
+        // B62 fix: pass sourceConfig so filament_colour with 7 entries reaches the
+        // embedded profile.  Without it, the slicer sees only 4 virtual extruders
+        // (from applyConfigToPrusa n_ext fallback) and drops paint states 5-7,
+        // producing ~432 tool changes instead of ~1400.
         val processed = BambuSanitizer.process(input, outDir)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
         // B48 fix: targetExtruderCount = 7 (one per model colour, not 4 physical)
         val config = embedder.buildConfig(
             info = origInfo,
+            sourceConfig = sourceConfig,
             targetExtruderCount = 7
         )
         assertEquals("extruder_count must be 7 for H2C with 7 model colours",
             "7", config["extruder_count"])
+        // B62: verify filament_colour is present and sized to 7
+        val fc = config["filament_colour"]
+        assertTrue("filament_colour must be a list in embedded config (B62)",
+            fc is List<*>)
+        assertEquals("filament_colour must have 7 entries for H2C (B62)",
+            7, (fc as List<*>).size)
 
         val embedded = embedder.embed(processed, config, outDir, origInfo)
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
@@ -237,7 +249,8 @@ class SemmSlicingTest {
         val gcode = File(result.gcodePath).readText()
         val lines = gcode.lines()
         val toolCounts = (0..3).map { t -> lines.count { it.trim() == "T$t" } }
-        Log.i("SemmSlicingTest", "H2C benchy tool counts: T0=${toolCounts[0]} T1=${toolCounts[1]} T2=${toolCounts[2]} T3=${toolCounts[3]}")
+        val totalToolChanges = toolCounts.sum()
+        Log.i("SemmSlicingTest", "H2C benchy tool counts: T0=${toolCounts[0]} T1=${toolCounts[1]} T2=${toolCounts[2]} T3=${toolCounts[3]} total=$totalToolChanges")
 
         for (t in 0..3) {
             assertTrue(
@@ -246,6 +259,16 @@ class SemmSlicingTest {
                 toolCounts[t] > 0
             )
         }
+
+        // B62: with 7 virtual extruders and full paint segmentation, the H2C benchy
+        // must produce significantly more tool changes than the degraded 4-extruder
+        // path (~432).  v1.5.48 produced ~1416 tool changes.
+        assertTrue(
+            "B62 regression: H2C benchy must produce >600 total tool changes with " +
+                "7-colour segmentation (got $totalToolChanges). If ~432, filament_colour " +
+                "is not reaching the native slicer with 7 entries.",
+            totalToolChanges > 600
+        )
     }
 
     /**

@@ -224,31 +224,58 @@ For clarity: rebuilding the native library is not something to avoid on principl
 
 The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
 
-> **CRITICAL: Always build with Release optimization.** Debug builds (`-O0`) produce a ~83MB `.so` (vs ~19MB Release) that is 3-5x slower and causes native OOM crashes on heavy multi-colour models. The shipped `.so` must always be Release-optimized.
+> **CRITICAL: Must use NDK 26 (Clang 17).** NDK 25 (Clang 14) produces different code generation
+> for OrcaSlicer's paint segmentation, causing B62 regression (H2C benchy 436 vs 840 tool changes).
+> Always verify the compiler: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17`.
+
+> **CRITICAL: Always build with Release optimization.** Debug builds (`-O0`) produce a ~83MB `.so`
+> (vs ~20MB Release) that is 3-5x slower and causes native OOM crashes on heavy multi-colour models.
 
 ### Using an existing build directory (preferred — faster)
 
 If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous build:
 
-1. **Ensure Release flags** — check `CMakeCache.txt` in that directory:
+1. **Verify NDK 26** — check `CMakeCache.txt`:
+   ```
+   CMAKE_TOOLCHAIN_FILE:FILEPATH=.../ndk/26.1.10909125/build/cmake/android.toolchain.cmake
+   ```
+   If it points to NDK 25 or 23, create a fresh build directory instead (see below).
+2. **Ensure Release flags** — check `CMakeCache.txt`:
    ```
    CMAKE_BUILD_TYPE:STRING=Release
-   CMAKE_CXX_FLAGS_RELEASE:STRING=-O2 -DNDEBUG
    ```
-   If it says `Debug`, change both values and run `cmake .` in that directory to regenerate ninja files.
-2. Run `ninja -j1` in `app/.cxx/Debug/<hash>/arm64-v8a/` (OOMs at `-j2`+)
-3. Strip: `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip --strip-unneeded libprusaslicer-jni.so`
-4. Copy to `app/src/main/jniLibs/arm64-v8a/`
-5. **Verify size**: stripped Release `.so` should be ~19-20MB. If it's 50MB+, you built with Debug — redo with Release flags.
-6. `./gradlew clean installDebug` — incremental builds may cache old APK
+   Do NOT set `CMAKE_CXX_FLAGS_RELEASE` — leave it empty so the toolchain default (`-O3 -DNDEBUG`) is used.
+3. Run `ninja -j1` in the directory (OOMs at `-j2`+)
+4. Strip: `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip --strip-unneeded libprusaslicer-jni.so`
+5. Copy to `app/src/main/jniLibs/arm64-v8a/`
+6. **Verify size**: stripped Release `.so` should be ~19-21MB. If it's 50MB+, you built with Debug — redo.
+7. **Verify compiler**: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17.0.2`.
+8. `./gradlew clean installDebug` — incremental builds may cache old APK
 
 ### Fresh build (when no existing build dir works)
 
-1. Enable CMake in `build.gradle` (uncomment `externalNativeBuild` blocks)
-2. Run `./gradlew assembleDebug` to configure CMake (will fail at link — that's OK, it generates ninja files)
-3. Disable CMake in `build.gradle` (re-comment)
-4. **Switch to Release** — edit `CMakeCache.txt` in `app/.cxx/Debug/<hash>/arm64-v8a/`:
-   - `CMAKE_BUILD_TYPE:STRING=Release`
-   - `CMAKE_CXX_FLAGS_RELEASE:STRING=-O2 -DNDEBUG`
-5. Run `cmake .` in that directory to regenerate
-6. Follow steps 2-6 from "Using an existing build directory" above
+Create a new build directory configured directly for Release with NDK 26:
+
+```bash
+CMAKE=C:/Users/kevin/AppData/Local/Android/Sdk/cmake/3.22.1/bin/cmake.exe
+NDK=C:/Users/kevin/AppData/Local/Android/Sdk/ndk/26.1.10909125
+BUILD_DIR=app/.cxx/Debug/ndk26release/arm64-v8a
+mkdir -p "$BUILD_DIR"
+"$CMAKE" \
+  -Happ/src/main/cpp \
+  -DCMAKE_SYSTEM_NAME=Android \
+  -DCMAKE_SYSTEM_VERSION=26 \
+  -DANDROID_PLATFORM=android-26 \
+  -DANDROID_ABI=arm64-v8a \
+  -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a \
+  -DANDROID_NDK="$NDK" \
+  -DCMAKE_ANDROID_NDK="$NDK" \
+  -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+  -DCMAKE_MAKE_PROGRAM=C:/Users/kevin/AppData/Local/Android/Sdk/cmake/3.22.1/bin/ninja.exe \
+  -DCMAKE_BUILD_TYPE=Release \
+  -B"$BUILD_DIR" \
+  -GNinja \
+  -DSLICER_BACKEND=orca \
+  -DANDROID_STL=c++_shared
+```
+Then follow steps 3-8 from "Using an existing build directory" above.
