@@ -8,7 +8,7 @@ Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no s
 
 Current release: `v1.5.45` (`versionCode 211`)
 
-This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk. 
+**This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
 ## Security
 
