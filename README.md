@@ -90,18 +90,37 @@ Instrumented tests use [Android Test Orchestrator](https://developer.android.com
 
 ## Native Rebuild
 
-To rebuild the native library from source (requires NDK 25.1+):
+The native `.so` must be built with **NDK 26** (Clang 17). NDK 25 or older produces
+different code generation in OrcaSlicer's paint segmentation, causing degraded
+multi-colour output (B62). Verify with: `llvm-readelf -p .comment libprusaslicer-jni.so`
+— must show `clang version 17`.
 
-1. Uncomment `externalNativeBuild` blocks in `app/build.gradle`
-2. Run `./gradlew assembleDebug` to configure CMake
-3. Re-comment CMake blocks, then `ninja -j1` in `app/.cxx/Debug/<hash>/arm64-v8a/`
-4. Strip: `llvm-strip --strip-unneeded libprusaslicer-jni.so`
-5. Copy to `app/src/main/jniLibs/arm64-v8a/`
-6. `./gradlew clean installDebug`
+**Quick rebuild** (existing build directory):
 
-Use `-j1` — higher parallelism OOMs on most machines.
+```bash
+ninja -j1    # in app/.cxx/Debug/<hash>/arm64-v8a/
+llvm-strip --strip-unneeded libprusaslicer-jni.so
+cp libprusaslicer-jni.so app/src/main/jniLibs/arm64-v8a/
+./gradlew clean installDebug
+```
 
-If new functionality depends on native C++ changes, it is OK to rebuild the native `.so` and ship the refreshed binary. Don't leave required native changes source-only.
+**Fresh build** (no existing build directory):
+
+```bash
+NDK=<path-to-ndk-26.1.10909125>
+cmake -Happ/src/main/cpp \
+  -DCMAKE_SYSTEM_NAME=Android -DANDROID_PLATFORM=android-26 \
+  -DANDROID_ABI=arm64-v8a -DANDROID_NDK="$NDK" \
+  -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+  -DCMAKE_BUILD_TYPE=Release -DSLICER_BACKEND=orca \
+  -DANDROID_STL=c++_shared -GNinja \
+  -B<build-dir>
+ninja -j1 -C <build-dir>
+```
+
+Use `-j1` — higher parallelism OOMs on most machines. See `CLAUDE.md` for full details.
+
+If new functionality depends on native C++ changes, it is OK to rebuild the `.so` and ship the refreshed binary. Don't leave required native changes source-only.
 
 ## Credits
 
