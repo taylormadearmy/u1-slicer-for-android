@@ -13,6 +13,34 @@ Open bugs, features, and investigations. Everything else is done — see git log
   `SemmSlicingTest` to assert >600 total tool changes, catching future NDK regressions.
 - **Tests**: 753 unit + 163 instrumented + 17/17 E2E PASS. H2C benchy: 838 tool changes.
 
+### B66: Color picker slider resets hue when adjusting shade (GitHub #70)
+- When editing printer filament/extruder colours, sliding the hue bar then adjusting shade causes hue to revert
+- **Workaround**: Set hue, save, re-enter to change shade
+- **Source**: Discord user Jon (2026-04-14)
+
+### B65: Copies stuck at 1 on multi-colour 3MF — Flarewing Dragon (GitHub #71)
+- Loading the 4-filament Flarewing Dragon 3MF (160×169mm T-shape), copies stuck at 1
+- **Root cause 1**: `setCopyCount()` uses unscaled `lastModelInfo` dimensions — ignores `_modelScale`, so scaling down doesn't help
+- **Root cause 2**: `maxCopies()` uses bounding-box grid which is overly conservative for non-rectangular models
+- **Root cause 3**: Copies are hard-blocked at max instead of warned — desktop slicers allow overlap and just warn
+- **Fix**: Remove coerceIn cap, let users set any count up to 16, warn (don't block) on overlap/out-of-bounds, fix scale bug
+- **Test file**: `G:\My Drive\tes-data\Flarewing-Dragon_100%_4FilamentMulticolor_v1.1`
+- **Source**: Discord user Jon (2026-04-14)
+
+### B64: SEMM colour mapping not applied to G-code — wrong colours printed (GitHub #72) — FIXED v1.5.52
+- User's colour-to-extruder mapping (e.g. Color 1→E4) was displayed in UI but never applied to the G-code for SEMM paint models
+- **Root cause**: `applyMultiColorAssignments` checked if `usedSlots` was identity `[0,1,2,3]` and set `toolRemapSlots=null`, ignoring the permutation ORDER of the colorMapping. OrcaSlicer outputs T0-T3 matching the 3MF filament order, not the user's assignment
+- **Fix**: Added dedicated `semmColorPermutation` field (separate from `toolRemapSlots`) that records the colour order permutation for SEMM models. Applied post-slice via `composeSemmRemap()` + `GcodeToolRemapper`. H2C models untouched.
+- **Tests**: 11 unit tests (`SemmColorPermutationTest`), 1 instrumented test (Flarewing Dragon permutation remap). 764 unit + 164 instrumented all pass.
+- **Test file**: Flarewing Dragon 4-colour 3MF
+- **Source**: Discord user Jon (2026-04-14)
+- **Related**: May improve B58 (#60) G-code preview colour mismatch as a side effect
+
+### B63: Reprint G-code sends PLA filament type instead of actual loaded material (GitHub #73)
+- Reprinting a previously-sliced G-code shows material mismatch (PLA) even though PETG is loaded and was used for the original slice
+- First print works at correct temps; reprint triggers wrong material warning
+- **Source**: Discord user Jon (2026-04-14)
+
 ### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60)
 - For `colored_3DBenchy (1).3mf` (4-colour SEMM), the Prepare preview, G-code preview, and desktop OrcaSlicer all show different colours
 - **Prepare screen**: Only 2 colour chips shown; model renders mostly white/gray — 2 of 4 paint zones missing
