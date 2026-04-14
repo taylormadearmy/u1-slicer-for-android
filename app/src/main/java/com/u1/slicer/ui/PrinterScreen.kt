@@ -716,13 +716,13 @@ private fun HsvColorPicker(
         Box(modifier = Modifier.fillMaxWidth().height(hueBarHeight)) {
             Canvas(modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
+                .pointerInput(saturation, value) {
                     detectTapGestures { offset ->
                         val h = (offset.x / size.width * 360f).coerceIn(0f, 359.9f)
                         onHsvChange(h, saturation, value)
                     }
                 }
-                .pointerInput(Unit) {
+                .pointerInput(saturation, value) {
                     detectDragGestures { change, _ ->
                         val h = (change.position.x / size.width * 360f).coerceIn(0f, 359.9f)
                         onHsvChange(h, saturation, value)
@@ -742,14 +742,14 @@ private fun HsvColorPicker(
         Box(modifier = Modifier.fillMaxWidth().aspectRatio(2f)) {
             Canvas(modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
+                .pointerInput(hue) {
                     detectTapGestures { offset ->
                         val s = (offset.x / size.width).coerceIn(0f, 1f)
                         val v = (1f - offset.y / size.height).coerceIn(0f, 1f)
                         onHsvChange(hue, s, v)
                     }
                 }
-                .pointerInput(Unit) {
+                .pointerInput(hue) {
                     detectDragGestures { change, _ ->
                         val s = (change.position.x / size.width).coerceIn(0f, 1f)
                         val v = (1f - change.position.y / size.height).coerceIn(0f, 1f)

@@ -221,6 +221,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Multiple copies
     private val _copyCount = MutableStateFlow(1)
     val copyCount: StateFlow<Int> = _copyCount.asStateFlow()
+    private val _copyBedWarning = MutableStateFlow<String?>(null)
+    val copyBedWarning: StateFlow<String?> = _copyBedWarning.asStateFlow()
 
     // Model scale: uniform or per-axis. Applied before slicing.
     data class ModelScale(val x: Float = 1f, val y: Float = 1f, val z: Float = 1f) {
@@ -1390,11 +1392,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setCopyCount(count: Int) {
+        _copyCount.value = count.coerceIn(1, 16)
+        // B65: use scaled dimensions for bed warning, don't hard-block
         val mi = lastModelInfo
-        val max = if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f)
-            CopyArrangeCalculator.maxCopies(mi.sizeX, mi.sizeY)
-        else 16
-        _copyCount.value = count.coerceIn(1, max)
+        val s = _modelScale.value
+        _copyBedWarning.value = if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f)
+            CopyArrangeCalculator.copyBedWarning(mi.sizeX * s.x, mi.sizeY * s.y, _copyCount.value)
+        else null
         customObjectPositions = null // reset custom positions when count changes
         _sliceStale.value = true
     }
@@ -1523,7 +1527,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
-        return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, usedSlots, hasSourceConfig)
+        val types = extruderPresets.value.sortedBy { it.index }.map { it.materialType }
+        return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, usedSlots, hasSourceConfig, filamentTypes = types)
     }
 
     private fun configureNativeDiagnosticsIfAvailable() {
@@ -3207,7 +3212,8 @@ internal fun buildProfileOverridesImpl(
     ov: SlicingOverrides,
     extCount: Int,
     usedSlots: List<Int>? = null,
-    hasSourceConfig: Boolean = false
+    hasSourceConfig: Boolean = false,
+    filamentTypes: List<String>? = null
 ): Map<String, Any> {
     val temps: MutableList<String> = if (cfg.extruderTemps.size >= extCount) {
         cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
@@ -3303,7 +3309,11 @@ internal fun buildProfileOverridesImpl(
         "prime_tower_brim_width" to primeTowerBrimWidth.toString(),
         "prime_tower_brim_chamfer" to if (primeTowerBrimChamfer) "1" else "0",
         "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString(),
-        "wipe_tower_rotation_angle" to wipeTowerRotationAngle.toString()
+        "wipe_tower_rotation_angle" to wipeTowerRotationAngle.toString(),
+        // B63: filament_type per extruder — resolved from user's extruder presets
+        "filament_type" to MutableList(extCount) { i ->
+            filamentTypes?.getOrNull(i) ?: "PLA"
+        }
     )
 
     // sparse_infill_speed: 0 means "auto" — only emit when the user has overridden to a

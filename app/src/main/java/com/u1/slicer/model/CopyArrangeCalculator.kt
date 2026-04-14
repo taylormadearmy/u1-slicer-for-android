@@ -72,6 +72,23 @@ object CopyArrangeCalculator {
     }
 
     /**
+     * Returns a warning message if [count] copies of the given object exceed the bed's
+     * grid capacity, or null if they fit. Used to warn (not block) the user.
+     */
+    fun copyBedWarning(
+        objectSizeX: Float,
+        objectSizeY: Float,
+        count: Int,
+        bedSizeX: Float = 270f,
+        bedSizeY: Float = 270f,
+        margin: Float = 5f
+    ): String? {
+        if (count <= 1) return null
+        val max = maxCopies(objectSizeX, objectSizeY, bedSizeX, bedSizeY, margin)
+        return if (count > max) "Copies may overlap or exceed bed (max $max for this size)" else null
+    }
+
+    /**
      * Compute a wipe tower position that avoids overlapping the model(s).
      * Tries eight candidate positions around the bed perimeter, picks the one with
      * the most clearance from all object bounding boxes.

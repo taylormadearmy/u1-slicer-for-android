@@ -702,6 +702,7 @@ fun PrepareScreen(
     val filaments by viewModel.filaments.collectAsState(initial = emptyList())
     val extruderPresets by viewModel.extruderPresets.collectAsState()
     val copyCount by viewModel.copyCount.collectAsState()
+    val copyBedWarning by viewModel.copyBedWarning.collectAsState()
     val modelScale by viewModel.modelScale.collectAsState()
     val modelRotation by viewModel.modelRotation.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
@@ -910,6 +911,7 @@ fun PrepareScreen(
                             onScaleChange = { viewModel.setModelScale(it) },
                             copyCount = copyCount,
                             onSetCopyCount = viewModel::setCopyCount,
+                            copyBedWarning = copyBedWarning,
                             rotation = modelRotation,
                             onRotationChange = { viewModel.setModelRotation(it) }
                         )
@@ -2891,6 +2893,7 @@ fun ScaleSection(
     onScaleChange: (SlicerViewModel.ModelScale) -> Unit,
     copyCount: Int = 1,
     onSetCopyCount: (Int) -> Unit = {},
+    copyBedWarning: String? = null,
     rotation: SlicerViewModel.ModelRotation = SlicerViewModel.ModelRotation(),
     onRotationChange: (SlicerViewModel.ModelRotation) -> Unit = {}
 ) {
@@ -2958,6 +2961,13 @@ fun ScaleSection(
                             valueRange = 1f..16f,
                             steps = 14
                         )
+                        if (copyBedWarning != null) {
+                            Text(
+                                copyBedWarning,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                         Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         if (uniformMode) {
                             val pct = "%.0f%%".format(uniformValue * 100)

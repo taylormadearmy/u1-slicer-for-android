@@ -277,4 +277,34 @@ class CopyArrangeCalculatorTest {
         assertEquals(expectedMinY, minY, 0.01f)
         assertEquals(expectedMaxY, maxY, 0.01f)
     }
+
+    // --- B65: Copy bed warning tests ---
+
+    @Test
+    fun `copyBedWarning returns null when copies fit on bed`() {
+        // 20mm object, 9 copies → 3x3 grid fits easily
+        assertNull(CopyArrangeCalculator.copyBedWarning(20f, 20f, 9))
+    }
+
+    @Test
+    fun `copyBedWarning returns warning when copies exceed bed capacity`() {
+        // 260mm object, max 1 copy — requesting 2 should warn
+        val warning = CopyArrangeCalculator.copyBedWarning(260f, 260f, 2)
+        assertNotNull("Should warn for 2 copies of 260mm object", warning)
+    }
+
+    @Test
+    fun `copyBedWarning returns null for single copy of any size`() {
+        assertNull(CopyArrangeCalculator.copyBedWarning(300f, 300f, 1))
+    }
+
+    @Test
+    fun `copyBedWarning returns warning at boundary`() {
+        // 80mm object: maxCopies = int(275/85) * int(275/85) = 3*3 = 9
+        // 10 copies should warn
+        val warning = CopyArrangeCalculator.copyBedWarning(80f, 80f, 10)
+        assertNotNull("Should warn for 10 copies of 80mm object", warning)
+        // 9 copies should not warn
+        assertNull(CopyArrangeCalculator.copyBedWarning(80f, 80f, 9))
+    }
 }

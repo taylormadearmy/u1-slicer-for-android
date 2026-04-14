@@ -934,4 +934,38 @@ class SlicingOverridesTest {
         val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
         assertEquals("enable_prime_tower must be 0 for explicit OVERRIDE false", "0", result["enable_prime_tower"])
     }
+
+    // --- B63: filament_type override tests ---
+
+    @Test
+    fun `buildProfileOverrides emits filament_type from extruder presets`() {
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides()
+        val types = listOf("PETG", "ABS", "TPU", "PLA")
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 4, filamentTypes = types)
+        @Suppress("UNCHECKED_CAST")
+        val ft = result["filament_type"] as List<String>
+        assertEquals(listOf("PETG", "ABS", "TPU", "PLA"), ft)
+    }
+
+    @Test
+    fun `buildProfileOverrides filament_type defaults to PLA when no types given`() {
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        @Suppress("UNCHECKED_CAST")
+        val ft = result["filament_type"] as List<String>
+        assertEquals(listOf("PLA", "PLA"), ft)
+    }
+
+    @Test
+    fun `buildProfileOverrides filament_type pads short list with PLA`() {
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides()
+        val types = listOf("PETG")
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 4, filamentTypes = types)
+        @Suppress("UNCHECKED_CAST")
+        val ft = result["filament_type"] as List<String>
+        assertEquals(listOf("PETG", "PLA", "PLA", "PLA"), ft)
+    }
 }
