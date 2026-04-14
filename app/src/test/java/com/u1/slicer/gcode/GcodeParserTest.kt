@@ -473,6 +473,32 @@ class GcodeParserTest {
         assertEquals(1.0f, result.perExtruderFilamentMm[1], 0.0001f)
     }
 
+    @Test
+    fun `B67 perExtruderFilamentMm uses natural tool order when T1 appears before T0`() {
+        // Flarewing Dragon SEMM: wipe tower primes T1 first, so T1 appears before T0.
+        // The compact array must still be in natural order (T0, T1) — not first-appearance.
+        // E values are cumulative: T1 extrudes 3mm, T0 extrudes 5mm, T1 extrudes 5mm more.
+        val file = writeGcode(
+            """
+            G1 Z0.2
+            ;LAYER_CHANGE
+            T1
+            G1 X10 Y10 E3.0
+            T0
+            G1 X20 Y20 E8.0
+            T1
+            G1 X30 Y30 E13.0
+            ; filament used [mm] = 100.00,50.00,0.00,0.00
+            """.trimIndent()
+        )
+        val result = GcodeParser.parse(file)
+
+        assertEquals(2, result.perExtruderFilamentMm.size)
+        // Index 0 must be T0's usage (5.0), not T1's — natural order, not first-appearance
+        assertEquals(5.0f, result.perExtruderFilamentMm[0], 0.0001f)  // T0
+        assertEquals(8.0f, result.perExtruderFilamentMm[1], 0.0001f)  // T1 (3.0 + 5.0)
+    }
+
     // ─── B52: move cap for very large G-code files ──────────────────────────
 
     @Test

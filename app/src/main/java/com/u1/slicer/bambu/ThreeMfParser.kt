@@ -147,11 +147,11 @@ object ThreeMfParser {
                 // Bambu files that use p:path component refs (e.g. colored_3DBenchy) store
                 // paint_color attributes on triangles in the component files
                 // (3D/Objects/*.model), not in the main 3D/3dmodel.model.
+                val componentModels = zip.entries().toList().filter { e ->
+                    e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
+                }
                 var hasPaintData = if (skipPaintDetection) false else {
                     val mainHasPaint = zip.getInputStream(modelEntry).use(::streamDetectPaintData)
-                    val componentModels = zip.entries().toList().filter { e ->
-                        e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
-                    }
                     val componentHasPaint = componentModels.any { e ->
                         streamDetectPaintData(zip.getInputStream(e))
                     }
@@ -179,14 +179,12 @@ object ThreeMfParser {
                 // We count distinct non-zero first-char states, NOT the number of
                 // unique spec strings (which can be thousands).
                 //
-                // B67: Scan paint states for Bambu files even when byte-scan hasPaintData
-                // is false.  streamDetectPaintData's chunked byte search was observed to
-                // miss paint_color in large component models (Flarewing Dragon's 82MB
-                // object_21.model) on some devices.  The regex-based spec scan serves as
-                // a fallback — if it finds paint states, hasPaintData is promoted to true.
-                // Non-Bambu files skip the spec scan when the byte scan already failed,
-                // as they don't use Bambu-style paint_color attributes.
-                val paintStateCount = if (hasPaintData || (isBambu && !skipPaintDetection)) {
+                // B67: When byte-scan missed paint data on a Bambu file with large
+                // component models (>10MB), run the regex spec scan as fallback.
+                // Only scoped to large components to avoid unnecessary I/O on small
+                // non-painted Bambu files.  sourceConfig values are String or List<String>.
+                val hasLargeComponents = componentModels.any { it.size > 10_000_000L }
+                val paintStateCount = if (hasPaintData || (!hasPaintData && isBambu && !skipPaintDetection && hasLargeComponents)) {
                     val states = mutableSetOf<Int>()
                     val modelFiles = mutableListOf<java.util.zip.ZipEntry>()
                     if (modelEntry != null) modelFiles.add(modelEntry)
@@ -685,9 +683,10 @@ object ThreeMfParser {
         return specs
     }
 
+    private val PAINT_SPEC_REGEX = Regex("""(?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)="([^"]+)"""")
+
     private fun extractPaintSpec(line: String): String? {
-        return Regex("""(?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)="([^"]+)"""")
-            .find(line)
+        return PAINT_SPEC_REGEX.find(line)
             ?.groupValues
             ?.getOrNull(1)
     }
