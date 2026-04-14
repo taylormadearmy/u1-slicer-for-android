@@ -264,7 +264,12 @@ object GcodeParser {
         val normalizedFooterPerExtruderMm = perExtruderMm
             .take(4)
             .dropLastWhile { it <= 0f }
-        val compactComputedPerExtruderMm = computedExtruderOrder.map { idx ->
+        // B67: use SORTED tool order (0,1,2,3) for compact array, not first-appearance
+        // order. First-appearance reordering caused the per-extruder summary to swap
+        // E1/E2 values when T1 appeared before T0 in the G-code (e.g. Flarewing Dragon
+        // SEMM where the wipe tower primes T1 first). The display layer
+        // (buildPerExtruderDisplaySlots) handles user-facing slot mapping separately.
+        val compactComputedPerExtruderMm = computedExtruderOrder.sorted().map { idx ->
             computedPerExtruderMm[idx]
         }
         val resolvedPerExtruderMm = when {
