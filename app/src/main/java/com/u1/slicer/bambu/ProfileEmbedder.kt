@@ -208,8 +208,14 @@ class ProfileEmbedder(private val context: Context) {
         )
 
         if (needsPreserve && sourceConfig != null) {
-            // Bambu preserve path: start with source config, overlay Snapmaker hardware
-            config = sourceConfig.toMutableMap()
+            // Bambu preserve path: start with source config, overlay Snapmaker hardware.
+            // Deep-copy list values so normalizePerFilamentArrays() doesn't mutate the
+            // cached sourceConfig — the initial embed (targetCount=1) would otherwise
+            // truncate filament_colour from 4→1, and the re-embed before slicing would
+            // see the truncated list and pad with #FFFFFF defaults (B67 root cause).
+            config = sourceConfig.entries.associateTo(mutableMapOf()) { (k, v) ->
+                k to if (v is List<*>) v.toMutableList() else v
+            }
             config.putAll(printerProfile!!.toMap())
             if (info.hasLayerToolChanges) {
                 sourceConfig["machine_pause_gcode"]?.let { config["machine_pause_gcode"] = it }
