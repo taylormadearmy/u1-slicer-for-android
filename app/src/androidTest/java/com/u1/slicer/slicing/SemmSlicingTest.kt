@@ -272,6 +272,80 @@ class SemmSlicingTest {
     }
 
     /**
+     * B64: SEMM colour permutation — verify that a non-identity colour mapping
+     * is applied to the sliced G-code.
+     *
+     * Flarewing Dragon is a 4-colour SEMM model. Without the permutation fix,
+     * the G-code T-indices match the 3MF filament_colour order regardless of the
+     * user's colour assignment. With the fix, GcodeToolRemapper rewrites T-indices
+     * to match the permuted mapping.
+     *
+     * Test applies mapping [3,0,2,1] (Color1→E4, Color2→E1, Color3→E3, Color4→E2)
+     * and verifies T3 gets the body volume (was T0 before remap).
+     */
+    @Test
+    fun flarewingDragon_semmPermutation_remapsGcodeToolIndices() {
+        val input = asset("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+
+        assertTrue("Flarewing Dragon must have hasPaintData=true", origInfo.hasPaintData)
+        assertEquals("Flarewing Dragon must have 4 detected colors",
+            4, origInfo.detectedColors.size)
+
+        // Pipeline: sanitize → embed → load → slice
+        val processed = BambuSanitizer.process(input, outDir)
+        val config = embedder.buildConfig(
+            info = origInfo,
+            targetExtruderCount = 4
+        )
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(makeConfig(4))
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue("Flarewing Dragon must slice successfully: ${result.errorMessage}", result.success)
+
+        // Before remap: T0 is the body (highest filament usage by far)
+        val gcodeBeforeRemap = File(result.gcodePath).readText()
+        val usageBefore = (0..3).map { t ->
+            gcodeBeforeRemap.lines().count { line -> line.trim() == "T$t" }
+        }
+        Log.i("SemmTest", "Before remap tool counts: $usageBefore")
+        // Sanity check: all 4 tools must be present before remap
+        for (t in 0..3) {
+            assertTrue("T$t must have tool changes before remap, got $usageBefore",
+                usageBefore[t] > 0)
+        }
+
+        // Apply permutation [3,0,2,1]: Color1→E4, Color2→E1, Color3→E3, Color4→E2
+        // This means: tool index t in original → permutation[t] in remapped output
+        val permutation = listOf(3, 0, 2, 1)
+        GcodeToolRemapper.remap(result.gcodePath, permutation)
+
+        val gcodeAfterRemap = File(result.gcodePath).readText()
+        val usageAfter = (0..3).map { t ->
+            gcodeAfterRemap.lines().count { line -> line.trim() == "T$t" }
+        }
+        Log.i("SemmTest", "After remap tool counts: $usageAfter")
+
+        // Verify the permutation was applied: each original Tx count must appear at
+        // the permuted destination index.
+        // permutation[0]=3 → T0 before remap becomes T3 after remap
+        assertEquals("T3 after remap must equal T0 before remap",
+            usageBefore[0], usageAfter[3])
+        // permutation[1]=0 → T1 before remap becomes T0 after remap
+        assertEquals("T0 after remap must equal T1 before remap",
+            usageBefore[1], usageAfter[0])
+        // permutation[2]=2 → T2 before remap becomes T2 after remap (identity)
+        assertEquals("T2 must be unchanged (identity in this permutation)",
+            usageBefore[2], usageAfter[2])
+        // permutation[3]=1 → T3 before remap becomes T1 after remap
+        assertEquals("T1 after remap must equal T3 before remap",
+            usageBefore[3], usageAfter[1])
+    }
+
+    /**
      * B48 Part 2 regression: SEMM models must NOT have their G-code tool indices
      * remapped by GcodeToolRemapper.  The slicer already maps model colours to
      * physical extruders internally — T0-T3 in the output ARE physical slot indices.
