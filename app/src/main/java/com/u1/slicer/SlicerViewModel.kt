@@ -244,6 +244,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Null / identity mapping → no post-processing needed.
     private var toolRemapSlots: List<Int>? = null
 
+    // B64: SEMM colour permutation — maps compact T-index → physical extruder slot
+    // when the user's colour assignment is a non-identity permutation.
+    // Null when no permutation needed (identity, H2C, non-SEMM).
+    // Applied post-slice via GcodeToolRemapper, independently of toolRemapSlots.
+    private var semmColorPermutation: List<Int>? = null
+
     // B49: cache the Prepare preview MeshData so returning from G-code view is instant.
     // The native side caches the raw mesh, but toMeshData() (normal computation + FloatBuffer
     // allocation) is expensive for large SEMM models (2M tris).  This cache avoids re-conversion.
@@ -641,6 +647,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceModelFile = processed
                 sourceModelInfo = processedInfo
                 toolRemapSlots = null
+                semmColorPermutation = null
                 val mergedInfo = _threeMfInfo.value!!
                 val sanitized = embedProfile(processed, mergedInfo, workspaceDir)
 
@@ -762,6 +769,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceModelFile = processed
                     sourceModelInfo = processedInfo
                     toolRemapSlots = null  // reset on each new file load
+                    semmColorPermutation = null
                     // Use merged info (preserves origInfo's extruder count, paint data, etc.)
                     // so the preserve path in buildConfig() activates correctly for Bambu files
                     // with multi-extruder assignments (needed for support preservation — B10 fix).
@@ -926,6 +934,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceModelFile = processed
                     sourceModelInfo = processedInfo
                     toolRemapSlots = null
+                    semmColorPermutation = null
                     val mergedInfo = _threeMfInfo.value!!
                     val sanitized = embedProfile(processed, mergedInfo, workspaceDir)
 
@@ -1010,6 +1019,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     plateInfo
                 _threeMfInfo.value = mergedPlateInfo
                 toolRemapSlots = null
+                semmColorPermutation = null
                 // Re-embed the selected plate so slice-time config preserves the
                 // original file's layer-change settings (SEMM/pause G-code), not just
                 // the preview metadata merged above.
@@ -1108,6 +1118,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         _activeExtruderColors.value = buildPreviewSlotColors(presets, previewSlots)
                         _selectedExtruder.value = 0
                         toolRemapSlots = null
+                        semmColorPermutation = null
                         customWipeTowerPos = null
                         _config.value = _config.value.copy(
                             extruderCount = 1,
@@ -1152,6 +1163,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Without this, stale extruderCount from a previous multi-color model
                     // forces the prime tower on and produces 2-extruder G-code (B24 fix).
                     toolRemapSlots = null
+                    semmColorPermutation = null
                     customWipeTowerPos = null
                     val presets = extruderPresets.value
                     _config.value = _config.value.copy(
@@ -1220,6 +1232,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val isIdentity = compactSlots == (0 until extCount).toList()
             if (isIdentity) null else compactSlots
         }
+        // B64: compute SEMM colour permutation for post-slice G-code remapping.
+        semmColorPermutation = computeSemmColorPermutation(
+            colorMapping = modelColorToExtruder,
+            hasPaintData = hasPaintData,
+            isH2cStyle = isH2cStyle
+        )
         val temps = IntArray(extCount) { i ->
             val slotIndex = usedSlots.getOrElse(i) { i }
             val preset = extruderPresets.firstOrNull { it.index == slotIndex }
@@ -1274,6 +1292,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "extCount" to extCount,
                 "toolRemapSlots" to toolRemapSlots,
                 "isIdentity" to (toolRemapSlots == null),
+                "semmColorPermutation" to semmColorPermutation,
                 "slotColors" to fullColors
             )
         )
@@ -1316,6 +1335,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (index == 0) {
             // E1 selected — identity mapping, no remap needed
             toolRemapSlots = null
+            semmColorPermutation = null
             _config.value = _config.value.copy(
                 extruderCount = 1,
                 wipeTowerEnabled = false,
@@ -1563,6 +1583,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             "copyCount" to _copyCount.value,
             "hasCustomPlacement" to (customObjectPositions != null),
             "toolRemapSlots" to toolRemapSlots,
+            "semmColorPermutation" to semmColorPermutation,
             "colorMapping" to _colorMapping.value,
             "extruderCount" to sliceConfig.extruderCount,
             "wipeTowerEnabled" to sliceConfig.wipeTowerEnabled,
@@ -2094,12 +2115,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     )
                     // Post-process G-code to remap compact tool indices to physical slots.
-                    // OrcaSlicer sliced in compact mode (T0,T1,…) — remap to actual printer
-                    // slots (e.g. T2,T3 for E3+E4) and fix SM_ command EXTRUDER/INDEX params.
-                    val slots = toolRemapSlots
-                    if (slots != null) {
-                        GcodeToolRemapper.remap(result.gcodePath, slots)
-                        Log.i("SlicerVM", "Post-processed G-code: remapped tools to physical slots $slots")
+                    // Two possible remaps: toolRemapSlots (sparse slot compaction, e.g. T0→T2)
+                    // and semmColorPermutation (colour order for SEMM models, e.g. T0→T3).
+                    // composeSemmRemap merges them — permutation subsumes compaction when both present.
+                    val composedRemap = composeSemmRemap(toolRemapSlots, semmColorPermutation)
+                    if (composedRemap != null) {
+                        GcodeToolRemapper.remap(result.gcodePath, composedRemap)
+                        Log.i("SlicerVM", "Post-processed G-code: remapped tools to $composedRemap (toolRemap=$toolRemapSlots, semmPerm=$semmColorPermutation)")
                     }
                     // Inject preview thumbnails into G-code for Klipper/Moonraker.
                     // 3MF: extract preview image from ZIP. STL: fall back to GL capture bitmap.
@@ -2753,6 +2775,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _copyCount.value = 1
         customObjectPositions = null
         customWipeTowerPos = null
+        toolRemapSlots = null
+        semmColorPermutation = null
         // Reset multi-extruder config to single extruder
         _config.value = _config.value.copy(
             extruderCount = 1,
