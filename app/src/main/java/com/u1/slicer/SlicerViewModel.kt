@@ -703,6 +703,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 } finally {
                     tmpFile.delete()
                 }
+                // B67: Log copy size to detect truncation from content providers (e.g. Google Drive)
+                val copiedBytes = file.length()
+                Log.i("SlicerVM", "File copy: uriSize=$uriSizeBytes, copiedSize=$copiedBytes, match=${uriSizeBytes == copiedBytes || uriSizeBytes == 0L}, filename=$filename")
+                if (uriSizeBytes > 0L && copiedBytes != uriSizeBytes) {
+                    Log.w("SlicerVM", "B67: File copy size mismatch! Expected $uriSizeBytes but got $copiedBytes bytes — content provider may have truncated the stream")
+                }
 
                 // Track raw input for Clipper recovery (rawInputFile is never an intermediate,
                 // so clearIntermediateCache() won't delete it — safe to use after a cache clear).
@@ -713,7 +719,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     mapOf(
                         "filename" to filename,
                         "copiedTo" to file.absolutePath,
-                        "sizeBytes" to file.length()
+                        "sizeBytes" to copiedBytes,
+                        "uriSizeBytes" to uriSizeBytes,
+                        "sizeMismatch" to (uriSizeBytes > 0L && copiedBytes != uriSizeBytes)
                     )
                 )
 
@@ -752,6 +760,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
                         "colors=${origInfo.detectedColors.size}, extruders=${origInfo.detectedExtruderCount}, " +
                         "paint=${origInfo.hasPaintData}, toolChanges=${origInfo.hasLayerToolChanges}")
+                    // B67: persist parse results so we can diagnose paint detection failures
+                    // on devices without adb access
+                    diagnostics.recordEvent(
+                        "threemf_parsed",
+                        mapOf(
+                            "filename" to filename,
+                            "sizeBytes" to file.length(),
+                            "isBambu" to origInfo.isBambu,
+                            "hasPaintData" to origInfo.hasPaintData,
+                            "hasPaintSupports" to origInfo.hasPaintSupports,
+                            "hasLayerToolChanges" to origInfo.hasLayerToolChanges,
+                            "hasMultiExtruderAssignments" to origInfo.hasMultiExtruderAssignments,
+                            "detectedColors" to origInfo.detectedColors,
+                            "detectedExtruderCount" to origInfo.detectedExtruderCount,
+                            "usedExtruderIndices" to origInfo.usedExtruderIndices,
+                            "objectExtruderMap" to origInfo.objectExtruderMap
+                        )
+                    )
 
                     // Parse original file's config BEFORE process() strips it.
                     // This preserves file-level settings (enable_support, etc.) through the pipeline.
@@ -924,6 +950,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
                         "colors=${origInfo.detectedColors.size}, extruders=${origInfo.detectedExtruderCount}, " +
                         "paint=${origInfo.hasPaintData}, toolChanges=${origInfo.hasLayerToolChanges}")
+                    diagnostics.recordEvent(
+                        "threemf_parsed",
+                        mapOf(
+                            "filename" to filename,
+                            "sizeBytes" to sourceFile.length(),
+                            "isBambu" to origInfo.isBambu,
+                            "hasPaintData" to origInfo.hasPaintData,
+                            "hasPaintSupports" to origInfo.hasPaintSupports,
+                            "hasLayerToolChanges" to origInfo.hasLayerToolChanges,
+                            "hasMultiExtruderAssignments" to origInfo.hasMultiExtruderAssignments,
+                            "detectedColors" to origInfo.detectedColors,
+                            "detectedExtruderCount" to origInfo.detectedExtruderCount,
+                            "usedExtruderIndices" to origInfo.usedExtruderIndices,
+                            "objectExtruderMap" to origInfo.objectExtruderMap
+                        )
+                    )
 
                     _sourceConfig.value = if (origInfo.isBambu) {
                         java.util.zip.ZipFile(sourceFile).use { profileEmbedder.parseSourceConfig(it) }
