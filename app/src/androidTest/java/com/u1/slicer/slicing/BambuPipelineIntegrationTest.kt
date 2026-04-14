@@ -1231,4 +1231,59 @@ class BambuPipelineIntegrationTest {
         )
     }
 
+    // ─── B67: Flarewing Dragon paint detection ──────────────────────────────
+
+    /**
+     * B67: Flarewing Dragon is a 4-colour SEMM model with 295,390 paint_color
+     * attributes in 3D/Objects/object_21.model.  ThreeMfParser.parse() must
+     * detect hasPaintData=true and 4 filament colours from project_settings.config.
+     *
+     * The model_settings.config has a single object with extruder="1" and an
+     * empty filament_sequence.json — the colour chain must fall through to
+     * project_settings.config's filament_colour array.
+     */
+    @Test
+    fun b67_flarewingDragon_paintDetection() {
+        val file = asset("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf")
+        val info = ThreeMfParser.parse(file)
+
+        android.util.Log.i("B67Test", "hasPaintData=${info.hasPaintData}")
+        android.util.Log.i("B67Test", "detectedColors=${info.detectedColors}")
+        android.util.Log.i("B67Test", "detectedExtruderCount=${info.detectedExtruderCount}")
+        android.util.Log.i("B67Test", "isBambu=${info.isBambu}")
+        android.util.Log.i("B67Test", "usedExtruderIndices=${info.usedExtruderIndices}")
+        android.util.Log.i("B67Test", "objectExtruderMap=${info.objectExtruderMap}")
+
+        assertTrue("Flarewing Dragon must be detected as Bambu format", info.isBambu)
+        assertTrue("Flarewing Dragon must have hasPaintData=true (295k paint_color attrs)",
+            info.hasPaintData)
+        assertEquals("Flarewing Dragon must detect 4 filament colours",
+            4, info.detectedColors.size)
+        assertTrue("Flarewing Dragon must have >=4 extruders",
+            info.detectedExtruderCount >= 4)
+    }
+
+    /**
+     * B67: After BambuSanitizer.process() + mergeThreeMfInfo(), the merged info
+     * must still carry hasPaintData=true and 4 colors from the original parse.
+     * This tests the full pipeline path that the ViewModel uses.
+     */
+    @Test
+    fun b67_flarewingDragon_mergedInfoPreservesPaintData() {
+        val file = asset("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf")
+        val origInfo = ThreeMfParser.parse(file)
+        val processed = com.u1.slicer.bambu.BambuSanitizer.process(file, outDir)
+        val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
+        val mergedInfo = SlicerViewModel.mergeThreeMfInfo(processedInfo, origInfo)
+
+        assertTrue("Merged info must preserve hasPaintData=true", mergedInfo.hasPaintData)
+        assertEquals("Merged info must preserve 4 detected colours",
+            4, mergedInfo.detectedColors.size)
+        assertTrue("Merged info must have >=4 extruders",
+            mergedInfo.detectedExtruderCount >= 4)
+        // Verify specific colors from project_settings.config filament_colour
+        assertTrue("Merged colors must include #0056B8",
+            mergedInfo.detectedColors.any { it.equals("#0056B8", ignoreCase = true) })
+    }
+
 }

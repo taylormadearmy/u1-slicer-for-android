@@ -147,12 +147,18 @@ object ThreeMfParser {
                 // Bambu files that use p:path component refs (e.g. colored_3DBenchy) store
                 // paint_color attributes on triangles in the component files
                 // (3D/Objects/*.model), not in the main 3D/3dmodel.model.
-                val hasPaintData = if (skipPaintDetection) false else {
-                    zip.getInputStream(modelEntry).use(::streamDetectPaintData) ||
-                        zip.entries().toList().any { e ->
-                            e.name.endsWith(".model") && e.name != "3D/3dmodel.model" &&
-                                streamDetectPaintData(zip.getInputStream(e))
-                        }
+                var hasPaintData = if (skipPaintDetection) false else {
+                    val mainHasPaint = zip.getInputStream(modelEntry).use(::streamDetectPaintData)
+                    val componentModels = zip.entries().toList().filter { e ->
+                        e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
+                    }
+                    val componentHasPaint = componentModels.any { e ->
+                        streamDetectPaintData(zip.getInputStream(e))
+                    }
+                    if (!mainHasPaint && !componentHasPaint && componentModels.isNotEmpty()) {
+                        Log.d(TAG, "Byte-scan found no paint_color in main model or ${componentModels.size} component(s): ${componentModels.map { "${it.name} (${it.size}B)" }}")
+                    }
+                    mainHasPaint || componentHasPaint
                 }
 
                 // B57: Detect support painting — single-color Bambu files with paint_supports
@@ -172,7 +178,15 @@ object ThreeMfParser {
                 // (0=none, 1-4=extruders, 5-8=AMS2 folded to 1-4).
                 // We count distinct non-zero first-char states, NOT the number of
                 // unique spec strings (which can be thousands).
-                val paintStateCount = if (hasPaintData) {
+                //
+                // B67: Scan paint states for Bambu files even when byte-scan hasPaintData
+                // is false.  streamDetectPaintData's chunked byte search was observed to
+                // miss paint_color in large component models (Flarewing Dragon's 82MB
+                // object_21.model) on some devices.  The regex-based spec scan serves as
+                // a fallback — if it finds paint states, hasPaintData is promoted to true.
+                // Non-Bambu files skip the spec scan when the byte scan already failed,
+                // as they don't use Bambu-style paint_color attributes.
+                val paintStateCount = if (hasPaintData || (isBambu && !skipPaintDetection)) {
                     val states = mutableSetOf<Int>()
                     val modelFiles = mutableListOf<java.util.zip.ZipEntry>()
                     if (modelEntry != null) modelFiles.add(modelEntry)
@@ -194,6 +208,12 @@ object ThreeMfParser {
                     }
                     states.size
                 } else 0
+                // B67: If byte-scan missed paint data but regex scan found paint states,
+                // promote hasPaintData to true — the file definitely has paint attributes.
+                if (!hasPaintData && paintStateCount > 0) {
+                    Log.w(TAG, "B67: byte-scan missed paint data but found $paintStateCount paint states via regex — promoting hasPaintData to true")
+                    hasPaintData = true
+                }
 
                 // Detect layer tool changes and any per-layer colors embedded in the
                 // custom_gcode_per_layer.xml metadata.  Hueforge-style files often use
@@ -217,6 +237,9 @@ object ThreeMfParser {
                     detectColorsFromFilamentSequence(
                         zip.getInputStream(filamentSeqEntry), detectedColors
                     )
+                    if (detectedColors.isNotEmpty()) {
+                        Log.d(TAG, "Color source: filament_sequence.json → ${detectedColors.size} colors")
+                    }
                 }
                 // 2. Bambu project_settings.config — JSON format
                 if (detectedColors.isEmpty()) {
@@ -225,6 +248,9 @@ object ThreeMfParser {
                         detectColorsFromJsonSettings(
                             zip.getInputStream(projEntry), detectedColors
                         )
+                        if (detectedColors.isNotEmpty()) {
+                            Log.d(TAG, "Color source: project_settings.config → ${detectedColors.size} colors: $detectedColors")
+                        }
                     }
                 }
                 // 3. PrusaSlicer Slic3r_PE.config — semicolon-delimited INI
