@@ -3454,3 +3454,41 @@ internal fun computeEmbedTargetCount(
     return fallbackExtCount
 }
 
+/**
+ * Compute the SEMM colour permutation for post-slice G-code remapping.
+ *
+ * For normal SEMM paint models, the slicer outputs T0–T(N-1) based on the 3MF's
+ * filament_colour order. When the user assigns model colours to physical extruders
+ * in a non-identity order (e.g. Color1→E4, [3,0,2,1]), this permutation must be
+ * applied to the G-code so T0→T3, T1→T0, etc.
+ *
+ * Returns null when no remap is needed: identity mapping, H2C models, or non-SEMM models.
+ */
+internal fun computeSemmColorPermutation(
+    colorMapping: List<Int>,
+    hasPaintData: Boolean,
+    isH2cStyle: Boolean
+): List<Int>? {
+    if (!hasPaintData) return null
+    if (isH2cStyle) return null
+    val identity = (0 until colorMapping.size).toList()
+    if (colorMapping == identity) return null
+    return colorMapping
+}
+
+/**
+ * Compose toolRemapSlots and semmColorPermutation into a single remap list.
+ *
+ * semmColorPermutation already maps compact T-index → physical slot, so when
+ * both are present it subsumes toolRemapSlots (which maps compact T-index →
+ * physical slot for sparse-slot compaction).
+ */
+internal fun composeSemmRemap(
+    toolRemapSlots: List<Int>?,
+    semmColorPermutation: List<Int>?
+): List<Int>? = when {
+    semmColorPermutation != null -> semmColorPermutation
+    toolRemapSlots != null -> toolRemapSlots
+    else -> null
+}
+
