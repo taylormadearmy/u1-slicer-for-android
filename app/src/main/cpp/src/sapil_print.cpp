@@ -420,6 +420,20 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("overhang_3_4_speed", new Slic3r::ConfigOptionFloatOrPercent(10, false));
     dpc.set_key_value("overhang_4_4_speed", new Slic3r::ConfigOptionFloatOrPercent(10, false));
 
+    // Idle extruder standby temperature — prevents idle nozzles from staying at full print temp.
+    // When an embedded Snapmaker profile is loaded, ooze_prevention/idle_temperature/
+    // standby_temperature_delta come from profile_keys[] (native app embeds ooze_prevention=1,
+    // idle_temperature=[105,...]).  For raw STL files with no embedded profile, apply a
+    // reasonable fallback: enable ooze prevention with a -100°C standby delta.
+    // This gives ~120°C standby for PLA and ~135°C for PETG — above glass transition,
+    // well below print temp, preventing ooze and thermal degradation on idle extruders.
+    if (!has_embedded_profile && n_ext > 1) {
+        dpc.set_key_value("ooze_prevention", new Slic3r::ConfigOptionBool(true));
+        dpc.set_key_value("standby_temperature_delta", new Slic3r::ConfigOptionInt(-100));
+        // idle_temperature of 0 means "use standby_temperature_delta" (per OrcaSlicer GCode.cpp)
+        dpc.set_key_value("idle_temperature", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 0)));
+    }
+
     // Support (OrcaSlicer keys)
     // When an embedded Snapmaker profile is loaded, support settings come from profile_keys[]
     // (the file's own enable_support, support_threshold_angle, etc.).  Only apply JNI fallback
@@ -679,6 +693,46 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // Filament colour (per-extruder — used by multi_material_segmentation_by_painting
                     // to dimension per-layer arrays; must be sized to extruder count)
                     "filament_colour",
+                    // Idle/standby temperature management — controls what temperature idle extruders
+                    // are held at while not printing.  Without these keys, inactive extruders stay
+                    // at full print temperature, causing unnecessary thermal degradation and ooze.
+                    // The native Snapmaker Orca app embeds these in its profiles (ooze_prevention=1,
+                    // idle_temperature=[105,...]).  idle_temperature is per-extruder (coInts).
+                    "ooze_prevention",
+                    "idle_temperature",
+                    "standby_temperature_delta",
+                    // Filament flow calibration — per-filament extrusion multiplier.
+                    // Native Snapmaker profiles use 0.95; without this, flow defaults
+                    // to 1.0 and calibrated profiles over-extrude by ~5%.
+                    "filament_flow_ratio",
+                    // Filament type string (per-filament).  Used in change_filament_gcode
+                    // template conditionals, e.g. PVA-specific handling.
+                    "filament_type",
+                    // Pressure advance (Klipper SET_PRESSURE_ADVANCE).  OrcaSlicer emits
+                    // these automatically when enable_pressure_advance is true and
+                    // gcode_flavor=klipper.  enable_pressure_advance is ConfigOptionBools.
+                    "enable_pressure_advance",
+                    "pressure_advance",
+                    // Wipe tower purge volumes.  flush_volumes_matrix is an NxN matrix of
+                    // mm³ per filament-combo transition; flush_multiplier scales it.
+                    // Native Snapmaker profiles calibrate these carefully (0–800mm³).
+                    // Without them we use OrcaSlicer's compiled default (flat 140mm³).
+                    "flush_volumes_matrix",
+                    "flush_multiplier",
+                    "filament_minimal_purge_on_wipe_tower",
+                    "purge_in_prime_tower",
+                    // Ooze prevention re-heat mode: 0 = M104 (non-blocking), 1 = M109 (wait).
+                    "tool_change_temprature_wait",
+                    // Per-feature jerk limits (from process/printer profile).
+                    // Without these the slicer uses OrcaSlicer defaults instead of the
+                    // Snapmaker-tuned values.
+                    "default_jerk",
+                    "outer_wall_jerk",
+                    "inner_wall_jerk",
+                    "infill_jerk",
+                    "initial_layer_jerk",
+                    "top_surface_jerk",
+                    "travel_jerk",
                     nullptr
                 };
                 for (const char** k = profile_keys; *k; ++k) {
@@ -728,6 +782,20 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                         opt->values.resize(virtual_ext, last);
                     }
                 };
+                auto pad_strings = [&](const char* key) {
+                    auto* opt = dpc.option<Slic3r::ConfigOptionStrings>(key);
+                    if (opt && (int)opt->values.size() < virtual_ext) {
+                        std::string last = opt->values.back();
+                        opt->values.resize(virtual_ext, last);
+                    }
+                };
+                auto pad_bools = [&](const char* key) {
+                    auto* opt = dpc.option<Slic3r::ConfigOptionBools>(key);
+                    if (opt && (int)opt->values.size() < virtual_ext) {
+                        bool last = opt->values.back();
+                        opt->values.resize(virtual_ext, last);
+                    }
+                };
 
                 pad_floats("nozzle_diameter");
                 pad_floats("filament_diameter");
@@ -767,15 +835,36 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 pad_ints("nozzle_temperature_initial_layer");
                 pad_ints("bed_temperature");
                 pad_ints("bed_temperature_initial_layer");
+                // Idle temperature array — must match virtual_ext when ooze_prevention is active
+                pad_ints("idle_temperature");
+
+                // New per-filament arrays added to profile_keys
+                pad_floats("filament_flow_ratio");
+                pad_strings("filament_type");
+                pad_bools("enable_pressure_advance");
+                pad_floats("pressure_advance");
+                pad_floats("filament_minimal_purge_on_wipe_tower");
 
                 // Flush volumes matrix — NxN where N = virtual_ext.
                 // ToolOrdering derives extruder count from sqrt(matrix.size()).
-                // Default purge volume 140mm³ (matches prime_volume default).
-                dpc.set_key_value("flush_volumes_matrix",
-                    new Slic3r::ConfigOptionFloats(std::vector<double>(virtual_ext * virtual_ext, 140.0)));
+                // Prefer the profile's calibrated matrix when it is already sized for
+                // virtual_ext.  For SEMM models (virtual_ext > profile extruder count)
+                // the sizes won't match and we fall back to the 140mm³ default.
+                {
+                    auto* fvm = dpc.option<Slic3r::ConfigOptionFloats>("flush_volumes_matrix");
+                    if (!fvm || (int)fvm->values.size() != virtual_ext * virtual_ext) {
+                        dpc.set_key_value("flush_volumes_matrix",
+                            new Slic3r::ConfigOptionFloats(std::vector<double>(virtual_ext * virtual_ext, 140.0)));
+                    }
+                }
                 // Flush volumes vector (per-extruder multipliers, one per extruder)
-                dpc.set_key_value("flush_volumes_vector",
-                    new Slic3r::ConfigOptionFloats(std::vector<double>(virtual_ext * 2, 140.0)));
+                {
+                    auto* fvv = dpc.option<Slic3r::ConfigOptionFloats>("flush_volumes_vector");
+                    if (!fvv || (int)fvv->values.size() < virtual_ext * 2) {
+                        dpc.set_key_value("flush_volumes_vector",
+                            new Slic3r::ConfigOptionFloats(std::vector<double>(virtual_ext * 2, 140.0)));
+                    }
+                }
             }
         }
 

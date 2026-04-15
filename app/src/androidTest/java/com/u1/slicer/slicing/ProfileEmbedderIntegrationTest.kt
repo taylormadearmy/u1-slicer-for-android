@@ -16,6 +16,8 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipEntry
@@ -717,6 +719,62 @@ class ProfileEmbedderIntegrationTest {
             result.success
         )
         assertTrue("Layer count > 0", result.totalLayers > 0)
+    }
+
+    /**
+     * Regression guard for enable_pressure_advance / pressure_advance profile key pass-through.
+     *
+     * When an embedded Snapmaker profile has enable_pressure_advance=1 and pressure_advance=0.04,
+     * OrcaSlicer (Klipper flavor) should emit SET_PRESSURE_ADVANCE ADVANCE=0.04 in the G-code.
+     * Before the fix, these keys were not in profile_keys[] and were silently dropped.
+     */
+    @Test
+    fun pressureAdvancePassesThroughFromEmbeddedProfile() {
+        // Step 1: Get a valid embedded Snapmaker 3MF (machine_start_gcode contains PRINT_START,
+        // gcode_flavor=klipper — both already set by fullPipeline via snapmaker_u1.json)
+        val embedded = fullPipeline("calib-cube-10-dual-colour-merged.3mf")
+
+        // Step 2: Inject enable_pressure_advance=1 and pressure_advance=0.04 into the
+        // project_settings.config JSON inside the embedded ZIP.
+        val modified = File(outDir, "pa_test.3mf")
+        modified.outputStream().use { fos ->
+            ZipOutputStream(fos).use { zout ->
+                ZipFile(embedded).use { zin ->
+                    for (entry in zin.entries()) {
+                        if (entry.name == "Metadata/project_settings.config") {
+                            val original = zin.getInputStream(entry).readBytes().decodeToString()
+                            val json = JSONObject(original)
+                            // Inject PA keys — per-extruder arrays (1 extruder for calib cube)
+                            json.put("enable_pressure_advance", JSONArray(listOf("1")))
+                            json.put("pressure_advance", JSONArray(listOf("0.04")))
+                            val patched = json.toString(2).toByteArray()
+                            zout.putNextEntry(ZipEntry(entry.name))
+                            zout.write(patched)
+                            zout.closeEntry()
+                        } else {
+                            zout.putNextEntry(ZipEntry(entry.name))
+                            zin.getInputStream(entry).use { it.copyTo(zout) }
+                            zout.closeEntry()
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 3: Load and slice
+        assertTrue("Modified 3MF should load", lib.loadModel(modified.absolutePath))
+        val result = lib.slice(defaultSliceConfig)
+        assertNotNull("Slice must not return null", result)
+        assertTrue("Slice must succeed: ${result!!.errorMessage}", result.success)
+
+        // Step 4: Assert PA command in G-code
+        val gcode = File(result.gcodePath).readText()
+        assertTrue(
+            "Expected SET_PRESSURE_ADVANCE ADVANCE=0.04 in G-code.\n" +
+            "This means enable_pressure_advance/pressure_advance are not in profile_keys[].\n" +
+            "First 2000 chars of G-code:\n${gcode.take(2000)}",
+            gcode.contains("SET_PRESSURE_ADVANCE ADVANCE=0.04")
+        )
     }
 
 }
