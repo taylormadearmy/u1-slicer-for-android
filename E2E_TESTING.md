@@ -89,6 +89,7 @@ These are the files most likely to catch regressions quickly:
 | `Shashibo-h2s-textured.3mf` plate 5 | Old-format multi-plate textured case | Plate 5 preview colours, slice |
 | `3DBenchy-H2C-Multi-Color-Test-Print.3mf` | H2C sparse paint / 7-colour mapping | Prepare vs Preview colour parity |
 | `colored_3DBenchy (1).3mf` | Non-H2C painted benchy baseline | Prepare colours, slice |
+| `Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf` | B67 canary: large SEMM file (295k paint attrs); catches ProfileEmbedder filament_colour corruption (B66), GcodeParser per-extruder mm swap (B67). **Slow — 3h+ slice.** | Prepare shows 4 colours; `filament_colour` in G-code has **4 distinct hex values** (not `#FFFFFF;#FFFFFF;…`); T0–T3 all non-trivial; `filament used [mm]` first value (T0) is the **largest** of the four |
 | `2026+F1+CALENDAR+-+DATES+&+TRACK+NAMES+(P_X+SERIES).3mf` | Large Bambu file / former B18 OOM repro | Loads without OOM, slice preserves multi-colour output |
 | `super clean.3mf` | Huge single-model 3MF / former sanitize+embed OOM repro | Loads without OOM, preview fallback still works |
 
@@ -152,6 +153,7 @@ Run through **every** file under `app/src/androidTest/assets/` at least once. Kn
 | `colored_3DBenchy (1).3mf` | SEMM / painted benchy |
 | `3DBenchy-H2C-Multi-Color-Test-Print.3mf` | H2C sparse paint (priority table) |
 | `PrusaSlicer-printables-Korok_mask_4colour.3mf` | Four-colour mask |
+| `Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf` | B67 canary: large SEMM 4-colour; check `filament_colour` 4 distinct hex values; T0–T3 all >20; `filament used [mm]` value 0 (T0) is the largest |
 | `foldy+coaster (1).3mf` | Pipeline foldy case |
 | `slip slide spin fidget.3mf` | Multi-plate slip/slide (e.g. plate 3) |
 | `u1-auxiliary-fan-cover-hex_mw.3mf` | MakerWorld-style embed |
