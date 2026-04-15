@@ -54,6 +54,26 @@ class PreviewSummaryMappingTest {
         assertEquals("", resolveExtruderMaterialType(0, emptyList()))
     }
 
+    // --- B65: per-extruder colour swatches with high-index slots (e.g. calicube E3+E4) ---
+
+    @Test
+    fun `color lookup uses physical slot index into sparse extruderColors list`() {
+        // calicube uses E3+E4 (physical slots 2 and 3).
+        // buildPreviewSlotColors returns ["", "", "#0000FF", "#FF0000"] — 4 elements,
+        // E1/E2 empty. displaySlots must return [2,3] and getOrNull(2)/getOrNull(3)
+        // must resolve to the correct hex values — NOT grey.
+        val colorMapping = listOf(2, 3)
+        val slots = buildPerExtruderDisplaySlots(count = 2, colorMapping = colorMapping)
+        assertEquals(listOf(2, 3), slots)
+
+        // Simulate the sparse activeExtruderColors list (not filtered).
+        val extruderColors = listOf("", "", "#0000FF", "#FF0000")
+        val color0 = extruderColors.getOrNull(slots[0])?.takeIf { it.isNotBlank() } ?: "#808080"
+        val color1 = extruderColors.getOrNull(slots[1])?.takeIf { it.isNotBlank() } ?: "#808080"
+        assertEquals("E3 color must be blue, not grey", "#0000FF", color0)
+        assertEquals("E4 color must be red, not grey", "#FF0000", color1)
+    }
+
     // --- F68: single-colour slice must show material type label ---
 
     @Test

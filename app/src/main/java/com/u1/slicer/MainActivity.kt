@@ -1247,7 +1247,7 @@ fun PreviewScreen(
                         perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
                         wipeTowerFilamentMm = parsedGcode?.wipeTowerFilamentMm ?: 0f,
                         bedTemp = config.bedTemp,
-                        extruderColors = extruderColors.filter { it.isNotBlank() },
+                        extruderColors = extruderColors,
                         colorMapping = colorMapping,
                         extruderPresets = extruderPresets
                     )
@@ -1773,7 +1773,7 @@ fun SliceCompleteSummaryCard(
                         rowItems.forEachIndexed { columnIndex, mm ->
                             val i = rowIndex * 2 + columnIndex
                             val slot = displaySlots.getOrElse(i) { i.coerceIn(0, 3) }
-                            val colorHex = extruderColors.getOrNull(slot) ?: "#808080"
+                            val colorHex = extruderColors.getOrNull(slot)?.takeIf { it.isNotBlank() } ?: "#808080"
                             val color = try {
                                 Color(android.graphics.Color.parseColor(colorHex))
                             } catch (_: Exception) {
