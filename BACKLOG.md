@@ -13,19 +13,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
   `SemmSlicingTest` to assert >600 total tool changes, catching future NDK regressions.
 - **Tests**: 753 unit + 163 instrumented + 17/17 E2E PASS. H2C benchy: 838 tool changes.
 
-### B66: Color picker slider resets hue when adjusting shade (GitHub #70)
-- When editing printer filament/extruder colours, sliding the hue bar then adjusting shade causes hue to revert
-- **Workaround**: Set hue, save, re-enter to change shade
-- **Source**: Discord user Jon (2026-04-14)
+### ~~B66: Color picker slider resets hue when adjusting shade (GitHub #70)~~ FIXED v1.5.55
+- Stale closure in HSV picker caused hue to reset when shade was adjusted
+- **Fix**: Fixed stale closure in `fix(B66,B65,B63)` commit; shipped in v1.5.55
 
-### B65: Copies stuck at 1 on multi-colour 3MF — Flarewing Dragon (GitHub #71)
-- Loading the 4-filament Flarewing Dragon 3MF (160×169mm T-shape), copies stuck at 1
-- **Root cause 1**: `setCopyCount()` uses unscaled `lastModelInfo` dimensions — ignores `_modelScale`, so scaling down doesn't help
-- **Root cause 2**: `maxCopies()` uses bounding-box grid which is overly conservative for non-rectangular models
-- **Root cause 3**: Copies are hard-blocked at max instead of warned — desktop slicers allow overlap and just warn
-- **Fix**: Remove coerceIn cap, let users set any count up to 16, warn (don't block) on overlap/out-of-bounds, fix scale bug
-- **Test file**: `G:\My Drive\tes-data\Flarewing-Dragon_100%_4FilamentMulticolor_v1.1`
-- **Source**: Discord user Jon (2026-04-14)
+### ~~B65: Copies stuck at 1 on multi-colour 3MF — Flarewing Dragon (GitHub #71)~~ FIXED v1.5.55
+- Copy count cap used unscaled model dimensions and hard-blocked instead of warned
+- **Fix**: Fixed in `fix(B66,B65,B63)` commit; shipped in v1.5.55
 
 ### B64: SEMM colour mapping not applied to G-code — wrong colours printed (GitHub #72) — FIXED v1.5.52
 - User's colour-to-extruder mapping (e.g. Color 1→E4) was displayed in UI but never applied to the G-code for SEMM paint models
