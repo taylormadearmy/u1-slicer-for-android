@@ -12,8 +12,8 @@ android {
         applicationId "com.u1.slicer.orca"
         minSdk 26
         targetSdk 34
-        versionCode 220
-        versionName "1.5.54"
+        versionCode 221
+        versionName "1.5.55"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
