@@ -416,6 +416,44 @@ fun PrinterScreen(
                                     trackColor = MaterialTheme.colorScheme.surface
                                 )
                             }
+                            if (status.isPrinting || status.isPaused) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    if (status.isPrinting) {
+                                        Button(
+                                            onClick = { viewModel.pausePrint() },
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107))
+                                        ) {
+                                            Icon(Icons.Default.Pause, null)
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Pause")
+                                        }
+                                    }
+                                    if (status.isPaused) {
+                                        Button(
+                                            onClick = { viewModel.resumePrint() },
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                                        ) {
+                                            Icon(Icons.Default.PlayArrow, null)
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Resume")
+                                        }
+                                    }
+                                    Button(
+                                        onClick = { viewModel.cancelPrint() },
+                                        modifier = Modifier.weight(1f),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                    ) {
+                                        Icon(Icons.Default.Stop, null)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Cancel")
+                                    }
+                                }
+                            }
                             if (status.printDuration > 0) {
                                 Row(modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween) {
@@ -481,46 +519,6 @@ fun PrinterScreen(
                     }
                 }
 
-                // ── Print controls ──────────────────────────────────────────
-                if (status.isPrinting || status.isPaused) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (status.isPrinting) {
-                            Button(
-                                onClick = { viewModel.pausePrint() },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107))
-                            ) {
-                                Icon(Icons.Default.Pause, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Pause")
-                            }
-                        }
-                        if (status.isPaused) {
-                            Button(
-                                onClick = { viewModel.resumePrint() },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
-                            ) {
-                                Icon(Icons.Default.PlayArrow, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Resume")
-                            }
-                        }
-                        Button(
-                            onClick = { viewModel.cancelPrint() },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                        ) {
-                            Icon(Icons.Default.Stop, null)
-                            Spacer(Modifier.width(4.dp))
-                            Text("Cancel")
-                        }
-                    }
-
-                }
             }
 
             // ── Extruder Slots ──────────────────────────────────────────────

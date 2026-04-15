@@ -199,9 +199,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             entries.forEach { entry ->
                 val idx = current.indexOfFirst { it.index == entry.slotIndex }
                 if (idx >= 0) {
+                    val applyingType = applyTypes && entry.newType != null
                     current[idx] = current[idx].copy(
                         color = if (applyColors && entry.newColor != null) entry.newColor else current[idx].color,
-                        materialType = if (applyTypes && entry.newType != null) entry.newType else current[idx].materialType
+                        materialType = if (applyingType) entry.newType!! else current[idx].materialType,
+                        // Clear the linked filament profile when applying a type from the printer,
+                        // so the slot label shows the synced material type rather than the old profile name.
+                        filamentProfileId = if (applyingType) null else current[idx].filamentProfileId
                     )
                 }
             }

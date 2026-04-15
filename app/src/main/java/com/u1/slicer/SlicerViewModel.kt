@@ -1286,7 +1286,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val slotIndex = usedSlots.getOrElse(i) { i }
             val preset = extruderPresets.firstOrNull { it.index == slotIndex }
             val profileId = preset?.filamentProfileId
-            filaments.firstOrNull { it.id == profileId }?.nozzleTemp ?: 210
+            filaments.firstOrNull { it.id == profileId }?.nozzleTemp
+                ?: nozzleTempDefaultForMaterial(preset?.materialType ?: "PLA")
         }
         // Recompute wipe tower position if multi-extruder (unless user already placed it)
         val mi = lastModelInfo
@@ -2121,8 +2122,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (result != null && result.success) {
-                    // B63: patch filament_type header — native slicer always writes "PLA"
-                    // because filament_type is not in profile_keys[]. Fix it post-slice.
+                    // B63: patch filament_type header with current extruder preset material types.
+                    // Needed for STL files (no embedded profile → native slicer uses OrcaSlicer
+                    // default "PLA") and as a staleness guard for 3MF files (profile was embedded
+                    // at model-load time; user may have changed presets since).
                     val ftTypes = extruderPresets.value.sortedBy { it.index }.map { it.materialType }
                     val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
                     Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
@@ -2555,7 +2558,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun importFilaments(profiles: List<FilamentProfile>) {
         viewModelScope.launch(Dispatchers.IO) {
-            profiles.forEach { filamentDao.insert(it) }
+            val existingNames = filamentDao.getAll().first().map { it.name }.toSet()
+            profiles.filter { it.name !in existingNames }.forEach { filamentDao.insert(it) }
         }
     }
 
@@ -2765,12 +2769,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 data.makerWorldCookiesEnabled?.let {
                     settingsRepo.saveMakerWorldCookiesEnabled(it)
                 }
-                // Insert filament profiles first so we can resolve names → IDs
+                // Insert filament profiles first so we can resolve names → IDs.
+                // Skip profiles whose name already exists to prevent duplicates on repeated imports.
                 val nameToId = mutableMapOf<String, Long>()
                 data.filamentProfiles?.let { profiles ->
+                    val existingByName = filamentDao.getAll().first().associateBy { it.name }
                     profiles.forEach { profile ->
-                        val newId = filamentDao.insert(profile)
-                        nameToId[profile.name] = newId
+                        val existing = existingByName[profile.name]
+                        if (existing == null) {
+                            val newId = filamentDao.insert(profile)
+                            nameToId[profile.name] = newId
+                        } else {
+                            nameToId[profile.name] = existing.id
+                        }
                     }
                 }
                 // Resolve filament profile names to new IDs on extruder presets
@@ -3428,6 +3439,11 @@ internal fun computeTogglePrimeTower(
     return com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, !effective)
 }
 
+/** Returns a sensible nozzle temperature default for a given material type string. */
+internal fun nozzleTempDefaultForMaterial(material: String): Int = when (material.uppercase()) {
+    "PETG" -> 235; "ABS" -> 245; "ASA" -> 250; "PA" -> 260; "TPU" -> 220; "PVA" -> 200; else -> 210
+}
+
 /**
  * Derive the filament type label for the Slice Settings card from the active
  * extruder slots and their preset materials.
@@ -3578,8 +3594,10 @@ internal fun composeSemmRemap(
  * B63: Replace the `; filament_type = ...` header comment in a generated G-code file
  * with [filamentTypes] joined by semicolons.
  *
- * The native slicer always emits "PLA" for this header because `filament_type` is not
- * in its `profile_keys[]` whitelist.  Patching post-slice avoids a native rebuild.
+ * For STL files there is no embedded profile, so the native slicer writes OrcaSlicer's
+ * default "PLA" for all slots.  For 3MF files the profile is embedded at model-load time;
+ * if the user changes extruder presets after loading, the embedded value is stale.
+ * This patch ensures the header always reflects the current extruder preset material types.
  *
  * @return true if the line was found and replaced, false otherwise (file unchanged).
  */
