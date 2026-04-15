@@ -2078,7 +2078,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         cfg.copy(wipeTowerX = clampedX, wipeTowerY = clampedY)
                     } else cfg
                 }
-                val sliceConfig = resolvedSliceConfig
+                // Recompute extruderTemps from current presets at slice time.
+                // applyMultiColorAssignments / updateSingleColorExtruder set extruderTemps at
+                // model-load time; if the user changes presets (or applies a filament profile via
+                // the library) after loading, the stored value is stale.
+                // NOTE: extruder_temps is what applyConfigToPrusa() actually reads for
+                // nozzle_temperature — NOT the nozzle_temperature key in the embedded profile
+                // (which is not in profile_keys[] and is therefore ignored by the native slicer).
+                val sliceConfig = resolvedSliceConfig.let { cfg ->
+                    val usedSlots = toolRemapSlots ?: (0 until cfg.extruderCount).toList()
+                    val freshTemps = IntArray(cfg.extruderCount) { i ->
+                        val slotIndex = usedSlots.getOrElse(i) { i }
+                        val preset = extruderPresets.value.firstOrNull { it.index == slotIndex }
+                        val profileId = preset?.filamentProfileId
+                        filaments.value.firstOrNull { it.id == profileId }?.nozzleTemp
+                            ?: nozzleTempDefaultForMaterial(preset?.materialType ?: "PLA")
+                    }
+                    cfg.copy(extruderTemps = freshTemps)
+                }
                 val profileOverrides = buildProfileOverrides(
                     sliceConfig,
                     sliceConfig.extruderCount,
