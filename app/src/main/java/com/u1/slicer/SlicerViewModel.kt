@@ -1588,16 +1588,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
         val presets = extruderPresets.value
         val types = presets.sortedBy { it.index }.map { it.materialType }
-        // Compute temps fresh at slice time so a profile linked after model load is honoured.
-        // usedSlots is the compact extruder list (e.g. [0,2] for a 2-colour model using E1+E3).
-        val slots = usedSlots ?: (0 until extCount).toList()
-        val temps = slots.map { slotIndex ->
-            val preset = presets.firstOrNull { it.index == slotIndex }
-            val profileId = preset?.filamentProfileId
-            filaments.value.firstOrNull { it.id == profileId }?.nozzleTemp
-                ?: nozzleTempDefaultForMaterial(preset?.materialType ?: "PLA")
-        }
-        return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, usedSlots, hasSourceConfig, filamentTypes = types, nozzleTemps = temps)
+        val temps = computeFreshExtruderTemps(extCount, usedSlots, presets, filaments.value).toList()
+        return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, hasSourceConfig, filamentTypes = types, nozzleTemps = temps)
     }
 
     private fun configureNativeDiagnosticsIfAvailable() {
@@ -2086,15 +2078,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // nozzle_temperature — NOT the nozzle_temperature key in the embedded profile
                 // (which is not in profile_keys[] and is therefore ignored by the native slicer).
                 val sliceConfig = resolvedSliceConfig.let { cfg ->
-                    val usedSlots = toolRemapSlots ?: (0 until cfg.extruderCount).toList()
-                    val freshTemps = IntArray(cfg.extruderCount) { i ->
-                        val slotIndex = usedSlots.getOrElse(i) { i }
-                        val preset = extruderPresets.value.firstOrNull { it.index == slotIndex }
-                        val profileId = preset?.filamentProfileId
-                        filaments.value.firstOrNull { it.id == profileId }?.nozzleTemp
-                            ?: nozzleTempDefaultForMaterial(preset?.materialType ?: "PLA")
-                    }
-                    cfg.copy(extruderTemps = freshTemps)
+                    cfg.copy(extruderTemps = computeFreshExtruderTemps(
+                        extruderCount = cfg.extruderCount,
+                        usedSlots = toolRemapSlots,
+                        presets = extruderPresets.value,
+                        filaments = filaments.value
+                    ))
                 }
                 val profileOverrides = buildProfileOverrides(
                     sliceConfig,
@@ -3333,7 +3322,6 @@ internal fun buildProfileOverridesImpl(
     cfg: SliceConfig,
     ov: SlicingOverrides,
     extCount: Int,
-    usedSlots: List<Int>? = null,
     hasSourceConfig: Boolean = false,
     filamentTypes: List<String>? = null,
     nozzleTemps: List<Int>? = null
@@ -3512,6 +3500,34 @@ internal fun computeTogglePrimeTower(
 /** Returns a sensible nozzle temperature default for a given material type string. */
 internal fun nozzleTempDefaultForMaterial(material: String): Int = when (material.uppercase()) {
     "PETG" -> 235; "ABS" -> 270; "ASA" -> 260; "PA" -> 260; "TPU" -> 225; "PVA" -> 210; else -> 220
+}
+
+/**
+ * Compute fresh nozzle temperatures for each extruder slot at slice time.
+ *
+ * [usedSlots] maps compact extruder index → physical slot (e.g. [0,2] for a model using E1+E3).
+ * Null means identity (slot i == index i).
+ *
+ * Priority: linked filament profile nozzleTemp > materialType default.
+ *
+ * This must be called immediately before native.slice() — not at model-load time — because
+ * the user can change presets or apply a library filament profile after the model is loaded,
+ * which would otherwise leave extruderTemps stale.
+ */
+internal fun computeFreshExtruderTemps(
+    extruderCount: Int,
+    usedSlots: List<Int>?,
+    presets: List<com.u1.slicer.data.ExtruderPreset>,
+    filaments: List<com.u1.slicer.data.FilamentProfile>
+): IntArray {
+    val slots = usedSlots ?: (0 until extruderCount).toList()
+    return IntArray(extruderCount) { i ->
+        val slotIndex = slots.getOrElse(i) { i }
+        val preset = presets.firstOrNull { it.index == slotIndex }
+        val profileId = preset?.filamentProfileId
+        filaments.firstOrNull { it.id == profileId }?.nozzleTemp
+            ?: nozzleTempDefaultForMaterial(preset?.materialType ?: "PLA")
+    }
 }
 
 /**

@@ -670,4 +670,42 @@ class SlicingIntegrationTest {
             result!!.cancelled || result!!.success
         )
     }
+
+    // ─── Nozzle temperature JNI path (B71 / v1.5.63 regression guard) ─────────
+
+    /**
+     * Regression guard: extruderTemps in SliceConfig flows through JNI to applyConfigToPrusa()
+     * and sets the actual nozzle_temperature in the G-code header.
+     *
+     * Background: nozzle_temperature in the embedded profile JSON is NOT in profile_keys[] and
+     * is ignored by the native slicer. The real source is SliceConfig.extruderTemps passed via
+     * JNI. This test confirms that path works for both PLA (220) and PETG (235), catching any
+     * regression where the wrong temperature field is used.
+     */
+    @Test
+    fun nozzleTemp_fromExtruderTemps_appearsInGcode_PLA() {
+        val config = DEFAULT_CONFIG.copy(
+            nozzleTemp = 220,
+            extruderTemps = intArrayOf(220)
+        )
+        val (success, gcode) = sliceAsset("tetrahedron.stl", config)
+        assertTrue("Slice must succeed", success)
+        assertTrue("G-code must contain nozzle_temperature = 220",
+            gcode!!.contains("; nozzle_temperature = 220"))
+    }
+
+    @Test
+    fun nozzleTemp_fromExtruderTemps_appearsInGcode_PETG() {
+        // Simulates what computeFreshExtruderTemps() produces when the user switches to PETG.
+        // Before v1.5.63, extruderTemps stayed at 220 (set at load time) even after preset change.
+        val config = DEFAULT_CONFIG.copy(
+            nozzleTemp = 235,
+            extruderTemps = intArrayOf(235),
+            filamentType = "PETG"
+        )
+        val (success, gcode) = sliceAsset("tetrahedron.stl", config)
+        assertTrue("Slice must succeed", success)
+        assertTrue("G-code must contain nozzle_temperature = 235 when PETG extruderTemps set",
+            gcode!!.contains("; nozzle_temperature = 235"))
+    }
 }
