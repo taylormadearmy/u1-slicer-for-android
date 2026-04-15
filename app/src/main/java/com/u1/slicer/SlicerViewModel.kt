@@ -262,8 +262,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         cachedPrepareMesh = null
     }
 
-    // Filament library
+    // Filament library — StateFlow so .value is accessible synchronously (e.g. for nozzle temp lookup at slice time)
     val filaments = filamentDao.getAll()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Job history
     val sliceJobs = sliceJobDao.getAll()
@@ -1196,7 +1197,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         Log.i("SlicerVM", "Auto-placed wipe tower at (${towerPos.first}, ${towerPos.second})")
                         _colorMapping.value = initialMapping
                         _layerToolOnly.value = false
-                        applyMultiColorAssignments(initialMapping, presets, emptyList())
+                        applyMultiColorAssignments(initialMapping, presets, filaments.value)
                         Log.i("SlicerVM", "Auto-applied color mapping: $extCount extruders, mapping=$initialMapping")
                     }
                 } else {
@@ -1213,7 +1214,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _config.value = _config.value.copy(
                         extruderCount = 1,
                         wipeTowerEnabled = false,
-                        filamentType = resolveFilamentTypeForSingleColorLoad(presets)
+                        filamentType = resolveFilamentTypeForSingleColorLoad(presets),
+                        extruderTemps = intArrayOf(computeSingleColorTemp(0))
                     )
                     // Single-color model: set E1's color from current printer slot config so
                     // the 3D model preview shows the correct filament color instead of default orange.
@@ -1359,6 +1361,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * Resolves the nozzle temperature for the single-color extruder at [index].
+     * Prefers the linked FilamentProfile's nozzleTemp; falls back to material-type default.
+     */
+    private fun computeSingleColorTemp(index: Int): Int {
+        val preset = extruderPresets.value.firstOrNull { it.index == index }
+        val profileId = preset?.filamentProfileId
+        return filaments.value.firstOrNull { it.id == profileId }?.nozzleTemp
+            ?: nozzleTempDefaultForMaterial(preset?.materialType ?: "PLA")
+    }
+
+    /**
      * For single-color models, all triangles have extruder index 0 in the mesh.
      * The recolor palette is indexed by extruder index in the mesh, so the selected
      * extruder's color must go at palette index 0. Also sets up tool remapping
@@ -1377,6 +1390,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         // Configure tool remapping: single-color model uses T0 in native slicer,
         // but we want it printed on the selected physical extruder slot.
+        val temp = computeSingleColorTemp(index)
         if (index == 0) {
             // E1 selected — identity mapping, no remap needed
             toolRemapSlots = null
@@ -1384,7 +1398,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _config.value = _config.value.copy(
                 extruderCount = 1,
                 wipeTowerEnabled = false,
-                filamentType = material
+                filamentType = material,
+                extruderTemps = intArrayOf(temp)
             )
         } else {
             // E2/E3/E4 — remap T0 → physical slot
@@ -1392,7 +1407,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _config.value = _config.value.copy(
                 extruderCount = 1,
                 wipeTowerEnabled = false,
-                filamentType = material
+                filamentType = material,
+                extruderTemps = intArrayOf(temp)
             )
         }
         Log.i("SlicerVM", "Single-color extruder set to E${index + 1}, remap=$toolRemapSlots")

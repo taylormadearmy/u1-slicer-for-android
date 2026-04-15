@@ -968,4 +968,38 @@ class SlicingOverridesTest {
         val ft = result["filament_type"] as List<String>
         assertEquals(listOf("PETG", "PLA", "PLA", "PLA"), ft)
     }
+
+    // --- Nozzle temp: extruderTemps populated by applyMultiColorAssignments ---
+
+    @Test
+    fun `nozzle_temperature uses extruderTemps when size matches extCount`() {
+        // PETG E1 (235°C) + PLA E2 (210°C) — the normal 2-colour case
+        val cfg = SliceConfig(extruderTemps = intArrayOf(235, 210))
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as List<String>
+        assertEquals(listOf("235", "210"), temps)
+    }
+
+    @Test
+    fun `nozzle_temperature falls back to nozzleTemp when extruderTemps empty`() {
+        // extruderTemps not yet set (e.g. stale config) → falls back to cfg.nozzleTemp
+        val cfg = SliceConfig(nozzleTemp = 210, extruderTemps = intArrayOf())
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as List<String>
+        assertEquals(listOf("210", "210"), temps)
+    }
+
+    @Test
+    fun `nozzle_temperature single-color PETG uses 235 when extruderTemps set`() {
+        val cfg = SliceConfig(extruderTemps = intArrayOf(235))
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1)
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as List<String>
+        assertEquals(listOf("235"), temps)
+    }
 }
