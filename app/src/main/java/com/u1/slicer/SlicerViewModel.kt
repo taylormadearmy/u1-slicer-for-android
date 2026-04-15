@@ -2618,6 +2618,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 filamentType = profile.material
             )
         }
+        // Also update the selected extruder's preset so buildProfileOverrides() computes
+        // the correct nozzle temp from the preset at slice time (not the stale materialType default).
+        // Only do this for single-colour mode — multi-colour presets are managed separately.
+        if (_config.value.extruderCount == 1) {
+            val selectedIdx = _selectedExtruder.value
+            val current = extruderPresets.value.toMutableList()
+            val idx = current.indexOfFirst { it.index == selectedIdx }
+            val updated = if (idx >= 0) {
+                current[idx].copy(materialType = profile.material, filamentProfileId = profile.id)
+            } else {
+                com.u1.slicer.data.ExtruderPreset(
+                    index = selectedIdx,
+                    materialType = profile.material,
+                    filamentProfileId = profile.id
+                )
+            }
+            if (idx >= 0) current[idx] = updated else current.add(updated)
+            viewModelScope.launch(Dispatchers.IO) {
+                settingsRepo.saveExtruderPresets(current.sortedBy { it.index })
+            }
+        }
     }
 
     // ---- Job History ----
