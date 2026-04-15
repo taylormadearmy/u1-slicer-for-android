@@ -205,7 +205,6 @@ private fun FilamentCard(
             ) {
                 MiniStat("Nozzle", "${filament.nozzleTemp}\u00B0C")
                 MiniStat("Bed", "${filament.bedTemp}\u00B0C")
-                MiniStat("Speed", "${filament.printSpeed.toInt()} mm/s")
             }
             Spacer(Modifier.height(8.dp))
             Row(
@@ -244,9 +243,8 @@ private fun FilamentEditDialog(
 ) {
     var name by remember { mutableStateOf(filament?.name ?: "") }
     var material by remember { mutableStateOf(filament?.material ?: "PLA") }
-    var nozzleTemp by remember { mutableStateOf(filament?.nozzleTemp?.toString() ?: "210") }
-    var bedTemp by remember { mutableStateOf(filament?.bedTemp?.toString() ?: "60") }
-    var printSpeed by remember { mutableStateOf(filament?.printSpeed?.toInt()?.toString() ?: "60") }
+    var nozzleTemp by remember { mutableStateOf(filament?.nozzleTemp?.toString() ?: "220") }
+    var bedTemp by remember { mutableStateOf(filament?.bedTemp?.toString() ?: "55") }
     var retractLength by remember { mutableStateOf(filament?.retractLength?.toString() ?: "0.8") }
     var retractSpeed by remember { mutableStateOf(filament?.retractSpeed?.toInt()?.toString() ?: "45") }
 
@@ -313,15 +311,6 @@ private fun FilamentEditDialog(
                     )
                 }
 
-                OutlinedTextField(
-                    value = printSpeed,
-                    onValueChange = { printSpeed = it },
-                    label = { Text("Print Speed (mm/s)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
-                )
-
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = retractLength,
@@ -347,13 +336,12 @@ private fun FilamentEditDialog(
                 onClick = {
                     val profile = (filament ?: FilamentProfile(
                         name = "", material = "", nozzleTemp = 0, bedTemp = 0,
-                        printSpeed = 0f, retractLength = 0f, retractSpeed = 0f
+                        retractLength = 0f, retractSpeed = 0f
                     )).copy(
                         name = name.ifBlank { "$material Filament" },
                         material = material,
-                        nozzleTemp = nozzleTemp.toIntOrNull() ?: 210,
-                        bedTemp = bedTemp.toIntOrNull() ?: 60,
-                        printSpeed = printSpeed.toFloatOrNull() ?: 60f,
+                        nozzleTemp = nozzleTemp.toIntOrNull() ?: 220,
+                        bedTemp = bedTemp.toIntOrNull() ?: 55,
                         retractLength = retractLength.toFloatOrNull() ?: 0.8f,
                         retractSpeed = retractSpeed.toFloatOrNull() ?: 45f,
                         isDefault = false
@@ -429,7 +417,6 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
     val material: String
     val nozzleTemp: Int
     val bedTemp: Int
-    val printSpeed: Float
     val retractLength: Float
     val retractSpeed: Float
 
@@ -447,14 +434,6 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
             .let { extractBambuValue(obj, "bed_temperature") })
             ?.toIntOrNull() ?: materialBedDefault(material)
 
-        // Derive print speed from volumetric speed (mm³/s → mm/s at 0.4mm nozzle, 0.2mm layer)
-        val volSpeed = extractBambuValue(obj, "filament_max_volumetric_speed")?.toDoubleOrNull()
-        printSpeed = if (volSpeed != null && volSpeed > 0) {
-            (volSpeed / 0.08).toFloat().coerceIn(30f, 500f)
-        } else {
-            materialSpeedDefault(material)
-        }
-
         retractLength = (extractBambuValue(obj, "filament_retraction_length")
             ?.toFloatOrNull() ?: 0.8f).coerceIn(0f, 10f)
 
@@ -462,9 +441,8 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
             ?.toFloatOrNull() ?: 45f).coerceIn(5f, 150f)
     } else {
         material = obj.optString("material").let { if (it.isBlank()) "PLA" else it }
-        nozzleTemp = obj.optInt("nozzle_temp", obj.optInt("nozzleTemp", 210))
-        bedTemp = obj.optInt("bed_temp", obj.optInt("bedTemp", 60))
-        printSpeed = obj.optDouble("print_speed", obj.optDouble("printSpeed", 60.0)).toFloat()
+        nozzleTemp = obj.optInt("nozzle_temp", obj.optInt("nozzleTemp", 220))
+        bedTemp = obj.optInt("bed_temp", obj.optInt("bedTemp", 55))
         retractLength = obj.optDouble("retract_length", obj.optDouble("retractLength", 0.8)).toFloat()
         retractSpeed = obj.optDouble("retract_speed", obj.optDouble("retractSpeed", 45.0)).toFloat()
     }
@@ -474,7 +452,6 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
         material = material,
         nozzleTemp = nozzleTemp,
         bedTemp = bedTemp,
-        printSpeed = printSpeed,
         retractLength = retractLength,
         retractSpeed = retractSpeed
     )
@@ -515,14 +492,11 @@ private fun inferMaterialFromName(name: String): String {
     }
 }
 
+// Temperatures from Snapmaker/OrcaSlicer Generic profiles
 private fun materialNozzleDefault(material: String) = when (material) {
-    "PETG" -> 235; "ABS" -> 245; "ASA" -> 250; "PA" -> 260; "TPU" -> 220; "PVA" -> 200; else -> 210
+    "PETG" -> 235; "ABS" -> 270; "ASA" -> 260; "PA" -> 260; "TPU" -> 225; "PVA" -> 210; else -> 220
 }
 
 private fun materialBedDefault(material: String) = when (material) {
-    "PETG" -> 80; "ABS" -> 100; "ASA" -> 100; "PA" -> 80; "TPU" -> 50; "PVA" -> 50; else -> 60
-}
-
-private fun materialSpeedDefault(material: String) = when (material) {
-    "TPU" -> 30f; "PA" -> 100f; "PVA" -> 30f; "ABS" -> 150f; "ASA" -> 150f; "PETG" -> 150f; else -> 200f
+    "PETG" -> 70; "ABS" -> 90; "ASA" -> 90; "PA" -> 100; "TPU" -> 60; "PVA" -> 65; else -> 55
 }

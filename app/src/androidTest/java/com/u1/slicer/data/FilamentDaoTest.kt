@@ -41,7 +41,6 @@ class FilamentDaoTest {
         material = material,
         nozzleTemp = nozzleTemp,
         bedTemp = bedTemp,
-        printSpeed = 60f,
         retractLength = 0.8f,
         retractSpeed = 45f
     )

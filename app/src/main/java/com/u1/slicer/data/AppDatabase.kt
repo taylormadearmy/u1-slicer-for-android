@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 
 @Database(
     entities = [FilamentProfile::class, SliceJob::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -37,6 +37,38 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v3 → v4: drop printSpeed from filament_profiles.
+         * Speed is a process concern (not per-filament); the column was never meaningfully used.
+         * SQLite pre-3.35 doesn't support DROP COLUMN, so we recreate the table.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE filament_profiles_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        material TEXT NOT NULL,
+                        nozzleTemp INTEGER NOT NULL,
+                        bedTemp INTEGER NOT NULL,
+                        retractLength REAL NOT NULL,
+                        retractSpeed REAL NOT NULL,
+                        color TEXT NOT NULL DEFAULT '#808080',
+                        density REAL NOT NULL DEFAULT 1.24,
+                        isDefault INTEGER NOT NULL DEFAULT 0
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO filament_profiles_new
+                        (id, name, material, nozzleTemp, bedTemp, retractLength, retractSpeed, color, density, isDefault)
+                    SELECT id, name, material, nozzleTemp, bedTemp, retractLength, retractSpeed, color, density, isDefault
+                    FROM filament_profiles
+                """.trimIndent())
+                db.execSQL("DROP TABLE filament_profiles")
+                db.execSQL("ALTER TABLE filament_profiles_new RENAME TO filament_profiles")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -44,7 +76,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "u1_slicer.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .addCallback(SeedCallback())
                     .build()
                 INSTANCE = instance
@@ -64,13 +96,13 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private suspend fun seedDefaultFilaments(dao: FilamentDao) {
+            // Temperatures from Snapmaker/OrcaSlicer Generic profiles (Snapmaker GitHub)
             val defaults = listOf(
                 FilamentProfile(
                     name = "Generic PLA",
                     material = "PLA",
-                    nozzleTemp = 210,
-                    bedTemp = 60,
-                    printSpeed = 60f,
+                    nozzleTemp = 220,
+                    bedTemp = 55,
                     retractLength = 0.8f,
                     retractSpeed = 45f,
                     color = "#4CAF50",
@@ -81,8 +113,7 @@ abstract class AppDatabase : RoomDatabase() {
                     name = "Generic PETG",
                     material = "PETG",
                     nozzleTemp = 235,
-                    bedTemp = 80,
-                    printSpeed = 50f,
+                    bedTemp = 70,
                     retractLength = 1.0f,
                     retractSpeed = 40f,
                     color = "#2196F3",
@@ -92,9 +123,8 @@ abstract class AppDatabase : RoomDatabase() {
                 FilamentProfile(
                     name = "Generic ABS",
                     material = "ABS",
-                    nozzleTemp = 245,
-                    bedTemp = 100,
-                    printSpeed = 50f,
+                    nozzleTemp = 270,
+                    bedTemp = 90,
                     retractLength = 0.8f,
                     retractSpeed = 45f,
                     color = "#FF9800",
@@ -104,9 +134,8 @@ abstract class AppDatabase : RoomDatabase() {
                 FilamentProfile(
                     name = "Generic TPU",
                     material = "TPU",
-                    nozzleTemp = 220,
-                    bedTemp = 50,
-                    printSpeed = 25f,
+                    nozzleTemp = 225,
+                    bedTemp = 60,
                     retractLength = 0.5f,
                     retractSpeed = 25f,
                     color = "#9C27B0",
@@ -116,9 +145,8 @@ abstract class AppDatabase : RoomDatabase() {
                 FilamentProfile(
                     name = "Generic ASA",
                     material = "ASA",
-                    nozzleTemp = 250,
-                    bedTemp = 100,
-                    printSpeed = 50f,
+                    nozzleTemp = 260,
+                    bedTemp = 90,
                     retractLength = 0.8f,
                     retractSpeed = 45f,
                     color = "#F44336",
@@ -129,8 +157,7 @@ abstract class AppDatabase : RoomDatabase() {
                     name = "Generic PA (Nylon)",
                     material = "PA",
                     nozzleTemp = 260,
-                    bedTemp = 80,
-                    printSpeed = 40f,
+                    bedTemp = 100,
                     retractLength = 1.2f,
                     retractSpeed = 40f,
                     color = "#FFEB3B",
@@ -140,9 +167,8 @@ abstract class AppDatabase : RoomDatabase() {
                 FilamentProfile(
                     name = "Generic PVA",
                     material = "PVA",
-                    nozzleTemp = 200,
-                    bedTemp = 50,
-                    printSpeed = 30f,
+                    nozzleTemp = 210,
+                    bedTemp = 65,
                     retractLength = 1.0f,
                     retractSpeed = 25f,
                     color = "#BDBDBD",

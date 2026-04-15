@@ -10,7 +10,6 @@ data class FilamentProfile(
     val material: String,        // PLA, PETG, ABS, TPU, ASA, PA, PVA
     val nozzleTemp: Int,
     val bedTemp: Int,
-    val printSpeed: Float,
     val retractLength: Float,
     val retractSpeed: Float,
     val color: String = "#808080", // Hex color for UI display

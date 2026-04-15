@@ -2603,7 +2603,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             it.copy(
                 nozzleTemp = profile.nozzleTemp,
                 bedTemp = profile.bedTemp,
-                printSpeed = profile.printSpeed,
                 retractLength = profile.retractLength,
                 retractSpeed = profile.retractSpeed,
                 filamentType = profile.material
@@ -3457,7 +3456,7 @@ internal fun computeTogglePrimeTower(
 
 /** Returns a sensible nozzle temperature default for a given material type string. */
 internal fun nozzleTempDefaultForMaterial(material: String): Int = when (material.uppercase()) {
-    "PETG" -> 235; "ABS" -> 245; "ASA" -> 250; "PA" -> 260; "TPU" -> 220; "PVA" -> 200; else -> 210
+    "PETG" -> 235; "ABS" -> 270; "ASA" -> 260; "PA" -> 260; "TPU" -> 225; "PVA" -> 210; else -> 220
 }
 
 /**

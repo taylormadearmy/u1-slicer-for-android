@@ -117,10 +117,10 @@ class SettingsBackupTest {
     fun `round-trip preserves filament profiles`() {
         val profiles = listOf(
             FilamentProfile(name = "Test PLA", material = "PLA", nozzleTemp = 210,
-                bedTemp = 60, printSpeed = 60f, retractLength = 0.8f, retractSpeed = 45f,
+                bedTemp = 60, retractLength = 0.8f, retractSpeed = 45f,
                 color = "#FF5733", density = 1.24f),
             FilamentProfile(name = "Test PETG", material = "PETG", nozzleTemp = 240,
-                bedTemp = 80, printSpeed = 50f, retractLength = 1.0f, retractSpeed = 40f)
+                bedTemp = 80, retractLength = 1.0f, retractSpeed = 40f)
         )
         val json = SettingsBackup.export(SliceConfig(), SlicingOverrides(), "", emptyList(), profiles)
         val data = SettingsBackup.import(json)

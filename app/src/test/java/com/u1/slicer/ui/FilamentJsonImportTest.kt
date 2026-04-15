@@ -26,7 +26,6 @@ class FilamentJsonImportTest {
         assertEquals("PLA", profiles[0].material)
         assertEquals(220, profiles[0].nozzleTemp)
         assertEquals(35, profiles[0].bedTemp)
-        assertEquals(150f, profiles[0].printSpeed, 0.001f)
         assertEquals(0.8f, profiles[0].retractLength, 0.001f)
         assertEquals(30f, profiles[0].retractSpeed, 0.001f)
     }
@@ -79,9 +78,8 @@ class FilamentJsonImportTest {
         val json = """[{"name":"Minimal PLA","material":"PLA"}]"""
         val profiles = parseFilamentJson(json)
         assertEquals(1, profiles.size)
-        assertEquals(210, profiles[0].nozzleTemp)
-        assertEquals(60, profiles[0].bedTemp)
-        assertEquals(60f, profiles[0].printSpeed, 0.001f)
+        assertEquals(220, profiles[0].nozzleTemp)
+        assertEquals(55, profiles[0].bedTemp)
         assertEquals(0.8f, profiles[0].retractLength, 0.001f)
         assertEquals(45f, profiles[0].retractSpeed, 0.001f)
     }
@@ -159,7 +157,7 @@ class FilamentJsonImportTest {
         val profiles = parseFilamentJson(json)
         assertEquals(1, profiles.size)
         assertEquals("TPU", profiles[0].material)
-        assertEquals(220, profiles[0].nozzleTemp)  // TPU default
+        assertEquals(225, profiles[0].nozzleTemp)  // TPU default
     }
 
     @Test

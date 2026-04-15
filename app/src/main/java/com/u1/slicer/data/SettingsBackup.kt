@@ -172,7 +172,6 @@ object SettingsBackup {
                     put("material", p.material)
                     put("nozzleTemp", p.nozzleTemp)
                     put("bedTemp", p.bedTemp)
-                    put("printSpeed", p.printSpeed.toDouble())
                     put("retractLength", p.retractLength.toDouble())
                     put("retractSpeed", p.retractSpeed.toDouble())
                     put("color", p.color)
@@ -190,7 +189,6 @@ object SettingsBackup {
                 material = obj.optString("material", "PLA"),
                 nozzleTemp = obj.optInt("nozzleTemp", 210),
                 bedTemp = obj.optInt("bedTemp", 60),
-                printSpeed = obj.optDouble("printSpeed", 60.0).toFloat(),
                 retractLength = obj.optDouble("retractLength", 0.8).toFloat(),
                 retractSpeed = obj.optDouble("retractSpeed", 45.0).toFloat(),
                 color = obj.optString("color", "#808080"),

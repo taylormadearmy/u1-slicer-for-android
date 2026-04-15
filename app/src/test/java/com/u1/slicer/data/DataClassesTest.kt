@@ -16,7 +16,6 @@ class DataClassesTest {
             material = "PLA",
             nozzleTemp = 210,
             bedTemp = 60,
-            printSpeed = 60f,
             retractLength = 0.8f,
             retractSpeed = 45f
         )
@@ -33,7 +32,6 @@ class DataClassesTest {
             material = "PLA",
             nozzleTemp = 210,
             bedTemp = 60,
-            printSpeed = 60f,
             retractLength = 0.8f,
             retractSpeed = 45f,
             color = "#FF0000"
@@ -43,8 +41,8 @@ class DataClassesTest {
 
     @Test
     fun `FilamentProfile equality`() {
-        val a = FilamentProfile(id = 1, name = "PLA", material = "PLA", nozzleTemp = 210, bedTemp = 60, printSpeed = 60f, retractLength = 0.8f, retractSpeed = 45f)
-        val b = FilamentProfile(id = 1, name = "PLA", material = "PLA", nozzleTemp = 210, bedTemp = 60, printSpeed = 60f, retractLength = 0.8f, retractSpeed = 45f)
+        val a = FilamentProfile(id = 1, name = "PLA", material = "PLA", nozzleTemp = 210, bedTemp = 60, retractLength = 0.8f, retractSpeed = 45f)
+        val b = FilamentProfile(id = 1, name = "PLA", material = "PLA", nozzleTemp = 210, bedTemp = 60, retractLength = 0.8f, retractSpeed = 45f)
         assertEquals(a, b)
     }
 

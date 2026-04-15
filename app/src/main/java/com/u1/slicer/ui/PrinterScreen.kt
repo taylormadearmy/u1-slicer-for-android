@@ -847,7 +847,7 @@ private fun ExtruderSlotEditDialog(
                                     text = {
                                         Column {
                                             Text(profile.name, style = MaterialTheme.typography.bodyMedium)
-                                            Text("${profile.material} · ${profile.nozzleTemp}°C · ${profile.printSpeed.toInt()} mm/s",
+                                            Text("${profile.material} · ${profile.nozzleTemp}°C",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
@@ -863,7 +863,7 @@ private fun ExtruderSlotEditDialog(
                     }
                     if (linkedProfile != null) {
                         Text(
-                            "Nozzle ${linkedProfile.nozzleTemp}°C · Bed ${linkedProfile.bedTemp}°C · ${linkedProfile.printSpeed.toInt()} mm/s",
+                            "Nozzle ${linkedProfile.nozzleTemp}°C · Bed ${linkedProfile.bedTemp}°C",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
