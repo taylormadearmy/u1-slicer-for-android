@@ -1002,4 +1002,26 @@ class SlicingOverridesTest {
         val temps = result["nozzle_temperature"] as List<String>
         assertEquals(listOf("235"), temps)
     }
+
+    @Test
+    fun `nozzleTemps param overrides stale extruderTemps — profile linked after model load`() {
+        // Simulates: model loaded (extruderTemps=[210] stored), user then links PETG profile,
+        // slice fires with fresh nozzleTemps=[235] from buildProfileOverrides at slice time.
+        val cfg = SliceConfig(extruderTemps = intArrayOf(210))  // stale load-time value
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, nozzleTemps = listOf(235))
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as List<String>
+        assertEquals(listOf("235"), temps)
+    }
+
+    @Test
+    fun `nozzleTemps param overrides stale extruderTemps — multi-colour case`() {
+        val cfg = SliceConfig(extruderTemps = intArrayOf(210, 210))  // stale
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2, nozzleTemps = listOf(235, 270))
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as List<String>
+        assertEquals(listOf("235", "270"), temps)
+    }
 }

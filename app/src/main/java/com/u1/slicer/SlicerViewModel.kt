@@ -1586,8 +1586,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
-        val types = extruderPresets.value.sortedBy { it.index }.map { it.materialType }
-        return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, usedSlots, hasSourceConfig, filamentTypes = types)
+        val presets = extruderPresets.value
+        val types = presets.sortedBy { it.index }.map { it.materialType }
+        // Compute temps fresh at slice time so a profile linked after model load is honoured.
+        // usedSlots is the compact extruder list (e.g. [0,2] for a 2-colour model using E1+E3).
+        val slots = usedSlots ?: (0 until extCount).toList()
+        val temps = slots.map { slotIndex ->
+            val preset = presets.firstOrNull { it.index == slotIndex }
+            val profileId = preset?.filamentProfileId
+            filaments.value.firstOrNull { it.id == profileId }?.nozzleTemp
+                ?: nozzleTempDefaultForMaterial(preset?.materialType ?: "PLA")
+        }
+        return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, usedSlots, hasSourceConfig, filamentTypes = types, nozzleTemps = temps)
     }
 
     private fun configureNativeDiagnosticsIfAvailable() {
@@ -3287,12 +3297,19 @@ internal fun buildProfileOverridesImpl(
     extCount: Int,
     usedSlots: List<Int>? = null,
     hasSourceConfig: Boolean = false,
-    filamentTypes: List<String>? = null
+    filamentTypes: List<String>? = null,
+    nozzleTemps: List<Int>? = null
 ): Map<String, Any> {
-    val temps: MutableList<String> = if (cfg.extruderTemps.size >= extCount) {
-        cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
-    } else {
-        MutableList(extCount) { cfg.nozzleTemp.toString() }
+    // nozzleTemps (fresh from slice-time preset lookup) takes priority over the stale
+    // cfg.extruderTemps stored at model-load time.  Falls back to cfg.extruderTemps if
+    // size matches, otherwise to cfg.nozzleTemp (unit-test / legacy path).
+    val temps: MutableList<String> = when {
+        nozzleTemps != null && nozzleTemps.size >= extCount ->
+            nozzleTemps.take(extCount).map { it.toString() }.toMutableList()
+        cfg.extruderTemps.size >= extCount ->
+            cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
+        else ->
+            MutableList(extCount) { cfg.nozzleTemp.toString() }
     }
 
     val defaults = SlicingOverrides.ORCA_DEFAULTS
