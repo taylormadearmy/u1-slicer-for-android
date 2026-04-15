@@ -36,9 +36,21 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Source**: Discord user Jon (2026-04-14)
 - **Related**: May improve B58 (#60) G-code preview colour mismatch as a side effect
 
-### B63: Reprint G-code sends PLA filament type instead of actual loaded material (GitHub #73)
-- Reprinting a previously-sliced G-code shows material mismatch (PLA) even though PETG is loaded and was used for the original slice
-- First print works at correct temps; reprint triggers wrong material warning
+### B68: Printer offline notification shown during printing — misleading text (GitHub #75)
+- While a print is actively in progress, the app shows a "printer offline" notification
+- May be unavoidable (Android limits background WebSocket connections), but text is misleading — implies the printer went offline rather than that the app lost its monitoring connection
+- **Suggested fix**: Change notification text to "Press to connect to see printer status" (or similar)
+- **Source**: Discord user Jon (2026-04-14)
+
+### B67: Import configuration only partially connects printer — camera doesn't show (GitHub #74)
+- After importing a printer configuration (QR code / settings import), printer appears connected but live camera feed does not load
+- User must navigate to Printer Settings and tap Connect manually to fully connect
+- **Expected**: Import should result in a fully connected printer (camera + status working)
+- **Source**: Discord user Jon (2026-04-14)
+
+### B63: Reprint G-code sends PLA filament type instead of actual loaded material (GitHub #73) — FIXED v1.5.56
+- Root cause: `filament_type` not in native `profile_keys[]` whitelist; slicer always emitted PLA in G-code header despite correct embedded profile
+- Fix: post-slice G-code header patch — `fixFilamentTypeHeader()` replaces `; filament_type = PLA` with actual per-extruder material types from extruder presets
 - **Source**: Discord user Jon (2026-04-14)
 
 ### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60)

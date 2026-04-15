@@ -2121,6 +2121,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 if (result != null && result.success) {
+                    // B63: patch filament_type header — native slicer always writes "PLA"
+                    // because filament_type is not in profile_keys[]. Fix it post-slice.
+                    val ftTypes = extruderPresets.value.sortedBy { it.index }.map { it.materialType }
+                    val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
+                    Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
+
                     val layerToolMetadataFile = when {
                         _threeMfInfo.value?.hasLayerToolChanges != true -> null
                         sourceModelFile?.exists() == true -> sourceModelFile
@@ -3566,5 +3572,50 @@ internal fun composeSemmRemap(
     semmColorPermutation != null -> semmColorPermutation
     toolRemapSlots != null -> toolRemapSlots
     else -> null
+}
+
+/**
+ * B63: Replace the `; filament_type = ...` header comment in a generated G-code file
+ * with [filamentTypes] joined by semicolons.
+ *
+ * The native slicer always emits "PLA" for this header because `filament_type` is not
+ * in its `profile_keys[]` whitelist.  Patching post-slice avoids a native rebuild.
+ *
+ * @return true if the line was found and replaced, false otherwise (file unchanged).
+ */
+internal fun fixFilamentTypeHeader(gcodePath: String, filamentTypes: List<String>): Boolean {
+    if (filamentTypes.isEmpty()) return false
+    val file = java.io.File(gcodePath)
+    if (!file.exists()) return false
+    val replacement = filamentTypes.joinToString(";")
+    val tmpFile = java.io.File("$gcodePath.ftype.tmp")
+    return try {
+        var found = false
+        file.bufferedReader().use { reader ->
+            tmpFile.bufferedWriter().use { writer ->
+                for (line in reader.lineSequence()) {
+                    if (!found && line.startsWith("; filament_type = ")) {
+                        writer.write("; filament_type = $replacement")
+                        found = true
+                    } else {
+                        writer.write(line)
+                    }
+                    writer.newLine()
+                }
+            }
+        }
+        if (found) {
+            java.nio.file.Files.move(
+                tmpFile.toPath(), file.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+        } else {
+            tmpFile.delete()
+        }
+        found
+    } catch (e: Exception) {
+        tmpFile.delete()
+        false
+    }
 }
 

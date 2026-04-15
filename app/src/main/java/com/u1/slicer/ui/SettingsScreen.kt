@@ -3,6 +3,13 @@ package com.u1.slicer.ui
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.core.content.FileProvider
+import java.io.File
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -140,6 +147,8 @@ fun SettingsScreen(
             val context = LocalContext.current
             val scope = rememberCoroutineScope()
             var updateState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
+            // null = not downloading, 0f..1f = download in progress
+            var downloadProgress by remember { mutableStateOf<Float?>(null) }
             SettingsSection("About") {
                 // Version row
                 Row(
@@ -227,27 +236,106 @@ fun SettingsScreen(
                 // Download row (only shown when update is available)
                 if (updateState is UpdateCheckState.Available) {
                     val available = updateState as UpdateCheckState.Available
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(available.downloadUrl))
+                    val isDownloading = downloadProgress != null
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !isDownloading) {
+                                    scope.launch {
+                                        downloadProgress = 0f
+                                        try {
+                                            val apkFile = File(context.cacheDir, "u1-slicer-update.apk")
+                                            withContext(Dispatchers.IO) {
+                                                val client = OkHttpClient.Builder()
+                                                    .connectTimeout(30, TimeUnit.SECONDS)
+                                                    .readTimeout(120, TimeUnit.SECONDS)
+                                                    .build()
+                                                val response = client.newCall(
+                                                    Request.Builder().url(available.downloadUrl).build()
+                                                ).execute()
+                                                if (!response.isSuccessful) {
+                                                    withContext(Dispatchers.Main) {
+                                                        Toast.makeText(context, "Download failed: HTTP ${response.code}", Toast.LENGTH_LONG).show()
+                                                        downloadProgress = null
+                                                    }
+                                                    return@withContext
+                                                }
+                                                val body = response.body
+                                                if (body == null) {
+                                                    withContext(Dispatchers.Main) {
+                                                        Toast.makeText(context, "Download failed: empty response", Toast.LENGTH_LONG).show()
+                                                        downloadProgress = null
+                                                    }
+                                                    return@withContext
+                                                }
+                                                val contentLength = body.contentLength()
+                                                body.byteStream().use { input ->
+                                                    apkFile.outputStream().use { output ->
+                                                        val buffer = ByteArray(8192)
+                                                        var bytesRead = 0L
+                                                        var read: Int
+                                                        while (input.read(buffer).also { read = it } != -1) {
+                                                            output.write(buffer, 0, read)
+                                                            bytesRead += read
+                                                            if (contentLength > 0) {
+                                                                val progress = bytesRead.toFloat() / contentLength
+                                                                withContext(Dispatchers.Main) {
+                                                                    downloadProgress = progress
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if (downloadProgress != null) {
+                                                // Download completed successfully — trigger install
+                                                val uri = FileProvider.getUriForFile(
+                                                    context,
+                                                    "${context.packageName}.fileprovider",
+                                                    apkFile
+                                                )
+                                                val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                                                    setDataAndType(uri, "application/vnd.android.package-archive")
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                }
+                                                context.startActivity(installIntent)
+                                                downloadProgress = null
+                                            }
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
+                                            downloadProgress = null
+                                        }
+                                    }
+                                },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                if (isDownloading) "Downloading v${available.version}…" else "Download v${available.version}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (isDownloading) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = "Download update",
+                                    tint = MaterialTheme.colorScheme.primary
                                 )
-                            },
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Download v${available.version}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Download update",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                            }
+                        }
+                        val progress = downloadProgress
+                        if (progress != null) {
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp)
+                            )
+                        }
                     }
                 }
 

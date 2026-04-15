@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.5.50` (`versionCode 216`)
+Current release: `v1.5.56` (`versionCode 222`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 764 JVM unit tests
+./gradlew testDebugUnitTest                        # 770 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 164 instrumented tests (uses Orchestrator)
 ```
 
@@ -59,7 +59,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.
 
-### Unit tests (`app/src/test/`) - 764 tests across 52 classes
+### Unit tests (`app/src/test/`) - 770 tests across 53 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -112,6 +112,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `SliceStalenessTest.kt` (4) — F67 _sliceStale StateFlow contract: initial false, config mutation sets true, startSlicing resets false, extruderPresets drop(1) skips startup
 - `SliceCancelTest.kt` (5) — B55 cancel state machine: SliceResult.cancelled field, Cancelling state singleton
 - `SemmColorPermutationTest.kt` (11) — B64 computeSemmColorPermutation: identity/permuted/H2C/non-SEMM/sparse guards; composeSemmRemap: priority, both-present, both-null
+- `FilamentTypeHeaderPatchTest.kt` (6) — B63 fixFilamentTypeHeader: single/multi-extruder replacement, absent line guard, empty list guard, missing file, first-occurrence-only
 - `network/UpdateCheckerTest.kt` (12) — F70 GitHub release JSON parsing, semantic version comparison, download URL extraction
 
 ### Instrumented tests (`app/src/androidTest/`) - 164 tests across 16 classes
