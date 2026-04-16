@@ -74,9 +74,42 @@ class SensoryTwistSupportsTest {
         assertTrue("Sensory Twist must be detected as hasPaintSupports",
             info.hasPaintSupports)
 
-        val sanitized = BambuSanitizer.process(input, outDir)
-        val config = embedder.buildConfig(info = info, targetExtruderCount = 1)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val sanitized = BambuSanitizer.process(input, outDir, isBambu = info.isBambu)
+
+        // Diagnostic: dump sanitized model_settings.config to confirm the per-object
+        // enable_support override survived BambuSanitizer's no-rewrite branch.
+        val sanitizedModelSettings = java.util.zip.ZipFile(sanitized).use { zip ->
+            zip.getEntry("Metadata/model_settings.config")?.let {
+                zip.getInputStream(it).bufferedReader().readText()
+            }
+        }
+        Log.i("SensoryTwistTest", "Sanitized model_settings.config:\n$sanitizedModelSettings")
+        assertNotNull("Sanitized output must retain model_settings.config", sanitizedModelSettings)
+        assertTrue(
+            "Sanitized model_settings.config must contain per-object enable_support=1",
+            sanitizedModelSettings!!.contains("""key="enable_support" value="1"""")
+        )
+
+        val config = embedder.buildConfig(
+            info = info,
+            sourceConfig = sourceConfig,
+            targetExtruderCount = 1
+        )
         val embedded = embedder.embed(sanitized, config, outDir, info)
+
+        // Diagnostic: dump final embedded model_settings.config too.
+        val embeddedModelSettings = java.util.zip.ZipFile(embedded).use { zip ->
+            zip.getEntry("Metadata/model_settings.config")?.let {
+                zip.getInputStream(it).bufferedReader().readText()
+            }
+        }
+        Log.i("SensoryTwistTest", "Embedded model_settings.config:\n$embeddedModelSettings")
+        assertNotNull("Final embedded output must retain model_settings.config", embeddedModelSettings)
+        assertTrue(
+            "Final embedded model_settings.config must still contain enable_support=1",
+            embeddedModelSettings!!.contains("""key="enable_support" value="1"""")
+        )
 
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
         val result = lib.slice(makeConfig(1))
@@ -86,14 +119,17 @@ class SensoryTwistSupportsTest {
             result.success)
 
         val gcode = File(result.gcodePath).readText()
+        // Orca-Marlin output uses ";TYPE:Support interface" (no space, TYPE not FEATURE).
+        // Bambu uses "; FEATURE: Support". Count both so the test is label-agnostic.
         val supportCount = gcode.lines().count {
             val t = it.trim()
+            t == ";TYPE:Support" || t == ";TYPE:Support interface" ||
             t == "; FEATURE: Support" || t == "; FEATURE: Support interface"
         }
         Log.i("SensoryTwistTest", "Support feature count: $supportCount")
         assertTrue(
             "Sensory Twist must emit >0 Support features " +
-            "(paint_supports + per-object enable_support=1). Got $supportCount",
+            "(paint_supports + per-object enable_support=1). Got $supportCount.",
             supportCount > 0
         )
     }

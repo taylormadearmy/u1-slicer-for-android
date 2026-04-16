@@ -4,6 +4,23 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B76: Goat ( Gray ).3mf — horns print in E1 filament when E4 set to match E3 — FIXED v1.5.69
+- **Symptom**: 4-extruder per-object Bambu model with paint_color triangles. If the user sets E4's colour to match E3's (colour mapping `[0,1,2,2]`), the parts that should print on E3 instead come out in E1's filament. Works correctly with all 4 extruders different.
+- **Root cause**: `computeEmbedTargetCount` returned `distinctSlots` (3) for non-H2C SEMM with duplicate-slot mapping. The 3MF was re-embedded with only 3 filament slots, silently dropping the 4th paint state. Per-object parts with `extruder="4"` landed on an out-of-range filament.
+- **Fix**: `computeEmbedTargetCount` now always returns `colorMapping.size` when `hasPaintData=true`, unifying the H2C and normal-SEMM paths. `GcodeToolRemapper` + `semmColorPermutation` compress tools to physical slots post-slice.
+- **Tests**: 1 new unit test (`B76 Goat — 4 colours 3 distinct slots uses full size`); 3 existing `computeEmbedTargetCount` tests updated to assert unified behaviour; 1 instrumented test (`GoatDedupeSemmTest`) verifies T0-T3 all present pre-remap and T3 absorbs into T2.
+- **Source**: Discord user Jon (2026-04-16)
+- **Test file**: `Goat ( Gray ).3mf`
+
+### B77: Bambu 3MF per-object overrides dropped by BambuSanitizer (Sensory Twist Ball supports missing) — FIXED v1.5.69
+- **Symptom**: Sensory Twist Ball 3MF prints with zero supports in U1 Slicer despite 2870 `paint_supports="4"` triangles on the mesh and per-object `enable_support=1` override in `model_settings.config`. Bambu Studio slices the same file with 334 Support + Support interface features.
+- **Root cause**: `BambuSanitizer`'s "no extruder-based rewrite needed" branch (taken for single-object single-extruder files) was a literal no-op — the source `model_settings.config` was buffered but never written to the sanitized output. OrcaSlicer had no per-object overrides to apply and fell back to the project-level `enable_support=0`.
+- **Fix**: Write the buffered `modelSettingsContent` through verbatim in that branch so OrcaSlicer's per-object config layer sees all the overrides set via Bambu Studio's Objects tab.
+- **Tests**: 2 new unit tests (`BambuSanitizerMetadataPreservationTest`); 1 instrumented test (`SensoryTwistSupportsTest`) verifying the full slice produces >0 Support features from paint_supports + per-object enable_support=1.
+- **Source**: Discord user DC15 (2026-04-16)
+- **Test file**: `SENSORY+TWIST+BALL+FIDGETS+optimised.3mf`
+- **Known limitation**: Per-object overrides on multi-extruder files that *also* need restructuring (non-trivial compound objects) are still handled via the rewrite path and may drop non-extruder metadata. Follow-up for a future release.
+
 ### B62: H2C SEMM segmentation regression — colours only on top surfaces, not sides (GitHub #69) — FIXED v1.5.51
 - **Root cause**: The B55 cancel `.so` rebuild used NDK 25 (Clang 14) instead of NDK 26 (Clang 17). Clang 14
   generates different code for OrcaSlicer's `MultiMaterialSegmentation.cpp` floating-point paint segmentation,

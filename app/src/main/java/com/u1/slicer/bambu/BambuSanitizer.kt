@@ -375,12 +375,25 @@ object BambuSanitizer {
                         // No extruder-based rewrite is needed, but the source may carry
                         // per-object overrides (enable_support, support_type, layer_height,
                         // seam_position, etc.) set via Bambu Studio's Objects tab.
-                        // Pass the source file through verbatim so OrcaSlicer's per-object
-                        // config layer sees them — otherwise they would be silently dropped
-                        // (B77: Sensory Twist Ball paint-on-supports with no supports generated).
+                        //
+                        // Only pass the source file through when it has support/quality
+                        // overrides we actually want to preserve.  Generic Bambu metadata
+                        // (just extruder/name/matrix/mesh_stat/source_*) is left as a no-op
+                        // so files like colored_3DBenchy (1).3mf — which reference stripped
+                        // printable="0" objects — don't confuse OrcaSlicer's BBS reader
+                        // with stale object id references.
                         modelSettingsContent?.let { content ->
-                            writeStored(destZip, "Metadata/model_settings.config", content)
-                            Log.i(TAG, "Preserved source model_settings.config for per-object overrides")
+                            if (shouldPreservePerObjectMetadata(content)) {
+                                // Normalize extruder="0" → extruder="1": Bambu Studio uses 0
+                                // to mean "default extruder", but OrcaSlicer's BBS reader
+                                // rejects 0-indexed extruder values.
+                                val normalized = String(content).replace(
+                                    """key="extruder" value="0"""",
+                                    """key="extruder" value="1""""
+                                ).toByteArray()
+                                writeStored(destZip, "Metadata/model_settings.config", normalized)
+                                Log.i(TAG, "Preserved source model_settings.config for per-object overrides (B77)")
+                            }
                         }
                     }
                 } // ZipOutputStream
@@ -924,6 +937,37 @@ $componentRefs    </components>
         sanitizeWipeTowerPosition(config)
 
         return serializeIniConfig(config)
+    }
+
+    /**
+     * B77: Return true if the source model_settings.config contains any per-object
+     * override key worth preserving through the sanitizer's no-rewrite branch.
+     *
+     * Files that only carry structural metadata (name/extruder/matrix/mesh_stat/source_*)
+     * don't need the pass-through — the previous no-op behaviour is safe and avoids
+     * risks from stale object id references (e.g. printable="0" stripped objects still
+     * mentioned in model_settings.config can confuse OrcaSlicer's BBS reader).
+     */
+    // Keys that meaningfully change slice output when set per-object.  Kept
+    // narrow to avoid triggering the pass-through for files where a stale
+    // object id reference would break OrcaSlicer's BBS reader (e.g.
+    // colored_3DBenchy (1).3mf has ironing_type on a printable="0" object that
+    // gets stripped — passing that through re-introduces the stripped id).
+    // The main use-case we need to cover is B77 (per-object support overrides).
+    private val PER_OBJECT_OVERRIDE_KEYS = setOf(
+        "enable_support", "support_type", "support_threshold_angle",
+        "support_on_build_plate_only", "support_remove_small_overhang",
+        "support_filament", "support_interface_filament", "support_angle",
+        "layer_height", "first_layer_height", "adaptive_layer_height",
+        "wall_loops", "sparse_infill_density", "sparse_infill_pattern",
+        "top_shell_layers", "bottom_shell_layers"
+    )
+
+    internal fun shouldPreservePerObjectMetadata(content: ByteArray): Boolean {
+        val text = String(content)
+        return PER_OBJECT_OVERRIDE_KEYS.any { key ->
+            text.contains("""key="$key"""")
+        }
     }
 
     /**

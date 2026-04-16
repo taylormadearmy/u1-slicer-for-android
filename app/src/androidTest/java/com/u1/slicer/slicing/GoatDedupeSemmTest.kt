@@ -84,8 +84,13 @@ class GoatDedupeSemmTest {
         // User dedupes: colour 4 onto same slot as colour 3 → [0,1,2,2].
         // extCount = distinct (3), but targetCount must be 4 after the B76 fix.
         val colorMapping = listOf(0, 1, 2, 2)
-        val sanitized = BambuSanitizer.process(input, outDir)
-        val config = embedder.buildConfig(info = info, targetExtruderCount = 4)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val sanitized = BambuSanitizer.process(input, outDir, isBambu = info.isBambu)
+        val config = embedder.buildConfig(
+            info = info,
+            sourceConfig = sourceConfig,
+            targetExtruderCount = 4
+        )
         val embedded = embedder.embed(sanitized, config, outDir, info)
 
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
