@@ -3619,20 +3619,19 @@ internal fun computeEmbedTargetCount(
     toolRemapSlots: List<Int>?,
     fallbackExtCount: Int
 ): Int {
-    if (hasPaintData && colorMapping != null) {
-        val distinctSlots = colorMapping.distinct().size.coerceAtLeast(1)
-        // B48 H2C: when all 4 physical extruders are used AND there are more model
-        // colours, the slicer needs virtual extruders (one per model colour) so
-        // multi_material_segmentation_by_painting() captures all paint states.
-        // Without this, paint states beyond 4 are silently dropped (T1=0 for H2C).
-        // The native C++ padding block handles arrays sized > physical extruders.
-        // For normal SEMM models (old.3mf: 2 slots, Korok: 3 slots), use the
-        // compact distinct count — matches pre-B48 behaviour.
-        return if (distinctSlots >= 4 && colorMapping.size > distinctSlots) {
-            colorMapping.size
-        } else {
-            distinctSlots
-        }
+    if (hasPaintData && colorMapping != null && colorMapping.isNotEmpty()) {
+        // B76: SEMM models must always embed with the full paint-state count so
+        // multi_material_segmentation_by_painting() sees every state and produces
+        // one T-command per state.  GcodeToolRemapper + semmColorPermutation then
+        // compress tools down to the user's distinct physical slots post-slice.
+        //
+        // Unifies the prior H2C special case with normal SEMM: any duplicate-slot
+        // mapping (e.g. [0,1,2,2]) previously shrunk the embed and silently dropped
+        // the high-index paint state, causing per-object parts assigned to that
+        // slot to land on a wrong filament (Jon's Goat horns-on-E1 bug).
+        //
+        // Native B48 padding handles virtual_ext > n_ext for per-filament arrays.
+        return colorMapping.size
     }
     if (toolRemapSlots != null) return toolRemapSlots.distinct().size
     return fallbackExtCount

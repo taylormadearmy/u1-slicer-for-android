@@ -812,27 +812,37 @@ class MergeThreeMfInfoTest {
     }
 
     @Test
-    fun `computeEmbedTargetCount SEMM with duplicate mapping uses distinct count`() {
-        // 4 model colours mapped to 2 physical extruders: [0, 0, 1, 1].
-        // distinct = 2 = physical count needed.
+    fun `computeEmbedTargetCount SEMM with duplicate mapping uses full colorMapping size`() {
+        // B76: SEMM models with duplicate-slot mapping must preserve every paint state.
+        // GcodeToolRemapper / semmColorPermutation compresses tools to physical slots
+        // post-slice; embedding with distinct count would drop high-index paint states
+        // entirely (Jon's Goat horns-on-E1 bug).
         val colorMapping = listOf(0, 0, 1, 1)
-        assertEquals(2, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
+        assertEquals(4, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
     }
 
     @Test
-    fun `computeEmbedTargetCount old_3mf — 6 colours to 2 slots uses distinct`() {
-        // old.3mf: 6 detected paint colours mapped to 2 physical slots [0,2].
-        // distinct = 2. Matches pre-B48 behaviour.
+    fun `computeEmbedTargetCount old_3mf — 6 colours to 2 slots uses full colorMapping size`() {
+        // B76: preserve all 6 paint states; post-slice remap compresses to 2 slots.
         val colorMapping = listOf(0, 2, 0, 2, 0, 2)
-        assertEquals(2, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
+        assertEquals(6, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
     }
 
     @Test
-    fun `computeEmbedTargetCount Korok — 5 colours to 3 slots uses distinct`() {
-        // Korok: 5 paint colours mapped to 3 physical slots [0,1,3].
-        // distinct = 3. Matches pre-B48 behaviour.
+    fun `computeEmbedTargetCount Korok — 5 colours to 3 slots uses full colorMapping size`() {
+        // B76: preserve all 5 paint states; post-slice remap compresses to 3 slots.
         val colorMapping = listOf(0, 0, 1, 1, 3)
-        assertEquals(3, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 3))
+        assertEquals(5, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 3))
+    }
+
+    @Test
+    fun `computeEmbedTargetCount B76 Goat — 4 colours 3 distinct slots uses full size`() {
+        // Jon's Goat (Gray).3mf scenario: per-object 4-extruder model with paint data,
+        // user sets E4 to match E3 colour → mapping [0,1,2,2].  Must embed with 4
+        // filaments so per-object extruder="4" parts retain a valid slot; post-slice
+        // remap maps T3 → T2 (physical E3).
+        val colorMapping = listOf(0, 1, 2, 2)
+        assertEquals(4, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 3))
     }
 
     @Test
