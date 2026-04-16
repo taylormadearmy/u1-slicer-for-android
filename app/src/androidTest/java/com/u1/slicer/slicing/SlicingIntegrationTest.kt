@@ -738,6 +738,40 @@ class SlicingIntegrationTest {
         )
     }
 
+    // ─── Idle/standby temperature for parked extruders (B75) ─────────────────
+
+    /**
+     * Regression: parked extruders must cool to standby temp (~120°C for PLA) after a
+     * tool change, not stay at full print temperature.
+     *
+     * Root cause: embedded Snapmaker profiles set ooze_prevention=0 and
+     * single_extruder_multi_material=1, which together prevented OrcaSlicer from emitting
+     * M104 ;cooldown commands for the departing extruder.  applyConfigToPrusa() now always
+     * overrides both values for multi-extruder prints.
+     *
+     * Verification: slicing the dual-colour calib-cube (which has an embedded profile with
+     * the bad values) must produce G-code containing `;cooldown` markers from OozePrevention.
+     */
+    @Test
+    fun dualExtruder_parkedExtruder_coolsToStandbyTemp() {
+        val file = asset("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(file.absolutePath))
+        val info = lib.getModelInfo()!!
+        val cx = (270f - info.sizeX) / 2f
+        val cy = (270f - info.sizeY) / 2f
+        lib.setModelInstances(floatArrayOf(cx, cy))
+        val config = DEFAULT_CONFIG.copy(extruderCount = 2)
+        val result = lib.slice(config)
+        assertNotNull("Dual-colour slice must succeed", result)
+        assertTrue("Dual-colour slice must succeed", result!!.success)
+        val gcode = File(result.gcodePath).readText()
+        assertTrue(
+            "G-code must contain ';cooldown' M104 commands to park idle extruders at standby temp " +
+                "(embedded profile has ooze_prevention=0 + SEMM=1 which must be overridden)",
+            gcode.contains(";cooldown")
+        )
+    }
+
     // ─── Nozzle temperature JNI path (B71 / v1.5.63 regression guard) ─────────
 
     /**

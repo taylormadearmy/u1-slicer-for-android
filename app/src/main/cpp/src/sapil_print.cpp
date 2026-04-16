@@ -300,12 +300,10 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
 
     // Multi-extruder machine type — the Snapmaker U1 has 4 independent extruders, NOT a
-    // single-extruder multi-material (SEMM) setup like Bambu/Prusa MMU.  OrcaSlicer defaults
-    // single_extruder_multi_material to true, which makes WipeTower2 perform bowden-style
-    // 94mm filament unload/reload sequences during tool changes — completely wrong for the U1
-    // and causes filament jams.  Must be set to false.
-    if (!has_embedded_profile)
-        dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+    // single-extruder multi-material (SEMM) setup like Bambu/Prusa MMU.  Embedded Snapmaker
+    // profiles incorrectly set single_extruder_multi_material=1, which disables ooze_prevention
+    // and causes bowden-style unload/reload sequences.  Always override to false.
+    dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
 
     // Wipe tower filament handling — OrcaSlicer defaults are for bowden SEMM printers
     // (cooling_tube_retraction=91.5, cooling_tube_length=5, parking_pos=92, ramming=on).
@@ -421,13 +419,13 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("overhang_4_4_speed", new Slic3r::ConfigOptionFloatOrPercent(10, false));
 
     // Idle extruder standby temperature — prevents idle nozzles from staying at full print temp.
-    // When an embedded Snapmaker profile is loaded, ooze_prevention/idle_temperature/
-    // standby_temperature_delta come from profile_keys[] (native app embeds ooze_prevention=1,
-    // idle_temperature=[105,...]).  For raw STL files with no embedded profile, apply a
-    // reasonable fallback: enable ooze prevention with a -100°C standby delta.
+    // Snapmaker profiles embed ooze_prevention=0 and standby_temperature_delta=-5, which leaves
+    // parked extruders at full print temperature for the entire job.  Always override for
+    // multi-extruder prints with a -100°C standby delta (applied after profile_keys[] load,
+    // so it wins regardless of what the profile says).
     // This gives ~120°C standby for PLA and ~135°C for PETG — above glass transition,
     // well below print temp, preventing ooze and thermal degradation on idle extruders.
-    if (!has_embedded_profile && n_ext > 1) {
+    if (n_ext > 1) {
         dpc.set_key_value("ooze_prevention", new Slic3r::ConfigOptionBool(true));
         dpc.set_key_value("standby_temperature_delta", new Slic3r::ConfigOptionInt(-100));
         // idle_temperature of 0 means "use standby_temperature_delta" (per OrcaSlicer GCode.cpp)
