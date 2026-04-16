@@ -372,7 +372,16 @@ object BambuSanitizer {
                             Log.i(TAG, "Generated Slic3r_PE_model.config:\n$slic3rModelConfig")
                         }
                     } else {
-                        // No model config needed — no-op
+                        // No extruder-based rewrite is needed, but the source may carry
+                        // per-object overrides (enable_support, support_type, layer_height,
+                        // seam_position, etc.) set via Bambu Studio's Objects tab.
+                        // Pass the source file through verbatim so OrcaSlicer's per-object
+                        // config layer sees them — otherwise they would be silently dropped
+                        // (B77: Sensory Twist Ball paint-on-supports with no supports generated).
+                        modelSettingsContent?.let { content ->
+                            writeStored(destZip, "Metadata/model_settings.config", content)
+                            Log.i(TAG, "Preserved source model_settings.config for per-object overrides")
+                        }
                     }
                 } // ZipOutputStream
             } // ZipFile
