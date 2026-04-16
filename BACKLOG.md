@@ -30,7 +30,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Source**: Discord user Jon (2026-04-14)
 - **Related**: May improve B58 (#60) G-code preview colour mismatch as a side effect
 
-### B73: Scale-down produces wrong slice position + double-scaled Prepare preview (GitHub #79)
+### ~~B73: Scale-down produces wrong slice position + double-scaled Prepare preview (GitHub #79)~~ FIXED v1.5.65
 - **Slice position**: Scaling a model down before slicing places the G-code at the wrong position on the bed (shifted back/right). Models appear correctly placed on screen but print at an offset location.
 - **Prepare preview double-scale**: After slicing at a reduced scale, returning to the Prepare tab shows the preview mesh at the wrong (much smaller) size. The GL renderer and the native mesh both apply the scale factor independently → s² visual size instead of s.
 - **Root cause (slice position)**: `setModelInstances()` single-object branch computed `offset = pos - meshBB.min`, ignoring the instance scale. The correct formula is `offset = pos - scale * meshBB.min`. For any model with a non-zero mesh origin and scale ≠ 1.0, the model lands at the wrong world position.
