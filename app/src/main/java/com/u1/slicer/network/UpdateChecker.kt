@@ -13,13 +13,14 @@ object UpdateChecker {
 
     private const val TAG = "UpdateChecker"
 
-    data class ReleaseInfo(val version: String, val downloadUrl: String)
+    data class ReleaseInfo(val version: String, val downloadUrl: String, val releaseUrl: String)
 
     fun parseLatestRelease(json: String): ReleaseInfo? {
         return try {
             val obj = JSONObject(json)
             val tagName = obj.optString("tag_name", "").ifEmpty { return null }
             val version = tagName.removePrefix("v")
+            val releaseUrl = obj.optString("html_url", "")
 
             val assets = obj.optJSONArray("assets")
             var downloadUrl: String? = null
@@ -34,11 +35,11 @@ object UpdateChecker {
                 }
             }
             if (downloadUrl.isNullOrEmpty()) {
-                downloadUrl = obj.optString("html_url", "")
+                downloadUrl = releaseUrl
             }
             if (downloadUrl.isNullOrEmpty()) return null
 
-            ReleaseInfo(version, downloadUrl)
+            ReleaseInfo(version, downloadUrl, releaseUrl)
         } catch (e: Exception) {
             Log.w(TAG, "parseLatestRelease failed: ${e.message}")
             null

@@ -64,7 +64,7 @@ import com.u1.slicer.printer.PrinterViewModel
 private sealed interface UpdateCheckState {
     data object Idle : UpdateCheckState
     data object Checking : UpdateCheckState
-    data class Available(val version: String, val downloadUrl: String) : UpdateCheckState
+    data class Available(val version: String, val downloadUrl: String, val releaseUrl: String) : UpdateCheckState
     data object UpToDate : UpdateCheckState
     data class Error(val message: String) : UpdateCheckState
 }
@@ -164,22 +164,25 @@ fun SettingsScreen(
                     )
                 }
 
-                // GitHub row
+                // GitHub / Release notes row
+                val releaseNotesUrl = (updateState as? UpdateCheckState.Available)?.releaseUrl
+                val githubRowUrl = if (!releaseNotesUrl.isNullOrEmpty()) releaseNotesUrl else GITHUB_URL
+                val githubRowLabel = if (!releaseNotesUrl.isNullOrEmpty()) "Release notes" else "GitHub"
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
                             context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_URL))
+                                Intent(Intent.ACTION_VIEW, Uri.parse(githubRowUrl))
                             )
                         },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("GitHub", style = MaterialTheme.typography.bodyMedium)
+                    Text(githubRowLabel, style = MaterialTheme.typography.bodyMedium)
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "Open GitHub",
+                        contentDescription = githubRowLabel,
                         tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
                 }
@@ -194,7 +197,7 @@ fun SettingsScreen(
                                 val result = UpdateChecker.checkForUpdate(BuildConfig.VERSION_NAME)
                                 updateState = result.fold(
                                     onSuccess = { release ->
-                                        if (release != null) UpdateCheckState.Available(release.version, release.downloadUrl)
+                                        if (release != null) UpdateCheckState.Available(release.version, release.downloadUrl, release.releaseUrl)
                                         else UpdateCheckState.UpToDate
                                     },
                                     onFailure = { UpdateCheckState.Error(it.message ?: "Check failed") }

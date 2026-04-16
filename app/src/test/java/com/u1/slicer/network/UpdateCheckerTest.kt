@@ -34,12 +34,21 @@ class UpdateCheckerTest {
 
     @Test
     fun `parseLatestRelease extracts first APK download URL from assets`() {
-        val json = """{"tag_name":"v1.5.49","assets":[
+        val json = """{"tag_name":"v1.5.49","html_url":"https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v1.5.49","assets":[
             {"name":"u1-slicer-v1.5.49.apk","browser_download_url":"https://github.com/download/u1-slicer-v1.5.49.apk"},
             {"name":"source.zip","browser_download_url":"https://github.com/download/source.zip"}
         ]}"""
         val result = UpdateChecker.parseLatestRelease(json)
         assertEquals("https://github.com/download/u1-slicer-v1.5.49.apk", result?.downloadUrl)
+    }
+
+    @Test
+    fun `parseLatestRelease extracts html_url as releaseUrl`() {
+        val json = """{"tag_name":"v1.5.49","html_url":"https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v1.5.49","assets":[
+            {"name":"u1-slicer-v1.5.49.apk","browser_download_url":"https://github.com/download/u1-slicer-v1.5.49.apk"}
+        ]}"""
+        val result = UpdateChecker.parseLatestRelease(json)
+        assertEquals("https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v1.5.49", result?.releaseUrl)
     }
 
     @Test
