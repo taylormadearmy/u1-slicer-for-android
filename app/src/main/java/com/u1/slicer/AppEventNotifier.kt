@@ -71,7 +71,7 @@ object AppEventNotifier {
         is Event.PrintPaused -> "Print paused"
         is Event.PrintComplete -> "Print complete"
         is Event.PrintFailed -> "Print stopped"
-        is Event.PrinterOffline -> "Printer offline"
+        is Event.PrinterOffline -> "Monitoring paused"
     }
 
     internal fun bodyFor(event: Event): String = when (event) {
@@ -83,7 +83,7 @@ object AppEventNotifier {
         is Event.PrintPaused -> "${event.filename} paused at ${event.progress}%"
         is Event.PrintComplete -> "${event.filename} finished"
         is Event.PrintFailed -> "${event.filename} was cancelled or failed"
-        is Event.PrinterOffline -> "Lost connection during print"
+        is Event.PrinterOffline -> "Tap to reconnect and see printer status"
     }
 
     internal fun navigateTargetFor(event: Event): String? = when (event) {

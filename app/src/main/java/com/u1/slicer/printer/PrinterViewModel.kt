@@ -138,6 +138,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             if (error == null) {
                 pollLedState()
                 _remoteScreenAvailable.value = printerRepo.probeRemoteScreen()
+                resolveWebcam()
             } else {
                 _remoteScreenAvailable.value = false
             }

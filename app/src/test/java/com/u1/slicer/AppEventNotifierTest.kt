@@ -67,8 +67,8 @@ class AppEventNotifierTest {
 
     @Test
     fun `printer offline title and body`() {
-        assertEquals("Printer offline", AppEventNotifier.titleFor(AppEventNotifier.Event.PrinterOffline))
-        assertEquals("Lost connection during print", AppEventNotifier.bodyFor(AppEventNotifier.Event.PrinterOffline))
+        assertEquals("Monitoring paused", AppEventNotifier.titleFor(AppEventNotifier.Event.PrinterOffline))
+        assertEquals("Tap to reconnect and see printer status", AppEventNotifier.bodyFor(AppEventNotifier.Event.PrinterOffline))
     }
 
     @Test

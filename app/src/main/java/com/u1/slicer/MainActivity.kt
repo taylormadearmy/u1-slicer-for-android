@@ -1801,7 +1801,7 @@ fun SliceCompleteSummaryCard(
                                         color = Color.White.copy(alpha = 0.7f)
                                     )
                                     Text(
-                                        "%.0f mm (%.1f g)".format(mm, mm * 0.00125f * 1.24f),
+                                        "%.0f mm (%.1f g)".format(mm, mm * 0.0024053f * 1.24f),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.White.copy(alpha = 0.85f)
                                     )
@@ -1818,7 +1818,7 @@ fun SliceCompleteSummaryCard(
                 HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
                 InfoRow(
                     "Prime Tower Waste",
-                    "%.0f mm (%.1f g)".format(wipeTowerFilamentMm, wipeTowerFilamentMm * 0.00125f * 1.24f),
+                    "%.0f mm (%.1f g)".format(wipeTowerFilamentMm, wipeTowerFilamentMm * 0.0024053f * 1.24f),
                     valueColor = Color(0xFFFFB74D)
                 )
             }

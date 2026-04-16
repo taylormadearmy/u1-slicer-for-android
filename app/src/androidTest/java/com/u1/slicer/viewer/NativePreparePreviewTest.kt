@@ -488,6 +488,49 @@ class NativePreparePreviewTest {
     }
 
     /**
+     * B72 regression: Prepare preview shows shattered/corrupted mesh after the user
+     * scales a model, increases copy count, slices, then returns to the Prepare tab.
+     *
+     * Root cause: setModelInstances() is called during prepareSlicer() with N grid positions;
+     * getPreparePreviewMesh() then returns all N copies baked into world-space coordinates.
+     * The GL renderer also applies instancePositions for N copies → N×N corruption.
+     *
+     * Fix: reset to a single centred instance before fetching the preview mesh.
+     * Without the reset, three copies at 40 mm spacing yield spanX ≈ 65 mm+;
+     * with the reset, a single 1.5× calicube has spanX ≈ 15 mm.
+     */
+    @Test
+    fun getPreparePreviewMesh_afterMultiInstanceSliceState_singleInstanceResetGivesCorrectBounds() {
+        copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        // Simulate prepareSlicer() side-effects: scale 1.5× then 3 instances at grid positions
+        lib.setModelScale(1.5f, 1.5f, 1.5f)
+        // 3 copies at 40 mm spacing — spans ~65 mm if baked into the preview mesh
+        lib.setModelInstances(floatArrayOf(100f, 135f, 140f, 135f, 180f, 135f))
+
+        // B72 fix: reset to a single centred instance before the preview fetch, exactly as
+        // the fixed InlineModelPreview LaunchedEffect now does.
+        lib.setModelInstances(floatArrayOf(135f, 135f))
+
+        val preview = lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+        assertNotNull("B72: preview must not be null after single-instance reset", preview)
+        preview!!
+
+        val bounds = previewBounds3D(preview)
+        val spanX = bounds[1] - bounds[0]
+        val spanY = bounds[3] - bounds[2]
+        Log.i("NativePreparePreviewTest",
+            "B72 calicube 1.5× single-instance bounds: X=[${bounds[0]},${bounds[1]}] " +
+                "Y=[${bounds[2]},${bounds[3]}] spans: $spanX × $spanY")
+
+        // Single calicube at 1.5× ≈ 15 mm × 15 mm.
+        // Three un-reset copies would span ≈ 65 mm in X — well above the 50 mm threshold.
+        assertTrue("B72: spanX should be <50 mm (single copy at 1.5×), got $spanX", spanX < 50f)
+        assertTrue("B72: spanY should be <50 mm (single copy at 1.5×), got $spanY", spanY < 50f)
+    }
+
+    /**
      * B51 regression: Korok mask preview shows wrong orientation (standing upright
      * instead of lying flat on the bed).  The mask is a flat object — its Z-extent
      * should be much smaller than its XY footprint.  G-code shows 18 layers ≈ 3.6mm.
