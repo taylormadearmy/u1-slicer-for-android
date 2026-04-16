@@ -671,6 +671,73 @@ class SlicingIntegrationTest {
         )
     }
 
+    // ─── B73: Scale-down correct bed placement ──────────────────────────────────
+
+    /**
+     * B73 regression: setModelInstances must account for the instance scale when computing
+     * the placement offset.  Buggy formula: offset = pos - meshBB.min (ignores scale).
+     * Correct formula: offset = pos - scale * meshBB.min.
+     *
+     * This test directly verifies the native instance offset via getInstanceOffsets(),
+     * bypassing G-code parsing (which is confounded by wipe towers and other moves).
+     *
+     * Derivation:
+     *   At scale=1.0:  offset1.x = pos1.x - 1.0 * meshBB.min.x  →  meshBB.min.x = pos1.x - offset1.x
+     *   At scale=0.5:  correct offset2.x = pos2.x - 0.5 * meshBB.min.x
+     *                  buggy   offset2.x = pos2.x - 1.0 * meshBB.min.x
+     *   Error for non-zero meshBB.min = 0.5 * meshBB.min.x (≈ sizeX/4 for centred meshes).
+     */
+    @Test
+    fun setModelInstances_withScale_placesInstanceAtCorrectOffset() {
+        // Use the auxiliary fan cover: single-object, single-colour (no wipe tower or
+        // multi-object path that would bypass the buggy formula).
+        val file = asset("u1-auxiliary-fan-cover-hex_mw.3mf")
+        assertTrue("Fan cover should load", lib.loadModel(file.absolutePath))
+        val info = lib.getModelInfo()!!
+
+        // ── Scale=1.0 baseline: derive meshBB.min from the placed offset ─────────
+        val p1x = (270f - info.sizeX) / 2f
+        val p1y = (270f - info.sizeY) / 2f
+        lib.setModelInstances(floatArrayOf(p1x, p1y))
+        val offsets1 = lib.getInstanceOffsets()
+        assertTrue("Model must produce at least one instance offset", offsets1.size >= 2)
+        val offset1x = offsets1[0]
+        val offset1y = offsets1[1]
+
+        // meshBB.min = pos - offset at scale=1.0  (formula is exact at unity scale)
+        val meshMinX = p1x - offset1x
+        val meshMinY = p1y - offset1y
+
+        // ── Scale=0.5: re-centre using ViewModel-style computation ───────────────
+        lib.setModelScale(0.5f, 0.5f, 0.5f)
+        val scale = 0.5f
+        // getModelInfo() returns load-time size (not updated by setModelScale); scale it
+        // explicitly — same as SlicerViewModel.prepareSlicer() does.
+        val p2x = (270f - info.sizeX * scale) / 2f
+        val p2y = (270f - info.sizeY * scale) / 2f
+        lib.setModelInstances(floatArrayOf(p2x, p2y))
+        val offsets2 = lib.getInstanceOffsets()
+        val offset2x = offsets2[0]
+        val offset2y = offsets2[1]
+
+        // Correct: offset2.x = p2x - scale * meshBB.min.x
+        val expectedOffset2x = p2x - scale * meshMinX
+        val expectedOffset2y = p2y - scale * meshMinY
+
+        assertEquals(
+            "B73: instance offset X at scale=0.5 should be p2x - 0.5*meshMinX " +
+                "(expected $expectedOffset2x, got $offset2x, " +
+                "p2x=$p2x, meshMinX=$meshMinX, p1x=$p1x, offset1x=$offset1x)",
+            expectedOffset2x.toDouble(), offset2x.toDouble(), 0.5
+        )
+        assertEquals(
+            "B73: instance offset Y at scale=0.5 should be p2y - 0.5*meshMinY " +
+                "(expected $expectedOffset2y, got $offset2y, " +
+                "p2y=$p2y, meshMinY=$meshMinY, p1y=$p1y, offset1y=$offset1y)",
+            expectedOffset2y.toDouble(), offset2y.toDouble(), 0.5
+        )
+    }
+
     // ─── Nozzle temperature JNI path (B71 / v1.5.63 regression guard) ─────────
 
     /**

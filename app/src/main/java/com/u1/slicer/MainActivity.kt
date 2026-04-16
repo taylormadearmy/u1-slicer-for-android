@@ -2271,6 +2271,21 @@ fun InlineModelPreview(
                 try {
                     val lib = NativeLibrary()
                     lib.setModelRotation(rot.x, rot.y, rot.z)
+                    // B72 + B73: reset native scale to 1.0 and to a single centred instance
+                    // before fetching the prepare preview mesh.
+                    //
+                    // B72: prepareSlicer() calls setModelInstances() with N grid positions for
+                    // multi-copy slices; without the instance reset getPreparePreviewMesh()
+                    // returns all N copies baked into world-space → shattered Prepare preview.
+                    //
+                    // B73: prepareSlicer() calls setModelScale(s) which permanently scales the
+                    // native model geometry; getPreparePreviewMesh() then returns an already-
+                    // scaled mesh; the GL renderer also applies modelScale = s via
+                    // renderer.modelScale → double-scaled (s²) visual size on the Prepare screen.
+                    // Resetting to scale=1.0 here ensures the native mesh is at full resolution;
+                    // the GL renderer applies the user-chosen scale via renderer.modelScale.
+                    lib.setModelScale(1f, 1f, 1f)
+                    lib.setModelInstances(floatArrayOf(135f, 135f))
                     lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)?.toMeshData()
                 } catch (_: Throwable) {
                     null

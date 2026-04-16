@@ -62,8 +62,9 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
     } else {
         // Single object, possibly multiple copies: preserve first instance's
         // transformation (rotation, scale, mirror) and clone it per position.
-        // Offset is set so the mesh lower-left corner lands at the target position:
-        //   offset = pos - meshBB.min
+        // Offset is set so the mesh lower-left corner lands at the target position.
+        // Since world_min = scale * meshBB.min + offset, we need:
+        //   offset = pos - scale * meshBB.min
         // This is correct for all mesh origins (including Bambu 3MF where mesh
         // vertices are at arbitrary world positions, not necessarily at 0,0).
         for (auto* obj : model.objects) {
@@ -75,18 +76,24 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
                 meshBB.merge(vol->mesh().bounding_box());
             }
 
-            // Save the transformation before clearing
+            // Save the transformation before clearing.
+            // Also read the per-axis scale so the mesh-space min can be scaled correctly.
+            // Offset must be: pos - scale * meshBB.min
+            // (not pos - meshBB.min, which ignores the instance scale and misplaces the
+            //  model for any non-unity scale where meshBB.min ≠ 0).
             auto trafo = obj->instances[0]->get_transformation();
+            const Slic3r::Vec3d sf = trafo.get_scaling_factor();
             obj->clear_instances();
 
             for (const auto& pos : positions) {
                 auto* inst = obj->add_instance();
                 inst->set_transformation(trafo);
-                // Place mesh lower-left at pos; lift to z=0
+                // Place mesh lower-left corner at pos:
+                //   world_min = scale * meshBB.min + offset  →  offset = pos - scale * meshBB.min
                 inst->set_offset(Slic3r::Vec3d(
-                    static_cast<double>(pos.first)  - meshBB.min.x(),
-                    static_cast<double>(pos.second) - meshBB.min.y(),
-                    -meshBB.min.z()
+                    static_cast<double>(pos.first)  - sf.x() * meshBB.min.x(),
+                    static_cast<double>(pos.second) - sf.y() * meshBB.min.y(),
+                    -sf.z() * meshBB.min.z()
                 ));
             }
         }
