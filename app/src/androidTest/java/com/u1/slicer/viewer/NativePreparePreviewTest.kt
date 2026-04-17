@@ -531,6 +531,198 @@ class NativePreparePreviewTest {
     }
 
     /**
+     * B78 regression: Shashibo plate 5 Prepare preview shows the pyramid far too large
+     * (~50-60% of the 270mm bed) and centred on bed, instead of the correct ~28% size
+     * (77×82mm) in the upper-left quadrant. Reference asset: Shashibo-h2s-textured.3mf,
+     * plate 5 "Small - H2D" (object_id=11, build transform scale=0.6).
+     *
+     * Root cause: the v1.5.65 B73 fix added `setModelScale(1f, 1f, 1f)` +
+     * `setModelInstances(floatArrayOf(135f, 135f))` before every `getPreparePreviewMesh`
+     * call. The scale reset overwrites the file's natural 0.6 scale (stored in the
+     * build transform), so the mesh comes out at raw 128×137mm instead of 77×82mm.
+     * The (135, 135) re-centre also shifts world.min to bed centre instead of the
+     * plate's original XY.
+     *
+     * This test simulates the exact InlineModelPreview sequence used on initial load
+     * (no prepareSlicer() side-effects yet) and asserts the preview mesh respects
+     * the file's natural scale.
+     */
+    /**
+     * Diagnostic companion to the B78 regression test: measures the mesh bounds
+     * produced by `getPreparePreviewMesh` IMMEDIATELY after load, with no extra
+     * setModelScale / setModelInstances calls.  Establishes the "natural" load-time
+     * span that the fix should preserve.
+     */
+    @Test
+    fun getPreparePreviewMesh_shashiboPlate5_naturalLoadBaseline() {
+        copyAssetToModelFile("Shashibo-h2s-textured.3mf")
+        val originalInfo = ThreeMfParser.parse(modelFile)
+        val sanitized = BambuSanitizer.process(modelFile, workDir, isBambu = originalInfo.isBambu)
+        val plateObjectIds = originalInfo.plates
+            .find { it.plateId == 5 }
+            ?.objectIds
+            ?.toSet()
+        val plateExtruderMap = originalInfo.objectExtruderMap
+            .filterKeys { key -> plateObjectIds?.contains(key) == true }
+        val rawPlateFile = BambuSanitizer.extractPlate(
+            sanitized,
+            5,
+            workDir,
+            hasPlateJsons = originalInfo.hasPlateJsons,
+            plateObjectIds = plateObjectIds,
+            objectExtruderMap = plateExtruderMap
+        )
+        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, workDir)
+        assertTrue(lib.loadModel(plateFile.absolutePath))
+
+        val mi = lib.getModelInfo()
+        val offsets = lib.getInstanceOffsets()
+        Log.i("NativePreparePreviewTest",
+            "B78 baseline model info: sizeX=${mi?.sizeX} sizeY=${mi?.sizeY} sizeZ=${mi?.sizeZ} " +
+                "offsets=${offsets.toList()}")
+
+        val preview = lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+        assertNotNull(preview)
+        preview!!
+        val bounds = previewBounds3D(preview)
+        val spanX = bounds[1] - bounds[0]
+        val spanY = bounds[3] - bounds[2]
+        val spanZ = bounds[5] - bounds[4]
+        Log.i("NativePreparePreviewTest",
+            "B78 baseline (natural load) bounds: X=[${bounds[0]},${bounds[1]}] " +
+                "Y=[${bounds[2]},${bounds[3]}] Z=[${bounds[4]},${bounds[5]}] spans: $spanX × $spanY × $spanZ")
+    }
+
+    @Test
+    fun getPreparePreviewMesh_shashiboPlate5_preservesFileNaturalScaleAndCentre() {
+        copyAssetToModelFile("Shashibo-h2s-textured.3mf")
+        val originalInfo = ThreeMfParser.parse(modelFile)
+        val sanitized = BambuSanitizer.process(modelFile, workDir, isBambu = originalInfo.isBambu)
+        val plateObjectIds = originalInfo.plates
+            .find { it.plateId == 5 }
+            ?.objectIds
+            ?.toSet()
+        val plateExtruderMap = originalInfo.objectExtruderMap
+            .filterKeys { key -> plateObjectIds?.contains(key) == true }
+        val rawPlateFile = BambuSanitizer.extractPlate(
+            sanitized,
+            5,
+            workDir,
+            hasPlateJsons = originalInfo.hasPlateJsons,
+            plateObjectIds = plateObjectIds,
+            objectExtruderMap = plateExtruderMap
+        )
+        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, workDir)
+
+        assertTrue(lib.loadModel(plateFile.absolutePath))
+
+        // Simulate the FIXED InlineModelPreview LaunchedEffect sequence on initial load.
+        // When nativeSliceStateDirty is false (no prior prepareSlicer), only setModelRotation
+        // is called — the setModelScale(1,1,1) + setModelInstances reset is skipped so the
+        // file's natural build-transform scale (0.6) and original plate position survive.
+        lib.setModelRotation(0f, 0f, 0f)
+        // NOTE: the buggy v1.5.65-v1.5.69 path would have called these two lines here:
+        //   lib.setModelScale(1f, 1f, 1f)
+        //   lib.setModelInstances(floatArrayOf(135f, 135f))
+        // The fix skips them on fresh load.  The regression test below confirms that
+        // the natural file state is what getPreparePreviewMesh emits.
+
+        val preview = lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+        assertNotNull("Shashibo plate 5 preview must not be null", preview)
+        preview!!
+        assertTrue(preview.trianglePositions.isNotEmpty())
+
+        val bounds = previewBounds3D(preview)
+        val spanX = bounds[1] - bounds[0]
+        val spanY = bounds[3] - bounds[2]
+        val centreX = (bounds[0] + bounds[1]) / 2f
+        val centreY = (bounds[2] + bounds[3]) / 2f
+        Log.i("NativePreparePreviewTest",
+            "B78 Shashibo plate 5 bounds: X=[${bounds[0]},${bounds[1]}] " +
+                "Y=[${bounds[2]},${bounds[3]}] spans: $spanX × $spanY centre=($centreX, $centreY)")
+
+        // The 3MF stores plate 5's object with build transform scale = 0.6 (H2D plate).
+        // With that scale preserved, the visible mesh fits comfortably under 110mm each axis
+        // (actual physical size ≈ 100×87 mm after BambuSanitizer recentring).
+        // Pre-fix (setModelScale(1,1,1) wipes 0.6): spanX/Y ≈ 167×145 mm.
+        assertTrue(
+            "B78: plate 5 X span should be < 110mm (file scale 0.6 preserved), got $spanX",
+            spanX < 110f
+        )
+        assertTrue(
+            "B78: plate 5 Y span should be < 110mm (file scale 0.6 preserved), got $spanY",
+            spanY < 110f
+        )
+        // Natural load positions the mesh bbox centred on the plate-local (135, 135) origin
+        // (BambuSanitizer.recenterGroupIfVirtual).  Pre-fix forced mesh lower-left to
+        // (135, 135) instead — bbox centre sat >=40mm away from bed centre.
+        assertTrue(
+            "B78: plate 5 bbox centre X should be within 20mm of bed centre (135mm), got $centreX",
+            kotlin.math.abs(centreX - 135f) < 20f
+        )
+        assertTrue(
+            "B78: plate 5 bbox centre Y should be within 20mm of bed centre (135mm), got $centreY",
+            kotlin.math.abs(centreY - 135f) < 20f
+        )
+    }
+
+    /**
+     * B78 companion: exercises the dirty-state path explicitly.  After a prepareSlicer()
+     * style sequence (user scale + multi-copy setModelInstances), the fixed InlineModelPreview
+     * sequence MUST restore a single instance at the load-time offset so the Prepare preview
+     * doesn't show N shattered copies (B72) and the mesh does not double-scale (B73).
+     */
+    @Test
+    fun getPreparePreviewMesh_shashiboPlate5_afterSliceState_restoresSingleInstance() {
+        copyAssetToModelFile("Shashibo-h2s-textured.3mf")
+        val originalInfo = ThreeMfParser.parse(modelFile)
+        val sanitized = BambuSanitizer.process(modelFile, workDir, isBambu = originalInfo.isBambu)
+        val plateObjectIds = originalInfo.plates
+            .find { it.plateId == 5 }
+            ?.objectIds
+            ?.toSet()
+        val plateExtruderMap = originalInfo.objectExtruderMap
+            .filterKeys { key -> plateObjectIds?.contains(key) == true }
+        val rawPlateFile = BambuSanitizer.extractPlate(
+            sanitized, 5, workDir,
+            hasPlateJsons = originalInfo.hasPlateJsons,
+            plateObjectIds = plateObjectIds,
+            objectExtruderMap = plateExtruderMap
+        )
+        val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, workDir)
+
+        assertTrue(lib.loadModel(plateFile.absolutePath))
+
+        // Snapshot load-time offsets, exactly as SlicerViewModel does post-loadModel.
+        val loadTimeOffsets = lib.getInstanceOffsets()
+        Log.i("NativePreparePreviewTest", "B78 post-slice: load-time offsets=${loadTimeOffsets.toList()}")
+
+        // Simulate prepareSlicer() side-effects with user scale + multi-copy grid.
+        lib.setModelScale(1.5f, 1.5f, 1.5f)
+        lib.setModelInstances(floatArrayOf(80f, 80f, 190f, 80f, 80f, 190f, 190f, 190f))
+
+        // Now simulate the fixed InlineModelPreview dirty-path reset.
+        lib.setModelRotation(0f, 0f, 0f)
+        lib.setModelScale(1f, 1f, 1f)
+        lib.setModelInstances(loadTimeOffsets)
+
+        val preview = lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+        assertNotNull(preview)
+        preview!!
+        val bounds = previewBounds3D(preview)
+        val spanX = bounds[1] - bounds[0]
+        val spanY = bounds[3] - bounds[2]
+        Log.i("NativePreparePreviewTest",
+            "B78 post-slice Shashibo plate 5 bounds: X=[${bounds[0]},${bounds[1]}] " +
+                "Y=[${bounds[2]},${bounds[3]}] spans: $spanX × $spanY")
+
+        // After dirty-path reset, mesh is a single copy; the 1.5× user scale was undone by
+        // setModelScale(1,1,1). Span should be well under 200mm (multi-copy grid would be >200mm).
+        assertTrue("B78 post-slice: spanX should be < 200mm (single copy), got $spanX", spanX < 200f)
+        assertTrue("B78 post-slice: spanY should be < 200mm (single copy), got $spanY", spanY < 200f)
+    }
+
+    /**
      * B51 regression: Korok mask preview shows wrong orientation (standing upright
      * instead of lying flat on the bed).  The mask is a flat object — its Z-extent
      * should be much smaller than its XY footprint.  G-code shows 18 layers ≈ 3.6mm.

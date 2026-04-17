@@ -4,12 +4,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B78: Shashibo plate 5 Prepare preview oversized + off-centre — PRE-EXISTING REGRESSION (since v1.5.65)
-- **Symptom**: `Shashibo-h2s-textured.3mf` plate 5 shows a Prepare preview with the pyramid filling ~50–60 % of the bed, centred — while earlier versions (up to v1.5.64) showed the same 77×82 mm model at the correct ~28 % size in the upper-left quadrant (the plate's original position). Slice output is correct (551 CP TOOLCHANGE, T0=71, T1=69 — matches historical baseline).
-- **Root cause**: The B73 fix (v1.5.65 commit bc2c76d) added `lib.setModelInstances(floatArrayOf(135f, 135f))` in `MainActivity.kt:2288` before `getPreparePreviewMesh()`. This re-centres the native model to bed centre for all plates, overriding plate-defined positions. The GL camera auto-fit then zooms tighter because the mesh is closer to the camera's lookAt point.
-- **Bisect**: PASS on v1.5.48, v1.5.55, v1.5.60, v1.5.64. FAIL on v1.5.65+ (all the way to current main).
+### B78: Shashibo plate 5 Prepare preview oversized + off-centre — FIXED v1.5.70
+- **Symptom**: `Shashibo-h2s-textured.3mf` plate 5 showed a Prepare preview with the pyramid filling ~50–60 % of the bed, centred — while v1.5.64 and earlier showed the same model at ~28 % size centred around the plate origin. Slice output was always correct.
+- **Root cause**: The B73 fix (v1.5.65 commit bc2c76d) unconditionally called `setModelScale(1f, 1f, 1f)` + `setModelInstances(floatArrayOf(135f, 135f))` before every `getPreparePreviewMesh()`. `setModelScale` is destructive — it overwrites the instance's scaling factor — so it wiped the Shashibo plate's baked 0.6 build-transform scale even on fresh load where no scale reset was needed. `setModelInstances` also forced world.min to bed centre instead of preserving the natural load-time offset.
+- **Fix**: Snapshot the load-time instance offsets in `SlicerViewModel.loadTimeInstanceOffsets` right after `loadModel`, and add a `nativeSliceStateDirty` flag that flips true only when `prepareSlicer()` has clobbered native scale/instance state. `InlineModelPreview` skips the B72/B73 reset entirely on fresh loads; when dirty, it uses `setModelInstances(loadTimeInstanceOffsets)` instead of the hard-coded `(135, 135)` so subsequent resets still preserve the plate's original XY.
+- **Tests**: 3 new instrumented tests in `NativePreparePreviewTest`: `shashiboPlate5_preservesFileNaturalScaleAndCentre`, `shashiboPlate5_afterSliceState_restoresSingleInstance`, `shashiboPlate5_naturalLoadBaseline`. Existing B72 calicube reset test + Dragon plate 3 + Sydney Buttons + Korok orientation tests all still pass.
+- **Confidence**: 807 unit + 177 instrumented + 7/7 E2E smoke-7 + manual Shashibo plate 5 visual match vs v1.5.48 reference.
 - **Handoff spec**: `docs/superpowers/specs/2026-04-17-b78-shashibo-prepare-oversize.md`
-- **Priority**: visual-only; slicing works correctly. Queue for v1.5.70.
 - **Source**: surfaced during v1.5.69 E2E batch on 2026-04-17
 
 ### B76: Goat ( Gray ).3mf — horns print in E1 filament when E4 set to match E3 — FIXED v1.5.69

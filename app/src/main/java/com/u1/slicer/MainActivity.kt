@@ -705,6 +705,8 @@ fun PrepareScreen(
     val copyBedWarning by viewModel.copyBedWarning.collectAsState()
     val modelScale by viewModel.modelScale.collectAsState()
     val modelRotation by viewModel.modelRotation.collectAsState()
+    val loadTimeInstanceOffsets by viewModel.loadTimeInstanceOffsets.collectAsState()
+    val nativeSliceStateDirty by viewModel.nativeSliceStateDirty.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
@@ -876,7 +878,9 @@ fun PrepareScreen(
                                 layerToolOnly = layerToolOnly,
                                 layerToolSegments = threeMfInfo?.layerToolSegments,
                                 cachedMesh = viewModel.cachedPrepareMesh,
-                                onMeshCached = { viewModel.cachedPrepareMesh = it }
+                                onMeshCached = { viewModel.cachedPrepareMesh = it },
+                                loadTimeInstanceOffsets = loadTimeInstanceOffsets,
+                                nativeSliceStateDirty = nativeSliceStateDirty
                             )
                             if (showInfoDialog && loadedInfo != null) {
                                 ModelInfoDialog(
@@ -2100,7 +2104,13 @@ fun InlineModelPreview(
     onResetView: (() -> Unit)? = null,
     // F46: layer-tool (Hueforge) Z-band recolour
     layerToolOnly: Boolean = false,
-    layerToolSegments: List<com.u1.slicer.bambu.LayerToolSegment>? = null
+    layerToolSegments: List<com.u1.slicer.bambu.LayerToolSegment>? = null,
+    // B78: snapshot of native instance offsets captured at loadModel time.
+    // Used to restore the file's original plate position after prepareSlicer() has
+    // clobbered native state; skipped when nativeSliceStateDirty is false so the
+    // natural load state is preserved on first preview.
+    loadTimeInstanceOffsets: FloatArray = floatArrayOf(135f, 135f),
+    nativeSliceStateDirty: Boolean = false
 ) {
     // B49: initialize from ViewModel cache for instant reload on tab switch
     var mesh by remember { mutableStateOf(cachedMesh) }
@@ -2271,8 +2281,10 @@ fun InlineModelPreview(
                 try {
                     val lib = NativeLibrary()
                     lib.setModelRotation(rot.x, rot.y, rot.z)
-                    // B72 + B73: reset native scale to 1.0 and to a single centred instance
-                    // before fetching the prepare preview mesh.
+                    // B72 + B73 + B78: only reset native scale and instances when a prior
+                    // prepareSlicer() call has clobbered them.  On a fresh load the file's
+                    // natural build-transform scale (e.g. the 0.6 applied to Shashibo plate 5)
+                    // and original plate position must be preserved verbatim.
                     //
                     // B72: prepareSlicer() calls setModelInstances() with N grid positions for
                     // multi-copy slices; without the instance reset getPreparePreviewMesh()
@@ -2284,8 +2296,19 @@ fun InlineModelPreview(
                     // renderer.modelScale → double-scaled (s²) visual size on the Prepare screen.
                     // Resetting to scale=1.0 here ensures the native mesh is at full resolution;
                     // the GL renderer applies the user-chosen scale via renderer.modelScale.
-                    lib.setModelScale(1f, 1f, 1f)
-                    lib.setModelInstances(floatArrayOf(135f, 135f))
+                    //
+                    // B78: setModelScale(1,1,1) is destructive — it overwrites the instance's
+                    // scaling factor regardless of previous state. Calling it on a freshly
+                    // loaded file wipes the file's baked build-transform scale, so the mesh
+                    // emerges at raw size instead of its designed-for scale. Gate behind the
+                    // dirty flag so fresh loads never trigger the destructive reset.
+                    // Similarly, setModelInstances is gated — on a fresh load the natural
+                    // build-transform offset is already correct, and calling setModelInstances
+                    // re-derives the offset from meshBB.min, shifting the mesh off-centre.
+                    if (nativeSliceStateDirty) {
+                        lib.setModelScale(1f, 1f, 1f)
+                        lib.setModelInstances(loadTimeInstanceOffsets)
+                    }
                     lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)?.toMeshData()
                 } catch (_: Throwable) {
                     null

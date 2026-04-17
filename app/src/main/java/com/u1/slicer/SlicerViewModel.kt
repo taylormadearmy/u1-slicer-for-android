@@ -236,6 +236,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _modelRotation = MutableStateFlow(ModelRotation())
     val modelRotation: StateFlow<ModelRotation> = _modelRotation.asStateFlow()
 
+    // B78: snapshot of the native instance offsets captured right after loadModel.
+    // InlineModelPreview restores these before getPreparePreviewMesh so the file's
+    // original plate position is preserved (e.g. Shashibo plate 5's H2D transform).
+    // Falls back to (135, 135) when the native call returns no offsets.
+    private val _loadTimeInstanceOffsets = MutableStateFlow(floatArrayOf(135f, 135f))
+    val loadTimeInstanceOffsets: StateFlow<FloatArray> = _loadTimeInstanceOffsets.asStateFlow()
+
+    // B78: true once prepareSlicer() has mutated native scale or instance state.
+    // InlineModelPreview only performs the B72/B73 reset when this is set; on a fresh
+    // load we must not call setModelScale(1,1,1) because that would wipe the file's
+    // baked build-transform scale (e.g. the 0.6 scale on Shashibo plate 5's H2D object).
+    private val _nativeSliceStateDirty = MutableStateFlow(false)
+    val nativeSliceStateDirty: StateFlow<Boolean> = _nativeSliceStateDirty.asStateFlow()
+
     // Custom object positions set from PlacementViewer (null = use auto grid)
     // Flat array [x0,y0,x1,y1,...] in mm
     private var customObjectPositions: FloatArray? = null
@@ -1119,6 +1133,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         )
         if (success) {
             profileNeedsReEmbed = false  // Profile is current — just embedded
+            // B78: snapshot the file's natural instance offsets and clear the dirty flag.
+            // Natural load stores the build-transform's tx/ty in inst->get_offset(); we
+            // restore these before getPreparePreviewMesh so the plate's original XY position
+            // survives the B72/B73 reset.
+            val naturalOffsets = runCatching { native.getInstanceOffsets() }.getOrNull()
+            if (naturalOffsets != null && naturalOffsets.isNotEmpty()) {
+                _loadTimeInstanceOffsets.value = naturalOffsets.copyOf()
+                Log.i("SlicerVM", "B78: snapshotted load-time instance offsets: ${naturalOffsets.toList()}")
+            } else {
+                _loadTimeInstanceOffsets.value = floatArrayOf(135f, 135f)
+            }
+            _nativeSliceStateDirty.value = false
             val info = native.getModelInfo()
             if (info != null) {
                 lastModelInfo = info
@@ -1997,6 +2023,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 if (rot.x != 0f || rot.y != 0f || rot.z != 0f) {
                     native.setModelRotation(rot.x, rot.y, rot.z)
                 }
+                // B78: mark native slice state dirty so InlineModelPreview knows the
+                // file's natural scale/position has been clobbered and must be reset
+                // before the next preview fetch (B72/B73). We set this before
+                // setModelInstances below even when the setModelScale guard didn't fire,
+                // because setModelInstances itself mutates instance state.
+                _nativeSliceStateDirty.value = true
 
                 val copies = _copyCount.value
                 val custom = customObjectPositions
