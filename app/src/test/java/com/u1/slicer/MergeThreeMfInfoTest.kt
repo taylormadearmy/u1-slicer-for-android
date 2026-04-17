@@ -812,37 +812,57 @@ class MergeThreeMfInfoTest {
     }
 
     @Test
-    fun `computeEmbedTargetCount SEMM with duplicate mapping uses full colorMapping size`() {
-        // B76: SEMM models with duplicate-slot mapping must preserve every paint state.
-        // GcodeToolRemapper / semmColorPermutation compresses tools to physical slots
-        // post-slice; embedding with distinct count would drop high-index paint states
-        // entirely (Jon's Goat horns-on-E1 bug).
+    fun `computeEmbedTargetCount pure-SEMM duplicate mapping uses distinct count`() {
+        // Pure SEMM (no per-object extruders).  Embedding with distinct count
+        // matches the physical slots exactly so GcodeToolRemapper distributes
+        // tools correctly (regression guard for old.3mf baseline).
         val colorMapping = listOf(0, 0, 1, 1)
-        assertEquals(4, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
+        assertEquals(2, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
     }
 
     @Test
-    fun `computeEmbedTargetCount old_3mf — 6 colours to 2 slots uses full colorMapping size`() {
-        // B76: preserve all 6 paint states; post-slice remap compresses to 2 slots.
+    fun `computeEmbedTargetCount old_3mf — 6 colours to 2 slots uses distinct`() {
+        // Pure SEMM: keep the distinct slot count so the post-slice remap places
+        // paint states onto the exact physical slots the user selected (no
+        // interleaving into unused slots).  Regression guard for v1.5.69.
         val colorMapping = listOf(0, 2, 0, 2, 0, 2)
-        assertEquals(6, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
+        assertEquals(2, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 2))
     }
 
     @Test
-    fun `computeEmbedTargetCount Korok — 5 colours to 3 slots uses full colorMapping size`() {
-        // B76: preserve all 5 paint states; post-slice remap compresses to 3 slots.
+    fun `computeEmbedTargetCount Korok — 5 colours to 3 slots uses distinct`() {
+        // Pure SEMM, no per-object extruders — keep distinct count.
         val colorMapping = listOf(0, 0, 1, 1, 3)
-        assertEquals(5, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 3))
+        assertEquals(3, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 3))
     }
 
     @Test
-    fun `computeEmbedTargetCount B76 Goat — 4 colours 3 distinct slots uses full size`() {
-        // Jon's Goat (Gray).3mf scenario: per-object 4-extruder model with paint data,
-        // user sets E4 to match E3 colour → mapping [0,1,2,2].  Must embed with 4
-        // filaments so per-object extruder="4" parts retain a valid slot; post-slice
-        // remap maps T3 → T2 (physical E3).
+    fun `computeEmbedTargetCount B76 Goat hybrid paint+per-object uses full size`() {
+        // Jon's Goat (Gray).3mf: paint data AND per-object extruder assignments.
+        // hasMultiExtruderAssignments=true → preserve all 4 paint states so parts
+        // with extruder="4" retain a valid slot; post-slice remap T3→T2 (E3).
         val colorMapping = listOf(0, 1, 2, 2)
-        assertEquals(4, computeEmbedTargetCount(colorMapping, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 3))
+        assertEquals(
+            4,
+            computeEmbedTargetCount(
+                colorMapping, hasPaintData = true, toolRemapSlots = null,
+                fallbackExtCount = 3, hasMultiExtruderAssignments = true
+            )
+        )
+    }
+
+    @Test
+    fun `computeEmbedTargetCount B76 Goat pure-paint variant stays distinct`() {
+        // Same colour mapping without per-object assignments — NOT a hybrid.
+        // Pure SEMM with duplicate mapping → distinct count (preserves remap fidelity).
+        val colorMapping = listOf(0, 1, 2, 2)
+        assertEquals(
+            3,
+            computeEmbedTargetCount(
+                colorMapping, hasPaintData = true, toolRemapSlots = null,
+                fallbackExtCount = 3, hasMultiExtruderAssignments = false
+            )
+        )
     }
 
     @Test

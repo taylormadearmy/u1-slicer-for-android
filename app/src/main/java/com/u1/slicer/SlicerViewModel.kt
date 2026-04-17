@@ -1550,7 +1550,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val extCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
         val colorMapping = _colorMapping.value
-        val targetCount = computeEmbedTargetCount(colorMapping, info.hasPaintData, usedSlots, extCount)
+        val targetCount = computeEmbedTargetCount(
+            colorMapping, info.hasPaintData, usedSlots, extCount,
+            hasMultiExtruderAssignments = info.hasMultiExtruderAssignments
+        )
         // No extruder remap in the 3MF — keep compact numbering (1,2,…).
         // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.
         val extruderRemap = buildCompactExtruderRemap(info, colorMapping)
@@ -3617,21 +3620,30 @@ internal fun computeEmbedTargetCount(
     colorMapping: List<Int>?,
     hasPaintData: Boolean,
     toolRemapSlots: List<Int>?,
-    fallbackExtCount: Int
+    fallbackExtCount: Int,
+    hasMultiExtruderAssignments: Boolean = false
 ): Int {
     if (hasPaintData && colorMapping != null && colorMapping.isNotEmpty()) {
-        // B76: SEMM models must always embed with the full paint-state count so
-        // multi_material_segmentation_by_painting() sees every state and produces
-        // one T-command per state.  GcodeToolRemapper + semmColorPermutation then
-        // compress tools down to the user's distinct physical slots post-slice.
-        //
-        // Unifies the prior H2C special case with normal SEMM: any duplicate-slot
-        // mapping (e.g. [0,1,2,2]) previously shrunk the embed and silently dropped
-        // the high-index paint state, causing per-object parts assigned to that
-        // slot to land on a wrong filament (Jon's Goat horns-on-E1 bug).
-        //
-        // Native B48 padding handles virtual_ext > n_ext for per-filament arrays.
-        return colorMapping.size
+        val distinctSlots = colorMapping.distinct().size.coerceAtLeast(1)
+        // B48 H2C: when all 4 physical extruders are used AND there are more model
+        // colours, the slicer needs virtual extruders (one per model colour) so
+        // multi_material_segmentation_by_painting() captures all paint states.
+        val isH2c = distinctSlots >= 4 && colorMapping.size > distinctSlots
+        // B76 (Jon's Goat): hybrid models where the user has collapsed ONE paint
+        // state onto an existing slot (colorMapping.size - distinctSlots == 1)
+        // need the full paint-state count preserved so per-object parts whose
+        // extruder index matches the collapsed state still get a valid slot.
+        // Anything looser than size-distinct==1 is normal SEMM with sparse
+        // usage (e.g. old.3mf has 6 paint states on 3 slots — delta 3 — and
+        // must keep the distinct count so GcodeToolRemapper's tool distribution
+        // matches the physical slots exactly).
+        val isHybridSingleDedup = hasMultiExtruderAssignments &&
+            (colorMapping.size - distinctSlots) == 1
+        return if (isH2c || isHybridSingleDedup) {
+            colorMapping.size
+        } else {
+            distinctSlots
+        }
     }
     if (toolRemapSlots != null) return toolRemapSlots.distinct().size
     return fallbackExtCount
