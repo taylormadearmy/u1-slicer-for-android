@@ -106,8 +106,8 @@ class Camera {
 
     fun updateProjectionMatrix(width: Int, height: Int) {
         val aspect = width.toFloat() / height.toFloat()
-        val near = (distance * 0.01).coerceAtLeast(0.1).toFloat()
-        val far = (distance * 10.0).toFloat()
+        val near = (distance * 0.05).coerceAtLeast(1.0).toFloat()
+        val far = (distance * 5.0).toFloat()
         Matrix.perspectiveM(projectionMatrix, 0, 45f, aspect, near, far)
     }
 

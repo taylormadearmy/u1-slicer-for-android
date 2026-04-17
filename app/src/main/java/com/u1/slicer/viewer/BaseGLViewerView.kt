@@ -23,6 +23,12 @@ import android.view.ScaleGestureDetector
  */
 abstract class BaseGLViewerView(context: Context) : GLSurfaceView(context) {
 
+    init {
+        // Request 24-bit depth buffer to eliminate Z-fighting on flat/thin objects.
+        // Must be called before setRenderer in subclass init.
+        setEGLConfigChooser(8, 8, 8, 8, 24, 0)
+    }
+
     abstract val camera: Camera
     var onCameraChanged: ((CameraViewState) -> Unit)? = null
     private var pendingCameraDispatch = false
