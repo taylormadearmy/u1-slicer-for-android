@@ -17,7 +17,7 @@ out vec3 v_Intensity;
 const vec3 LIGHT_TOP_DIR = normalize(vec3(-0.46, 0.46, 0.76));
 const vec3 LIGHT_FRONT_DIR = normalize(vec3(0.70, 0.14, 0.70));
 
-const float AMBIENT = 0.3;
+const float AMBIENT = 0.45;
 const float DIFFUSE_TOP = 0.8;
 const float DIFFUSE_FRONT = 0.3;
 const float SPECULAR_TOP = 0.125;

@@ -93,6 +93,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0.059f, 0.059f, 0.118f, 1f)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
+        GLES30.glEnable(GLES30.GL_CULL_FACE)
 
         modelShader = ShaderProgram(context, "shaders/model.vert", "shaders/model.frag")
         gridShader = ShaderProgram(context, "shaders/grid.vert", "shaders/grid.frag")
