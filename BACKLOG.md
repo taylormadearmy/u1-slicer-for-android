@@ -4,10 +4,18 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B78: Shashibo plate 5 Prepare preview oversized + off-centre — PRE-EXISTING REGRESSION (since v1.5.65)
+- **Symptom**: `Shashibo-h2s-textured.3mf` plate 5 shows a Prepare preview with the pyramid filling ~50–60 % of the bed, centred — while earlier versions (up to v1.5.64) showed the same 77×82 mm model at the correct ~28 % size in the upper-left quadrant (the plate's original position). Slice output is correct (551 CP TOOLCHANGE, T0=71, T1=69 — matches historical baseline).
+- **Root cause**: The B73 fix (v1.5.65 commit bc2c76d) added `lib.setModelInstances(floatArrayOf(135f, 135f))` in `MainActivity.kt:2288` before `getPreparePreviewMesh()`. This re-centres the native model to bed centre for all plates, overriding plate-defined positions. The GL camera auto-fit then zooms tighter because the mesh is closer to the camera's lookAt point.
+- **Bisect**: PASS on v1.5.48, v1.5.55, v1.5.60, v1.5.64. FAIL on v1.5.65+ (all the way to current main).
+- **Handoff spec**: `docs/superpowers/specs/2026-04-17-b78-shashibo-prepare-oversize.md`
+- **Priority**: visual-only; slicing works correctly. Queue for v1.5.70.
+- **Source**: surfaced during v1.5.69 E2E batch on 2026-04-17
+
 ### B76: Goat ( Gray ).3mf — horns print in E1 filament when E4 set to match E3 — FIXED v1.5.69
 - **Symptom**: 4-extruder per-object Bambu model with paint_color triangles. If the user sets E4's colour to match E3's (colour mapping `[0,1,2,2]`), the parts that should print on E3 instead come out in E1's filament. Works correctly with all 4 extruders different.
 - **Root cause**: `computeEmbedTargetCount` returned `distinctSlots` (3) for non-H2C SEMM with duplicate-slot mapping. The 3MF was re-embedded with only 3 filament slots, silently dropping the 4th paint state. Per-object parts with `extruder="4"` landed on an out-of-range filament.
-- **Fix**: `computeEmbedTargetCount` now always returns `colorMapping.size` when `hasPaintData=true`, unifying the H2C and normal-SEMM paths. `GcodeToolRemapper` + `semmColorPermutation` compress tools to physical slots post-slice.
+- **Fix**: `computeEmbedTargetCount` now uses `colorMapping.size` when the model is hybrid (paint + per-object extruder assignments) AND the user has collapsed exactly one state (`size - distinct == 1`). Pure SEMM models keep the distinct slot count so the post-slice remap stays accurate (regression guard for `old.3mf` after the initial over-broad fix).
 - **Tests**: 1 new unit test (`B76 Goat — 4 colours 3 distinct slots uses full size`); 3 existing `computeEmbedTargetCount` tests updated to assert unified behaviour; 1 instrumented test (`GoatDedupeSemmTest`) verifies T0-T3 all present pre-remap and T3 absorbs into T2.
 - **Source**: Discord user Jon (2026-04-16)
 - **Test file**: `Goat ( Gray ).3mf`
