@@ -3175,7 +3175,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 !sourceInfo.hasMultiExtruderAssignments
             val filteredColors = if (layerToolOnly) {
                 val selectedLayerToolColors = linkedSetOf<String>()
-                val selectedExtruders = mergedUsedExtruderIndices.filter { it > 0 }.sorted()
+                // When sourcePlateObjectExtruders is non-empty (explicit object→extruder mapping),
+                // check whether plateInfo.usedExtruderIndices is over-reporting:
+                //   - If it includes the same extruder(s) as the object map, the reconstructed
+                //     plate is echoing the base slot alongside transient tool-change slots →
+                //     trust the object map only (avoids phantom secondary colour chips).
+                //   - If it reports exclusively NEW extruder indices, those are real layer-tool
+                //     secondaries → combine with object extruders for the full colour set.
+                val selectedExtruders = if (sourcePlateObjectExtruders.isNotEmpty()) {
+                    if (plateInfo.usedExtruderIndices.any { it in sourcePlateObjectExtruders }) {
+                        sourcePlateObjectExtruders.filter { it > 0 }.sorted()
+                    } else {
+                        (sourcePlateObjectExtruders + plateInfo.usedExtruderIndices.filter { it > 0 })
+                            .sorted()
+                    }
+                } else {
+                    mergedUsedExtruderIndices.filter { it > 0 }.sorted()
+                }
                 if (selectedExtruders.isNotEmpty()) {
                     selectedExtruders.forEach { extruderIndex ->
                         sourceInfo.detectedColors.getOrNull(extruderIndex - 1)

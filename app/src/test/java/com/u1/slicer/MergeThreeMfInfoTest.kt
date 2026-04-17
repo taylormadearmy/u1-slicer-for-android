@@ -599,6 +599,65 @@ class MergeThreeMfInfoTest {
         )
     }
 
+    // ── layerToolOnly single-colour plate colour chip tests ───────────────────
+
+    @Test
+    fun `mergeThreeMfInfoForPlate single-colour layerToolOnly plate shows 1 chip when sourcePlateObjectExtruders has 1 entry`() {
+        // flippy+flappy+mini plate 1 scenario: layerToolOnly=true, all objects on extruder 1,
+        // but plateInfo.usedExtruderIndices=[1,2] is over-reported. Should produce 1 colour chip.
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(ThreeMfPlate(1, "Single Colour", listOf("obj1"))),
+            isBambu = true, isMultiPlate = true,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = false,
+            hasPaintData = false,
+            objectExtruderMap = mapOf("obj1" to 1),
+            detectedColors = listOf("#161616", "#F4D976"),
+            detectedExtruderCount = 2,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 1)
+        assertEquals(
+            "Single-colour layerToolOnly plate must show 1 colour chip, not leak plateInfo extruder 2",
+            1, merged.detectedColors.size
+        )
+        assertEquals("#161616", merged.detectedColors[0])
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate dual-colour layerToolOnly plate shows 2 chips when sourcePlateObjectExtruders is empty`() {
+        // flippy+flappy+mini plate 4 scenario: layerToolOnly=true, no object extruder map
+        // (Hueforge-style), plateInfo.usedExtruderIndices=[1,2] is correct. Should produce 2 chips.
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(ThreeMfPlate(4, "Dual Colour", listOf())),
+            isBambu = true, isMultiPlate = true,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = false,
+            hasPaintData = false,
+            objectExtruderMap = emptyMap(),
+            detectedColors = listOf("#161616", "#F4D976"),
+            detectedExtruderCount = 2,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 4)
+        assertEquals(
+            "Dual-colour layerToolOnly plate (no object extruder map) must show 2 colour chips",
+            2, merged.detectedColors.size
+        )
+    }
+
     // ── isHueforgePlate classification tests ──────────────────────────────────
 
     @Test
