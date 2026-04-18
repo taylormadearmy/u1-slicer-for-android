@@ -103,7 +103,7 @@ class PreparePreviewViewModelTest {
     }
 
     @Test
-    fun slipSlidePlate3_selectPlate_keepsTwoVisiblePrepareColours() {
+    fun slipSlidePlate3_selectPlate_keepsFourVisiblePrepareColours() {
         val application = targetContext.applicationContext as U1SlicerApplication
         val viewModel = SlicerViewModel(application)
         val modelFile = copyAssetToCache("slip slide spin fidget.3mf")
@@ -132,16 +132,16 @@ class PreparePreviewViewModelTest {
             mapping!!
 
             assertTrue(
-                "Slip/slide plate 3 should keep at least 2 detected colours in Prepare state, got ${info.detectedColors}",
-                info.detectedColors.size >= 2
+                "Slip/slide plate 3 should keep at least 4 detected colours in Prepare state, got ${info.detectedColors}",
+                info.detectedColors.size >= 4
             )
             assertTrue(
-                "Slip/slide plate 3 should keep at least 2 visible slots in Prepare state, got $mapping",
-                mapping.distinct().size >= 2
+                "Slip/slide plate 3 should keep at least 4 visible slots in Prepare state, got $mapping",
+                mapping.distinct().size >= 4
             )
             assertTrue(
-                "Slip/slide plate 3 should expose at least 2 non-blank active extruder colours, got ${viewModel.activeExtruderColors.value}",
-                viewModel.activeExtruderColors.value.count { it.isNotBlank() } >= 2
+                "Slip/slide plate 3 should expose at least 4 non-blank active extruder colours, got ${viewModel.activeExtruderColors.value}",
+                viewModel.activeExtruderColors.value.count { it.isNotBlank() } >= 4
             )
         } finally {
             viewModel.clearModel()

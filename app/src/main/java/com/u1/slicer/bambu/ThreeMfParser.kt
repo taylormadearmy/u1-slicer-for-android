@@ -719,26 +719,41 @@ object ThreeMfParser {
 
         return fallbackPlateObjectMap.mapValues { (_, objectIds) ->
             val objectExtruderSet = objectIds.mapNotNull { extruderAssignments[it] }.toSet()
-            // Collect distinct paint STATES (first char of each paint_color spec, values 1-8).
-            // Using distinct states rather than distinct spec strings prevents SEMM models with
-            // hundreds of unique paint_color hex strings (one per triangle) from inflating the
-            // visual count to 700+ when there are only 2-4 actual extruder states (B81).
+            // paintSpecs: distinct spec strings — used to detect simple vs complex encoding.
+            // paintExtruderStates: non-zero states only — used for hasPaintData and as the
+            //   visual count for complex-encoded SEMM models (many specs, few states, e.g.
+            //   painted flippy: 708 unique spec strings for only 2 extruder states — B81).
+            // allPaintStates: all states including 0 — size matches paintSpecs size on
+            //   simple-encoded models (one spec per state, e.g. slip-slide: "0C","1C","8").
+            val paintSpecs = linkedSetOf<String>()
             val paintExtruderStates = mutableSetOf<Int>()
+            val allPaintStates = mutableSetOf<Int>()
             objectIds.forEach { objectId ->
                 componentPathsByObject[objectId].orEmpty().forEach { path ->
                     val entry = zip.getEntry(path) ?: return@forEach
                     streamCollectPaintSpecs(zip.getInputStream(entry)).forEach { spec ->
+                        paintSpecs.add(spec)
                         val c = spec.firstOrNull() ?: return@forEach
                         val state = when {
                             c in '0'..'9' -> c - '0'
                             c in 'A'..'Z' -> c - 'A' + 10
                             else -> return@forEach
                         }
+                        allPaintStates.add(state)
                         if (state > 0) paintExtruderStates.add(state)
                     }
                 }
             }
-            Pair((objectExtruderSet + paintExtruderStates).size, paintExtruderStates.isNotEmpty())
+            // Simple encoding (1 spec per state): include state 0 as a distinct region so
+            // the pre-B81 count is preserved (e.g. slip-slide: 3 specs → count 3 → 1+3=4).
+            // Complex encoding (many specs, few states): use non-zero state count to avoid
+            // inflation (e.g. painted flippy: 708 specs, 2 states → count 1 → 1+1=2 — B81).
+            val paintVisualCount = if (paintSpecs.size == allPaintStates.size) {
+                paintSpecs.size
+            } else {
+                paintExtruderStates.size
+            }
+            Pair(objectExtruderSet.size + paintVisualCount, paintExtruderStates.isNotEmpty())
         }
     }
 
