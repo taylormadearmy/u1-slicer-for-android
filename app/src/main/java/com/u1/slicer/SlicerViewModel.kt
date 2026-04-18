@@ -324,6 +324,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // when the user sets non-identity slot assignments after initial load.
     private var sourceModelFile: File? = null
     private var sourceModelInfo: ThreeMfInfo? = null
+    // Full processed multi-plate file — set once on load, never replaced by per-plate
+    // extractions so selectPlate() always calls extractPlate() on the right source.
+    private var _multiPlateSourceFile: File? = null
     // Original Bambu file's project_settings.config, parsed before process() strips it.
     // Used by embedProfile() so the file's own settings (enable_support, etc.) survive
     // through the sanitize→embed→extractPlate→restructure→re-embed pipeline.
@@ -669,6 +672,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 sourceModelFile = processed
                 sourceModelInfo = processedInfo
+                if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
                 toolRemapSlots = null
                 semmColorPermutation = null
                 val mergedInfo = _threeMfInfo.value!!
@@ -818,6 +822,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // the correct extruder remap once the user has picked their slots.
                     sourceModelFile = processed
                     sourceModelInfo = processedInfo
+                    if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
                     toolRemapSlots = null  // reset on each new file load
                     semmColorPermutation = null
                     // Use merged info (preserves origInfo's extruder count, paint data, etc.)
@@ -1000,6 +1005,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                     sourceModelFile = processed
                     sourceModelInfo = processedInfo
+                    if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
                     toolRemapSlots = null
                     semmColorPermutation = null
                     val mergedInfo = _threeMfInfo.value!!
@@ -1037,7 +1043,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun selectPlate(plateId: Int) {
         _showPlateSelector.value = false
-        val file = resolvePlateSelectionSourceFile(sourceModelFile, currentModelFile) ?: return
+        // Always extract from the full processed multi-plate file so that switching plates
+        // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
+        // _multiPlateSourceFile is set once on load and never overwritten (B83 fix).
+        val file = _multiPlateSourceFile
+            ?: resolvePlateSelectionSourceFile(sourceModelFile, currentModelFile)
+            ?: return
         recoveryPlateId = plateId          // Track for Clipper recovery
         clipperRetryAttempted = false      // New plate = fresh retry allowance
         diagnostics.recordEvent(
@@ -1052,15 +1063,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val context = getApplication<Application>()
                 val workspaceDir = transientWorkspaceDir()
-                // Pass hasPlateJsons from _threeMfInfo which preserves the original value
-                // (process() strips plate_N.json files from the ZIP, so auto-detection
-                // on the processed file would always return false).
-                val hasPlateJsons = _threeMfInfo.value?.hasPlateJsons
-                // Pass plate object IDs from the original parse (model_settings.config
-                // may have been stripped by process() from the sanitized file).
-                val plateObjectIds = _threeMfInfo.value?.plates
+                // Use the stable file-level info (set once on load, never mutated by plate
+                // selections) so that switching plates doesn't lose the original plates list.
+                // _threeMfInfo.value is overwritten to a per-plate merged result after each
+                // selectPlate(), so it may no longer have the correct objectIds for other plates.
+                val fileInfo = _fileThreeMfInfo ?: _threeMfInfo.value
+                val hasPlateJsons = fileInfo?.hasPlateJsons
+                val plateObjectIds = fileInfo?.plates
                     ?.find { it.plateId == plateId }?.objectIds?.toSet()
-                val plateExtruderMap = _threeMfInfo.value?.objectExtruderMap
+                val plateExtruderMap = fileInfo?.objectExtruderMap
                     ?.filterKeys { key -> plateObjectIds?.contains(key) == true }
                 val rawPlateFile = BambuSanitizer.extractPlate(file, plateId, workspaceDir,
                     hasPlateJsons = hasPlateJsons,
@@ -1121,6 +1132,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         currentModelFile = null
         sourceModelFile = null
         sourceModelInfo = null
+        _multiPlateSourceFile = null
         _threeMfInfo.value = null
         _fileThreeMfInfo = null
     }
@@ -2930,6 +2942,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _selectedExtruder.value = 0
         _threeMfInfo.value = null
         _fileThreeMfInfo = null
+        _multiPlateSourceFile = null
         _showPlateSelector.value = false
         _showMultiColorDialog.value = false
         currentModelFile = null

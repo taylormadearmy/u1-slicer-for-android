@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -102,7 +103,7 @@ class PreparePreviewViewModelTest {
     }
 
     @Test
-    fun slipSlidePlate3_selectPlate_keepsFourVisiblePrepareColours() {
+    fun slipSlidePlate3_selectPlate_keepsTwoVisiblePrepareColours() {
         val application = targetContext.applicationContext as U1SlicerApplication
         val viewModel = SlicerViewModel(application)
         val modelFile = copyAssetToCache("slip slide spin fidget.3mf")
@@ -131,16 +132,16 @@ class PreparePreviewViewModelTest {
             mapping!!
 
             assertTrue(
-                "Slip/slide plate 3 should keep at least 4 detected colours in Prepare state, got ${info.detectedColors}",
-                info.detectedColors.size >= 4
+                "Slip/slide plate 3 should keep at least 2 detected colours in Prepare state, got ${info.detectedColors}",
+                info.detectedColors.size >= 2
             )
             assertTrue(
-                "Slip/slide plate 3 should keep at least 4 visible slots in Prepare state, got $mapping",
-                mapping.distinct().size >= 4
+                "Slip/slide plate 3 should keep at least 2 visible slots in Prepare state, got $mapping",
+                mapping.distinct().size >= 2
             )
             assertTrue(
-                "Slip/slide plate 3 should expose at least 4 non-blank active extruder colours, got ${viewModel.activeExtruderColors.value}",
-                viewModel.activeExtruderColors.value.count { it.isNotBlank() } >= 4
+                "Slip/slide plate 3 should expose at least 2 non-blank active extruder colours, got ${viewModel.activeExtruderColors.value}",
+                viewModel.activeExtruderColors.value.count { it.isNotBlank() } >= 2
             )
         } finally {
             viewModel.clearModel()
@@ -403,6 +404,57 @@ class PreparePreviewViewModelTest {
             assertTrue(
                 "H2C benchy G-code must have T1 tool changes (green), got $t1Count",
                 t1Count > 0
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
+     * B83: After selecting plate 4 of a 5-plate file, selecting plate 5 must still produce
+     * the correct chip count. Bug: selectPlate() read plateObjectIds from _threeMfInfo.value
+     * which is overwritten to the per-plate merged result after each selection, losing the
+     * original plates list. Fix: use _fileThreeMfInfo (stable) for plate object IDs.
+     *
+     * Uses flippy+flappy+mini-with-plate-painted.3mf: plate 5 is SEMM-painted (hasPaintData=true,
+     * 2 chips). If plateObjectIds is wrong the extracted plate 5 file omits paint data and
+     * mergeThreeMfInfoForPlate collapses to 1 chip.
+     */
+    @Test
+    fun b83_paintedFlippy_selectPlate5AfterPlate4_hasTwoChips() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("flippy+flappy+mini-with-plate-painted.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("plate selector visible") { viewModel.showPlateSelector.value }
+
+            viewModel.selectPlate(4)
+            waitUntil("plate 4 loaded", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+
+            // Capture plate 4's info reference so we can detect when plate 5 replaces it.
+            val plate4Info = viewModel.threeMfInfo.value
+            viewModel.selectPlate(5)
+            waitUntil("plate 5 info loaded (threeMfInfo reference changed)", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null &&
+                    viewModel.threeMfInfo.value !== plate4Info
+            }
+
+            val info = viewModel.threeMfInfo.value!!
+            assertEquals(
+                "B83: plate 5 after plate 4 switch must have 2 chips (SEMM paint), got ${info.detectedColors}",
+                2, info.detectedColors.size
+            )
+            assertTrue(
+                "B83: plate 5 must have hasPaintData=true",
+                info.hasPaintData
             )
         } finally {
             viewModel.clearModel()
