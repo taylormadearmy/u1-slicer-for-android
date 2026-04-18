@@ -658,6 +658,67 @@ class MergeThreeMfInfoTest {
         )
     }
 
+    // ── B81: non-painted plate in a file where other plates have paint data ─────
+
+    @Test
+    fun `mergeThreeMfInfoForPlate single-colour layerToolOnly plate in painted file shows 1 chip`() {
+        // Plate 1 of flippy+flappy+mini-with-plate-painted.3mf:
+        // - sourceInfo.hasPaintData=true (file-level: other plates have SEMM paint)
+        // - plateInfo.hasPaintData=false (this plate has no paint)
+        // - sourcePlateObjectExtruders=[1]: single object on extruder 1
+        // - plateInfo.usedExtruderIndices=[1,2]: over-reporting noise
+        // layerToolOnly should use plate-level hasPaintData (false), not file-level (true),
+        // so the B80 overlap logic applies and produces 1 chip.
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(ThreeMfPlate(1, "Plate 1", listOf("obj1"))),
+            isBambu = true, isMultiPlate = true,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = false,
+            hasPaintData = true,   // file has other plates with paint
+            objectExtruderMap = mapOf("obj1" to 1),
+            detectedColors = listOf("#161616", "#F4D976"),
+            detectedExtruderCount = 2,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            hasPaintData = false,   // this plate has no paint
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 1)
+        assertEquals(
+            "Non-painted plate in painted file must use plate-level hasPaintData for layerToolOnly check",
+            1, merged.detectedColors.size
+        )
+        assertEquals("#161616", merged.detectedColors[0])
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate painted plate shows hasPaintData true`() {
+        // After selecting plate 5 (painted SEMM), hasPaintData must be true in merged result.
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(ThreeMfPlate(5, "Plate 5", listOf("obj5"))),
+            isBambu = true, isMultiPlate = true,
+            hasLayerToolChanges = true,
+            hasPaintData = true,
+            objectExtruderMap = mapOf("obj5" to 1),
+            detectedColors = listOf("#161616", "#F4D976"),
+            detectedExtruderCount = 2,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            hasPaintData = true,   // plate 5 has paint
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 5)
+        assertTrue("Painted plate must produce hasPaintData=true in merged result", merged.hasPaintData)
+    }
+
     // ── isHueforgePlate classification tests ──────────────────────────────────
 
     @Test

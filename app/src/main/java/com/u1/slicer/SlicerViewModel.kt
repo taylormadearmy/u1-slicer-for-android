@@ -168,6 +168,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Bambu / multi-plate state
     private val _threeMfInfo = MutableStateFlow<ThreeMfInfo?>(null)
     val threeMfInfo: StateFlow<ThreeMfInfo?> = _threeMfInfo.asStateFlow()
+    // Original file-level ThreeMfInfo set on load, never overwritten by plate selections (B81).
+    // Used as the stable sourceInfo for mergeThreeMfInfoForPlate so that cross-plate selections
+    // always see the correct file-level metadata (e.g. hasPaintData=true for files where only
+    // some plates have paint data).
+    private var _fileThreeMfInfo: ThreeMfInfo? = null
 
     private val _showPlateSelector = MutableStateFlow(false)
     val showPlateSelector: StateFlow<Boolean> = _showPlateSelector.asStateFlow()
@@ -660,6 +665,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val processed = BambuSanitizer.process(outputFile, workspaceDir, isBambu = origInfo.isBambu)
                 val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
                 _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
+                _fileThreeMfInfo = _threeMfInfo.value
 
                 sourceModelFile = processed
                 sourceModelInfo = processedInfo
@@ -806,6 +812,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val processed = BambuSanitizer.process(file, workspaceDir, isBambu = origInfo.isBambu)
                     val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
                     _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
+                    _fileThreeMfInfo = _threeMfInfo.value
 
                     // Store source before embedding so startSlicing() can re-embed with
                     // the correct extruder remap once the user has picked their slots.
@@ -989,6 +996,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val processed = BambuSanitizer.process(sourceFile, workspaceDir, isBambu = origInfo.isBambu)
                     val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
                     _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
+                    _fileThreeMfInfo = _threeMfInfo.value
 
                     sourceModelFile = processed
                     sourceModelInfo = processedInfo
@@ -1066,12 +1074,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
                 sourceModelFile = plateFile
                 sourceModelInfo = plateInfo
-                // Merge plate structural info with the pre-select merged info so that
+                // Merge plate structural info with the file-level info so that
                 // color/extruder metadata from the original file is preserved.
                 // plateInfo has 0 detected colors because extractPlate() works on the
                 // processed file which has had filament_sequence.json stripped by process().
-                // _threeMfInfo.value holds the correctly-merged info from openModel().
-                val preSelectInfo = _threeMfInfo.value
+                // Always use _fileThreeMfInfo (set once on load, never mutated by plate
+                // selections) so that cross-plate selections don't lose file-level state
+                // like hasPaintData=true from other plates (B81).
+                val preSelectInfo = _fileThreeMfInfo ?: _threeMfInfo.value
                 val mergedPlateInfo = if (preSelectInfo != null)
                     mergeThreeMfInfoForPlate(plateInfo, preSelectInfo, plateId)
                 else
@@ -1112,6 +1122,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         sourceModelFile = null
         sourceModelInfo = null
         _threeMfInfo.value = null
+        _fileThreeMfInfo = null
     }
 
     private suspend fun loadNativeModel(file: File) {
@@ -2918,6 +2929,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _activeExtruderColors.value = emptyList()
         _selectedExtruder.value = 0
         _threeMfInfo.value = null
+        _fileThreeMfInfo = null
         _showPlateSelector.value = false
         _showMultiColorDialog.value = false
         currentModelFile = null
@@ -3170,8 +3182,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // Layer-change models use per-layer tool colors rather than per-object
             // extruder assignment, so filtering to plate filament indices collapses the
             // preview back to one colour. Keep the full source palette in that case.
+            // Use plate-level hasPaintData (not file-level sourceInfo.hasPaintData) so that
+            // non-painted plates in a file where other plates have SEMM paint data still get
+            // the layerToolOnly treatment — avoiding phantom extra colour chips (B81).
+            val plateHasPaintData = plateInfo.hasPaintData
             val layerToolOnly = sourceInfo.hasLayerToolChanges &&
-                !sourceInfo.hasPaintData &&
+                !plateHasPaintData &&
                 !sourceInfo.hasMultiExtruderAssignments
             val filteredColors = if (layerToolOnly) {
                 val selectedLayerToolColors = linkedSetOf<String>()
@@ -3271,11 +3287,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // and no per-object extruder diversity in the source file.
             // The UI needs extruderCount > 1 and hasMultiExtruderAssignments=false to activate
             // the layerToolOnly recolor path.
-            // Use plate-level paint detection: plateInfo is parsed from the extracted
-            // single-plate file, so hasPaintData reflects only THIS plate's objects.
-            // sourceInfo.hasPaintData is file-level and would block Hueforge classification
-            // for non-painted plates in a file where other plates have paint data.
-            val plateHasPaintData = plateInfo.hasPaintData
             val sourceObjectExtruderDiversity = sourceInfo.objectExtruderMap.values.toSet().size
             val isHueforgePlate = selectedPlateId != null &&
                 sourceInfo.hasLayerToolChanges && !plateHasPaintData &&

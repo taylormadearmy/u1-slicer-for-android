@@ -443,13 +443,16 @@ object ThreeMfParser {
                         filamentIndices = plateFilamentMap[plateId] ?: emptySet()
                     )
                 }
-                val effectiveExtruders = visualColorCountByPlate.values.maxOrNull()?.let { visualCount ->
-                    if (visualCount > uniqueExtruders.size) {
-                        (1..visualCount).toSet()
-                    } else {
-                        uniqueExtruders
-                    }
-                } ?: uniqueExtruders
+                val hasPaintDataForPlate = visualColorCountByPlate.values.any { (_, hasPaint) -> hasPaint }
+                val effectiveExtruders = visualColorCountByPlate.values
+                    .maxByOrNull { (count, _) -> count }
+                    ?.let { (visualCount, _) ->
+                        if (visualCount > uniqueExtruders.size) {
+                            (1..visualCount).toSet()
+                        } else {
+                            uniqueExtruders
+                        }
+                    } ?: uniqueExtruders
                 val projectColors = mutableListOf<String>()
                 zip.getEntry("Metadata/project_settings.config")?.let { entry ->
                     detectColorsFromJsonSettings(zip.getInputStream(entry), projectColors)
@@ -488,6 +491,7 @@ object ThreeMfParser {
                     isBambu = isBambu,
                     isMultiPlate = false,
                     hasLayerToolChanges = layerToolInfo?.hasToolChanges == true,
+                    hasPaintData = hasPaintDataForPlate,
                     detectedColors = detectedColors,
                     detectedExtruderCount = detectedExtruderCount,
                     usedExtruderIndices = if (filteredExtruders.isNotEmpty()) filteredExtruders else effectiveExtruders,
@@ -691,13 +695,14 @@ object ThreeMfParser {
             ?.getOrNull(1)
     }
 
+    // Returns (visualColorCount, hasPaintData) per plate.
     private fun computeVisualColorCountByPlate(
         zip: ZipFile,
         modelEntry: java.util.zip.ZipEntry?,
         plateObjectMap: Map<Int, List<String>>,
         componentPathsByObject: Map<String, List<String>>,
         extruderAssignments: Map<String, Int>
-    ): Map<Int, Int> {
+    ): Map<Int, Pair<Int, Boolean>> {
         val fallbackPlateObjectMap = if (plateObjectMap.isNotEmpty() || modelEntry == null) {
             plateObjectMap
         } else {
@@ -707,15 +712,27 @@ object ThreeMfParser {
         }
 
         return fallbackPlateObjectMap.mapValues { (_, objectIds) ->
-            val baseCount = objectIds.mapNotNull { extruderAssignments[it] }.toSet().size
-            val paintSpecs = linkedSetOf<String>()
+            val objectExtruderSet = objectIds.mapNotNull { extruderAssignments[it] }.toSet()
+            // Collect distinct paint STATES (first char of each paint_color spec, values 1-8).
+            // Using distinct states rather than distinct spec strings prevents SEMM models with
+            // hundreds of unique paint_color hex strings (one per triangle) from inflating the
+            // visual count to 700+ when there are only 2-4 actual extruder states (B81).
+            val paintExtruderStates = mutableSetOf<Int>()
             objectIds.forEach { objectId ->
                 componentPathsByObject[objectId].orEmpty().forEach { path ->
                     val entry = zip.getEntry(path) ?: return@forEach
-                    paintSpecs += streamCollectPaintSpecs(zip.getInputStream(entry))
+                    streamCollectPaintSpecs(zip.getInputStream(entry)).forEach { spec ->
+                        val c = spec.firstOrNull() ?: return@forEach
+                        val state = when {
+                            c in '0'..'9' -> c - '0'
+                            c in 'A'..'Z' -> c - 'A' + 10
+                            else -> return@forEach
+                        }
+                        if (state > 0) paintExtruderStates.add(state)
+                    }
                 }
             }
-            baseCount + paintSpecs.size
+            Pair((objectExtruderSet + paintExtruderStates).size, paintExtruderStates.isNotEmpty())
         }
     }
 
