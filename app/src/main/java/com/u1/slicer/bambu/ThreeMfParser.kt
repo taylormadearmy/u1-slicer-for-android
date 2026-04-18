@@ -225,6 +225,8 @@ object ThreeMfParser {
                 val layerToolSegments: List<LayerToolSegment>? = if (hasLayerToolChanges && layerToolXml != null) {
                     parseLayerToolSegments(layerToolXml).takeIf { it.isNotEmpty() }
                 } else null
+                val perPlateLayerToolInfo: Map<Int, LayerToolCustomGcodeXmlInfo> =
+                    if (layerToolXml != null) parseLayerToolCustomGcodeXmlPerPlate(layerToolXml) else emptyMap()
 
                 // Detect colors from multiple sources (priority order)
                 val detectedColors = mutableListOf<String>()
@@ -305,6 +307,7 @@ object ThreeMfParser {
                         )
                         val thumbnailBytes = zip.getEntry("Metadata/plate_$plateId.png")
                             ?.let { entry -> runCatching { zip.getInputStream(entry).readBytes() }.getOrNull() }
+                        val plateLtInfo = perPlateLayerToolInfo[plateId]
                         ThreeMfPlate(
                             plateId = plateId,
                             name = name,
@@ -312,7 +315,10 @@ object ThreeMfParser {
                             filamentIndices = plateFilamentMap[plateId] ?: emptySet(),
                             printable = firstItem?.printable ?: true,
                             transform = firstItem?.transform ?: floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f),
-                            thumbnailBytes = thumbnailBytes
+                            thumbnailBytes = thumbnailBytes,
+                            layerToolColors = plateLtInfo?.colors.orEmpty(),
+                            layerToolExtruders = plateLtInfo?.extruders.orEmpty(),
+                            hasLayerToolChanges = plateLtInfo?.hasToolChanges == true
                         )
                     }
                 } else {

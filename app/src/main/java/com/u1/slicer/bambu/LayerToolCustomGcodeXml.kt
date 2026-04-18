@@ -38,6 +38,23 @@ internal fun parseLayerToolCustomGcodeXml(xml: String): LayerToolCustomGcodeXmlI
 }
 
 /**
+ * Parses `custom_gcode_per_layer.xml` per plate. Each `<plate>` block starts with a
+ * `<plate_info id="N"/>` element; subsequent `<layer>` entries belong to that plate.
+ * Returns a map from 1-based plate ID → LayerToolCustomGcodeXmlInfo.
+ */
+internal fun parseLayerToolCustomGcodeXmlPerPlate(xml: String): Map<Int, LayerToolCustomGcodeXmlInfo> {
+    val result = mutableMapOf<Int, LayerToolCustomGcodeXmlInfo>()
+    val plateInfoIdRegex = Regex("""<plate_info\b[^>]*\bid="(\d+)"""")
+    for (section in xml.split("<plate>").drop(1)) {
+        val content = section.substringBefore("</plate>")
+        val plateId = plateInfoIdRegex.find(content)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: continue
+        result[plateId] = parseLayerToolCustomGcodeXml(content)
+    }
+    return result
+}
+
+/**
  * Parses `custom_gcode_per_layer.xml` into an ordered list of Z→extruder segments.
  * Each entry represents "from this Z and up, use this extruder" (last entry with topZ ≤ triangle Z wins).
  * extruderBambu is 1-based (1→T0, 2→T1). Entries are sorted ascending by topZ.

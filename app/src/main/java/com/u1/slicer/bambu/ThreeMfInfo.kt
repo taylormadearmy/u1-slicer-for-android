@@ -7,7 +7,13 @@ data class ThreeMfPlate(
     val filamentIndices: Set<Int> = emptySet(),
     val printable: Boolean = true,
     val transform: FloatArray = floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f),
-    val thumbnailBytes: ByteArray? = null
+    val thumbnailBytes: ByteArray? = null,
+    /** Per-plate layer-tool change display colors (from `<layer color="...">` in this plate's XML section). */
+    val layerToolColors: List<String> = emptyList(),
+    /** Per-plate layer-tool change extruder indices (1-based) for this plate's XML section. */
+    val layerToolExtruders: Set<Int> = emptySet(),
+    /** True if this plate's XML section contains at least one type-1 or type-2 layer entry. */
+    val hasLayerToolChanges: Boolean = false
 ) {
     val translationX: Float get() = transform[9]
     val translationY: Float get() = transform[10]

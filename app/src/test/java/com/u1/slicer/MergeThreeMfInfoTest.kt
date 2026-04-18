@@ -719,6 +719,78 @@ class MergeThreeMfInfoTest {
         assertTrue("Painted plate must produce hasPaintData=true in merged result", merged.hasPaintData)
     }
 
+    // ── B82: per-plate layer-tool secondary colour matching ───────────────────
+
+    @Test
+    fun `mergeThreeMfInfoForPlate dual-colour plate with palette-matching layer-tool secondary shows 2 chips`() {
+        // flippy plate 2: object on E1, layer-tool entry color #F4D976 IS in palette (E2).
+        // sourcePlateObjectExtruders=[1] would trigger B80 if no per-plate data; per-plate
+        // color match recognises it as real → 2 chips.
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(ThreeMfPlate(
+                plateId = 2, name = "Dual Colour", objectIds = listOf("obj2"),
+                layerToolColors = listOf("#F4D976"),
+                layerToolExtruders = setOf(2),
+                hasLayerToolChanges = true
+            )),
+            isBambu = true, isMultiPlate = true,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = false,
+            hasPaintData = false,
+            objectExtruderMap = mapOf("obj2" to 1),
+            detectedColors = listOf("#161616", "#F4D976"),
+            detectedExtruderCount = 2,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 2)
+        assertEquals(
+            "Dual-colour plate with palette-matching layer-tool secondary must show 2 chips",
+            2, merged.detectedColors.size
+        )
+        assertEquals("#161616", merged.detectedColors[0])
+        assertEquals("#F4D976", merged.detectedColors[1])
+    }
+
+    @Test
+    fun `mergeThreeMfInfoForPlate single-colour plate with non-palette layer-tool secondary shows 1 chip`() {
+        // flippy plate 1: object on E1, layer-tool entry color #2323F7 is NOT in palette
+        // [#161616, #F4D976]. Color mismatch means no real secondary → 1 chip.
+        val sourceInfo = ThreeMfInfo(
+            objects = emptyList(),
+            plates = listOf(ThreeMfPlate(
+                plateId = 1, name = "Single Colour", objectIds = listOf("obj1"),
+                layerToolColors = listOf("#2323F7"),
+                layerToolExtruders = setOf(2),
+                hasLayerToolChanges = true
+            )),
+            isBambu = true, isMultiPlate = true,
+            hasLayerToolChanges = true,
+            hasMultiExtruderAssignments = false,
+            hasPaintData = false,
+            objectExtruderMap = mapOf("obj1" to 1),
+            detectedColors = listOf("#161616", "#F4D976"),
+            detectedExtruderCount = 2,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val plateInfo = ThreeMfInfo(
+            objects = emptyList(), plates = emptyList(),
+            isBambu = false, isMultiPlate = false,
+            usedExtruderIndices = setOf(1, 2)
+        )
+        val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 1)
+        assertEquals(
+            "Single-colour plate with non-palette layer-tool secondary must show 1 chip",
+            1, merged.detectedColors.size
+        )
+        assertEquals("#161616", merged.detectedColors[0])
+    }
+
     // ── isHueforgePlate classification tests ──────────────────────────────────
 
     @Test

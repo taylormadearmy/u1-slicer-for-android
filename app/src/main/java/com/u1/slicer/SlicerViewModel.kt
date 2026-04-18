@@ -3199,11 +3199,34 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 //   - If it reports exclusively NEW extruder indices, those are real layer-tool
                 //     secondaries → combine with object extruders for the full colour set.
                 val selectedExtruders = if (sourcePlateObjectExtruders.isNotEmpty()) {
-                    if (plateInfo.usedExtruderIndices.any { it in sourcePlateObjectExtruders }) {
-                        sourcePlateObjectExtruders.filter { it > 0 }.sorted()
-                    } else {
-                        (sourcePlateObjectExtruders + plateInfo.usedExtruderIndices.filter { it > 0 })
-                            .sorted()
+                    val plateLtColors = sourcePlate?.layerToolColors.orEmpty()
+                    val plateLtExtruders = sourcePlate?.layerToolExtruders.orEmpty()
+                    when {
+                        plateLtColors.isNotEmpty() -> {
+                            // Per-plate layer-tool data available. A secondary is "real" only when
+                            // its display color matches the file's actual filament palette — this
+                            // distinguishes genuine dual-colour layer-change plates (palette match)
+                            // from single-colour plates whose layer-tool entry was set up with an
+                            // off-palette colour (e.g. flippy plate 1: #2323F7 not in palette).
+                            val hasRealSecondaries = plateLtColors.any { color ->
+                                sourceInfo.detectedColors.any { it.equals(color, ignoreCase = true) }
+                            }
+                            if (hasRealSecondaries) {
+                                (sourcePlateObjectExtruders + plateLtExtruders).filter { it > 0 }.sorted()
+                            } else {
+                                sourcePlateObjectExtruders.filter { it > 0 }.sorted()
+                            }
+                        }
+                        plateInfo.usedExtruderIndices.any { it in sourcePlateObjectExtruders } -> {
+                            // B80 fallback (no per-plate data): extracted plate over-reports
+                            // transient tool-change extruders alongside the base slot → trust
+                            // the object map only.
+                            sourcePlateObjectExtruders.filter { it > 0 }.sorted()
+                        }
+                        else -> {
+                            (sourcePlateObjectExtruders + plateInfo.usedExtruderIndices.filter { it > 0 })
+                                .sorted()
+                        }
                     }
                 } else {
                     mergedUsedExtruderIndices.filter { it > 0 }.sorted()

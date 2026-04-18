@@ -51,7 +51,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 807 JVM unit tests
+./gradlew testDebugUnitTest                        # 814 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 177 instrumented tests (uses Orchestrator)
 ```
 
@@ -77,7 +77,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `bambu/ThreeMfParserTest.kt` (12) - 3MF data model construction, isMultiPlate detection, hasPaintSupports field (B57)
 - `bambu/BambuSanitizerTest.kt` (25) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard, group recentering
 - `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
-- `bambu/LayerToolCustomGcodeXmlTest.kt` (2) — custom_gcode_per_layer.xml colour extraction for type 1 and 2 (parity with pause injector)
+- `bambu/LayerToolCustomGcodeXmlTest.kt` (3) — custom_gcode_per_layer.xml colour extraction for type 1 and 2 (parity with pause injector); per-plate parsing (parseLayerToolCustomGcodeXmlPerPlate)
 - `ui/ExtruderAssignmentTest.kt` (6) — ExtruderAssignment defaults, copy, list building
 - `ui/FilamentJsonImportTest.kt` (15) — JSON import parsing: snake_case/camelCase, defaults, errors
 - `ui/MultiColorMappingTest.kt` (9) — ensureMultiSlotMapping collapse detection and sequential distribution
@@ -86,7 +86,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `model/CopyArrangeCalculatorTest.kt` (21) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
-- `MergeThreeMfInfoTest.kt` (41) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates), B60 hasPaintSupports preservation
+- `MergeThreeMfInfoTest.kt` (49) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates), B60 hasPaintSupports preservation, B82 per-plate layer-tool secondary colour matching (palette-match = real, off-palette = artefact)
 - `printer/PrinterRepositoryTest.kt` (2) — upload filename sanitization and unique suffix generation
 - `printer/PrinterRepositoryNotificationTest.kt` (9) — printer state transition detection for all event types
 - `AppEventNotifierTest.kt` (13) — notification title/body/channel/navigate-target for all event types
