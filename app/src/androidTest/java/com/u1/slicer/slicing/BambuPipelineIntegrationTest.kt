@@ -1263,6 +1263,105 @@ class BambuPipelineIntegrationTest {
             info.detectedExtruderCount >= 4)
     }
 
+    // ─── B82: per-plate layer-tool chip count ─────────────────────────────────
+
+    /**
+     * B82: Standard flippy+flappy+mini.3mf — 4-plate file with layer-tool changes on
+     * plates 2 and 4.  mergeThreeMfInfoForPlate must produce 1 chip for single-colour
+     * plates (1, 3) and 2 chips for dual-colour plates (2, 4).
+     */
+    @Test
+    fun b82_flippyStandard_perPlateChipCount() {
+        val input = asset("flippy+flappy+mini.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val preSelectInfo = SlicerViewModel.mergeThreeMfInfo(ThreeMfParser.parse(processed), origInfo)
+
+        val expectedChips = mapOf(1 to 1, 2 to 2, 3 to 1, 4 to 2)
+
+        for ((plateId, expected) in expectedChips.entries.sortedBy { it.key }) {
+            val sourcePlate = preSelectInfo.plates.find { it.plateId == plateId }
+            val plateObjectIds = sourcePlate?.objectIds?.toSet()
+            val plateExtruderMap = preSelectInfo.objectExtruderMap
+                .filterKeys { key -> plateObjectIds?.contains(key) == true }
+
+            val rawPlateFile = BambuSanitizer.extractPlate(
+                processed, plateId, outDir,
+                hasPlateJsons = preSelectInfo.hasPlateJsons,
+                plateObjectIds = plateObjectIds,
+                objectExtruderMap = plateExtruderMap
+            )
+            val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
+            val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
+            val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, preSelectInfo, selectedPlateId = plateId)
+
+            assertEquals(
+                "Flippy plate $plateId: expected $expected chip(s), got ${merged.detectedColors.size} (${merged.detectedColors})",
+                expected, merged.detectedColors.size
+            )
+        }
+    }
+
+    /**
+     * B82: flippy+flappy+mini-with-plate-painted.3mf — 5-plate file.
+     * Plates 1, 3: single-colour (1 chip).
+     * Plates 2, 4: dual-colour via layer-tool palette match (2 chips).
+     * Plate 5:     painted (SEMM) — hasPaintData=true, 2 chips.
+     */
+    @Test
+    fun b82_flippyPainted_perPlateChipCount() {
+        val input = asset("flippy+flappy+mini-with-plate-painted.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val preSelectInfo = SlicerViewModel.mergeThreeMfInfo(ThreeMfParser.parse(processed), origInfo)
+
+        // Plates 1,3 → 1 chip; plates 2,4 → 2 chips; plate 5 → hasPaintData + 2 chips
+        val expectedChips = mapOf(1 to 1, 2 to 2, 3 to 1, 4 to 2, 5 to 2)
+
+        for ((plateId, expected) in expectedChips.entries.sortedBy { it.key }) {
+            val sourcePlate = preSelectInfo.plates.find { it.plateId == plateId }
+            val plateObjectIds = sourcePlate?.objectIds?.toSet()
+            val plateExtruderMap = preSelectInfo.objectExtruderMap
+                .filterKeys { key -> plateObjectIds?.contains(key) == true }
+
+            val rawPlateFile = BambuSanitizer.extractPlate(
+                processed, plateId, outDir,
+                hasPlateJsons = preSelectInfo.hasPlateJsons,
+                plateObjectIds = plateObjectIds,
+                objectExtruderMap = plateExtruderMap
+            )
+            val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
+            val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
+            val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, preSelectInfo, selectedPlateId = plateId)
+
+            assertEquals(
+                "Painted-flippy plate $plateId: expected $expected chip(s), got ${merged.detectedColors.size} (${merged.detectedColors})",
+                expected, merged.detectedColors.size
+            )
+        }
+
+        // Plate 5 must be detected as painted (SEMM)
+        run {
+            val sourcePlate = preSelectInfo.plates.find { it.plateId == 5 }
+            val plateObjectIds = sourcePlate?.objectIds?.toSet()
+            val plateExtruderMap = preSelectInfo.objectExtruderMap
+                .filterKeys { key -> plateObjectIds?.contains(key) == true }
+            val rawPlateFile = BambuSanitizer.extractPlate(
+                processed, 5, outDir,
+                hasPlateJsons = preSelectInfo.hasPlateJsons,
+                plateObjectIds = plateObjectIds,
+                objectExtruderMap = plateExtruderMap
+            )
+            val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, outDir)
+            val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
+            val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, preSelectInfo, selectedPlateId = 5)
+            assertTrue(
+                "Painted-flippy plate 5 must have hasPaintData=true",
+                merged.hasPaintData
+            )
+        }
+    }
+
     /**
      * B67: After BambuSanitizer.process() + mergeThreeMfInfo(), the merged info
      * must still carry hasPaintData=true and 4 colors from the original parse.
