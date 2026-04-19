@@ -122,6 +122,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val instanceCount: Int
     )
 
+    /**
+     * Shared 3MF import pipeline contract for loadModel(uri), loadModelFromFile(file),
+     * and MakerWorld imports.
+     *
+     * rawFile is the durable pre-sanitize copy retained for recovery. processedFile is the
+     * sanitize/deferred-restructure artifact kept for later plate extraction and re-embed.
+     * embeddedFile is the current profile-embedded artifact loaded into native code.
+     */
+    private data class PreparedModelArtifacts(
+        val rawFile: File,
+        val origInfo: ThreeMfInfo,
+        val sourceConfig: Map<String, Any>?,
+        val processedFile: File,
+        val processedInfo: ThreeMfInfo,
+        val mergedInfo: ThreeMfInfo,
+        val embeddedFile: File
+    ) {
+        val requiresPlateSelection: Boolean
+            get() = origInfo.isMultiPlate && origInfo.plates.size > 1
+    }
+
     private val native = NativeLibrary()
     private val diagnostics = DiagnosticsStore(application)
     private val container = (application as U1SlicerApplication).container
@@ -658,34 +679,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 recoveryPlateId = -1
                 _state.value = SlicerState.Loading("Preparing model…")
 
-                // Same pipeline as loadModel(): parse → sanitize → embed → load
-                val origInfo = ThreeMfParser.parse(outputFile)
-                recoveryOrigInfo = origInfo  // Saved for Clipper recovery pipeline
-                _sourceConfig.value = if (origInfo.isBambu) {
-                    java.util.zip.ZipFile(outputFile).use { profileEmbedder.parseSourceConfig(it) }
-                } else null
+                val prepared = prepareImportedModelArtifacts(outputFile, workspaceDir)
 
-                val processed = BambuSanitizer.process(outputFile, workspaceDir, isBambu = origInfo.isBambu)
-                val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
-                _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
-                _fileThreeMfInfo = _threeMfInfo.value
-
-                sourceModelFile = processed
-                sourceModelInfo = processedInfo
-                if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
-                toolRemapSlots = null
-                semmColorPermutation = null
-                val mergedInfo = _threeMfInfo.value!!
-                val sanitized = embedProfile(processed, mergedInfo, workspaceDir)
-
-                currentModelFile = sanitized
-                if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
-                    Log.i("SlicerVM", "MakerWorld file is multi-plate (${origInfo.plates.size} plates), showing selector")
+                currentModelFile = prepared.embeddedFile
+                if (prepared.requiresPlateSelection) {
+                    Log.i(
+                        "SlicerVM",
+                        "MakerWorld file is multi-plate (${prepared.origInfo.plates.size} plates), showing selector"
+                    )
                     _showPlateSelector.value = true
                     return@launch
                 }
-                Log.i("SlicerVM", "Loading MakerWorld model natively: ${sanitized.name} (${sanitized.length()} bytes)")
-                loadNativeModel(sanitized)
+                Log.i(
+                    "SlicerVM",
+                    "Loading MakerWorld model natively: ${prepared.embeddedFile.name} (${prepared.embeddedFile.length()} bytes)"
+                )
+                loadNativeModel(prepared.embeddedFile)
             } catch (e: Throwable) {
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error(e.message ?: "Import failed")
@@ -777,10 +786,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
 
-                    // Parse original file first for multi-plate detection (process()
-                    // strips plate_N.json so detection would fail on the processed file).
-                    val origInfo = ThreeMfParser.parse(file)
-                    recoveryOrigInfo = origInfo  // Saved for Clipper recovery pipeline
+                    val prepared = prepareImportedModelArtifacts(file, workspaceDir)
+                    val origInfo = prepared.origInfo
 
                     Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
                         "colors=${origInfo.detectedColors.size}, extruders=${origInfo.detectedExtruderCount}, " +
@@ -804,45 +811,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     )
 
-                    // Parse original file's config BEFORE process() strips it.
-                    // This preserves file-level settings (enable_support, etc.) through the pipeline.
-                    _sourceConfig.value = if (origInfo.isBambu) {
-                        java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
-                    } else null
-
-                    // Sanitize first (strip printable="0", restructure multi-color, clean XML),
-                    // then embed Snapmaker profile.  Without process(), non-printable build
-                    // items cause "Coordinate outside allowed range" Clipper errors.
-                val processed = BambuSanitizer.process(file, workspaceDir, isBambu = origInfo.isBambu)
-                    val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
-                    _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
-                    _fileThreeMfInfo = _threeMfInfo.value
-
-                    // Store source before embedding so startSlicing() can re-embed with
-                    // the correct extruder remap once the user has picked their slots.
-                    sourceModelFile = processed
-                    sourceModelInfo = processedInfo
-                    if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
-                    toolRemapSlots = null  // reset on each new file load
-                    semmColorPermutation = null
-                    // Use merged info (preserves origInfo's extruder count, paint data, etc.)
-                    // so the preserve path in buildConfig() activates correctly for Bambu files
-                    // with multi-extruder assignments (needed for support preservation — B10 fix).
-                    val mergedInfo = _threeMfInfo.value!!
-                    val sanitized = embedProfile(processed, mergedInfo, workspaceDir)
-
                     // Show plate selector for multi-plate files (use origInfo since
                     // process() strips plate_N.json files that isMultiPlate relies on).
-                    if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
+                    if (prepared.requiresPlateSelection) {
                         Log.i("SlicerVM", "Multi-plate: ${origInfo.plates.size} plates, showing selector")
-                        currentModelFile = sanitized
+                        currentModelFile = prepared.embeddedFile
                         _showPlateSelector.value = true
                         // Don't load yet — wait for plate selection
                         return@launch
                     }
                     Log.i("SlicerVM", "Single-plate, loading directly")
 
-                    sanitized
+                    prepared.embeddedFile
                 } else {
                     _threeMfInfo.value = null
                     recoveryOrigInfo = null  // STL: no 3MF pipeline needed for recovery
@@ -971,8 +951,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
 
-                    val origInfo = ThreeMfParser.parse(sourceFile)
-                    recoveryOrigInfo = origInfo
+                    val prepared = prepareImportedModelArtifacts(sourceFile, workspaceDir)
+                    val origInfo = prepared.origInfo
 
                     Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
                         "colors=${origInfo.detectedColors.size}, extruders=${origInfo.detectedExtruderCount}, " +
@@ -994,32 +974,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     )
 
-                    _sourceConfig.value = if (origInfo.isBambu) {
-                        java.util.zip.ZipFile(sourceFile).use { profileEmbedder.parseSourceConfig(it) }
-                    } else null
-
-                    val processed = BambuSanitizer.process(sourceFile, workspaceDir, isBambu = origInfo.isBambu)
-                    val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
-                    _threeMfInfo.value = mergeThreeMfInfo(processedInfo, origInfo)
-                    _fileThreeMfInfo = _threeMfInfo.value
-
-                    sourceModelFile = processed
-                    sourceModelInfo = processedInfo
-                    if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
-                    toolRemapSlots = null
-                    semmColorPermutation = null
-                    val mergedInfo = _threeMfInfo.value!!
-                    val sanitized = embedProfile(processed, mergedInfo, workspaceDir)
-
-                    if (origInfo.isMultiPlate && origInfo.plates.size > 1) {
+                    if (prepared.requiresPlateSelection) {
                         Log.i("SlicerVM", "Multi-plate: ${origInfo.plates.size} plates, showing selector")
-                        currentModelFile = sanitized
+                        currentModelFile = prepared.embeddedFile
                         _showPlateSelector.value = true
                         return@launch
                     }
                     Log.i("SlicerVM", "Single-plate, loading directly")
 
-                    sanitized
+                    prepared.embeddedFile
                 } else {
                     _threeMfInfo.value = null
                     recoveryOrigInfo = null
@@ -1588,6 +1551,46 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         saveSlicingOverrides(slicingOverrides.value.copy(primeTower = newOverride))
         invalidatePrepareMeshCache()
         _sliceStale.value = true
+    }
+
+    /**
+     * Runs the shared 3MF preparation path used by all import entry points:
+     * parse original metadata, capture file-level config, sanitize/defer restructure,
+     * merge stage metadata, then embed the active Snapmaker profile.
+     */
+    private fun prepareImportedModelArtifacts(sourceFile: File, workspaceDir: File): PreparedModelArtifacts {
+        val origInfo = ThreeMfParser.parse(sourceFile)
+        recoveryOrigInfo = origInfo
+
+        val sourceConfig = if (origInfo.isBambu) {
+            ZipFile(sourceFile).use { profileEmbedder.parseSourceConfig(it) }
+        } else {
+            null
+        }
+        _sourceConfig.value = sourceConfig
+
+        val processed = BambuSanitizer.process(sourceFile, workspaceDir, isBambu = origInfo.isBambu)
+        val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
+        val mergedInfo = mergeThreeMfInfo(processedInfo, origInfo)
+
+        _threeMfInfo.value = mergedInfo
+        _fileThreeMfInfo = mergedInfo
+        sourceModelFile = processed
+        sourceModelInfo = processedInfo
+        if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
+        toolRemapSlots = null
+        semmColorPermutation = null
+
+        val embedded = embedProfile(processed, mergedInfo, workspaceDir)
+        return PreparedModelArtifacts(
+            rawFile = sourceFile,
+            origInfo = origInfo,
+            sourceConfig = sourceConfig,
+            processedFile = processed,
+            processedInfo = processedInfo,
+            mergedInfo = mergedInfo,
+            embeddedFile = embedded
+        )
     }
 
     /**
