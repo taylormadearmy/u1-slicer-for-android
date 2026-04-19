@@ -1,5 +1,6 @@
 package com.u1.slicer
 
+import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.zip.ZipFile
 
 @RunWith(AndroidJUnit4::class)
 class PreparePreviewViewModelTest {
@@ -292,12 +294,113 @@ class PreparePreviewViewModelTest {
         }
     }
 
+    @Test
+    fun dragonScale_importViaUri_matchesDirectFilePipelineArtifacts() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val fileViewModel = SlicerViewModel(application)
+        val uriViewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Dragon Scale infinity.3mf")
+
+        try {
+            fileViewModel.loadModelFromFile(modelFile)
+
+            waitUntil("direct-file import reaches prepared multi-plate state", timeoutMs = 90_000L) {
+                fileViewModel.showPlateSelector.value &&
+                    fileViewModel.threeMfInfo.value != null &&
+                    fileViewModel.currentModelPath != null
+            }
+
+            val fileInfo = fileViewModel.threeMfInfo.value!!
+            val fileSourceConfig = fileViewModel.sourceConfig.value
+            val fileEntryNames = zipEntryNames(File(fileViewModel.currentModelPath!!))
+            val fileProjectSettingsCount = zipEntryCount(
+                File(fileViewModel.currentModelPath!!),
+                "Metadata/project_settings.config"
+            )
+            val fileShowPlateSelector = fileViewModel.showPlateSelector.value
+
+            fileViewModel.clearModel()
+            uriViewModel.loadModel(Uri.fromFile(modelFile))
+
+            waitUntil("uri import reaches prepared multi-plate state", timeoutMs = 90_000L) {
+                uriViewModel.showPlateSelector.value &&
+                    uriViewModel.threeMfInfo.value != null &&
+                    uriViewModel.currentModelPath != null
+            }
+
+            val uriInfo = uriViewModel.threeMfInfo.value!!
+            val uriSourceConfig = uriViewModel.sourceConfig.value
+            val uriEntryNames = zipEntryNames(File(uriViewModel.currentModelPath!!))
+            val uriProjectSettingsCount = zipEntryCount(
+                File(uriViewModel.currentModelPath!!),
+                "Metadata/project_settings.config"
+            )
+            val uriShowPlateSelector = uriViewModel.showPlateSelector.value
+
+            assertTrue("Dragon Scale should be Bambu in direct-file path", fileInfo.isBambu)
+            assertTrue("Dragon Scale should be Bambu in uri path", uriInfo.isBambu)
+            assertTrue("Dragon Scale should show plate selector for direct-file path", fileShowPlateSelector)
+            assertTrue("Dragon Scale should show plate selector for uri path", uriShowPlateSelector)
+
+            assertEquals("isMultiPlate must match across import paths", fileInfo.isMultiPlate, uriInfo.isMultiPlate)
+            assertEquals(
+                "detectedExtruderCount must match across import paths",
+                fileInfo.detectedExtruderCount,
+                uriInfo.detectedExtruderCount
+            )
+            assertEquals("hasPaintData must match across import paths", fileInfo.hasPaintData, uriInfo.hasPaintData)
+            assertEquals(
+                "hasLayerToolChanges must match across import paths",
+                fileInfo.hasLayerToolChanges,
+                uriInfo.hasLayerToolChanges
+            )
+            assertEquals("detectedColors must match across import paths", fileInfo.detectedColors, uriInfo.detectedColors)
+            assertEquals(
+                "plate ids must match across import paths",
+                fileInfo.plates.map { it.plateId },
+                uriInfo.plates.map { it.plateId }
+            )
+            assertEquals(
+                "sourceConfig must match across import paths",
+                fileSourceConfig,
+                uriSourceConfig
+            )
+            assertEquals(
+                "embedded ZIP entry set must match across import paths",
+                fileEntryNames,
+                uriEntryNames
+            )
+            assertEquals(
+                "embedded direct-file import must contain exactly one project_settings.config",
+                1,
+                fileProjectSettingsCount
+            )
+            assertEquals(
+                "embedded uri import must contain exactly one project_settings.config",
+                1,
+                uriProjectSettingsCount
+            )
+        } finally {
+            fileViewModel.clearModel()
+            uriViewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
     private fun copyAssetToCache(assetName: String): File {
         val outFile = File(targetContext.cacheDir, assetName.replace("/", "_"))
         assetContext.assets.open(assetName).use { input ->
             outFile.outputStream().use { output -> input.copyTo(output) }
         }
         return outFile
+    }
+
+    private fun zipEntryNames(file: File): Set<String> = ZipFile(file).use { zip ->
+        zip.entries().asSequence().map { it.name }.toSet()
+    }
+
+    private fun zipEntryCount(file: File, entryName: String): Int = ZipFile(file).use { zip ->
+        zip.entries().asSequence().count { it.name == entryName }
     }
 
     /**

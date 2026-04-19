@@ -52,7 +52,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 814 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 180 instrumented tests (uses Orchestrator)
+./gradlew connectedDebugAndroidTest                # 181 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -119,7 +119,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 
-### Instrumented tests (`app/src/androidTest/`) - 179 tests across 18 classes
+### Instrumented tests (`app/src/androidTest/`) - 180 tests across 18 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -134,7 +134,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/NativePreparePreviewTest.kt` (16) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation, H2C benchy full/decimated 7-index preservation + green recolor + interleaving guard, layer-tool Z-band recolor, triangle count cap, B51 old.3mf bounding box + Korok orientation, B72 multi-instance post-slice bounds, B78 Shashibo plate 5 file-scale+centre preservation on fresh load + post-slice dirty-path reset
 - `viewer/ThreeMfMeshParserTest.kt` (4) - 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
-- `PreparePreviewViewModelTest.kt` (6) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix
+- `PreparePreviewViewModelTest.kt` (7) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix, entry-point equivalence for `loadModel(uri)` vs `loadModelFromFile(file)`
 - `ui/MakerWorldBrowserUtilsInstrumentedTest.kt` (6) — resolveDownloadFilename with URLUtil, RFC 5987, path traversal sanitization
 
 ### Red-green TDD for bug fixes
@@ -143,7 +143,7 @@ When fixing visual or pipeline bugs (preview colours, G-code output, colour mapp
 
 1. **Red**: Write a failing instrumented test that reproduces the bug programmatically. The test must fail on the current code and assert the correct behaviour.
 2. **Green**: Fix the code until the test passes.
-3. **Verify**: Run the test on-device (`connectedDebugAndroidTest --tests "..."`) — do not rely on screenshots or manual inspection.
+3. **Verify**: Run the test on-device (`connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.TestClass#testMethod"`) — do not rely on screenshots or manual inspection.
 
 **Why**: Screenshots at default zoom are unreliable. Manual visual checks can't be repeated. Programmatic tests catch regressions automatically.
 
