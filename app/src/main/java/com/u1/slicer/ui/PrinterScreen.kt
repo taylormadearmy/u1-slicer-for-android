@@ -121,6 +121,11 @@ fun PrinterScreen(
         }
     }
 
+    DisposableEffect(Unit) {
+        viewModel.startCameraKeepalive()
+        onDispose { viewModel.stopCameraKeepalive() }
+    }
+
     // Sync preview dialog
     if (syncState is PrinterViewModel.SyncState.Preview) {
         FilamentSyncDialog(
