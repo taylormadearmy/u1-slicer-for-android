@@ -123,11 +123,17 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         // Resolve webcam URLs for the already-saved printer URL (if any)
         viewModelScope.launch(Dispatchers.IO) { resolveWebcam() }
         // Auto-clear the "Print started!" banner once the printer confirms printing.
+        // Also sync LED state on first connection (pollLedState only runs via testConnection otherwise).
         viewModelScope.launch {
+            var wasConnected = false
             status.collect { s ->
                 if (_sendingState.value is SendingState.PrintStarted && s.isPrinting) {
                     _sendingState.value = SendingState.Idle
                 }
+                if (s.isConnected && !wasConnected) {
+                    launch(Dispatchers.IO) { pollLedState() }
+                }
+                wasConnected = s.isConnected
             }
         }
     }
