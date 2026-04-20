@@ -11,11 +11,18 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Tests**: `sButtons_plate1_withUserLikePresetsWhiteE2PinkE4_showsFourDistinctColors` in `PreparePreviewViewModelTest`.
 - **Source**: User report 2026-04-20
 
-### B79: STL single-colour extruder selection ignored — always slices on E1 (GitHub #84)
-- **Symptom**: Selecting a non-E1 extruder for a single-colour STL file is ignored; the print always uses E1. Removing filament from E1 causes a filament run-out error rather than switching to the chosen tool.
-- **3MF files work correctly** — issue is STL-only
-- **Root cause hypothesis**: STL files have no embedded profile; the extruder assignment path that reads the user's `selectedExtruder` may not be applied when slicing without an embedded config
-- **Source**: Reddit u/NismoStroke0027 (2026-04-20); reproduced with 3 different STL files
+### B79: STL UI settings ignored — extruder selection, support type, and likely others (GitHub #84)
+- **Symptom**: Multiple UI settings are silently ignored when slicing STL files:
+  - Selecting a non-E1 extruder always slices on E1 (filament run-out if E1 is empty)
+  - Setting support type to "tree" uses regular supports instead
+  - Likely other settings (wall count, infill density, brim type, etc.) affected too
+- **3MF files work correctly** — STL-only
+- **Root cause**: The slicer has two paths for settings reaching the native engine (see CLAUDE.md "Profile Key Pipeline"):
+  - **Path 1** `applyConfigToPrusa()`: hardcoded fallbacks, always applied
+  - **Path 2** `profile_keys[]` whitelist: only applied when `is_snapmaker_profile = true` (i.e. an embedded Snapmaker profile is present — never true for STL)
+  - UI overrides from `buildProfileOverrides()` go through Path 2. Any setting not also covered by a hardcoded fallback in Path 1 is silently dropped for STL files.
+- **Recommended approach**: Audit `buildProfileOverrides()` vs `applyConfigToPrusa()` — identify all gaps where a UI-controllable setting has no Path 1 fallback, then add the missing fallbacks (and `profile_keys[]` entries where needed). Fix the full class, not individual symptoms.
+- **Source**: Reddit u/NismoStroke0027 (extruder, 2026-04-20); user report (tree supports, 2026-04-20)
 
 ### B78: Shashibo plate 5 Prepare preview oversized + off-centre — FIXED v1.5.70
 - **Symptom**: `Shashibo-h2s-textured.3mf` plate 5 showed a Prepare preview with the pyramid filling ~50–60 % of the bed, centred — while v1.5.64 and earlier showed the same model at ~28 % size centred around the plate origin. Slice output was always correct.
