@@ -4,7 +4,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B86: S-Buttons Prepare preview shows 3 colours instead of 4 — FIXED v1.5.77 (GitHub #85)
+### B86: S-Buttons Prepare preview shows 3 colours instead of 4 — FIXED v1.6.1 (GitHub #85)
 - **Symptom**: `Button-for-S-trousers.3mf` Prepare preview intermittently showed yellow, white, blue but not pink (E4). G-code preview after slicing showed all 4 correctly.
 - **Root cause**: DataStore race in `SlicerViewModel.loadNativeModel`. `extruderPresets.value` read the StateFlow's initial placeholder (`defaultExtruderPresets()` = red/green/blue/white) before DataStore had emitted the actual stored user presets. `findClosestExtruder` then mapped S-Buttons detected colours against the defaults, producing a non-identity `colorMapping`. Later `refreshMappedPreviewColors` updated `activeExtruderColors` to the correct user colours but never updated `colorMapping`, so the Compose palette `colorMapping.map { slot → extruderColors[slot] }` incorrectly assigned E4 objects (slot 3) to `extruderColors[colorMapping[3]]` which pointed at white (E2's slot).
 - **Fix**: `loadNativeModel` now calls `settingsRepo.extruderPresets.first()` instead of `extruderPresets.value`, suspending until DataStore emits the real stored presets.
