@@ -9,6 +9,8 @@ import com.u1.slicer.data.defaultExtruderPresets
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -56,6 +58,23 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     private val _heaterError = MutableStateFlow<String?>(null)
     val heaterError: StateFlow<String?> = _heaterError.asStateFlow()
+
+    private var cameraKeepaliveJob: Job? = null
+
+    fun startCameraKeepalive() {
+        if (cameraKeepaliveJob?.isActive == true) return
+        cameraKeepaliveJob = viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                printerRepo.wakeCamera()
+                delay(2000)
+            }
+        }
+    }
+
+    fun stopCameraKeepalive() {
+        cameraKeepaliveJob?.cancel()
+        cameraKeepaliveJob = null
+    }
 
     fun clearHeaterError() { _heaterError.value = null }
 
@@ -280,6 +299,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     override fun onCleared() {
         super.onCleared()
+        stopCameraKeepalive()
         printerRepo.stopPolling()
     }
 }

@@ -126,6 +126,8 @@ class PrinterRepository(
 
     suspend fun queryWebcamSnapshotCandidates(): List<String> = client.queryWebcamSnapshotCandidates()
 
+    suspend fun wakeCamera() = client.wakeCamera()
+
     suspend fun queryFilamentSlots(): List<FilamentSlot>? = client.queryFilamentSlots()
 
     suspend fun pausePrint(): Boolean = client.pausePrint()
