@@ -763,6 +763,7 @@ fun PrepareScreen(
     val context = LocalContext.current
     val modelInfo by viewModel.modelInfo.collectAsState()
     val showPlateSelector by viewModel.showPlateSelector.collectAsState()
+    val multiPlatePlates by viewModel.multiPlatePlates.collectAsState()
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
@@ -782,9 +783,9 @@ fun PrepareScreen(
     var showInspectModelSheet by remember { mutableStateOf(false) }
 
     // Plate selector dialog
-    if (showPlateSelector && threeMfInfo != null) {
+    if (showPlateSelector && multiPlatePlates.isNotEmpty()) {
         com.u1.slicer.ui.PlateSelectDialog(
-            plates = threeMfInfo!!.plates,
+            plates = multiPlatePlates,
             onSelect = { viewModel.selectPlate(it) },
             onDismiss = { viewModel.dismissPlateSelector() },
             info = threeMfInfo
@@ -984,6 +985,20 @@ fun PrepareScreen(
                                     onDismiss = { showInfoDialog = false }
                                 )
                             }
+                        }
+                        // Change plate chip — visible when a multi-plate file is loaded
+                        if (multiPlatePlates.isNotEmpty()) {
+                            AssistChip(
+                                onClick = { viewModel.reopenPlateSelector() },
+                                label = { Text("Change plate") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Layers,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            )
                         }
                         // Inline extruder/color assignment + prime tower toggle
                         PrintSetupSection(
