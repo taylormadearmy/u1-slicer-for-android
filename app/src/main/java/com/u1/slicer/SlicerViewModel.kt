@@ -14,6 +14,7 @@ import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
+import com.u1.slicer.bambu.ThreeMfPlate
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.data.ModelInfo
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
@@ -194,6 +196,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // always see the correct file-level metadata (e.g. hasPaintData=true for files where only
     // some plates have paint data).
     private var _fileThreeMfInfo: ThreeMfInfo? = null
+
+    private val _multiPlatePlates = MutableStateFlow<List<ThreeMfPlate>>(emptyList())
+    val multiPlatePlates: StateFlow<List<ThreeMfPlate>> = _multiPlatePlates.asStateFlow()
 
     private val _showPlateSelector = MutableStateFlow(false)
     val showPlateSelector: StateFlow<Boolean> = _showPlateSelector.asStateFlow()
@@ -1098,6 +1103,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _multiPlateSourceFile = null
         _threeMfInfo.value = null
         _fileThreeMfInfo = null
+        _multiPlatePlates.value = emptyList()
+    }
+
+    fun reopenPlateSelector() {
+        if (_multiPlatePlates.value.isNotEmpty()) _showPlateSelector.value = true
     }
 
     private suspend fun loadNativeModel(file: File) {
@@ -1579,6 +1589,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         _threeMfInfo.value = mergedInfo
         _fileThreeMfInfo = mergedInfo
+        _multiPlatePlates.value = if (origInfo.isMultiPlate) mergedInfo.plates else emptyList()
         sourceModelFile = processed
         sourceModelInfo = processedInfo
         if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
@@ -2949,6 +2960,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _selectedExtruder.value = 0
         _threeMfInfo.value = null
         _fileThreeMfInfo = null
+        _multiPlatePlates.value = emptyList()
         _multiPlateSourceFile = null
         _showPlateSelector.value = false
         _showMultiColorDialog.value = false
@@ -3046,6 +3058,66 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (_: Throwable) {
                 // Silent fail — user may have cancelled the save dialog
+            }
+        }
+    }
+
+    fun getExportableModelArtifacts(): ExportableModelArtifacts? =
+        ModelExportArtifacts.current(
+            sourceDisplayName = currentModelName,
+            selectedPlateId = recoveryPlateId.takeIf { it >= 0 },
+            sanitizedFile = sourceModelFile,
+            embeddedFile = currentModelFile,
+            info = _threeMfInfo.value
+        )
+
+    fun buildModelDebugSummary(): String? {
+        val artifacts = getExportableModelArtifacts() ?: return null
+        return ModelExportArtifacts.buildDebugSummary(artifacts, currentModelFile)
+    }
+
+    fun suggestedArtifactFilename(kind: ExportArtifactKind): String? {
+        val artifacts = getExportableModelArtifacts() ?: return null
+        return ModelExportArtifacts.suggestedFilename(artifacts.sourceDisplayName, kind)
+    }
+
+    fun exportArtifactTo(
+        kind: ExportArtifactKind,
+        targetUri: Uri,
+        onResult: (Result<Unit>) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val context = getApplication<Application>()
+                val artifacts = getExportableModelArtifacts()
+                    ?: error("No exportable model artifacts are available")
+                val sourceFile = artifacts.fileFor(kind)
+                    ?: error("Requested export artifact is unavailable")
+                context.contentResolver.openOutputStream(targetUri, "w")?.use { out ->
+                    sourceFile.inputStream().use { input -> input.copyTo(out) }
+                } ?: error("Could not open export destination")
+                diagnostics.recordEvent(
+                    "model_artifact_exported",
+                    mapOf(
+                        "kind" to kind.name,
+                        "sourceDisplayName" to artifacts.sourceDisplayName,
+                        "selectedPlateId" to artifacts.selectedPlateId,
+                        "artifactPath" to sourceFile.absolutePath,
+                        "destinationUri" to targetUri.toString()
+                    )
+                )
+            }.onFailure { error ->
+                diagnostics.recordEvent(
+                    "model_artifact_export_failed",
+                    mapOf(
+                        "kind" to kind.name,
+                        "destinationUri" to targetUri.toString(),
+                        "error" to (error.message ?: error.javaClass.simpleName)
+                    )
+                )
+            }
+            withContext(Dispatchers.Main) {
+                onResult(result)
             }
         }
     }
