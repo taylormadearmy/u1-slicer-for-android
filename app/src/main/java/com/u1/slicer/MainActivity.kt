@@ -40,6 +40,9 @@ import kotlin.math.roundToInt
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.core.content.pm.PackageInfoCompat
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.SliceResult
@@ -48,6 +51,7 @@ import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
 import com.u1.slicer.printer.PrinterViewModel
+import com.u1.slicer.ui.InspectModelSheet
 import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
@@ -63,6 +67,7 @@ class MainActivity : ComponentActivity() {
     private var launchApkUpdateTime: Long = 0L
     private var pendingNavigateTo: String? = null
     private var navigateTabCallback: ((String) -> Unit)? = null
+    private var pendingArtifactExportKind: ExportArtifactKind? = null
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -82,6 +87,52 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         uri?.let { viewModel.saveGcodeTo(it) }
+    }
+
+    private val sanitizedModelExportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.ms-3mfdocument")
+    ) { uri ->
+        val kind = pendingArtifactExportKind
+        pendingArtifactExportKind = null
+        if (uri != null && kind == ExportArtifactKind.Sanitized3mf) {
+            exportModelArtifact(kind, uri)
+        }
+    }
+
+    private val embeddedModelExportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.ms-3mfdocument")
+    ) { uri ->
+        val kind = pendingArtifactExportKind
+        pendingArtifactExportKind = null
+        if (uri != null && kind == ExportArtifactKind.SanitizedEmbedded3mf) {
+            exportModelArtifact(kind, uri)
+        }
+    }
+
+    private fun exportModelArtifact(kind: ExportArtifactKind, uri: Uri) {
+        viewModel.exportArtifactTo(kind, uri) { result ->
+            val message = result.fold(
+                onSuccess = {
+                    when (kind) {
+                        ExportArtifactKind.Sanitized3mf -> "Sanitized 3MF exported"
+                        ExportArtifactKind.SanitizedEmbedded3mf -> "Sanitized + embedded 3MF exported"
+                    }
+                },
+                onFailure = { error ->
+                    "Export failed: ${error.message ?: error.javaClass.simpleName}"
+                }
+            )
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun copyModelDebugSummary() {
+        val summary = viewModel.buildModelDebugSummary() ?: return
+        val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+        clipboard.setPrimaryClip(
+            android.content.ClipData.newPlainText("U1 Slicer Model Debug Summary", summary)
+        )
+        android.widget.Toast.makeText(this, "Debug summary copied", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -491,6 +542,19 @@ class MainActivity : ComponentActivity() {
                             onNavigatePrinter = { navigateTab(Routes.PRINTER) },
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
+                            onExportSanitized3mf = {
+                                viewModel.suggestedArtifactFilename(ExportArtifactKind.Sanitized3mf)?.let { filename ->
+                                    pendingArtifactExportKind = ExportArtifactKind.Sanitized3mf
+                                    sanitizedModelExportLauncher.launch(filename)
+                                }
+                            },
+                            onExportSanitizedEmbedded3mf = {
+                                viewModel.suggestedArtifactFilename(ExportArtifactKind.SanitizedEmbedded3mf)?.let { filename ->
+                                    pendingArtifactExportKind = ExportArtifactKind.SanitizedEmbedded3mf
+                                    embeddedModelExportLauncher.launch(filename)
+                                }
+                            },
+                            onCopyModelDebugSummary = { copyModelDebugSummary() },
                             sharedPreviewCameraState = sharedPreviewCameraState,
                             onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it },
                             onResetPreviewCamera = { sharedPreviewCameraState = null },
@@ -685,6 +749,9 @@ fun PrepareScreen(
     onNavigatePrinter: () -> Unit,
     onNavigateJobs: () -> Unit,
     onNavigateModelViewer: () -> Unit,
+    onExportSanitized3mf: () -> Unit,
+    onExportSanitizedEmbedded3mf: () -> Unit,
+    onCopyModelDebugSummary: () -> Unit,
     sharedPreviewCameraState: com.u1.slicer.viewer.CameraViewState?,
     onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit,
     onResetPreviewCamera: (() -> Unit)? = null,
@@ -710,7 +777,9 @@ fun PrepareScreen(
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
+    val exportArtifacts = viewModel.getExportableModelArtifacts()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
+    var showInspectModelSheet by remember { mutableStateOf(false) }
 
     // Plate selector dialog
     if (showPlateSelector && threeMfInfo != null) {
@@ -733,6 +802,24 @@ fun PrepareScreen(
                 viewModel.applyMultiColorAssignments(mapping, extruderPresets, filaments)
             },
             onDismiss = { viewModel.dismissMultiColorDialog() }
+        )
+    }
+
+    if (showInspectModelSheet && exportArtifacts != null) {
+        InspectModelSheet(
+            artifacts = exportArtifacts,
+            onDismiss = { showInspectModelSheet = false },
+            onExportSanitized = {
+                showInspectModelSheet = false
+                onExportSanitized3mf()
+            },
+            onExportEmbedded = {
+                showInspectModelSheet = false
+                onExportSanitizedEmbedded3mf()
+            },
+            onCopyDebugSummary = {
+                onCopyModelDebugSummary()
+            }
         )
     }
 
@@ -761,6 +848,11 @@ fun PrepareScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
+                    if (exportArtifacts != null) {
+                        IconButton(onClick = { showInspectModelSheet = true }) {
+                            Icon(Icons.Default.Info, "Inspect model")
+                        }
+                    }
                     if (state !is SlicerViewModel.SlicerState.Idle) {
                         IconButton(onClick = { viewModel.clearModel() }) {
                             Icon(Icons.Default.Clear, "Clear model")
@@ -3007,35 +3099,158 @@ fun ScaleSection(
                             )
                         }
                         Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                        val focusManager = LocalFocusManager.current
                         if (uniformMode) {
-                            val pct = "%.0f%%".format(uniformValue * 100)
-                            Text("Scale: $pct", style = MaterialTheme.typography.labelMedium)
+                            var uniformText by remember(uniformValue) {
+                                mutableStateOf("%.0f".format(uniformValue * 100))
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Scale", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = uniformText,
+                                    onValueChange = { uniformText = it },
+                                    suffix = { Text("%") },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = uniformText.toFloatOrNull()
+                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: uniformValue
+                                        uniformValue = v
+                                        uniformText = "%.0f".format(v * 100)
+                                        onScaleChange(SlicerViewModel.ModelScale(v, v, v))
+                                        focusManager.clearFocus()
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier.width(96.dp)
+                                )
+                            }
                             Slider(
                                 value = uniformValue,
                                 onValueChange = { v ->
                                     uniformValue = v
+                                    uniformText = "%.0f".format(v * 100)
                                     onScaleChange(SlicerViewModel.ModelScale(v, v, v))
                                 },
-                                valueRange = 0.1f..3f,
-                                steps = 28
+                                valueRange = 0.1f..3f
                             )
                         } else {
-                            listOf("X" to scale.x, "Y" to scale.y, "Z" to scale.z).forEach { (axis, v) ->
-                                Text("$axis: ${"%.0f%%".format(v * 100)}", style = MaterialTheme.typography.labelMedium)
-                                Slider(
-                                    value = v,
-                                    onValueChange = { nv ->
-                                        val ns = when (axis) {
-                                            "X" -> scale.copy(x = nv)
-                                            "Y" -> scale.copy(y = nv)
-                                            else -> scale.copy(z = nv)
-                                        }
-                                        onScaleChange(ns)
-                                    },
-                                    valueRange = 0.1f..3f,
-                                    steps = 28
+                            var xText by remember(scale.x) {
+                                mutableStateOf("%.0f".format(scale.x * 100))
+                            }
+                            var yText by remember(scale.y) {
+                                mutableStateOf("%.0f".format(scale.y * 100))
+                            }
+                            var zText by remember(scale.z) {
+                                mutableStateOf("%.0f".format(scale.z * 100))
+                            }
+                            // X
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("X", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = xText,
+                                    onValueChange = { xText = it },
+                                    suffix = { Text("%") },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = xText.toFloatOrNull()
+                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.x
+                                        xText = "%.0f".format(v * 100)
+                                        onScaleChange(scale.copy(x = v))
+                                        focusManager.clearFocus()
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier.width(96.dp)
                                 )
                             }
+                            Slider(
+                                value = scale.x,
+                                onValueChange = { nv ->
+                                    xText = "%.0f".format(nv * 100)
+                                    onScaleChange(scale.copy(x = nv))
+                                },
+                                valueRange = 0.1f..3f
+                            )
+                            // Y
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Y", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = yText,
+                                    onValueChange = { yText = it },
+                                    suffix = { Text("%") },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = yText.toFloatOrNull()
+                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.y
+                                        yText = "%.0f".format(v * 100)
+                                        onScaleChange(scale.copy(y = v))
+                                        focusManager.clearFocus()
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier.width(96.dp)
+                                )
+                            }
+                            Slider(
+                                value = scale.y,
+                                onValueChange = { nv ->
+                                    yText = "%.0f".format(nv * 100)
+                                    onScaleChange(scale.copy(y = nv))
+                                },
+                                valueRange = 0.1f..3f
+                            )
+                            // Z
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Z", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = zText,
+                                    onValueChange = { zText = it },
+                                    suffix = { Text("%") },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = zText.toFloatOrNull()
+                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.z
+                                        zText = "%.0f".format(v * 100)
+                                        onScaleChange(scale.copy(z = v))
+                                        focusManager.clearFocus()
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier.width(96.dp)
+                                )
+                            }
+                            Slider(
+                                value = scale.z,
+                                onValueChange = { nv ->
+                                    zText = "%.0f".format(nv * 100)
+                                    onScaleChange(scale.copy(z = nv))
+                                },
+                                valueRange = 0.1f..3f
+                            )
                         }
                         if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
                             TextButton(
