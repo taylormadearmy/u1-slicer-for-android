@@ -3,11 +3,13 @@ package com.u1.slicer
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.u1.slicer.data.ExtruderPreset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -148,6 +150,204 @@ class PreparePreviewViewModelTest {
         } finally {
             viewModel.clearModel()
             modelFile.delete()
+        }
+    }
+
+    @Test
+    fun sButtons_plate1_selectPlate_keepsFourVisiblePrepareColours() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Button-for-S-trousers.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("S-Buttons plate selector visible") {
+                viewModel.showPlateSelector.value
+            }
+
+            viewModel.selectPlate(1)
+
+            waitUntil("S-Buttons plate 1 loaded with color mapping", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+
+            val info = viewModel.threeMfInfo.value
+            val mapping = viewModel.colorMapping.value
+
+            assertNotNull("Plate 1 info should be available after selection", info)
+            assertNotNull("Plate 1 color mapping should be available after selection", mapping)
+
+            info!!
+            mapping!!
+
+            assertTrue(
+                "S-Buttons plate 1 should detect at least 4 colours in Prepare state, got ${info.detectedColors}",
+                info.detectedColors.size >= 4
+            )
+            assertTrue(
+                "S-Buttons plate 1 colorMapping should map to at least 4 distinct extruder slots, got $mapping",
+                mapping.distinct().size >= 4
+            )
+            assertTrue(
+                "S-Buttons plate 1 should expose at least 4 non-blank active extruder colours, got ${viewModel.activeExtruderColors.value}",
+                viewModel.activeExtruderColors.value.count { it.isNotBlank() } >= 4
+            )
+
+            // Verify the native prepare mesh has 4 distinct extruder indices and recoloring
+            // with the real mapping produces 4 distinct RGBA clusters (no colour clamping).
+            val preview = NativeLibrary().getPreparePreviewMesh()
+            assertNotNull("Native prepare preview mesh should be available after S-Buttons plate 1 load", preview)
+            preview!!
+            val mesh = preview.toMeshData()
+            assertNotNull("MeshData conversion should succeed", mesh)
+            mesh!!
+
+            val distinctNativeIndices = mesh.extruderIndices!!.map { it.toInt() and 0xFF }.toSet()
+            assertTrue(
+                "Native mesh should have at least 4 distinct extruder indices for S-Buttons, got $distinctNativeIndices",
+                distinctNativeIndices.size >= 4
+            )
+
+            val colors = viewModel.activeExtruderColors.value
+            val palette = mapping.map { slot ->
+                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
+            }
+            mesh.recolor(palette)
+
+            // Count distinct RGBA values in the vertex buffer — if pink (slot 3) is clamped
+            // to blue (slot 2), we'd see only 3 distinct colours even though the mesh has 4 indices.
+            val distinctRgba = mutableSetOf<Int>()
+            val buf = mesh.vertices
+            val triCount = mesh.vertexCount / 3
+            for (tri in 0 until triCount) {
+                val base = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX
+                val r = (buf.get(base + 6) * 255).toInt()
+                val g = (buf.get(base + 7) * 255).toInt()
+                val b = (buf.get(base + 8) * 255).toInt()
+                distinctRgba.add((r shl 16) or (g shl 8) or b)
+                if (distinctRgba.size >= 4) break
+            }
+            assertTrue(
+                "S-Buttons plate 1 recolored mesh should have at least 4 distinct RGBA values (not 3 due to clamping), got ${distinctRgba.size}",
+                distinctRgba.size >= 4
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
+     * B86: S-Buttons Prepare preview shows 3 colours instead of 4 (pink/E4 appears white).
+     *
+     * Root cause hypothesis: when the user has E2=white AND E4=pink, the auto colour-mapping
+     * via findClosestExtruder (which runs at plate-load time using the current extruderPresets)
+     * can produce a non-identity colorMapping where colorMapping[3]=1 (the 4th model colour
+     * maps to slot 1 = E2 = white).  The mesh's extruder-index-3 triangles then get
+     * palette[3]=activeExtruderColors[1]=white instead of activeExtruderColors[3]=pink.
+     *
+     * This test injects user-like presets before creating the ViewModel so DataStore has them
+     * when loadNativeModel runs findClosestExtruder.  It asserts that activeExtruderColors
+     * contains 4 DISTINCT colours (not just 4 non-blank entries), and that the recoloured
+     * mesh vertex buffer has 4 distinct RGBA clusters.
+     *
+     * Red: should FAIL because E4 gets DEFAULT_COLORS[3]="#FFFFFF" (white = same as E2),
+     * showing only 3 visually distinct colours.
+     */
+    @Test
+    fun sButtons_plate1_withUserLikePresetsWhiteE2PinkE4_showsFourDistinctColors() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+
+        // Save user-like presets: E2=white (matches what user reported), E4=pink.
+        // If E4 falls back to DEFAULT_COLORS[3]="#FFFFFF" it will equal E2 and only
+        // 3 distinct preview colours will be visible — that is the B86 bug.
+        val userPresets = listOf(
+            ExtruderPreset(index = 0, color = "#FFD700"),  // E1: yellow
+            ExtruderPreset(index = 1, color = "#FFFFFF"),  // E2: white
+            ExtruderPreset(index = 2, color = "#0000FF"),  // E3: blue
+            ExtruderPreset(index = 3, color = "#FF69B4"),  // E4: pink
+        )
+        runBlocking {
+            application.container.settingsRepository.saveExtruderPresets(userPresets)
+        }
+
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Button-for-S-trousers.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("S-Buttons plate selector visible") {
+                viewModel.showPlateSelector.value
+            }
+
+            viewModel.selectPlate(1)
+
+            waitUntil("S-Buttons plate 1 loaded with color mapping", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+
+            // Wait for extruderPresets to reflect the user presets we saved, and for
+            // refreshMappedPreviewColors to propagate them into activeExtruderColors.
+            waitUntil("extruderPresets should have E4=pink from DataStore", timeoutMs = 5_000L) {
+                viewModel.extruderPresets.value.firstOrNull { it.index == 3 }?.color == "#FF69B4"
+            }
+            Thread.sleep(300) // allow refreshMappedPreviewColors coroutine to complete
+
+            val colors = viewModel.activeExtruderColors.value
+            val mapping = viewModel.colorMapping.value!!
+
+            // B86: with E2=white and E4=pink, all 4 active colours must be DISTINCT.
+            // If E4 was incorrectly set to DEFAULT_COLORS[3]="#FFFFFF" it would equal E2.
+            val nonBlankColors = colors.filter { it.isNotBlank() }
+            val distinctColors = nonBlankColors.distinct()
+            assertTrue(
+                "B86: S-Buttons with user presets [yellow,white,blue,pink] must have 4 distinct " +
+                    "active extruder colours, got colors=$colors mapping=$mapping",
+                distinctColors.size >= 4
+            )
+
+            // Also verify the palette produced for the Compose recolor has 4 distinct RGBA values
+            // when applied to the native mesh. This catches colorMapping-level remapping bugs where
+            // palette[3]=activeExtruderColors[mapping[3]]=white even though activeExtruderColors[3]=pink.
+            val preview = NativeLibrary().getPreparePreviewMesh()
+            assertNotNull("Native prepare preview mesh should be available", preview)
+            preview!!
+            val mesh = preview.toMeshData()!!
+
+            val palette = mapping.map { slot ->
+                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
+            }
+            mesh.recolor(palette)
+
+            val distinctRgba = mutableSetOf<Int>()
+            val buf = mesh.vertices
+            val triCount = mesh.vertexCount / 3
+            for (tri in 0 until triCount) {
+                val base = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX
+                val r = (buf.get(base + 6) * 255).toInt()
+                val g = (buf.get(base + 7) * 255).toInt()
+                val b = (buf.get(base + 8) * 255).toInt()
+                distinctRgba.add((r shl 16) or (g shl 8) or b)
+                if (distinctRgba.size >= 4) break
+            }
+            assertTrue(
+                "B86: recolored mesh must show 4 distinct RGBA values with [yellow,white,blue,pink] presets " +
+                    "(E4/pink must not collapse to E2/white). " +
+                    "mapping=$mapping colors=$colors distinctRgba=$distinctRgba",
+                distinctRgba.size >= 4
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+            runBlocking {
+                application.container.settingsRepository.saveExtruderPresets(
+                    com.u1.slicer.data.defaultExtruderPresets()
+                )
+            }
         }
     }
 

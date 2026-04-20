@@ -1154,7 +1154,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                     // Auto-apply closest-extruder mapping immediately — no dialog popup.
                     // The inline UI on the model page lets the user change assignments.
-                    val presets = extruderPresets.value
+                    // Use settingsRepo.extruderPresets.first() instead of extruderPresets.value to
+                    // guarantee we read the actual stored presets. extruderPresets.value may still
+                    // be defaultExtruderPresets() if DataStore hasn't emitted yet, causing
+                    // findClosestExtruder to build a wrong colorMapping. (B86)
+                    val presets = settingsRepo.extruderPresets.first()
                     val rawMapping = mfInfo.detectedColors.map { modelColor ->
                         com.u1.slicer.ui.findClosestExtruder(modelColor, presets)?.index ?: 0
                     }

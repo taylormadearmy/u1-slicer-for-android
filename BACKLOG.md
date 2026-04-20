@@ -4,6 +4,19 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B86: S-Buttons Prepare preview shows 3 colours instead of 4 — FIXED v1.5.77 (GitHub #85)
+- **Symptom**: `Button-for-S-trousers.3mf` Prepare preview intermittently showed yellow, white, blue but not pink (E4). G-code preview after slicing showed all 4 correctly.
+- **Root cause**: DataStore race in `SlicerViewModel.loadNativeModel`. `extruderPresets.value` read the StateFlow's initial placeholder (`defaultExtruderPresets()` = red/green/blue/white) before DataStore had emitted the actual stored user presets. `findClosestExtruder` then mapped S-Buttons detected colours against the defaults, producing a non-identity `colorMapping`. Later `refreshMappedPreviewColors` updated `activeExtruderColors` to the correct user colours but never updated `colorMapping`, so the Compose palette `colorMapping.map { slot → extruderColors[slot] }` incorrectly assigned E4 objects (slot 3) to `extruderColors[colorMapping[3]]` which pointed at white (E2's slot).
+- **Fix**: `loadNativeModel` now calls `settingsRepo.extruderPresets.first()` instead of `extruderPresets.value`, suspending until DataStore emits the real stored presets.
+- **Tests**: `sButtons_plate1_withUserLikePresetsWhiteE2PinkE4_showsFourDistinctColors` in `PreparePreviewViewModelTest`.
+- **Source**: User report 2026-04-20
+
+### B79: STL single-colour extruder selection ignored — always slices on E1 (GitHub #84)
+- **Symptom**: Selecting a non-E1 extruder for a single-colour STL file is ignored; the print always uses E1. Removing filament from E1 causes a filament run-out error rather than switching to the chosen tool.
+- **3MF files work correctly** — issue is STL-only
+- **Root cause hypothesis**: STL files have no embedded profile; the extruder assignment path that reads the user's `selectedExtruder` may not be applied when slicing without an embedded config
+- **Source**: Reddit u/NismoStroke0027 (2026-04-20); reproduced with 3 different STL files
+
 ### B78: Shashibo plate 5 Prepare preview oversized + off-centre — FIXED v1.5.70
 - **Symptom**: `Shashibo-h2s-textured.3mf` plate 5 showed a Prepare preview with the pyramid filling ~50–60 % of the bed, centred — while v1.5.64 and earlier showed the same model at ~28 % size centred around the plate origin. Slice output was always correct.
 - **Root cause**: The B73 fix (v1.5.65 commit bc2c76d) unconditionally called `setModelScale(1f, 1f, 1f)` + `setModelInstances(floatArrayOf(135f, 135f))` before every `getPreparePreviewMesh()`. `setModelScale` is destructive — it overwrites the instance's scaling factor — so it wiped the Shashibo plate's baked 0.6 build-transform scale even on fresh load where no scale reset was needed. `setModelInstances` also forced world.min to bed centre instead of preserving the natural load-time offset.
@@ -312,6 +325,21 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Short-term: add a safe triangle cap (~1M tris) with stride on the interleaved output
 - Long-term: QEM on original volume mesh with per-face colour preservation (centroid matching only recovers indices 0-3 currently)
 - Related to B48 interleaving fix; currently no decimation for MMU meshes
+
+### F72: Object skip UI on Printer page (GitHub #83)
+- During an active print, show a list of objects on the Printer page and let the user skip individual ones without aborting the job
+- Sends Moonraker `EXCLUDE_OBJECT NAME=<id>` via the existing `sendGcode` path
+- Object list sourced from `EXCLUDE_OBJECT_DEFINE` markers in the uploaded G-code
+- **Blocked on F71** — requires `exclude_object = true` in sliced G-code
+- U1 firmware v1.2.0 confirmed to support object skip (released early 2026); Moonraker `[exclude_object]` module enabled
+- Track: [`#83`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/83)
+
+### F71: Enable exclude_object G-code output for object skip support (GitHub #82)
+- OrcaSlicer defaults `exclude_object = false`; enabling it emits `EXCLUDE_OBJECT_DEFINE`, `EXCLUDE_OBJECT_START`, `EXCLUDE_OBJECT_END` markers in G-code
+- `gcode_label_objects` is already `true` (object comments present), so labelling groundwork is in place
+- Requires: add `exclude_object = 1` to `applyConfigToPrusa()` in `sapil_print.cpp` + native `.so` rebuild
+- **Prerequisite for F72**; U1 firmware v1.2.0 confirmed to support `EXCLUDE_OBJECT` commands (released early 2026)
+- Track: [`#82`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/82)
 
 ### D1: Document slicer engine upgrade process (GitHub #25)
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
