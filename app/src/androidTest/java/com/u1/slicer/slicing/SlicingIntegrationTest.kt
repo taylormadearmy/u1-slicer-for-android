@@ -668,6 +668,45 @@ class SlicingIntegrationTest {
     }
 
     /**
+     * B79 regression: brim_type must be set to no_brim when brim_width=0 to suppress
+     * OrcaSlicer's btAutoBrim default, which adds geometry-based brims even at width=0.
+     */
+    @Test
+    fun tetrahedron_stl_zeroBrimWidth_producesNoBrimType() {
+        val config = DEFAULT_CONFIG.copy(brimWidth = 0f)
+        val (success, gcode) = sliceAsset("tetrahedron.stl", config)
+        assertTrue("Slice must succeed", success)
+        assertTrue(
+            "G-code config should record brim_type = no_brim when brim_width=0",
+            gcode!!.contains("brim_type = no_brim")
+        )
+    }
+
+    /**
+     * B79 regression: SlicingOverrides → resolveInto() → SliceConfig → JNI chain.
+     * Verifies that setting supportType via SlicingOverrides (not SliceConfig.copy directly)
+     * reaches applyConfigToPrusa() and appears in the G-code config dump.
+     */
+    @Test
+    fun tetrahedron_stl_slicingOverrides_supportType_resolveIntoChain() {
+        val file = asset("tetrahedron.stl")
+        lib.loadModel(file.absolutePath)
+        val overrides = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.OVERRIDE, true),
+            supportType = OverrideValue(OverrideMode.OVERRIDE, "tree(auto)")
+        )
+        val cfg = overrides.resolveInto(DEFAULT_CONFIG)
+        assertEquals("resolveInto must propagate tree(auto)", "tree(auto)", cfg.supportType)
+        val result = lib.slice(cfg)!!
+        assertTrue("Slice should succeed", result.success)
+        val gcode = File(result.gcodePath).readText()
+        assertTrue(
+            "G-code config dump should record support_type = tree(auto) via resolveInto chain",
+            gcode.contains("support_type = tree(auto)")
+        )
+    }
+
+    /**
      * B79 regression: filament_type from SliceConfig must reach applyConfigToPrusa()
      * and appear in the sliced G-code for raw STL files.
      */

@@ -27,7 +27,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
   - `filament_type` — per-extruder string array from `config.filament_type`
   - `brim_type` — derived from `config.brim_width` (0 → `no_brim`, >0 → `outer_only`) to suppress `btAutoBrim` default
   - Fixed `SlicingOverrides.resolveInto()` to include `supportType` and `supportAngle`
-- **Tests**: 2 new instrumented tests in `SlicingIntegrationTest` (`benchy_stl_treeSupportType_producesTreeSupportInGcode`, `tetrahedron_stl_filamentType_petg_appearsInGcode`); 5 new unit tests in `SlicingOverridesTest` for `resolveInto` supportType/supportAngle OVERRIDE/ORCA_DEFAULT/USE_FILE modes.
+- **Tests**: 4 new instrumented tests in `SlicingIntegrationTest` (`benchy_stl_treeSupportType_producesTreeSupportInGcode`, `tetrahedron_stl_filamentType_petg_appearsInGcode`, `tetrahedron_stl_zeroBrimWidth_producesNoBrimType`, `tetrahedron_stl_slicingOverrides_supportType_resolveIntoChain` — the last two added post-release to cover brim_type and the full resolveInto→JNI chain); 5 new unit tests in `SlicingOverridesTest` for `resolveInto` supportType/supportAngle OVERRIDE/ORCA_DEFAULT/USE_FILE modes.
 - **Source**: Reddit u/NismoStroke0027 (extruder, 2026-04-20); user report (tree supports, 2026-04-20)
 
 ### B78: Shashibo plate 5 Prepare preview oversized + off-centre — FIXED v1.5.70
