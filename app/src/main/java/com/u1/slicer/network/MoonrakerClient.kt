@@ -77,7 +77,8 @@ class MoonrakerClient {
 
     /**
      * Wake the printer's camera keepalive stream by opening a WebSocket connection
-     * and sending camera.start_monitor. Fire-and-forget: closes immediately after opening.
+     * and sending camera.start_monitor. Fire-and-forget: returns before the WebSocket
+     * handshake completes; the message is sent asynchronously on OkHttp's dispatcher thread.
      * Used to ensure the camera monitor.jpg endpoint is freshly populated.
      */
     suspend fun wakeCamera() = withContext(Dispatchers.IO) {
