@@ -83,7 +83,10 @@ class MoonrakerClient {
     suspend fun wakeCamera() = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank()) return@withContext
         try {
-            val wsUrl = baseUrl.replace("http://", "ws://").replace("https://", "wss://") + "/websocket"
+            val wsUrl = when {
+                baseUrl.startsWith("https://") -> "wss://" + baseUrl.removePrefix("https://")
+                else -> "ws://" + baseUrl.removePrefix("http://")
+            } + "/websocket"
             val request = Request.Builder().url(wsUrl).build()
             client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
