@@ -51,8 +51,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 814 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 182 instrumented tests (uses Orchestrator)
+./gradlew testDebugUnitTest                        # 819 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 184 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -74,7 +74,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `data/SliceConfigTest.kt` (25) — Default values match Snapmaker U1 hardware specs, wipe tower bounds clamping
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
 - `data/PlateTypeTest.kt` (21) — PlateType.bedTempFor per-material presets, fromName, case-insensitivity
-- `data/SlicingOverridesTest.kt` (85) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, B24 stale config, B31 brim_type, F30/F31 plus F41/F42/F43 override/file-value coverage, F57/F58 primeTowerWidth + wipeTowerRotationAngle, B53 computeTogglePrimeTower, B71 nozzle temp extruderTemps + nozzleTemps slice-time override
+- `data/SlicingOverridesTest.kt` (90) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, B24 stale config, B31 brim_type, F30/F31 plus F41/F42/F43 override/file-value coverage, F57/F58 primeTowerWidth + wipeTowerRotationAngle, B53 computeTogglePrimeTower, B71 nozzle temp extruderTemps + nozzleTemps slice-time override, B79 resolveInto supportType/supportAngle
 - `data/SettingsBackupTest.kt` (16) — Export/import round-trip, version validation, partial restore, filament profile name resolution, stale skirt-loop import normalization
 - `bambu/ThreeMfParserTest.kt` (12) - 3MF data model construction, isMultiPlate detection, hasPaintSupports field (B57)
 - `bambu/BambuSanitizerTest.kt` (25) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard, group recentering
@@ -125,7 +125,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
 - `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
-- `slicing/SlicingIntegrationTest.kt` (35) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation, B55 slice cancel, v1.5.63 nozzle temp JNI path (PLA=220, PETG=235), B73 scale-down placement correctness, B75 parked extruder cooldown
+- `slicing/SlicingIntegrationTest.kt` (37) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation, B55 slice cancel, v1.5.63 nozzle temp JNI path (PLA=220, PETG=235), B73 scale-down placement correctness, B75 parked extruder cooldown, B79 tree support type + filament type for STL
 - `slicing/BambuPipelineIntegrationTest.kt` (34) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing, B54 modifier volume subtype preservation, B82 per-plate layer-tool chip count (standard + painted flippy all plates)
 - `slicing/SemmSlicingTest.kt` (5) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard, B64 Flarewing Dragon colour permutation remap
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code

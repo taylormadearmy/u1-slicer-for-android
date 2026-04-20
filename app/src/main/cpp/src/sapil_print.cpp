@@ -443,12 +443,38 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         if (config.support_enabled) {
             dpc.set_key_value("support_threshold_angle", new Slic3r::ConfigOptionInt((int)config.support_angle));
         }
+        // Map support_type string → OrcaSlicer SupportType enum.  Without this, OrcaSlicer always
+        // uses its stNormalAuto default for raw STL files, ignoring the user's tree-support selection.
+        {
+            Slic3r::SupportType stype = Slic3r::stNormalAuto;
+            const std::string& st = config.support_type;
+            if (st == "tree(auto)" || st == "tree") {
+                stype = Slic3r::stTreeAuto;
+            } else if (st == "tree(manual)") {
+                stype = Slic3r::stTree;
+            } else if (st == "normal(manual)") {
+                stype = Slic3r::stNormal;
+            }
+            dpc.set_key_value("support_type", new Slic3r::ConfigOptionEnum<Slic3r::SupportType>(stype));
+        }
+        // Filament type — per-extruder array; affects fan curves, flow limits, and G-code metadata.
+        // Without this, OrcaSlicer uses its PLA default regardless of the user's material selection.
+        {
+            std::vector<std::string> ftypes(n_ext, config.filament_type);
+            dpc.set_key_value("filament_type", new Slic3r::ConfigOptionStrings(ftypes));
+        }
     }
 
     // Skirt/Brim (same key names)
     dpc.set_key_value("skirt_loops", new Slic3r::ConfigOptionInt(config.skirt_loops));
     dpc.set_key_value("skirt_distance", new Slic3r::ConfigOptionFloat(config.skirt_distance));
     dpc.set_key_value("brim_width", new Slic3r::ConfigOptionFloat(config.brim_width));
+    // Brim type — suppress OrcaSlicer's btAutoBrim default, which adds geometry-based brims
+    // even when brim_width=0.  Derive from brim_width: no brim → no_brim, else outer_only.
+    {
+        Slic3r::BrimType btype = (config.brim_width > 0.0f) ? Slic3r::btOuterOnly : Slic3r::btNoBrim;
+        dpc.set_key_value("brim_type", new Slic3r::ConfigOptionEnum<Slic3r::BrimType>(btype));
+    }
 
     // Prime tower / wipe tower (OrcaSlicer keys)
     // wipe_tower_x/y are coFloats (arrays) in OrcaSlicer, one value per extruder

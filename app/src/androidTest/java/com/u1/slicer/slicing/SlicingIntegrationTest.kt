@@ -640,6 +640,51 @@ class SlicingIntegrationTest {
         assertTrue("Slice should succeed without support", result.success)
     }
 
+    // ─── B79: STL UI settings passed to native slicer ─────────────────────────
+
+    /**
+     * B79 regression: support_type="tree(auto)" must be applied by applyConfigToPrusa()
+     * for raw STL files (no embedded Snapmaker profile). Before the fix, applyConfigToPrusa()
+     * never set support_type, so OrcaSlicer always used its stNormalAuto default.
+     */
+    @Test
+    fun benchy_stl_treeSupportType_producesTreeSupportInGcode() {
+        val file = asset("3DBenchy.stl")
+        assertTrue(lib.loadModel(file.absolutePath))
+        val config = DEFAULT_CONFIG.copy(
+            supportEnabled = true,
+            supportType = "tree(auto)",
+            supportAngle = 30f
+        )
+        val result = lib.slice(config)!!
+        assertTrue("Slice with tree support should succeed", result.success)
+        val gcode = File(result.gcodePath).readText()
+        // OrcaSlicer writes the full runtime config as comments at the end of the G-code.
+        // Verify the config dump records tree(auto), proving applyConfigToPrusa() applied it.
+        assertTrue(
+            "G-code config dump should record support_type = tree(auto)",
+            gcode.contains("support_type = tree(auto)")
+        )
+    }
+
+    /**
+     * B79 regression: filament_type from SliceConfig must reach applyConfigToPrusa()
+     * and appear in the sliced G-code for raw STL files.
+     */
+    @Test
+    fun tetrahedron_stl_filamentType_petg_appearsInGcode() {
+        val config = DEFAULT_CONFIG.copy(
+            nozzleTemp = 235,
+            filamentType = "PETG"
+        )
+        val (success, gcode) = sliceAsset("tetrahedron.stl", config)
+        assertTrue("Slice must succeed", success)
+        assertTrue(
+            "G-code must report filament_type = PETG",
+            gcode!!.contains("filament_type = PETG")
+        )
+    }
+
     // ─── B55: Slice cancellation ─────────────────────────────────────────────
 
     @Test

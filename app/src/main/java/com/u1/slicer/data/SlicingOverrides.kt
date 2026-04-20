@@ -114,6 +114,8 @@ data class SlicingOverrides(
             topSolidLayers   = res(topShellLayers,    base.topSolidLayers,    "topShellLayers"),
             bottomSolidLayers= res(bottomShellLayers, base.bottomSolidLayers, "bottomShellLayers"),
             supportEnabled   = res(supports,          base.supportEnabled,    "supports"),
+            supportType      = res(supportType,       base.supportType,       "supportType"),
+            supportAngle     = res(supportAngle,      base.supportAngle.toInt(), "supportAngle").toFloat(),
             brimWidth        = res(brimWidth,          base.brimWidth,         "brimWidth"),
             skirtLoops       = res(skirtLoops,        base.skirtLoops,        "skirtLoops"),
             bedTemp          = res(bedTemp,           base.bedTemp,           "bedTemp"),

@@ -11,7 +11,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Tests**: `sButtons_plate1_withUserLikePresetsWhiteE2PinkE4_showsFourDistinctColors` in `PreparePreviewViewModelTest`.
 - **Source**: User report 2026-04-20
 
-### B79: STL UI settings ignored — extruder selection, support type, and likely others (GitHub #84)
+### B79: STL UI settings ignored — extruder selection, support type, and likely others — FIXED v1.6.2 (GitHub #84)
 - **Symptom**: Multiple UI settings are silently ignored when slicing STL files:
   - Selecting a non-E1 extruder always slices on E1 (filament run-out if E1 is empty)
   - Setting support type to "tree" uses regular supports instead
@@ -21,7 +21,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
   - **Path 1** `applyConfigToPrusa()`: hardcoded fallbacks, always applied
   - **Path 2** `profile_keys[]` whitelist: only applied when `is_snapmaker_profile = true` (i.e. an embedded Snapmaker profile is present — never true for STL)
   - UI overrides from `buildProfileOverrides()` go through Path 2. Any setting not also covered by a hardcoded fallback in Path 1 is silently dropped for STL files.
-- **Recommended approach**: Audit `buildProfileOverrides()` vs `applyConfigToPrusa()` — identify all gaps where a UI-controllable setting has no Path 1 fallback, then add the missing fallbacks (and `profile_keys[]` entries where needed). Fix the full class, not individual symptoms.
+  - Additionally, `SlicingOverrides.resolveInto()` was missing `supportType` and `supportAngle`, so those overrides never reached `SliceConfig` even before JNI.
+- **Fix**: Added to `applyConfigToPrusa()` for `!has_embedded_profile` (STL) path:
+  - `support_type` — mapped from `config.support_type` string → `SupportType` enum (normal/tree auto/manual variants)
+  - `filament_type` — per-extruder string array from `config.filament_type`
+  - `brim_type` — derived from `config.brim_width` (0 → `no_brim`, >0 → `outer_only`) to suppress `btAutoBrim` default
+  - Fixed `SlicingOverrides.resolveInto()` to include `supportType` and `supportAngle`
+- **Tests**: 2 new instrumented tests in `SlicingIntegrationTest` (`benchy_stl_treeSupportType_producesTreeSupportInGcode`, `tetrahedron_stl_filamentType_petg_appearsInGcode`); 5 new unit tests in `SlicingOverridesTest` for `resolveInto` supportType/supportAngle OVERRIDE/ORCA_DEFAULT/USE_FILE modes.
 - **Source**: Reddit u/NismoStroke0027 (extruder, 2026-04-20); user report (tree supports, 2026-04-20)
 
 ### B78: Shashibo plate 5 Prepare preview oversized + off-centre — FIXED v1.5.70
@@ -347,6 +353,20 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Requires: add `exclude_object = 1` to `applyConfigToPrusa()` in `sapil_print.cpp` + native `.so` rebuild
 - **Prerequisite for F72**; U1 firmware v1.2.0 confirmed to support `EXCLUDE_OBJECT` commands (released early 2026)
 - Track: [`#82`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/82)
+
+### F74: Finer model scaling — 1% increments instead of 10% (GitHub #87)
+- Current scale stepper only allows 10% steps; users want 1% control to maximise build-plate usage (e.g. fit a slightly-oversized model without wasted space)
+- Options: change stepper buttons to 1% steps, add a free-entry text field, or add long-press for coarse 10% adjust
+- `setModelScale()` accepts float — no native constraint to current increment
+- **Source**: Discord user DC15 (2026-04-20)
+- Track: [`#87`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/87)
+
+### F73: Multi-plate navigation — go back to all plates without reloading file (GitHub #86)
+- After loading a multi-plate 3MF and slicing one plate, the user must exit and fully reload to pick a different plate — high friction for multi-plate workflows
+- Two complementary solutions: (1) "See all plates" / back button after plate selection that returns to the plate picker without a full reload; (2) Recently-opened files list (last 3–5 files) on the Load screen, stored in DataStore (URI + display name + timestamp)
+- File is already loaded natively — plate switch should be much faster than a full reload
+- **Source**: Discord user DC15 (2026-04-20)
+- Track: [`#86`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/86)
 
 ### D1: Document slicer engine upgrade process (GitHub #25)
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)

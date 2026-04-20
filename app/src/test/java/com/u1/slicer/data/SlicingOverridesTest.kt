@@ -370,6 +370,56 @@ class SlicingOverridesTest {
         assertEquals(2, base.perimeters)
     }
 
+    // --- resolveInto: B79 supportType and supportAngle ---
+
+    @Test
+    fun `resolveInto OVERRIDE supportType passes value to SliceConfig`() {
+        val base = SliceConfig(supportType = "normal")
+        val overrides = SlicingOverrides(
+            supportType = OverrideValue(OverrideMode.OVERRIDE, "tree(auto)")
+        )
+        val resolved = overrides.resolveInto(base)
+        assertEquals("tree(auto)", resolved.supportType)
+    }
+
+    @Test
+    fun `resolveInto ORCA_DEFAULT supportType uses factory default`() {
+        val base = SliceConfig(supportType = "tree(auto)")
+        val overrides = SlicingOverrides(
+            supportType = OverrideValue(OverrideMode.ORCA_DEFAULT)
+        )
+        val resolved = overrides.resolveInto(base)
+        assertEquals("normal(auto)", resolved.supportType)
+    }
+
+    @Test
+    fun `resolveInto USE_FILE supportType keeps base value`() {
+        val base = SliceConfig(supportType = "tree(manual)")
+        val overrides = SlicingOverrides()
+        val resolved = overrides.resolveInto(base)
+        assertEquals("tree(manual)", resolved.supportType)
+    }
+
+    @Test
+    fun `resolveInto OVERRIDE supportAngle passes value to SliceConfig`() {
+        val base = SliceConfig(supportAngle = 45f)
+        val overrides = SlicingOverrides(
+            supportAngle = OverrideValue(OverrideMode.OVERRIDE, 30)
+        )
+        val resolved = overrides.resolveInto(base)
+        assertEquals(30f, resolved.supportAngle, 0.001f)
+    }
+
+    @Test
+    fun `resolveInto ORCA_DEFAULT supportAngle uses factory default`() {
+        val base = SliceConfig(supportAngle = 45f)
+        val overrides = SlicingOverrides(
+            supportAngle = OverrideValue(OverrideMode.ORCA_DEFAULT)
+        )
+        val resolved = overrides.resolveInto(base)
+        assertEquals(30f, resolved.supportAngle, 0.001f)
+    }
+
     // --- buildProfileOverridesImpl tests (B10 support preservation) ---
 
     @Test
