@@ -395,6 +395,48 @@ class MoonrakerClientTest {
         assertEquals("SET_HEATER_TEMPERATURE HEATER=extruder TARGET=300",
             MoonrakerClient.buildSetHeaterGcode("extruder", 999))
     }
+
+    @Test
+    fun `queryWebcamSnapshotCandidates with empty webcam list appends monitor jpg as last candidate`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""{"result":{"webcams":[]}}"""))
+        server.start()
+        val client = MoonrakerClient()
+        client.baseUrl = server.url("/").toString()
+        val candidates = client.queryWebcamSnapshotCandidates()
+        assertTrue("Expected at least 2 candidates", candidates.size >= 2)
+        assertTrue(
+            "Last candidate must be monitor.jpg, got: ${candidates.last()}",
+            candidates.last().endsWith("/server/files/camera/monitor.jpg")
+        )
+        server.shutdown()
+    }
+
+    @Test
+    fun `queryWebcamSnapshotCandidates with configured webcam appends monitor jpg after existing candidates`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("""
+            {"result":{"webcams":[{
+                "name":"Camera","enabled":true,
+                "snapshot_url":"/webcam/?action=snapshot",
+                "stream_url":"/webcam/?action=stream"
+            }]}}
+        """.trimIndent()))
+        server.start()
+        val client = MoonrakerClient()
+        client.baseUrl = server.url("/").toString()
+        val candidates = client.queryWebcamSnapshotCandidates()
+        assertTrue("Expected at least 2 candidates", candidates.size >= 2)
+        assertTrue(
+            "Last candidate must be monitor.jpg, got: ${candidates.last()}",
+            candidates.last().endsWith("/server/files/camera/monitor.jpg")
+        )
+        assertFalse(
+            "First candidate must not be monitor.jpg",
+            candidates.first().contains("monitor.jpg")
+        )
+        server.shutdown()
+    }
 }
 
 // MoonrakerClientTestHelper removed — tests now use MoonrakerClient.normalizeUrl() directly.
