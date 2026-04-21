@@ -51,7 +51,6 @@ import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
 import com.u1.slicer.printer.PrinterViewModel
-import com.u1.slicer.ui.InspectModelSheet
 import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
@@ -780,9 +779,7 @@ fun PrepareScreen(
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
-    val exportArtifacts = viewModel.getExportableModelArtifacts()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
-    var showInspectModelSheet by remember { mutableStateOf(false) }
 
     // Plate selector dialog
     if (showPlateSelector && multiPlatePlates.isNotEmpty()) {
@@ -805,24 +802,6 @@ fun PrepareScreen(
                 viewModel.applyMultiColorAssignments(mapping, extruderPresets, filaments)
             },
             onDismiss = { viewModel.dismissMultiColorDialog() }
-        )
-    }
-
-    if (showInspectModelSheet && exportArtifacts != null) {
-        InspectModelSheet(
-            artifacts = exportArtifacts,
-            onDismiss = { showInspectModelSheet = false },
-            onExportSanitized = {
-                showInspectModelSheet = false
-                onExportSanitized3mf()
-            },
-            onExportEmbedded = {
-                showInspectModelSheet = false
-                onExportSanitizedEmbedded3mf()
-            },
-            onCopyDebugSummary = {
-                onCopyModelDebugSummary()
-            }
         )
     }
 
@@ -851,11 +830,6 @@ fun PrepareScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 ),
                 actions = {
-                    if (exportArtifacts != null) {
-                        IconButton(onClick = { showInspectModelSheet = true }) {
-                            Icon(Icons.Default.Info, "Inspect model")
-                        }
-                    }
                     if (state !is SlicerViewModel.SlicerState.Idle) {
                         IconButton(onClick = { viewModel.clearModel() }) {
                             Icon(Icons.Default.Clear, "Clear model")
@@ -981,9 +955,13 @@ fun PrepareScreen(
                                 ModelInfoDialog(
                                     info = loadedInfo,
                                     threeMfInfo = threeMfInfo,
+                                    exportArtifacts = viewModel.getExportableModelArtifacts(),
                                     config = config,
                                     onToggleWipeTower = { viewModel.togglePrimeTower() },
                                     onReassign = { viewModel.showMultiColorReassign() },
+                                    onExportSanitized = onExportSanitized3mf,
+                                    onExportEmbedded = onExportSanitizedEmbedded3mf,
+                                    onCopyDebugSummary = onCopyModelDebugSummary,
                                     onDismiss = { showInfoDialog = false }
                                 )
                             }
@@ -2812,9 +2790,13 @@ private fun LargePreviewFallback(
 fun ModelInfoDialog(
     info: ModelInfo,
     threeMfInfo: com.u1.slicer.bambu.ThreeMfInfo?,
+    exportArtifacts: ExportableModelArtifacts?,
     config: com.u1.slicer.data.SliceConfig,
     onToggleWipeTower: () -> Unit,
     onReassign: () -> Unit,
+    onExportSanitized: () -> Unit,
+    onExportEmbedded: () -> Unit,
+    onCopyDebugSummary: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -2849,6 +2831,49 @@ fun ModelInfoDialog(
                         InfoRow("Paint Data", "Yes (per-triangle)")
                     if (threeMfInfo.isMultiPlate)
                         InfoRow("Plates", threeMfInfo.plates.size.toString())
+                }
+
+                if (exportArtifacts != null) {
+                    Divider(modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    Text(
+                        "Export Pipeline Artifacts",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    InfoRow("Selected Plate", exportArtifacts.selectedPlateId?.toString() ?: "None")
+                    InfoRow(
+                        "Sanitized for Orca",
+                        exportArtifacts.fileFor(ExportArtifactKind.Sanitized3mf)?.name ?: "Unavailable"
+                    )
+                    InfoRow(
+                        "Sanitized + U1 profile",
+                        exportArtifacts.fileFor(ExportArtifactKind.SanitizedEmbedded3mf)?.name ?: "Unavailable"
+                    )
+                    OutlinedButton(
+                        onClick = onExportSanitized,
+                        enabled = exportArtifacts.fileFor(ExportArtifactKind.Sanitized3mf) != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Export Sanitized for Orca Compatibility")
+                    }
+                    OutlinedButton(
+                        onClick = onExportEmbedded,
+                        enabled = exportArtifacts.fileFor(ExportArtifactKind.SanitizedEmbedded3mf) != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Export Sanitized + U1 Profile Embedded")
+                    }
+                    OutlinedButton(
+                        onClick = onCopyDebugSummary,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Copy Debug Summary")
+                    }
                 }
 
                 if (config.extruderCount > 1) {
