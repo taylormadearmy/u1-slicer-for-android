@@ -2365,7 +2365,7 @@ fun InlineModelPreview(
     // Without debouncing, each intermediate value cancels the previous LaunchedEffect,
     // wasting the 30s computation and restarting.  The initial call (rot=0,0,0) skips
     // the delay so model load isn't slowed.
-    LaunchedEffect(modelRotation) {
+    LaunchedEffect(modelRotation, modelFilePath) {
         val rot = modelRotation
 
         // B49: reuse cached mesh if available (instant reload on tab switch).

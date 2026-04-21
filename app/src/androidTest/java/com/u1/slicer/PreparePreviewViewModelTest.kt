@@ -765,6 +765,90 @@ class PreparePreviewViewModelTest {
         }
     }
 
+    /**
+     * F73: After loading a multi-plate 3MF and selecting an initial plate, tapping "Change plate"
+     * and selecting a different plate must invalidate the Prepare preview cache so that
+     * InlineModelPreview re-fetches the new plate's native mesh.
+     *
+     * Bug: loadNativeModel() never called invalidatePrepareMeshCache(), so cachedPrepareMesh
+     * held the previous plate's mesh. InlineModelPreview's LaunchedEffect(modelRotation) has
+     * an early-return guard "if (mesh != null && cachedMesh != null) return" — with the stale
+     * cache, this guard fired and skipped getPreparePreviewMesh(), leaving viewerLoading=true
+     * (spinner) indefinitely.
+     *
+     * Red: cachedPrepareMesh is non-null after plate re-selection (bug present).
+     * Green: cachedPrepareMesh is null after plate re-selection (bug fixed).
+     */
+    @Test
+    fun f73_changePlate_multiPlatePlatesAvailableAndCacheInvalidated() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Dragon Scale infinity.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("plate selector visible") { viewModel.showPlateSelector.value }
+
+            // multiPlatePlates must be populated before initial selection
+            assertTrue(
+                "F73: multiPlatePlates must be non-empty after multi-plate load",
+                viewModel.multiPlatePlates.value.isNotEmpty()
+            )
+
+            // Select initial plate
+            viewModel.selectPlate(1)
+            val plate1Info = viewModel.threeMfInfo.value
+            waitUntil("plate 1 loaded", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+
+            // multiPlatePlates must survive selectPlate() — this keeps the chip visible
+            assertTrue(
+                "F73: multiPlatePlates must survive selectPlate() so the Change plate chip stays visible",
+                viewModel.multiPlatePlates.value.isNotEmpty()
+            )
+
+            // Simulate InlineModelPreview caching the preview mesh after it loads
+            val plate1Mesh = NativeLibrary().getPreparePreviewMesh()?.toMeshData()
+            assertNotNull("Plate 1 preview mesh should be available for cache simulation", plate1Mesh)
+            viewModel.cachedPrepareMesh = plate1Mesh
+
+            // reopenPlateSelector must open the dialog
+            viewModel.reopenPlateSelector()
+            assertTrue(
+                "F73: reopenPlateSelector() must set showPlateSelector=true when plates available",
+                viewModel.showPlateSelector.value
+            )
+
+            // Select a different plate (simulates user picking from the reopened dialog)
+            viewModel.selectPlate(3)
+            waitUntil("plate 3 info loaded (threeMfInfo replaced)", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.threeMfInfo.value !== plate1Info
+            }
+
+            // Core assertion: cachedPrepareMesh must be null after plate re-selection.
+            // If it is non-null, InlineModelPreview's LaunchedEffect(modelRotation, modelFilePath)
+            // hits the B49 early-return guard and never calls getPreparePreviewMesh() for the
+            // new plate — the spinner shows indefinitely (F73 regression).
+            assertNull(
+                "F73: cachedPrepareMesh must be null after plate re-selection so InlineModelPreview " +
+                    "re-fetches the new plate's preview mesh (stale cache causes spinner-forever bug)",
+                viewModel.cachedPrepareMesh
+            )
+
+            // multiPlatePlates must still be non-empty — user can change plate again
+            assertTrue(
+                "F73: multiPlatePlates must survive second selectPlate() for subsequent changes",
+                viewModel.multiPlatePlates.value.isNotEmpty()
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
     private fun waitUntil(label: String, timeoutMs: Long = 30_000L, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {

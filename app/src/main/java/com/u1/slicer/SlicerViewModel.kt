@@ -1112,6 +1112,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun loadNativeModel(file: File) {
         val firstModelLoadThisLaunch = diagnostics.markFirstModelLoad()
+        // Stale cached mesh from a previous model/plate load would cause InlineModelPreview's
+        // LaunchedEffect(modelRotation, modelFilePath) to hit the B49 early-return guard and
+        // skip getPreparePreviewMesh() for the new model, leaving the spinner indefinitely.
+        invalidatePrepareMeshCache()
         // Acquire previewMutex before touching native model — prevents SIGSEGV when
         // getPreparePreviewMesh (on the preview coroutine) is iterating model volumes
         // while we clear+reload here.  Large model QEM decimation can hold the lock for
