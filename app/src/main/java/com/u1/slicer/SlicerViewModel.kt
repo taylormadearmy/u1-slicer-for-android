@@ -1023,6 +1023,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             ?: return
         recoveryPlateId = plateId          // Track for Clipper recovery
         clipperRetryAttempted = false      // New plate = fresh retry allowance
+        // Transition to Loading immediately so InlineModelPreview unmounts.
+        // Without this, the rotation LaunchedEffect fires between _threeMfInfo update
+        // and loadNativeModel completing, hitting the native's stale plate-N cache and
+        // delivering the wrong mesh.  Unmounting ensures the fresh effect fires only
+        // after the correct plate is loaded in native.
+        _state.value = SlicerState.Loading("Loading plate $plateId…")
         diagnostics.recordEvent(
             "plate_selected",
             mapOf(
