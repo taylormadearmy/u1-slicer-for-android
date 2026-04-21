@@ -14,6 +14,7 @@ import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
+import com.u1.slicer.bambu.ThreeMfPlate
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.data.ModelInfo
@@ -35,7 +36,10 @@ import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.gcode.buildSuspiciousModelLineContexts
 import com.u1.slicer.model.CopyArrangeCalculator
 import org.json.JSONObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +50,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
@@ -195,6 +200,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // some plates have paint data).
     private var _fileThreeMfInfo: ThreeMfInfo? = null
 
+    private val _multiPlatePlates = MutableStateFlow<List<ThreeMfPlate>>(emptyList())
+    val multiPlatePlates: StateFlow<List<ThreeMfPlate>> = _multiPlatePlates.asStateFlow()
+
     private val _showPlateSelector = MutableStateFlow(false)
     val showPlateSelector: StateFlow<Boolean> = _showPlateSelector.asStateFlow()
 
@@ -296,10 +304,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // The native side caches the raw mesh, but toMeshData() (normal computation + FloatBuffer
     // allocation) is expensive for large SEMM models (2M tris).  This cache avoids re-conversion.
     // Invalidated on model load, rotation change, or arrangement change.
+    // cachedPrepareMeshPath ties the cache to a specific model file so that a plate switch
+    // (which changes previewModelPath before invalidation runs) doesn't serve a stale mesh.
     @Volatile var cachedPrepareMesh: com.u1.slicer.viewer.MeshData? = null
+    @Volatile var cachedPrepareMeshPath: String? = null
 
     fun invalidatePrepareMeshCache() {
         cachedPrepareMesh = null
+        cachedPrepareMeshPath = null
     }
 
     // Filament library — StateFlow so .value is accessible synchronously (e.g. for nozzle temp lookup at slice time)
@@ -336,7 +348,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     // Track the current working file (may be sanitized copy)
     private var currentModelFile: File? = null
+    private val _modelFileName = MutableStateFlow("")
+    val modelFileName: StateFlow<String> = _modelFileName.asStateFlow()
     private var currentModelName: String = ""
+        set(value) { field = value; _modelFileName.value = value }
     private var lastModelInfo: ModelInfo? = null
     private val _modelInfo = MutableStateFlow<ModelInfo?>(null)
     val modelInfo: StateFlow<ModelInfo?> = _modelInfo.asStateFlow()
@@ -348,6 +363,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Full processed multi-plate file — set once on load, never replaced by per-plate
     // extractions so selectPlate() always calls extractPlate() on the right source.
     private var _multiPlateSourceFile: File? = null
+    // Tracks the in-flight selectPlate coroutine so rapid plate changes cancel the prior one.
+    private var selectPlateJob: Job? = null
+    // Tracks the in-flight slice coroutine so a plate switch can cancel it before it writes
+    // SliceComplete/Error and overwrites the Loading state set by selectPlate().
+    private var slicingJob: Job? = null
     // Original Bambu file's project_settings.config, parsed before process() strips it.
     // Used by embedProfile() so the file's own settings (enable_support, etc.) survive
     // through the sanitize→embed→extractPlate→restructure→re-embed pipeline.
@@ -361,7 +381,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // which is why we can't use them in recovery.
     private var rawInputFile: File? = null
     private var recoveryOrigInfo: ThreeMfInfo? = null
+    private val _currentPlateId = MutableStateFlow(-1)
+    val currentPlateId: StateFlow<Int> = _currentPlateId.asStateFlow()
     private var recoveryPlateId: Int = -1
+        set(value) { field = value; _currentPlateId.value = value }
 
     // B24 RC2: Track whether profile needs re-embedding before next slice.
     // Set to true when config/overrides are saved while a model is loaded.
@@ -1005,6 +1028,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Called when user selects a plate from the multi-plate dialog.
      */
     fun selectPlate(plateId: Int) {
+        selectPlateJob?.cancel()
+        slicingJob?.cancel()
         _showPlateSelector.value = false
         // Always extract from the full processed multi-plate file so that switching plates
         // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
@@ -1014,6 +1039,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             ?: return
         recoveryPlateId = plateId          // Track for Clipper recovery
         clipperRetryAttempted = false      // New plate = fresh retry allowance
+        // Transition to Loading immediately so InlineModelPreview unmounts.
+        // Without this, the rotation LaunchedEffect fires between _threeMfInfo update
+        // and loadNativeModel completing, hitting the native's stale plate-N cache and
+        // delivering the wrong mesh.  Unmounting ensures the fresh effect fires only
+        // after the correct plate is loaded in native.
+        _state.value = SlicerState.Loading("Loading plate $plateId…")
         diagnostics.recordEvent(
             "plate_selected",
             mapOf(
@@ -1022,7 +1053,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             )
         )
 
-        viewModelScope.launch(Dispatchers.IO) {
+        selectPlateJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
                 val workspaceDir = transientWorkspaceDir()
@@ -1040,9 +1071,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     hasPlateJsons = hasPlateJsons,
                     plateObjectIds = plateObjectIds,
                     objectExtruderMap = plateExtruderMap)
+                ensureActive()
                 // Restructure per-plate: inline component meshes so OrcaSlicer
                 // can assign per-volume extruders (deferred from process()).
                 val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, workspaceDir)
+                ensureActive()
                 // Lightweight parse: only reads model_settings.config (~1KB) for extruder
                 // indices, skips the 15MB+ main model XML entirely (~2s saved).
                 val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
@@ -1067,9 +1100,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // original file's layer-change settings (SEMM/pause G-code), not just
                 // the preview metadata merged above.
                 val embeddedPlateFile = embedProfile(plateFile, mergedPlateInfo, workspaceDir)
+                ensureActive()
                 currentModelFile = embeddedPlateFile
                 loadNativeModel(embeddedPlateFile)
             } catch (e: Throwable) {
+                if (e is CancellationException) throw e
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error extracting plate: ${e.message}")
             }
@@ -1088,6 +1123,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun dismissPlateSelector() {
+        selectPlateJob?.cancel()
         _showPlateSelector.value = false
         // Cancel the load — multi-plate files need a plate selection to work correctly.
         // Loading the full file causes off-bed coordinates and Clipper errors (B12).
@@ -1098,10 +1134,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _multiPlateSourceFile = null
         _threeMfInfo.value = null
         _fileThreeMfInfo = null
+        _multiPlatePlates.value = emptyList()
+    }
+
+    fun reopenPlateSelector() {
+        if (_multiPlatePlates.value.isNotEmpty()) _showPlateSelector.value = true
     }
 
     private suspend fun loadNativeModel(file: File) {
         val firstModelLoadThisLaunch = diagnostics.markFirstModelLoad()
+        // Stale cached mesh from a previous model/plate load would cause InlineModelPreview's
+        // LaunchedEffect(modelRotation, modelFilePath) to hit the B49 early-return guard and
+        // skip getPreparePreviewMesh() for the new model, leaving the spinner indefinitely.
+        invalidatePrepareMeshCache()
         // Acquire previewMutex before touching native model — prevents SIGSEGV when
         // getPreparePreviewMesh (on the preview coroutine) is iterating model volumes
         // while we clear+reload here.  Large model QEM decimation can hold the lock for
@@ -1579,6 +1624,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         _threeMfInfo.value = mergedInfo
         _fileThreeMfInfo = mergedInfo
+        _multiPlatePlates.value = if (origInfo.isMultiPlate) mergedInfo.plates else emptyList()
         sourceModelFile = processed
         sourceModelInfo = processedInfo
         if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
@@ -1948,7 +1994,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // fails early or throws — avoids leaking a full-resolution screen-capture Bitmap.
         val capturedBitmap = pendingThumbnailBitmap.also { pendingThumbnailBitmap = null }
         _sliceStale.value = false
-        viewModelScope.launch(Dispatchers.IO) {
+        slicingJob = viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
             try {
                 when (_state.value) {
@@ -1972,9 +2018,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 SlicingService.start(context)
                 var maxPct = 0
                 native.progressListener = { pct, stage ->
-                    if (pct > maxPct) maxPct = pct
-                    _state.value = SlicerState.Slicing(maxPct, stage)
-                    SlicingService.updateProgress(context, maxPct, stage)
+                    // Guard: don't override Loading — selectPlate() may have set it to initiate
+                    // a plate switch while this slice was still running. Overriding Loading would
+                    // remount InlineModelPreview against the stale native state and produce
+                    // wrong preview colours on the new plate.
+                    val cur = _state.value
+                    if (cur !is SlicerState.Loading && cur !is SlicerState.Idle) {
+                        if (pct > maxPct) maxPct = pct
+                        _state.value = SlicerState.Slicing(maxPct, stage)
+                        SlicingService.updateProgress(context, maxPct, stage)
+                    }
                 }
 
                 _state.value = SlicerState.Slicing(0, "Preparing...")
@@ -2207,6 +2260,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 diagnostics.markSliceInProgress(currentModelFile!!.name)
 
                 val result = native.slice(sliceConfig)
+                ensureActive()
 
                 // Native cancel: slice() returned with cancelled=true from CanceledException
                 if (result?.cancelled == true) {
@@ -2287,6 +2341,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             Log.i("SlicerVM", "Thumbnails injected from GL capture")
                         }
                     } catch (e: Throwable) {
+                        if (e is CancellationException) throw e
                         Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
                     }
 
@@ -2350,6 +2405,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _state.value = SlicerState.Error(clipperUserMessage(errorMsg))
                 }
             } catch (e: Throwable) {
+                if (e is CancellationException) throw e
                 Log.e("SlicerVM", "Unexpected error during slicing", e)
                 val errorMsg = e.message ?: e.javaClass.simpleName
                 if (isClipperError(errorMsg)) {
@@ -2949,6 +3005,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _selectedExtruder.value = 0
         _threeMfInfo.value = null
         _fileThreeMfInfo = null
+        _multiPlatePlates.value = emptyList()
         _multiPlateSourceFile = null
         _showPlateSelector.value = false
         _showMultiColorDialog.value = false
@@ -3046,6 +3103,66 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (_: Throwable) {
                 // Silent fail — user may have cancelled the save dialog
+            }
+        }
+    }
+
+    fun getExportableModelArtifacts(): ExportableModelArtifacts? =
+        ModelExportArtifacts.current(
+            sourceDisplayName = currentModelName,
+            selectedPlateId = recoveryPlateId.takeIf { it >= 0 },
+            sanitizedFile = sourceModelFile,
+            embeddedFile = currentModelFile,
+            info = _threeMfInfo.value
+        )
+
+    fun buildModelDebugSummary(): String? {
+        val artifacts = getExportableModelArtifacts() ?: return null
+        return ModelExportArtifacts.buildDebugSummary(artifacts, currentModelFile)
+    }
+
+    fun suggestedArtifactFilename(kind: ExportArtifactKind): String? {
+        val artifacts = getExportableModelArtifacts() ?: return null
+        return ModelExportArtifacts.suggestedFilename(artifacts.sourceDisplayName, kind)
+    }
+
+    fun exportArtifactTo(
+        kind: ExportArtifactKind,
+        targetUri: Uri,
+        onResult: (Result<Unit>) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val context = getApplication<Application>()
+                val artifacts = getExportableModelArtifacts()
+                    ?: error("No exportable model artifacts are available")
+                val sourceFile = artifacts.fileFor(kind)
+                    ?: error("Requested export artifact is unavailable")
+                context.contentResolver.openOutputStream(targetUri, "w")?.use { out ->
+                    sourceFile.inputStream().use { input -> input.copyTo(out) }
+                } ?: error("Could not open export destination")
+                diagnostics.recordEvent(
+                    "model_artifact_exported",
+                    mapOf(
+                        "kind" to kind.name,
+                        "sourceDisplayName" to artifacts.sourceDisplayName,
+                        "selectedPlateId" to artifacts.selectedPlateId,
+                        "artifactPath" to sourceFile.absolutePath,
+                        "destinationUri" to targetUri.toString()
+                    )
+                )
+            }.onFailure { error ->
+                diagnostics.recordEvent(
+                    "model_artifact_export_failed",
+                    mapOf(
+                        "kind" to kind.name,
+                        "destinationUri" to targetUri.toString(),
+                        "error" to (error.message ?: error.javaClass.simpleName)
+                    )
+                )
+            }
+            withContext(Dispatchers.Main) {
+                onResult(result)
             }
         }
     }

@@ -9,6 +9,8 @@ import com.u1.slicer.data.defaultExtruderPresets
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +59,23 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     private val _heaterError = MutableStateFlow<String?>(null)
     val heaterError: StateFlow<String?> = _heaterError.asStateFlow()
 
+    private var cameraKeepaliveJob: Job? = null
+
+    fun startCameraKeepalive() {
+        if (!shouldStartCameraKeepalive(cameraKeepaliveJob?.isActive == true)) return
+        cameraKeepaliveJob = viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                printerRepo.wakeCamera()
+                delay(2000)
+            }
+        }
+    }
+
+    fun stopCameraKeepalive() {
+        cameraKeepaliveJob?.cancel()
+        cameraKeepaliveJob = null
+    }
+
     fun clearHeaterError() { _heaterError.value = null }
 
     sealed class ConnectionState {
@@ -104,11 +123,17 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         // Resolve webcam URLs for the already-saved printer URL (if any)
         viewModelScope.launch(Dispatchers.IO) { resolveWebcam() }
         // Auto-clear the "Print started!" banner once the printer confirms printing.
+        // Also sync LED state on first connection (pollLedState only runs via testConnection otherwise).
         viewModelScope.launch {
+            var wasConnected = false
             status.collect { s ->
                 if (_sendingState.value is SendingState.PrintStarted && s.isPrinting) {
                     _sendingState.value = SendingState.Idle
                 }
+                if (shouldPollLedOnConnectionEdge(wasConnected = wasConnected, isConnected = s.isConnected)) {
+                    launch(Dispatchers.IO) { pollLedState() }
+                }
+                wasConnected = s.isConnected
             }
         }
     }
@@ -280,6 +305,14 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     override fun onCleared() {
         super.onCleared()
+        stopCameraKeepalive()
         printerRepo.stopPolling()
+    }
+
+    companion object {
+        internal fun shouldStartCameraKeepalive(hasActiveJob: Boolean): Boolean = !hasActiveJob
+
+        internal fun shouldPollLedOnConnectionEdge(wasConnected: Boolean, isConnected: Boolean): Boolean =
+            isConnected && !wasConnected
     }
 }

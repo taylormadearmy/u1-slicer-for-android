@@ -36,9 +36,11 @@ class MoonrakerClient {
      * Returns up to 2 candidates: [primary, alt] where alt keeps the original port.
      * Falls back to legacy mjpeg-streamer path if the list is unavailable.
      * Mirrors the bridge's moonraker.py get_webcams() + _resolve_moonraker_url() logic.
+     * Always appends monitor.jpg as a final fallback candidate.
      */
     suspend fun queryWebcamSnapshotCandidates(): List<String> = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank()) return@withContext emptyList()
+        val monitorUrl = "$baseUrl/server/files/camera/monitor.jpg"
         try {
             val request = Request.Builder().url(url("/server/webcams/list")).get().build()
             val response = client.newCall(request).execute()
@@ -61,7 +63,7 @@ class MoonrakerClient {
                         )
                         if (candidates.isNotEmpty()) {
                             Log.d(TAG, "Webcam candidates: $candidates")
-                            return@withContext candidates
+                            return@withContext candidates + monitorUrl
                         }
                     }
                 }
@@ -69,8 +71,36 @@ class MoonrakerClient {
         } catch (e: Exception) {
             Log.d(TAG, "Webcam list unavailable, using legacy fallback: ${e.message}")
         }
-        // Legacy fallback: mjpeg-streamer style
-        listOf("$baseUrl/webcam/?action=snapshot")
+        // Legacy fallback: mjpeg-streamer style + monitor.jpg
+        listOf("$baseUrl/webcam/?action=snapshot", monitorUrl)
+    }
+
+    /**
+     * Wake the printer's camera keepalive stream by opening a WebSocket connection
+     * and sending camera.start_monitor. Fire-and-forget: returns before the WebSocket
+     * handshake completes; the message is sent asynchronously on OkHttp's dispatcher thread.
+     * Used to ensure the camera monitor.jpg endpoint is freshly populated.
+     */
+    suspend fun wakeCamera() = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank()) return@withContext
+        try {
+            val wsUrl = when {
+                baseUrl.startsWith("https://") -> "wss://" + baseUrl.removePrefix("https://")
+                else -> "ws://" + baseUrl.removePrefix("http://")
+            } + "/websocket"
+            val request = Request.Builder().url(wsUrl).build()
+            client.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    webSocket.send("""{"jsonrpc":"2.0","id":1000,"method":"camera.start_monitor","params":{"domain":"lan","interval":0}}""")
+                    webSocket.close(1000, null)
+                }
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    Log.d(TAG, "wakeCamera failed: ${t.message}")
+                }
+            })
+        } catch (e: Exception) {
+            Log.d(TAG, "wakeCamera failed: ${e.message}")
+        }
     }
 
     /** Resolve a possibly-relative webcam URL against baseUrl. Mirrors bridge's _resolve_moonraker_url(). */

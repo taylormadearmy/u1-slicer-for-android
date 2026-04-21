@@ -40,6 +40,9 @@ import kotlin.math.roundToInt
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.core.content.pm.PackageInfoCompat
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.SliceResult
@@ -82,6 +85,48 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         uri?.let { viewModel.saveGcodeTo(it) }
+    }
+
+    private val sanitizedModelExportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.ms-3mfdocument")
+    ) { uri ->
+        if (uri != null) {
+            exportModelArtifact(ExportArtifactKind.Sanitized3mf, uri)
+        }
+    }
+
+    private val embeddedModelExportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.ms-3mfdocument")
+    ) { uri ->
+        if (uri != null) {
+            exportModelArtifact(ExportArtifactKind.SanitizedEmbedded3mf, uri)
+        }
+    }
+
+    private fun exportModelArtifact(kind: ExportArtifactKind, uri: Uri) {
+        viewModel.exportArtifactTo(kind, uri) { result ->
+            val message = result.fold(
+                onSuccess = {
+                    when (kind) {
+                        ExportArtifactKind.Sanitized3mf -> "Sanitized 3MF exported"
+                        ExportArtifactKind.SanitizedEmbedded3mf -> "Sanitized + embedded 3MF exported"
+                    }
+                },
+                onFailure = { error ->
+                    "Export failed: ${error.message ?: error.javaClass.simpleName}"
+                }
+            )
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun copyModelDebugSummary() {
+        val summary = viewModel.buildModelDebugSummary() ?: return
+        val clipboard = getSystemService(android.content.ClipboardManager::class.java)
+        clipboard.setPrimaryClip(
+            android.content.ClipData.newPlainText("U1 Slicer Model Debug Summary", summary)
+        )
+        android.widget.Toast.makeText(this, "Debug summary copied", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -491,6 +536,17 @@ class MainActivity : ComponentActivity() {
                             onNavigatePrinter = { navigateTab(Routes.PRINTER) },
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
+                            onExportSanitized3mf = {
+                                viewModel.suggestedArtifactFilename(ExportArtifactKind.Sanitized3mf)?.let { filename ->
+                                    sanitizedModelExportLauncher.launch(filename)
+                                }
+                            },
+                            onExportSanitizedEmbedded3mf = {
+                                viewModel.suggestedArtifactFilename(ExportArtifactKind.SanitizedEmbedded3mf)?.let { filename ->
+                                    embeddedModelExportLauncher.launch(filename)
+                                }
+                            },
+                            onCopyModelDebugSummary = { copyModelDebugSummary() },
                             sharedPreviewCameraState = sharedPreviewCameraState,
                             onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it },
                             onResetPreviewCamera = { sharedPreviewCameraState = null },
@@ -685,6 +741,9 @@ fun PrepareScreen(
     onNavigatePrinter: () -> Unit,
     onNavigateJobs: () -> Unit,
     onNavigateModelViewer: () -> Unit,
+    onExportSanitized3mf: () -> Unit,
+    onExportSanitizedEmbedded3mf: () -> Unit,
+    onCopyModelDebugSummary: () -> Unit,
     sharedPreviewCameraState: com.u1.slicer.viewer.CameraViewState?,
     onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit,
     onResetPreviewCamera: (() -> Unit)? = null,
@@ -696,6 +755,9 @@ fun PrepareScreen(
     val context = LocalContext.current
     val modelInfo by viewModel.modelInfo.collectAsState()
     val showPlateSelector by viewModel.showPlateSelector.collectAsState()
+    val multiPlatePlates by viewModel.multiPlatePlates.collectAsState()
+    val currentModelName by viewModel.modelFileName.collectAsState()
+    val currentPlateId by viewModel.currentPlateId.collectAsState()
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
@@ -713,9 +775,9 @@ fun PrepareScreen(
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
 
     // Plate selector dialog
-    if (showPlateSelector && threeMfInfo != null) {
+    if (showPlateSelector && multiPlatePlates.isNotEmpty()) {
         com.u1.slicer.ui.PlateSelectDialog(
-            plates = threeMfInfo!!.plates,
+            plates = multiPlatePlates,
             onSelect = { viewModel.selectPlate(it) },
             onDismiss = { viewModel.dismissPlateSelector() },
             info = threeMfInfo
@@ -877,8 +939,8 @@ fun PrepareScreen(
                                 onResetView = { captureViewer?.resetView(); onResetPreviewCamera?.invoke() },
                                 layerToolOnly = layerToolOnly,
                                 layerToolSegments = threeMfInfo?.layerToolSegments,
-                                cachedMesh = viewModel.cachedPrepareMesh,
-                                onMeshCached = { viewModel.cachedPrepareMesh = it },
+                                cachedMesh = if (viewModel.cachedPrepareMeshPath == modelPath) viewModel.cachedPrepareMesh else null,
+                                onMeshCached = { viewModel.cachedPrepareMeshPath = modelPath; viewModel.cachedPrepareMesh = it },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
                                 nativeSliceStateDirty = nativeSliceStateDirty
                             )
@@ -886,10 +948,49 @@ fun PrepareScreen(
                                 ModelInfoDialog(
                                     info = loadedInfo,
                                     threeMfInfo = threeMfInfo,
+                                    exportArtifacts = viewModel.getExportableModelArtifacts(),
                                     config = config,
                                     onToggleWipeTower = { viewModel.togglePrimeTower() },
                                     onReassign = { viewModel.showMultiColorReassign() },
+                                    onExportSanitized = onExportSanitized3mf,
+                                    onExportEmbedded = onExportSanitizedEmbedded3mf,
+                                    onCopyDebugSummary = onCopyModelDebugSummary,
                                     onDismiss = { showInfoDialog = false }
+                                )
+                            }
+                        }
+                        // File/plate label row — always shown when a model is loaded
+                        if (currentModelName.isNotEmpty()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (multiPlatePlates.isNotEmpty()) {
+                                    AssistChip(
+                                        onClick = { viewModel.reopenPlateSelector() },
+                                        label = { Text("Change plate") },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Layers,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
+                                }
+                                val displayName = currentModelName
+                                    .removeSuffix(".3mf")
+                                    .removeSuffix(".stl")
+                                    .removeSuffix(".obj")
+                                    .removeSuffix(".step")
+                                val plateLabel = if (currentPlateId > 0) " · Plate $currentPlateId" else ""
+                                Text(
+                                    text = "$displayName$plateLabel",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
                         }
@@ -2155,8 +2256,15 @@ fun InlineModelPreview(
         // rotation path handles the preview (3MF files).  The parse effect returns
         // null for 3MF — clearing the mesh here just kills the cached preview and
         // forces a slow re-fetch from native.
+        // F73 fix: also don't clear mesh when we already have a displayed mesh (mesh != null)
+        // and the native path is in use.  colorMapping?.size is a LaunchedEffect key so this
+        // effect re-fires on every color-mapping change (e.g. after a plate switch completes
+        // and loadNativeModel emits colorMapping size change).  Without this guard, the effect
+        // clears mesh/viewerLoading that were already correctly set by the rotation effect,
+        // leaving the "Preparing preview…" spinner forever because the rotation effect won't
+        // re-fire (modelFilePath and modelRotation are both unchanged).
         val isNativePreviewPath = modelFilePath.endsWith(".3mf", ignoreCase = true)
-        if (cachedMesh == null || !isNativePreviewPath) {
+        if ((cachedMesh == null && mesh == null) || !isNativePreviewPath) {
             viewerLoading = true
             mesh = null
             lastSetMesh = null
@@ -2258,7 +2366,7 @@ fun InlineModelPreview(
     // Without debouncing, each intermediate value cancels the previous LaunchedEffect,
     // wasting the 30s computation and restarting.  The initial call (rot=0,0,0) skips
     // the delay so model load isn't slowed.
-    LaunchedEffect(modelRotation) {
+    LaunchedEffect(modelRotation, modelFilePath) {
         val rot = modelRotation
 
         // B49: reuse cached mesh if available (instant reload on tab switch).
@@ -2675,9 +2783,13 @@ private fun LargePreviewFallback(
 fun ModelInfoDialog(
     info: ModelInfo,
     threeMfInfo: com.u1.slicer.bambu.ThreeMfInfo?,
+    exportArtifacts: ExportableModelArtifacts?,
     config: com.u1.slicer.data.SliceConfig,
     onToggleWipeTower: () -> Unit,
     onReassign: () -> Unit,
+    onExportSanitized: () -> Unit,
+    onExportEmbedded: () -> Unit,
+    onCopyDebugSummary: () -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -2699,7 +2811,7 @@ fun ModelInfoDialog(
                 InfoRow("Manifold", if (info.isManifold) "Yes" else "No")
 
                 if (threeMfInfo != null && threeMfInfo.isBambu) {
-                    Divider(modifier = Modifier.padding(vertical = 4.dp),
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     Text("Bambu Studio File", fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
@@ -2714,8 +2826,51 @@ fun ModelInfoDialog(
                         InfoRow("Plates", threeMfInfo.plates.size.toString())
                 }
 
+                if (exportArtifacts != null) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    Text(
+                        "Export Pipeline Artifacts",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    InfoRow("Selected Plate", exportArtifacts.selectedPlateId?.toString() ?: "None")
+                    InfoRow(
+                        "Sanitized for Orca",
+                        exportArtifacts.fileFor(ExportArtifactKind.Sanitized3mf)?.name ?: "Unavailable"
+                    )
+                    InfoRow(
+                        "Sanitized + U1 profile",
+                        exportArtifacts.fileFor(ExportArtifactKind.SanitizedEmbedded3mf)?.name ?: "Unavailable"
+                    )
+                    OutlinedButton(
+                        onClick = onExportSanitized,
+                        enabled = exportArtifacts.fileFor(ExportArtifactKind.Sanitized3mf) != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Export Sanitized for Orca Compatibility")
+                    }
+                    OutlinedButton(
+                        onClick = onExportEmbedded,
+                        enabled = exportArtifacts.fileFor(ExportArtifactKind.SanitizedEmbedded3mf) != null,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Export Sanitized + U1 Profile Embedded")
+                    }
+                    OutlinedButton(
+                        onClick = onCopyDebugSummary,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Copy Debug Summary")
+                    }
+                }
+
                 if (config.extruderCount > 1) {
-                    Divider(modifier = Modifier.padding(vertical = 4.dp),
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -3007,35 +3162,158 @@ fun ScaleSection(
                             )
                         }
                         Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                        val focusManager = LocalFocusManager.current
                         if (uniformMode) {
-                            val pct = "%.0f%%".format(uniformValue * 100)
-                            Text("Scale: $pct", style = MaterialTheme.typography.labelMedium)
+                            var uniformText by remember(uniformValue) {
+                                mutableStateOf("%.0f".format(uniformValue * 100))
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Scale", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = uniformText,
+                                    onValueChange = { uniformText = it },
+                                    suffix = { Text("%") },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = uniformText.toFloatOrNull()
+                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: uniformValue
+                                        uniformValue = v
+                                        uniformText = "%.0f".format(v * 100)
+                                        onScaleChange(SlicerViewModel.ModelScale(v, v, v))
+                                        focusManager.clearFocus()
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier.width(96.dp)
+                                )
+                            }
                             Slider(
                                 value = uniformValue,
                                 onValueChange = { v ->
                                     uniformValue = v
+                                    uniformText = "%.0f".format(v * 100)
                                     onScaleChange(SlicerViewModel.ModelScale(v, v, v))
                                 },
-                                valueRange = 0.1f..3f,
-                                steps = 28
+                                valueRange = 0.1f..3f
                             )
                         } else {
-                            listOf("X" to scale.x, "Y" to scale.y, "Z" to scale.z).forEach { (axis, v) ->
-                                Text("$axis: ${"%.0f%%".format(v * 100)}", style = MaterialTheme.typography.labelMedium)
-                                Slider(
-                                    value = v,
-                                    onValueChange = { nv ->
-                                        val ns = when (axis) {
-                                            "X" -> scale.copy(x = nv)
-                                            "Y" -> scale.copy(y = nv)
-                                            else -> scale.copy(z = nv)
-                                        }
-                                        onScaleChange(ns)
-                                    },
-                                    valueRange = 0.1f..3f,
-                                    steps = 28
+                            var xText by remember(scale.x) {
+                                mutableStateOf("%.0f".format(scale.x * 100))
+                            }
+                            var yText by remember(scale.y) {
+                                mutableStateOf("%.0f".format(scale.y * 100))
+                            }
+                            var zText by remember(scale.z) {
+                                mutableStateOf("%.0f".format(scale.z * 100))
+                            }
+                            // X
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("X", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = xText,
+                                    onValueChange = { xText = it },
+                                    suffix = { Text("%") },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = xText.toFloatOrNull()
+                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.x
+                                        xText = "%.0f".format(v * 100)
+                                        onScaleChange(scale.copy(x = v))
+                                        focusManager.clearFocus()
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier.width(96.dp)
                                 )
                             }
+                            Slider(
+                                value = scale.x,
+                                onValueChange = { nv ->
+                                    xText = "%.0f".format(nv * 100)
+                                    onScaleChange(scale.copy(x = nv))
+                                },
+                                valueRange = 0.1f..3f
+                            )
+                            // Y
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Y", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = yText,
+                                    onValueChange = { yText = it },
+                                    suffix = { Text("%") },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = yText.toFloatOrNull()
+                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.y
+                                        yText = "%.0f".format(v * 100)
+                                        onScaleChange(scale.copy(y = v))
+                                        focusManager.clearFocus()
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier.width(96.dp)
+                                )
+                            }
+                            Slider(
+                                value = scale.y,
+                                onValueChange = { nv ->
+                                    yText = "%.0f".format(nv * 100)
+                                    onScaleChange(scale.copy(y = nv))
+                                },
+                                valueRange = 0.1f..3f
+                            )
+                            // Z
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Z", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = zText,
+                                    onValueChange = { zText = it },
+                                    suffix = { Text("%") },
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = KeyboardType.Number,
+                                        imeAction = ImeAction.Done
+                                    ),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val v = zText.toFloatOrNull()
+                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.z
+                                        zText = "%.0f".format(v * 100)
+                                        onScaleChange(scale.copy(z = v))
+                                        focusManager.clearFocus()
+                                    }),
+                                    singleLine = true,
+                                    modifier = Modifier.width(96.dp)
+                                )
+                            }
+                            Slider(
+                                value = scale.z,
+                                onValueChange = { nv ->
+                                    zText = "%.0f".format(nv * 100)
+                                    onScaleChange(scale.copy(z = nv))
+                                },
+                                valueRange = 0.1f..3f
+                            )
                         }
                         if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {
                             TextButton(
