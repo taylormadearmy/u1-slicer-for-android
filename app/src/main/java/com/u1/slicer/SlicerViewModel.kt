@@ -2260,6 +2260,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 diagnostics.markSliceInProgress(currentModelFile!!.name)
 
                 val result = native.slice(sliceConfig)
+                ensureActive()
 
                 // Native cancel: slice() returned with cancelled=true from CanceledException
                 if (result?.cancelled == true) {

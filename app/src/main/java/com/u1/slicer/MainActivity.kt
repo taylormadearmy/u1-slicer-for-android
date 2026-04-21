@@ -66,7 +66,6 @@ class MainActivity : ComponentActivity() {
     private var launchApkUpdateTime: Long = 0L
     private var pendingNavigateTo: String? = null
     private var navigateTabCallback: ((String) -> Unit)? = null
-    private var pendingArtifactExportKind: ExportArtifactKind? = null
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -91,20 +90,16 @@ class MainActivity : ComponentActivity() {
     private val sanitizedModelExportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/vnd.ms-3mfdocument")
     ) { uri ->
-        val kind = pendingArtifactExportKind
-        pendingArtifactExportKind = null
-        if (uri != null && kind == ExportArtifactKind.Sanitized3mf) {
-            exportModelArtifact(kind, uri)
+        if (uri != null) {
+            exportModelArtifact(ExportArtifactKind.Sanitized3mf, uri)
         }
     }
 
     private val embeddedModelExportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/vnd.ms-3mfdocument")
     ) { uri ->
-        val kind = pendingArtifactExportKind
-        pendingArtifactExportKind = null
-        if (uri != null && kind == ExportArtifactKind.SanitizedEmbedded3mf) {
-            exportModelArtifact(kind, uri)
+        if (uri != null) {
+            exportModelArtifact(ExportArtifactKind.SanitizedEmbedded3mf, uri)
         }
     }
 
@@ -543,13 +538,11 @@ class MainActivity : ComponentActivity() {
                             onNavigateModelViewer = { navController.navigate(Routes.MODEL_VIEWER) },
                             onExportSanitized3mf = {
                                 viewModel.suggestedArtifactFilename(ExportArtifactKind.Sanitized3mf)?.let { filename ->
-                                    pendingArtifactExportKind = ExportArtifactKind.Sanitized3mf
                                     sanitizedModelExportLauncher.launch(filename)
                                 }
                             },
                             onExportSanitizedEmbedded3mf = {
                                 viewModel.suggestedArtifactFilename(ExportArtifactKind.SanitizedEmbedded3mf)?.let { filename ->
-                                    pendingArtifactExportKind = ExportArtifactKind.SanitizedEmbedded3mf
                                     embeddedModelExportLauncher.launch(filename)
                                 }
                             },
@@ -2818,7 +2811,7 @@ fun ModelInfoDialog(
                 InfoRow("Manifold", if (info.isManifold) "Yes" else "No")
 
                 if (threeMfInfo != null && threeMfInfo.isBambu) {
-                    Divider(modifier = Modifier.padding(vertical = 4.dp),
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     Text("Bambu Studio File", fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary,
@@ -2834,7 +2827,7 @@ fun ModelInfoDialog(
                 }
 
                 if (exportArtifacts != null) {
-                    Divider(modifier = Modifier.padding(vertical = 4.dp),
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     Text(
                         "Export Pipeline Artifacts",
@@ -2877,7 +2870,7 @@ fun ModelInfoDialog(
                 }
 
                 if (config.extruderCount > 1) {
-                    Divider(modifier = Modifier.padding(vertical = 4.dp),
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp),
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     Row(
                         modifier = Modifier.fillMaxWidth(),

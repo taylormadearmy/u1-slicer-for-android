@@ -62,7 +62,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     private var cameraKeepaliveJob: Job? = null
 
     fun startCameraKeepalive() {
-        if (cameraKeepaliveJob?.isActive == true) return
+        if (!shouldStartCameraKeepalive(cameraKeepaliveJob?.isActive == true)) return
         cameraKeepaliveJob = viewModelScope.launch(Dispatchers.IO) {
             while (true) {
                 printerRepo.wakeCamera()
@@ -130,7 +130,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 if (_sendingState.value is SendingState.PrintStarted && s.isPrinting) {
                     _sendingState.value = SendingState.Idle
                 }
-                if (s.isConnected && !wasConnected) {
+                if (shouldPollLedOnConnectionEdge(wasConnected = wasConnected, isConnected = s.isConnected)) {
                     launch(Dispatchers.IO) { pollLedState() }
                 }
                 wasConnected = s.isConnected
@@ -307,5 +307,12 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         super.onCleared()
         stopCameraKeepalive()
         printerRepo.stopPolling()
+    }
+
+    companion object {
+        internal fun shouldStartCameraKeepalive(hasActiveJob: Boolean): Boolean = !hasActiveJob
+
+        internal fun shouldPollLedOnConnectionEdge(wasConnected: Boolean, isConnected: Boolean): Boolean =
+            isConnected && !wasConnected
     }
 }
