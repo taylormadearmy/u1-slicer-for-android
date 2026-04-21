@@ -764,6 +764,8 @@ fun PrepareScreen(
     val modelInfo by viewModel.modelInfo.collectAsState()
     val showPlateSelector by viewModel.showPlateSelector.collectAsState()
     val multiPlatePlates by viewModel.multiPlatePlates.collectAsState()
+    val currentModelName by viewModel.modelFileName.collectAsState()
+    val currentPlateId by viewModel.currentPlateId.collectAsState()
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
@@ -986,19 +988,40 @@ fun PrepareScreen(
                                 )
                             }
                         }
-                        // Change plate chip — visible when a multi-plate file is loaded
-                        if (multiPlatePlates.isNotEmpty()) {
-                            AssistChip(
-                                onClick = { viewModel.reopenPlateSelector() },
-                                label = { Text("Change plate") },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.Layers,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
+                        // File/plate label row — always shown when a model is loaded
+                        if (currentModelName.isNotEmpty()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (multiPlatePlates.isNotEmpty()) {
+                                    AssistChip(
+                                        onClick = { viewModel.reopenPlateSelector() },
+                                        label = { Text("Change plate") },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Layers,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
                                     )
                                 }
-                            )
+                                val displayName = currentModelName
+                                    .removeSuffix(".3mf")
+                                    .removeSuffix(".stl")
+                                    .removeSuffix(".obj")
+                                    .removeSuffix(".step")
+                                val plateLabel = if (currentPlateId > 0) " · Plate $currentPlateId" else ""
+                                Text(
+                                    text = "$displayName$plateLabel",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
                         }
                         // Inline extruder/color assignment + prime tower toggle
                         PrintSetupSection(

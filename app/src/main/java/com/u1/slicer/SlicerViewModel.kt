@@ -348,7 +348,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     // Track the current working file (may be sanitized copy)
     private var currentModelFile: File? = null
+    private val _modelFileName = MutableStateFlow("")
+    val modelFileName: StateFlow<String> = _modelFileName.asStateFlow()
     private var currentModelName: String = ""
+        set(value) { field = value; _modelFileName.value = value }
     private var lastModelInfo: ModelInfo? = null
     private val _modelInfo = MutableStateFlow<ModelInfo?>(null)
     val modelInfo: StateFlow<ModelInfo?> = _modelInfo.asStateFlow()
@@ -375,7 +378,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // which is why we can't use them in recovery.
     private var rawInputFile: File? = null
     private var recoveryOrigInfo: ThreeMfInfo? = null
+    private val _currentPlateId = MutableStateFlow(-1)
+    val currentPlateId: StateFlow<Int> = _currentPlateId.asStateFlow()
     private var recoveryPlateId: Int = -1
+        set(value) { field = value; _currentPlateId.value = value }
 
     // B24 RC2: Track whether profile needs re-embedding before next slice.
     // Set to true when config/overrides are saved while a model is loaded.
