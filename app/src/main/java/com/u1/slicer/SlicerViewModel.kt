@@ -36,7 +36,10 @@ import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.gcode.buildSuspiciousModelLineContexts
 import com.u1.slicer.model.CopyArrangeCalculator
 import org.json.JSONObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -357,6 +360,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Full processed multi-plate file — set once on load, never replaced by per-plate
     // extractions so selectPlate() always calls extractPlate() on the right source.
     private var _multiPlateSourceFile: File? = null
+    // Tracks the in-flight selectPlate coroutine so rapid plate changes cancel the prior one.
+    private var selectPlateJob: Job? = null
     // Original Bambu file's project_settings.config, parsed before process() strips it.
     // Used by embedProfile() so the file's own settings (enable_support, etc.) survive
     // through the sanitize→embed→extractPlate→restructure→re-embed pipeline.
@@ -1014,6 +1019,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Called when user selects a plate from the multi-plate dialog.
      */
     fun selectPlate(plateId: Int) {
+        selectPlateJob?.cancel()
         _showPlateSelector.value = false
         // Always extract from the full processed multi-plate file so that switching plates
         // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
@@ -1037,7 +1043,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             )
         )
 
-        viewModelScope.launch(Dispatchers.IO) {
+        selectPlateJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
                 val workspaceDir = transientWorkspaceDir()
@@ -1055,9 +1061,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     hasPlateJsons = hasPlateJsons,
                     plateObjectIds = plateObjectIds,
                     objectExtruderMap = plateExtruderMap)
+                ensureActive()
                 // Restructure per-plate: inline component meshes so OrcaSlicer
                 // can assign per-volume extruders (deferred from process()).
                 val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, workspaceDir)
+                ensureActive()
                 // Lightweight parse: only reads model_settings.config (~1KB) for extruder
                 // indices, skips the 15MB+ main model XML entirely (~2s saved).
                 val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
@@ -1082,9 +1090,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // original file's layer-change settings (SEMM/pause G-code), not just
                 // the preview metadata merged above.
                 val embeddedPlateFile = embedProfile(plateFile, mergedPlateInfo, workspaceDir)
+                ensureActive()
                 currentModelFile = embeddedPlateFile
                 loadNativeModel(embeddedPlateFile)
             } catch (e: Throwable) {
+                if (e is CancellationException) throw e
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error extracting plate: ${e.message}")
             }
@@ -1103,6 +1113,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun dismissPlateSelector() {
+        selectPlateJob?.cancel()
         _showPlateSelector.value = false
         // Cancel the load — multi-plate files need a plate selection to work correctly.
         // Loading the full file causes off-bed coordinates and Clipper errors (B12).
