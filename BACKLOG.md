@@ -4,6 +4,17 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B89: Prepare preview Info (I) menu not scrollable — buttons inaccessible (GitHub #92)
+- **Symptom**: The Info (ℹ︎) menu on the Prepare preview is not scrollable. Long file titles or portrait orientation push the action buttons off-screen and they cannot be reached.
+- **Fix**: Wrap the menu body in a vertical scroll container so content reflows regardless of length/orientation.
+- **Source**: User report, 2026-04-21
+
+### B88: Multi-colour mapping inconsistent in Prepare preview across plates (Buzz Lightyear) (GitHub #89)
+- **Symptom**: On a multi-plate Bambu 3MF, Prepare preview does not reliably reflect per-part 2-colour assignments. Fresh load → Prepare shows single colour, G-code preview correct. Plate 9 → Prepare shows one colour (apparently from previous plate), G-code preview also single colour but different from Prepare. Switching back to plate 8 behaves as first sequence.
+- **Root cause**: TBD — possibly colour mapping leaking across plate switches or between load and preview-effect emission. May relate to B83 (plate-switch objectIds) / B86 (DataStore presets race).
+- **Source**: Discord user DC15 on v1.6.7, 2026-04-21
+- **Test file**: TBD — MakerWorld model 2602980 (Buzz Lightyear Multipart Fanart); not yet on G-Drive
+
 ### B87: Black layers in Prepare preview missing from G-code preview after slicing (GitHub #88)
 - **Symptom**: Skywing Seawing Hybrid Dragon 3MF — bottom layers shown as black in Prepare screen do not appear black in the G-code preview after slicing. The actual print matches the incorrect G-code preview (no black on bottom layers). Reproducible at both 70% and 100% scale; eye components show correct colours.
 - **Root cause**: TBD — confirmed file-specific.
@@ -241,6 +252,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Issue #19 closed.
 
 ## Open Features
+
+### F75: Prime tower should default to back of plate (GitHub #90)
+- Default auto-placed prime tower to back of bed instead of current default; prefer embedded 3MF position when present; user can still move freely.
+- **Source**: Discord user DC15, 2026-04-21
 
 ### F70: Check for Updates (GitHub #68) — DONE v1.5.49
 - "Check for Updates" button in Settings About section; queries GitHub Releases API (`/releases/latest`), compares to `BuildConfig.VERSION_NAME`, shows inline result

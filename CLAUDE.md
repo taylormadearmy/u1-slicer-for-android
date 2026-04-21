@@ -230,6 +230,8 @@ Settings reach OrcaSlicer's native engine through **two paths** — a setting th
 
 For clarity: rebuilding the native library is not something to avoid on principle. If a feature depends on C++ changes, rebuild it so the shipped app actually gets the functionality.
 
+**Authorization**: Claude is pre-authorized to rebuild the native `.so` whenever a bug fix or feature genuinely requires C++ changes — no need to pause and ask. Follow the NDK 26 / Release / size + compiler verification checklist below exactly; ship only stripped Release builds.
+
 ## Native Rebuild
 
 The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
