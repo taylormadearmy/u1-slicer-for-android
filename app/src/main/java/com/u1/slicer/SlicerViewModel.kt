@@ -2008,9 +2008,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 SlicingService.start(context)
                 var maxPct = 0
                 native.progressListener = { pct, stage ->
-                    if (pct > maxPct) maxPct = pct
-                    _state.value = SlicerState.Slicing(maxPct, stage)
-                    SlicingService.updateProgress(context, maxPct, stage)
+                    // Guard: don't override Loading — selectPlate() may have set it to initiate
+                    // a plate switch while this slice was still running. Overriding Loading would
+                    // remount InlineModelPreview against the stale native state and produce
+                    // wrong preview colours on the new plate.
+                    val cur = _state.value
+                    if (cur !is SlicerState.Loading && cur !is SlicerState.Idle) {
+                        if (pct > maxPct) maxPct = pct
+                        _state.value = SlicerState.Slicing(maxPct, stage)
+                        SlicingService.updateProgress(context, maxPct, stage)
+                    }
                 }
 
                 _state.value = SlicerState.Slicing(0, "Preparing...")
