@@ -4,6 +4,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B87: Black layers in Prepare preview missing from G-code preview after slicing (GitHub #88)
+- **Symptom**: Skywing Seawing Hybrid Dragon 3MF — bottom layers shown as black in Prepare screen do not appear black in the G-code preview after slicing. The actual print matches the incorrect G-code preview (no black on bottom layers). Reproducible at both 70% and 100% scale; eye components show correct colours.
+- **Root cause**: TBD — confirmed file-specific.
+- **Source**: Discord user DC15, 2026-04-20
+- **Test file**: `天翼，海翼，丝翼拆件多色.3mf` (test-data folder on G-Drive); MakerWorld model 2661371
+
 ### B86: S-Buttons Prepare preview shows 3 colours instead of 4 — FIXED v1.6.1 (GitHub #85)
 - **Symptom**: `Button-for-S-trousers.3mf` Prepare preview intermittently showed yellow, white, blue but not pink (E4). G-code preview after slicing showed all 4 correctly.
 - **Root cause**: DataStore race in `SlicerViewModel.loadNativeModel`. `extruderPresets.value` read the StateFlow's initial placeholder (`defaultExtruderPresets()` = red/green/blue/white) before DataStore had emitted the actual stored user presets. `findClosestExtruder` then mapped S-Buttons detected colours against the defaults, producing a non-identity `colorMapping`. Later `refreshMappedPreviewColors` updated `activeExtruderColors` to the correct user colours but never updated `colorMapping`, so the Compose palette `colorMapping.map { slot → extruderColors[slot] }` incorrectly assigned E4 objects (slot 3) to `extruderColors[colorMapping[3]]` which pointed at white (E2's slot).
@@ -90,19 +96,19 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Fix**: (1) `sapil_arrange.cpp` — use `trafo.get_scaling_factor()` to multiply meshBB.min before offset computation. (2) `MainActivity.kt` — add `lib.setModelScale(1f, 1f, 1f)` before `getPreparePreviewMesh()` in the Prepare preview LaunchedEffect (alongside the existing B72 instance reset).
 - **Tests**: `SlicingIntegrationTest.threeMf_scaledDown50pct_gcodeIsCenteredOnBed`, `SlicingIntegrationTest.setModelInstances_withScale_placesInstanceAtCorrectOffset`
 
-### B72: Prepare preview corrupted (shattered mesh) after scale + copies + slice (GitHub #78)
+### B72: Prepare preview corrupted (shattered mesh) after scale + copies + slice (GitHub #78) — FIXED v1.5.70
 - After increasing model scale, increasing copy count, slicing, then returning to Prepare tab, the preview mesh looks geometrically shattered. The slice output is correct.
 - **Root cause**: `setModelInstances()` is called during `prepareSlicer()` with N grid positions. The scale change clears the prepare-preview cache but the cache is never repopulated (LaunchedEffect key=modelRotation doesn't change). On tab return the composable is recreated with a null cache, triggering a fresh `getPreparePreviewMesh()` on the post-slice native state which has N instances set — returning all N copies baked in world-space. The GL renderer then also applies instancePositions for N copies → N×N corruption.
 - **Fix**: Reset to single centred instance (`setModelInstances(floatArrayOf(135f, 135f))`) before calling `getPreparePreviewMesh()` in the Prepare preview LaunchedEffect.
 - **Test**: `NativePreparePreviewTest.getPreparePreviewMesh_afterMultiInstanceSliceState_singleInstanceResetGivesCorrectBounds`
 
-### B68: Printer offline notification shown during printing — misleading text (GitHub #75)
+### B68: Printer offline notification shown during printing — misleading text (GitHub #75) — FIXED v1.5.67
 - While a print is actively in progress, the app shows a "printer offline" notification
 - May be unavoidable (Android limits background WebSocket connections), but text is misleading — implies the printer went offline rather than that the app lost its monitoring connection
 - **Suggested fix**: Change notification text to "Press to connect to see printer status" (or similar)
 - **Source**: Discord user Jon (2026-04-14)
 
-### B67: Import configuration only partially connects printer — camera doesn't show (GitHub #74)
+### B67: Import configuration only partially connects printer — camera doesn't show (GitHub #74) — FIXED v1.5.67
 - After importing a printer configuration (QR code / settings import), printer appears connected but live camera feed does not load
 - User must navigate to Printer Settings and tap Connect manually to fully connect
 - **Expected**: Import should result in a fully connected printer (camera + status working)
