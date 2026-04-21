@@ -970,8 +970,8 @@ fun PrepareScreen(
                                 onResetView = { captureViewer?.resetView(); onResetPreviewCamera?.invoke() },
                                 layerToolOnly = layerToolOnly,
                                 layerToolSegments = threeMfInfo?.layerToolSegments,
-                                cachedMesh = viewModel.cachedPrepareMesh,
-                                onMeshCached = { viewModel.cachedPrepareMesh = it },
+                                cachedMesh = if (viewModel.cachedPrepareMeshPath == modelPath) viewModel.cachedPrepareMesh else null,
+                                onMeshCached = { viewModel.cachedPrepareMeshPath = modelPath; viewModel.cachedPrepareMesh = it },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
                                 nativeSliceStateDirty = nativeSliceStateDirty
                             )
@@ -2262,8 +2262,15 @@ fun InlineModelPreview(
         // rotation path handles the preview (3MF files).  The parse effect returns
         // null for 3MF — clearing the mesh here just kills the cached preview and
         // forces a slow re-fetch from native.
+        // F73 fix: also don't clear mesh when we already have a displayed mesh (mesh != null)
+        // and the native path is in use.  colorMapping?.size is a LaunchedEffect key so this
+        // effect re-fires on every color-mapping change (e.g. after a plate switch completes
+        // and loadNativeModel emits colorMapping size change).  Without this guard, the effect
+        // clears mesh/viewerLoading that were already correctly set by the rotation effect,
+        // leaving the "Preparing preview…" spinner forever because the rotation effect won't
+        // re-fire (modelFilePath and modelRotation are both unchanged).
         val isNativePreviewPath = modelFilePath.endsWith(".3mf", ignoreCase = true)
-        if (cachedMesh == null || !isNativePreviewPath) {
+        if ((cachedMesh == null && mesh == null) || !isNativePreviewPath) {
             viewerLoading = true
             mesh = null
             lastSetMesh = null

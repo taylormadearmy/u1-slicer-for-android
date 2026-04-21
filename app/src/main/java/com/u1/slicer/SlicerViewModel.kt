@@ -301,10 +301,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // The native side caches the raw mesh, but toMeshData() (normal computation + FloatBuffer
     // allocation) is expensive for large SEMM models (2M tris).  This cache avoids re-conversion.
     // Invalidated on model load, rotation change, or arrangement change.
+    // cachedPrepareMeshPath ties the cache to a specific model file so that a plate switch
+    // (which changes previewModelPath before invalidation runs) doesn't serve a stale mesh.
     @Volatile var cachedPrepareMesh: com.u1.slicer.viewer.MeshData? = null
+    @Volatile var cachedPrepareMeshPath: String? = null
 
     fun invalidatePrepareMeshCache() {
         cachedPrepareMesh = null
+        cachedPrepareMeshPath = null
     }
 
     // Filament library — StateFlow so .value is accessible synchronously (e.g. for nozzle temp lookup at slice time)
