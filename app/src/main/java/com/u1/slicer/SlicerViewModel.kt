@@ -365,6 +365,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private var _multiPlateSourceFile: File? = null
     // Tracks the in-flight selectPlate coroutine so rapid plate changes cancel the prior one.
     private var selectPlateJob: Job? = null
+    // Tracks the in-flight slice coroutine so a plate switch can cancel it before it writes
+    // SliceComplete/Error and overwrites the Loading state set by selectPlate().
+    private var slicingJob: Job? = null
     // Original Bambu file's project_settings.config, parsed before process() strips it.
     // Used by embedProfile() so the file's own settings (enable_support, etc.) survive
     // through the sanitize→embed→extractPlate→restructure→re-embed pipeline.
@@ -1026,6 +1029,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun selectPlate(plateId: Int) {
         selectPlateJob?.cancel()
+        slicingJob?.cancel()
         _showPlateSelector.value = false
         // Always extract from the full processed multi-plate file so that switching plates
         // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
@@ -1990,7 +1994,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // fails early or throws — avoids leaking a full-resolution screen-capture Bitmap.
         val capturedBitmap = pendingThumbnailBitmap.also { pendingThumbnailBitmap = null }
         _sliceStale.value = false
-        viewModelScope.launch(Dispatchers.IO) {
+        slicingJob = viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
             try {
                 when (_state.value) {
@@ -2336,6 +2340,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             Log.i("SlicerVM", "Thumbnails injected from GL capture")
                         }
                     } catch (e: Throwable) {
+                        if (e is CancellationException) throw e
                         Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
                     }
 
@@ -2399,6 +2404,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _state.value = SlicerState.Error(clipperUserMessage(errorMsg))
                 }
             } catch (e: Throwable) {
+                if (e is CancellationException) throw e
                 Log.e("SlicerVM", "Unexpected error during slicing", e)
                 val errorMsg = e.message ?: e.javaClass.simpleName
                 if (isClipperError(errorMsg)) {
