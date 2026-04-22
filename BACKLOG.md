@@ -4,6 +4,20 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B91: parseForPlateSelection takes 3m31s on dense SEMM (Skywing Dragon) — FIXED (GitHub #94)
+- **Symptom**: Selecting a plate on dense painted models (Skywing: 162K `paint_color` attributes across 35 component model files) stalled the UI for ~3.5 minutes. No user-visible log activity between `restructurePlateFile` and the next SlicerVM event.
+- **Root cause**: `computeVisualColorCountByPlate` read every paint_color via per-line regex into an unbounded `LinkedHashSet`.
+- **Fix**: Callback-based `streamCollectPaintSpecs` + `EarlyExit` sentinel. Once 32 unique specs and ≥2 states observed, complex encoding is confirmed and the reader stops. Simple-encoded models still collect the full set. Skywing plate 1: 3m31s → ~2s.
+- **Source**: Surfaced during B87/B88 investigation 2026-04-22
+- **Test file**: `skywing-seawing-silkwing.3mf` on G-Drive
+
+### B90: Buzz plate 9 detectedColors reports filaments 1-2 instead of actual high-index filaments — FIXED (GitHub #93)
+- **Symptom**: Buzz Lightyear plate 9 — objects use filament 10 (white) with paint state 8 (peach), but `detectedColors` reported `[#000000, #0086D6]` (filaments 1-2). After B88 compaction fix the preview had 2 distinct colours but the wrong slot presets.
+- **Root cause**: `parseForPlateSelection` synthesised `effectiveExtruders=(1..visualCount)` whenever paint visual count exceeded unique object extruders. Worked for low-index cases; dropped high indices.
+- **Fix**: When max(objectExtruders) > visualCount, use union of actual object extruders + paint states. Low-index cases keep the synthetic range (preserves B84 slip-slide four-colour chip count).
+- **Tests**: `buzzLightyear_plateSwitch_preparePreviewReflectsCurrentPlatePalette` asserts plate 9's detectedColors includes both `#FFFFFF` and `#FFD6C1`.
+- **Source**: Surfaced during B87/B88 investigation 2026-04-22
+
 ### B89: Prepare preview Info (I) menu not scrollable — buttons inaccessible (GitHub #92)
 - **Symptom**: The Info (ℹ︎) menu on the Prepare preview is not scrollable. Long file titles or portrait orientation push the action buttons off-screen and they cannot be reached.
 - **Fix**: Wrap the menu body in a vertical scroll container so content reflows regardless of length/orientation.
