@@ -353,6 +353,61 @@ class PreparePreviewViewModelTest {
     }
 
     /**
+     * Follow-up diagnostic for the Skywing plate-1 hang observed during B87
+     * investigation. Loads Skywing and triggers plate 1 selection, asserts the
+     * native model load completes within a generous timeout and the Prepare
+     * preview mesh is produced.
+     *
+     * The hang manifested after `restructurePlateFile: no multi-color components,
+     * skipping` with no further SlicerVM log activity — either embedProfile hung
+     * or loadNativeModel deadlocked. This test either reproduces the hang (fail
+     * with timeout) or proves it's been resolved by an unrelated change.
+     */
+    @Test
+    fun skywingDragon_selectPlate1_loadCompletes() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("skywing-seawing-silkwing.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("skywing plate selector or ModelLoaded", timeoutMs = 240_000L) {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val s = viewModel.state.value
+            if (s is SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("skywing load failed: ${s.message}")
+            }
+            assertTrue("skywing should show plate selector", viewModel.showPlateSelector.value)
+
+            val startNanos = System.nanoTime()
+            viewModel.selectPlate(1)
+
+            waitUntil("skywing plate 1 ModelLoaded (colorMapping may be null)", timeoutMs = 360_000L) {
+                val st = viewModel.state.value
+                st is SlicerViewModel.SlicerState.ModelLoaded ||
+                    st is SlicerViewModel.SlicerState.Error
+            }
+            val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L
+
+            val st = viewModel.state.value
+            if (st is SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("skywing plate 1 selectPlate errored: ${st.message}")
+            }
+            assertTrue(
+                "skywing plate 1 must complete within 360s; took ${elapsedMs}ms",
+                elapsedMs < 360_000L
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
      * B88: Plate-switch on Buzz Lightyear multi-plate 3MF leaves Prepare preview
      * showing the previous plate's colour(s) instead of the new plate's palette.
      *
@@ -448,6 +503,20 @@ class PreparePreviewViewModelTest {
             assertTrue(
                 "plate 9 must expose detectedColors\n$diag",
                 plate9DetectedColors.isNotEmpty()
+            )
+
+            // Invariant 1b (B90): plate 9 objects use extruder=10 and paint state 8.
+            // Before the fix, `parseForPlateSelection` synthesized (1..visualCount) =
+            // (1..2) as effectiveExtruders, dropping filament 10 (white) and filament 8
+            // (peach) and substituting filaments 1 (black) and 2 (blue) instead.
+            // After the fix, detectedColors must include filament 10 (#FFFFFF) and
+            // filament 8 (#FFD6C1).
+            val expectedPlate9Colors = setOf("#FFFFFF", "#FFD6C1")
+            assertTrue(
+                "plate 9 detectedColors must include both filament 10 (#FFFFFF white, " +
+                    "object extruder) and filament 8 (#FFD6C1 peach, paint state 8). " +
+                    "Got ${plate9DetectedColors}\n$diag",
+                plate9DetectedColors.toSet().containsAll(expectedPlate9Colors)
             )
 
             // Invariant 2: colorMapping size matches detectedColors size (stale detection).
