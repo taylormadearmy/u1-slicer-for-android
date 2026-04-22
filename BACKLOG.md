@@ -4,6 +4,19 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B93: Buzz Lightyear 73MB 3MF cold load ~100s + plate switch ~36s (GitHub #97)
+- **Symptom**: 73MB multi-plate Bambu 3MF takes ~100s from LOAD_FILE to plate selector, then ~30-40s per plate selection on Pixel 8a. Distinct from B91 (Skywing), which was `parseForPlateSelection` specific.
+- **Root cause candidates**: (1) initial full-file embedProfile + native loadModel is throwaway work when `isMultiPlate=true` — user will select a plate and trigger a per-plate reload; (2) `ThreeMfParser.parse` (file-level) doesn't use B91's `EarlyExit` pattern; (3) `BambuSanitizer.process` iterates 80+ component .model entries serially.
+- **Test file**: `Buzz_Multipart_3MF_Bambu.3mf` in `app/src/androidTest/assets/`
+- **Source**: Surfaced during v1.6.9 manual testing on 2026-04-22
+
+### B92: Prepare ↔ Preview colour swap on per-object + paint-state SEMM plates (GitHub #96)
+- **Symptom**: On Bambu SEMM plates that combine a per-object default extruder with a *higher* source filament index than any paint state in use (Buzz plate 7, 8, 4, 9), the Prepare preview and the G-code Preview render the same triangles in *swapped* colours. Pre-v1.6.9 this was hidden by the Prepare clamp bug (B88); post-v1.6.9 Prepare is correct and the Preview-side ordering mismatch becomes visible.
+- **Root cause**: `normalizeGcodePreviewColors` indexes its palette by `detectedColors` order (sorted filament index ascending), but the slicer emits T0 for the object's default extruder first and paint states after. The two orderings disagree whenever the object default has a higher filament index than the paint state. Related: `ProfileEmbedder` embeds `filament_colour = filaments[0..N-1]` instead of the actually-used filaments (same class of issue, doesn't surface in Prepare because Prepare uses slot presets).
+- **Fix direction**: Reorder the G-code viewer's palette derivation to match slicer tool order (Option 2 in the issue — narrow, Preview-side only, avoids touching slicing or embedding). Alternative: reorder mesh compact indices in `NativePreviewMesh.toMeshData()` to match slicer order (Option 1 — Prepare-side only).
+- **Test file**: `Buzz_Multipart_3MF_Bambu.3mf` plate 8 (also plates 4, 7, 9)
+- **Source**: Surfaced during v1.6.9 manual testing on 2026-04-22 — user DC15 reported via Discord; reproduced locally after v1.6.9 ship
+
 ### B91: parseForPlateSelection takes 3m31s on dense SEMM (Skywing Dragon) — FIXED v1.6.9 (GitHub #94)
 - **Symptom**: Selecting a plate on dense painted models (Skywing: 162K `paint_color` attributes across 35 component model files) stalled the UI for ~3.5 minutes. No user-visible log activity between `restructurePlateFile` and the next SlicerVM event.
 - **Root cause**: `computeVisualColorCountByPlate` read every paint_color via per-line regex into an unbounded `LinkedHashSet`.
