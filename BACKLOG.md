@@ -4,6 +4,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B94: User drag-to-move object position lost after slicing — Preview shows model at default (GitHub #99)
+- **Symptom**: User drags object to a new bed position on Prepare → slice → Preview shows the object back at the default (front-centre) position. Reproduces on single-object Spiderman file. Wipe tower position IS preserved, only the model position is lost.
+- **Likely suspect**: B78 `loadTimeInstanceOffsets` snapshot may be overwriting the user-drag offset before slice. Drag handler in SlicerViewModel vs slice-time `setModelInstances` path to be audited.
+- **Test file**: `hanging+pre+cut+colour+3mf.3mf` on G-Drive tes-data — needs copying to `app/src/androidTest/assets/` as `spiderman-hanging-pre-cut.3mf`.
+- **Source**: Discord user DC15 on 2026-04-22
+
 ### B93: Buzz Lightyear 73MB 3MF cold load ~100s + plate switch ~36s (GitHub #97)
 - **Symptom**: 73MB multi-plate Bambu 3MF takes ~100s from LOAD_FILE to plate selector, then ~30-40s per plate selection on Pixel 8a. Distinct from B91 (Skywing), which was `parseForPlateSelection` specific.
 - **Root cause candidates**: (1) initial full-file embedProfile + native loadModel is throwaway work when `isMultiPlate=true` — user will select a plate and trigger a per-plate reload; (2) `ThreeMfParser.parse` (file-level) doesn't use B91's `EarlyExit` pattern; (3) `BambuSanitizer.process` iterates 80+ component .model entries serially.
