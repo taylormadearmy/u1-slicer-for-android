@@ -194,11 +194,9 @@ object ThreeMfParser {
                     for (entry in modelFiles) {
                         streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
                             val ch = spec.firstOrNull() ?: return@streamCollectPaintSpecs
-                            val state = when (ch) {
-                                in '1'..'9' -> ch - '0'
-                                in 'A'..'Z' -> ch - 'A' + 10
-                                else -> return@streamCollectPaintSpecs
-                            }
+                            val state = paintCharToState(ch)
+                                ?.takeIf { it > 0 }
+                                ?: return@streamCollectPaintSpecs
                             // Fold AMS2 states (5-8) back to AMS1 (1-4)
                             val folded = if (state > 4) ((state - 1) % 4) + 1 else state
                             states.add(folded)
@@ -738,6 +736,17 @@ object ThreeMfParser {
     }
 
     /**
+     * Decode the first character of an OrcaSlicer paint_color / mmu_segmentation
+     * spec to the 0-based paint-state index (0 = unpainted, 1..15 = filament
+     * indices encoded as hex 1..F). Returns null for characters outside 0-9/A-Z.
+     */
+    internal fun paintCharToState(c: Char): Int? = when (c) {
+        in '0'..'9' -> c - '0'
+        in 'A'..'Z' -> c - 'A' + 10
+        else -> null
+    }
+
+    /**
      * Per-plate visual colour metadata.
      * - [count]: total distinct colour regions visible on this plate (object extruders +
      *   paint visual count), used to size filament palettes.
@@ -793,11 +802,7 @@ object ThreeMfParser {
                     streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
                         if (paintSpecs.size < specCollectionCap) paintSpecs.add(spec)
                         val c = spec.firstOrNull() ?: return@streamCollectPaintSpecs
-                        val state = when {
-                            c in '0'..'9' -> c - '0'
-                            c in 'A'..'Z' -> c - 'A' + 10
-                            else -> return@streamCollectPaintSpecs
-                        }
+                        val state = paintCharToState(c) ?: return@streamCollectPaintSpecs
                         allPaintStates.add(state)
                         if (state > 0) paintExtruderStates.add(state)
                         // B91: once we've saturated the spec cap and any new states would
