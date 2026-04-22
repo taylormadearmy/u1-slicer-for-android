@@ -18,6 +18,19 @@ data class NativePreviewMesh(
         val triangleCount = extruderIndices.size
         if (triangleCount == 0 || trianglePositions.size != triangleCount * 9) return null
 
+        // B88: compact raw extruder indices to 0..N-1 using sorted-unique ordering.
+        // Native `compactPreviewIndices` skips compaction when MMU paint data is present
+        // (to preserve state_idx for H2C-style folding), but this leaves plates with
+        // high filament indices (e.g. Buzz Lightyear plate 9 uses filaments 10/11 → raw
+        // indices 9/10) mismatched against the Kotlin `colorMapping`, which is sized to
+        // the plate's compacted `detectedColors`. The result: `MeshData.recolor` clamps
+        // the OOB index to palette.lastIndex, collapsing the preview to a single colour.
+        //
+        // Compacting in Kotlin is safe for all existing models — meshes that already use
+        // compact 0..N-1 indices are a no-op under this mapping. `mergeThreeMfInfoForPlate`
+        // produces `detectedColors` in sorted-filament-index order, so the sorted-unique
+        // compact mapping here aligns with the palette ordering.
+        val compactedIndices = compactExtruderIndices(extruderIndices)
         val buf = MeshData.allocateBuffer(triangleCount)
         var minX = Float.POSITIVE_INFINITY
         var minY = Float.POSITIVE_INFINITY
@@ -80,7 +93,7 @@ data class NativePreviewMesh(
             maxX = maxX,
             maxY = maxY,
             maxZ = maxZ,
-            extruderIndices = extruderIndices.copyOf()
+            extruderIndices = compactedIndices
         )
     }
 
@@ -106,6 +119,31 @@ data class NativePreviewMesh(
     }
 
     companion object {
+        /**
+         * B88: Map raw filament indices (possibly sparse/high, e.g. 9 and 10 for Buzz
+         * Lightyear plate 9) to compact 0..N-1 in sorted-unique order. Matches the
+         * native `compactPreviewIndices` algorithm but runs unconditionally on the
+         * Kotlin side so per-plate meshes with paint data (`has_mmu_data=true`) — for
+         * which native skips compaction — still align with the Kotlin-compacted
+         * `detectedColors` + `colorMapping` palette.
+         */
+        internal fun compactExtruderIndices(raw: ByteArray): ByteArray {
+            if (raw.isEmpty()) return raw.copyOf()
+            val seen = BooleanArray(256)
+            for (b in raw) seen[b.toInt() and 0xFF] = true
+            val lut = ByteArray(256)
+            var next = 0
+            for (i in 0 until 256) {
+                if (seen[i]) {
+                    lut[i] = next.toByte()
+                    next++
+                }
+            }
+            val out = ByteArray(raw.size)
+            for (i in raw.indices) out[i] = lut[raw[i].toInt() and 0xFF]
+            return out
+        }
+
         /** Target triangle count passed to native QEM decimation. At 100K, GL buffer ≈ 12MB. */
         const val MAX_DECIMATED_TRIANGLES = 100_000
 

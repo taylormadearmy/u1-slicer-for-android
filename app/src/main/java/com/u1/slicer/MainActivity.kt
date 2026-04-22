@@ -2803,7 +2803,11 @@ fun ModelInfoDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val infoScrollState = rememberScrollState()
+            Column(
+                modifier = Modifier.verticalScroll(infoScrollState),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 InfoRow("Format", info.format.uppercase())
                 InfoRow("Dimensions", info.dimensionString)
                 InfoRow("Triangles", "%,d".format(info.triangleCount))

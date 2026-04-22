@@ -192,13 +192,11 @@ object ThreeMfParser {
                         e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
                     }
                     for (entry in modelFiles) {
-                        for (spec in streamCollectPaintSpecs(zip.getInputStream(entry))) {
-                            val ch = spec.firstOrNull() ?: continue
-                            val state = when (ch) {
-                                in '1'..'9' -> ch - '0'
-                                in 'A'..'Z' -> ch - 'A' + 10
-                                else -> continue
-                            }
+                        streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
+                            val ch = spec.firstOrNull() ?: return@streamCollectPaintSpecs
+                            val state = paintCharToState(ch)
+                                ?.takeIf { it > 0 }
+                                ?: return@streamCollectPaintSpecs
                             // Fold AMS2 states (5-8) back to AMS1 (1-4)
                             val folded = if (state > 4) ((state - 1) % 4) + 1 else state
                             states.add(folded)
@@ -449,12 +447,32 @@ object ThreeMfParser {
                         filamentIndices = plateFilamentMap[plateId] ?: emptySet()
                     )
                 }
-                val hasPaintDataForPlate = visualColorCountByPlate.values.any { (_, hasPaint) -> hasPaint }
+                val hasPaintDataForPlate = visualColorCountByPlate.values.any { it.hasPaint }
                 val effectiveExtruders = visualColorCountByPlate.values
-                    .maxByOrNull { (count, _) -> count }
-                    ?.let { (visualCount, _) ->
+                    .maxByOrNull { it.count }
+                    ?.let { maxPlate ->
+                        val visualCount = maxPlate.count
                         if (visualCount > uniqueExtruders.size) {
-                            (1..visualCount).toSet()
+                            // B90: when the plate's real object extruders include indices
+                            // strictly above `visualCount` (e.g. Buzz Lightyear plate 9:
+                            // extruder=10, visualCount=2), the synthetic (1..visualCount)
+                            // range drops those indices and substitutes low filaments that
+                            // don't match the rendered mesh. Prefer the union of actual
+                            // object extruders and paint states so `detectedColors` maps
+                            // to the filaments the user would physically print.
+                            //
+                            // slip-slide plate 3 keeps the synthetic range: its object
+                            // extruder (1) fits inside (1..visualCount=4), so the pre-B90
+                            // B84 behaviour (4 distinct filament slots derived from the
+                            // file's filament_colour array) is preserved.
+                            val maxObjectExtruder = maxPlate.objectExtruders.maxOrNull() ?: 0
+                            if (maxObjectExtruder > visualCount) {
+                                (maxPlate.objectExtruders + maxPlate.paintExtruderStates)
+                                    .filter { it > 0 }
+                                    .toSortedSet()
+                            } else {
+                                (1..visualCount).toSet()
+                            }
                         } else {
                             uniqueExtruders
                         }
@@ -681,16 +699,32 @@ object ThreeMfParser {
         return false
     }
 
-    private fun streamCollectPaintSpecs(input: InputStream): Set<String> {
-        val specs = linkedSetOf<String>()
-        input.bufferedReader().useLines { lines ->
-            lines.forEach { line ->
-                extractPaintSpec(line)?.let { spec ->
-                    if (spec.isNotBlank()) specs.add(spec)
+    /**
+     * Streams paint_color / mmu_segmentation specs from a 3MF component model,
+     * invoking [onSpec] for each occurrence. Returns early when the callback
+     * throws [EarlyExit] so callers can stop after they've seen enough data —
+     * Skywing's dragon has 162K paint_color attributes and reading them all was
+     * blocking the UI for several minutes on plate selection (B91).
+     */
+    private inline fun streamCollectPaintSpecs(
+        input: InputStream,
+        onSpec: (String) -> Unit
+    ) {
+        try {
+            input.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    extractPaintSpec(line)?.let { spec ->
+                        if (spec.isNotBlank()) onSpec(spec)
+                    }
                 }
             }
+        } catch (_: EarlyExit) {
+            // Callback signalled it has seen enough; stop reading the stream.
         }
-        return specs
+    }
+
+    internal object EarlyExit : RuntimeException() {
+        private fun readResolve(): Any = EarlyExit
     }
 
     private val PAINT_SPEC_REGEX = Regex("""(?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)="([^"]+)"""")
@@ -701,14 +735,41 @@ object ThreeMfParser {
             ?.getOrNull(1)
     }
 
-    // Returns (visualColorCount, hasPaintData) per plate.
+    /**
+     * Decode the first character of an OrcaSlicer paint_color / mmu_segmentation
+     * spec to the 0-based paint-state index (0 = unpainted, 1..15 = filament
+     * indices encoded as hex 1..F). Returns null for characters outside 0-9/A-Z.
+     */
+    internal fun paintCharToState(c: Char): Int? = when (c) {
+        in '0'..'9' -> c - '0'
+        in 'A'..'Z' -> c - 'A' + 10
+        else -> null
+    }
+
+    /**
+     * Per-plate visual colour metadata.
+     * - [count]: total distinct colour regions visible on this plate (object extruders +
+     *   paint visual count), used to size filament palettes.
+     * - [hasPaint]: true when any non-zero paint state was observed.
+     * - [objectExtruders]: 1-based filament indices assigned to objects on this plate.
+     * - [paintExtruderStates]: non-zero paint states observed on this plate, interpreted
+     *   as 1-based filament indices. Bambu Studio's SEMM encoding treats paint_color's
+     *   first hex character as the filament index (1..F).
+     */
+    internal data class PlateVisualInfo(
+        val count: Int,
+        val hasPaint: Boolean,
+        val objectExtruders: Set<Int>,
+        val paintExtruderStates: Set<Int>
+    )
+
     private fun computeVisualColorCountByPlate(
         zip: ZipFile,
         modelEntry: java.util.zip.ZipEntry?,
         plateObjectMap: Map<Int, List<String>>,
         componentPathsByObject: Map<String, List<String>>,
         extruderAssignments: Map<String, Int>
-    ): Map<Int, Pair<Int, Boolean>> {
+    ): Map<Int, PlateVisualInfo> {
         val fallbackPlateObjectMap = if (plateObjectMap.isNotEmpty() || modelEntry == null) {
             plateObjectMap
         } else {
@@ -728,19 +789,32 @@ object ThreeMfParser {
             val paintSpecs = linkedSetOf<String>()
             val paintExtruderStates = mutableSetOf<Int>()
             val allPaintStates = mutableSetOf<Int>()
-            objectIds.forEach { objectId ->
-                componentPathsByObject[objectId].orEmpty().forEach { path ->
-                    val entry = zip.getEntry(path) ?: return@forEach
-                    streamCollectPaintSpecs(zip.getInputStream(entry)).forEach { spec ->
-                        paintSpecs.add(spec)
-                        val c = spec.firstOrNull() ?: return@forEach
-                        val state = when {
-                            c in '0'..'9' -> c - '0'
-                            c in 'A'..'Z' -> c - 'A' + 10
-                            else -> return@forEach
-                        }
+            // B91: once we confirm complex encoding (many unique specs for few states —
+            // e.g. Skywing: 162K specs, 3 states) we stop growing paintSpecs. The cap
+            // is well above the simple-encoding upper bound (max 16 states) so simple
+            // models still collect every spec and the `paintSpecs.size == allPaintStates.size`
+            // discriminator for simple encoding keeps firing correctly.
+            val specCollectionCap = SPEC_CAP_FOR_COMPLEX_DETECTION
+            outer@ for (objectId in objectIds) {
+                val paths = componentPathsByObject[objectId].orEmpty()
+                for (path in paths) {
+                    val entry = zip.getEntry(path) ?: continue
+                    streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
+                        if (paintSpecs.size < specCollectionCap) paintSpecs.add(spec)
+                        val c = spec.firstOrNull() ?: return@streamCollectPaintSpecs
+                        val state = paintCharToState(c) ?: return@streamCollectPaintSpecs
                         allPaintStates.add(state)
                         if (state > 0) paintExtruderStates.add(state)
+                        // B91: once we've saturated the spec cap and any new states would
+                        // only swell paintSpecs.size further past the simple/complex
+                        // threshold, stop reading. AllPaintStates is bounded by 16 states
+                        // (hex 0..F); we require at least 2 to differentiate encodings.
+                        if (paintSpecs.size >= specCollectionCap && allPaintStates.size >= 2) {
+                            throw EarlyExit
+                        }
+                    }
+                    if (paintSpecs.size >= specCollectionCap && allPaintStates.size >= 2) {
+                        break@outer
                     }
                 }
             }
@@ -753,9 +827,24 @@ object ThreeMfParser {
             } else {
                 paintExtruderStates.size
             }
-            Pair(objectExtruderSet.size + paintVisualCount, paintExtruderStates.isNotEmpty())
+            PlateVisualInfo(
+                count = objectExtruderSet.size + paintVisualCount,
+                hasPaint = paintExtruderStates.isNotEmpty(),
+                objectExtruders = objectExtruderSet,
+                paintExtruderStates = paintExtruderStates
+            )
         }
     }
+
+    /**
+     * Complex SEMM encoding is detected when unique spec strings greatly exceed
+     * distinct paint states. The upper bound for simple encoding is 16 (one spec
+     * per state 0..F); any model past the cap is definitively complex-encoded, so
+     * we stop growing the set to keep `computeVisualColorCountByPlate` fast on
+     * dense painted models (B91 — Skywing's extracted plate was spending >3 min
+     * on this step).
+     */
+    private const val SPEC_CAP_FOR_COMPLEX_DETECTION = 32
 
     private fun containsBytes(haystack: ByteArray, haystackLen: Int, needle: ByteArray): Boolean {
         if (needle.size > haystackLen) return false

@@ -31,14 +31,20 @@ class NativePreviewMeshTest {
         assertEquals(30f, mesh.maxX, 0.001f)
         assertEquals(0f, mesh.minY, 0.001f)
         assertEquals(10f, mesh.maxY, 0.001f)
-        assertArrayEquals(byteArrayOf(0, 3), mesh.extruderIndices)
+        // B88: toMeshData compacts sparse native indices to 0..N-1 so MeshData.recolor
+        // palette lookups align with the Kotlin-compacted colorMapping / detectedColors.
+        // Sorted-unique ordering preserved: raw 0 → compact 0, raw 3 → compact 1.
+        assertArrayEquals(byteArrayOf(0, 1), mesh.extruderIndices)
     }
 
     @Test
-    fun `toMeshData preserves raw extruder indices for colorMapping palette`() {
-        // Raw indices from native TS state_idx map directly into the colorMapping
-        // palette (which handles the model-color→extruder mapping). Indices must
-        // NOT be folded — H2C models can have 7+ distinct state indices.
+    fun `toMeshData compacts sparse extruder indices to match colorMapping palette`() {
+        // B88: sparse / high raw paint-state indices must compact to 0..N-1 sorted-unique
+        // so `MeshData.recolor(palette)` — where `palette.size == colorMapping.size` —
+        // does not clamp to `palette.lastIndex`. Buzz Lightyear plate 9 shipped raw
+        // indices 9/10 with a 2-entry palette; the clamp collapsed Prepare to a single
+        // colour. H2C painted models where states 0..N-1 are already contiguous are
+        // unaffected by this compaction (it degenerates to the identity map).
         val preview = NativePreviewMesh(
             trianglePositions = FloatArray(5 * 9) { idx ->
                 when (idx % 9) {
@@ -51,7 +57,8 @@ class NativePreviewMeshTest {
         )
         val mesh = preview.toMeshData()
         assertNotNull(mesh)
-        assertArrayEquals(byteArrayOf(0, 3, 4, 6, 9), mesh!!.extruderIndices)
+        // Sorted-unique: 0, 3, 4, 6, 9 → compact 0, 1, 2, 3, 4.
+        assertArrayEquals(byteArrayOf(0, 1, 2, 3, 4), mesh!!.extruderIndices)
     }
 
     @Test
