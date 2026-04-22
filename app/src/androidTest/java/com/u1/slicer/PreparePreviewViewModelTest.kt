@@ -793,15 +793,27 @@ class PreparePreviewViewModelTest {
                 fileEntryNames,
                 uriEntryNames
             )
+            // B93 phase 1 (v1.6.10): for multi-plate 3MFs the initial prepare
+            // pipeline intentionally skips the full-file embedProfile to avoid
+            // ~20-40s of throwaway work — the user must pick a plate and
+            // selectPlate() re-embeds the selected plate. Both URI and direct
+            // paths must produce the same artifact shape post-v1.6.10, so
+            // compare counts across paths instead of asserting a fixed count.
+            // Dragon Scale is multi-plate so both artifacts point at the
+            // sanitized file and have 0 project_settings.config entries.
             assertEquals(
-                "embedded direct-file import must contain exactly one project_settings.config",
-                1,
-                fileProjectSettingsCount
+                "embed-skip behaviour must match across import paths (B93)",
+                fileProjectSettingsCount,
+                uriProjectSettingsCount
             )
             assertEquals(
-                "embedded uri import must contain exactly one project_settings.config",
-                1,
-                uriProjectSettingsCount
+                "B93 phase 1: multi-plate imports skip the full-file " +
+                    "embedProfile; the currentModelPath must point at the " +
+                    "sanitized (pre-embed) artifact which does not contain " +
+                    "Metadata/project_settings.config. If this count is 1, " +
+                    "embed ran for a multi-plate file — regression.",
+                0,
+                fileProjectSettingsCount
             )
         } finally {
             fileViewModel.clearModel()
