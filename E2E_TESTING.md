@@ -61,6 +61,50 @@ Run these after any change to the G-code viewer rendering, Jobs tab, or Room sch
 - **F61 — Old jobs (no Edit icon):** Jobs sliced before v1.5.32 (i.e. rows with `sourcePath = NULL` in the database) should show **only** the Layers icon — no Edit icon.
 - **F61 — Room migration smoke test:** On a device that had v1.5.31 installed with existing job history, upgrade to v1.5.32. Confirm the app launches without crash, the Jobs tab shows the existing job history intact, and old jobs have only the Layers icon (no Edit icon).
 
+### Manual regression checks (v1.6.8 — B87/B88/B89/B90/B91)
+
+Run after any change to the Prepare-preview colour pipeline, plate-switch flow,
+`ThreeMfParser.parseForPlateSelection`, `NativePreviewMesh.toMeshData`, or the
+ModelInfoDialog composable:
+
+- **B89 — Info (ℹ︎) menu scrollable:** Load any file with a long filename
+  (≥60 characters) or rotate the device to portrait. Tap the **info (ℹ︎) icon**
+  on the Prepare screen. Drag up inside the dialog. Content should scroll
+  smoothly, and the **Close** button plus any **Export Sanitized / Copy Debug
+  Summary / Reassign Filaments** buttons must all be reachable with the device
+  in portrait. Regression shape: Close hidden below screen edge, drag does
+  nothing.
+- **B88 — Buzz Lightyear plate-switch colour consistency:** Load
+  `Buzz_Multipart_3MF_Bambu.3mf`. Select plate 1; note the Prepare preview
+  shows **4 distinct filament colours** (red / green / blue / white by
+  default, one per detected filament). Tap **Change plate** → pick plate 9.
+  Prepare preview on plate 9 should render **two distinct colours**, not
+  a single colour matching plate 8. Switch back to plate 1; 4 colours
+  return. Slice plate 9 and confirm the G-code preview uses the same two
+  colours Prepare showed (no divergence).
+- **B90 — Buzz plate 9 filament identity:** On plate 9 of the Buzz file,
+  the two detected colours should correspond to **filament 10 (white
+  #FFFFFF)** and **filament 8 (peach #FFD6C1)** from the original 3MF's
+  `filament_colour` array — **not** filaments 1 (black) and 2 (blue).
+  Visual check: in the extruder-chip row at the bottom of Prepare, the
+  two "Model colour" swatches should read peach-ish and white-ish, not
+  black-ish and blue-ish.
+- **B91 — Skywing plate selection speed:** Load
+  `skywing-seawing-silkwing.3mf`. Dialog opens showing 2 plates. Tap
+  plate 1. The "Loading plate 1…" spinner should clear within **~15
+  seconds**. Regression shape: spinner sits for 3+ minutes before the
+  3D preview appears.
+- **B87 — Skywing bottom-layer colours in Prepare vs slice:** On Skywing
+  plate 1, Prepare shows three distinct colour regions (cyan body,
+  purple accents, white tips — though exact rendering depends on your
+  E1..E4 preset colours). Slice and open the G-code viewer. The sliced
+  geometry should carry **the same three colour regions** visible in
+  Prepare — in particular the painted "bottom" areas should NOT
+  collapse to a single object-extruder colour. G-code tool counts in
+  the summary should include T0, T1, and T2 (per
+  `SemmSlicingTest.skywingSeawingDragon_sliceProducesMultipleToolChanges`
+  expectations).
+
 ### Manual regression checks (v1.5.x colour / layer-tool hotfixes)
 
 Run these on at least one multi-colour file from the priority table below when touching Prepare metadata, preview colours, G-code post-processing, or plate merge logic:
@@ -90,6 +134,8 @@ These are the files most likely to catch regressions quickly:
 | `3DBenchy-H2C-Multi-Color-Test-Print.3mf` | H2C sparse paint / 7-colour mapping | Prepare vs Preview colour parity |
 | `colored_3DBenchy (1).3mf` | Non-H2C painted benchy baseline | Prepare colours, slice |
 | `Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf` | B67 canary: large SEMM file (295k paint attrs); catches ProfileEmbedder filament_colour corruption (B66), GcodeParser per-extruder mm swap (B67). **Slow — 3h+ slice.** | Prepare shows 4 colours; `filament_colour` in G-code has **4 distinct hex values** (not `#FFFFFF;#FFFFFF;…`); T0–T3 all non-trivial; `filament used [mm]` first value (T0) is the **largest** of the four |
+| `Buzz_Multipart_3MF_Bambu.3mf` — **plates 1 & 9** | B88/B90 canary: 10-plate Bambu with per-object extruder 10 + paint state 8 (filament indices above declared visual count). Catches plate-switch colour leak + high-index `detectedColors` synthesis. | Select plate 1 (4 colours), **Change plate** to plate 9 (2 colours: peach + white, **not** black + blue), slice plate 9, Preview matches Prepare's 2 colours |
+| `skywing-seawing-silkwing.3mf` | B87/B91 canary: dense SEMM (162K paint_color attrs across 35 component models). Catches slow `parseForPlateSelection` regression + multi-colour bottom-layer dropout. | Select plate 1 within ~15s, Prepare shows ≥3 colour regions, slice emits T0/T1/T2 (summary layer count > 0) |
 | `2026+F1+CALENDAR+-+DATES+&+TRACK+NAMES+(P_X+SERIES).3mf` | Large Bambu file / former B18 OOM repro | Loads without OOM, slice preserves multi-colour output |
 | `super clean.3mf` | Huge single-model 3MF / former sanitize+embed OOM repro | Loads without OOM, preview fallback still works |
 
@@ -154,6 +200,8 @@ Run through **every** file under `app/src/androidTest/assets/` at least once. Kn
 | `3DBenchy-H2C-Multi-Color-Test-Print.3mf` | H2C sparse paint (priority table) |
 | `PrusaSlicer-printables-Korok_mask_4colour.3mf` | Four-colour mask |
 | `Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf` | B67 canary: large SEMM 4-colour; check `filament_colour` 4 distinct hex values; T0–T3 all >20; `filament used [mm]` value 0 (T0) is the largest |
+| `Buzz_Multipart_3MF_Bambu.3mf` | B88/B90: 10-plate high-filament-index; plate-switch colour consistency + plate 9 peach+white (not black+blue) |
+| `skywing-seawing-silkwing.3mf` | B87/B91: dense SEMM; plate-select finishes quickly, bottom-layer multi-colour preserved through slice |
 | `foldy+coaster (1).3mf` | Pipeline foldy case |
 | `slip slide spin fidget.3mf` | Multi-plate slip/slide (e.g. plate 3) |
 | `u1-auxiliary-fan-cover-hex_mw.3mf` | MakerWorld-style embed |
