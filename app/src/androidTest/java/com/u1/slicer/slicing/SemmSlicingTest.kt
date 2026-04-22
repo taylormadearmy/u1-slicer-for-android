@@ -398,4 +398,96 @@ class SemmSlicingTest {
             )
         }
     }
+
+    /**
+     * B87: Skywing / Seawing / Silkwing Dragon 3MF — SEMM model with paint_color
+     * states up to 8 but only 3 declared filaments (#6FCAEF cyan, #482960 purple,
+     * #FFFFFF white). User reports that "black" bottom layers in the Prepare
+     * preview disappear from both the G-code preview and the actual print, so the
+     * slicer is collapsing paint states rather than folding them to the declared
+     * filaments like the Prepare preview does.
+     *
+     * Red: expect the sliced G-code to contain at least 2 distinct T<n> tool
+     * changes (multi-colour), since the model has 3 paint states (0, 4, 8) mapped
+     * to 3 filaments. Today's build produces a mono-coloured G-code for this file
+     * — all triangles fall back to the object extruder (T0) because OrcaSlicer's
+     * paint segmentation interprets states 4/8 as filaments 4/8 which do not
+     * exist.
+     *
+     * Test file: `skywing-seawing-silkwing.3mf` (ASCII-renamed copy of the original
+     * `天翼，海翼，丝翼拆件多色.3mf` — assets.open struggles with CJK filenames).
+     */
+    @Test
+    fun skywingSeawingDragon_sliceProducesMultipleToolChanges() {
+        val input = asset("skywing-seawing-silkwing.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+
+        assertTrue("skywing dragon must have hasPaintData=true", origInfo.hasPaintData)
+        val nColors = origInfo.detectedColors.size
+        assertTrue(
+            "skywing dragon must declare at least 3 filament colours, got ${origInfo.detectedColors}",
+            nColors >= 3
+        )
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val config = embedder.buildConfig(
+            info = origInfo,
+            targetExtruderCount = nColors.coerceIn(2, 4)
+        )
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val extCount = nColors.coerceIn(2, 4)
+        val result = lib.slice(makeConfig(extCount))
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue(
+            "skywing dragon must slice successfully: ${result.errorMessage}",
+            result.success
+        )
+
+        val gcode = File(result.gcodePath).readText()
+        val lines = gcode.lines()
+        val toolCounts = (0..3).map { t -> lines.count { it.trim() == "T$t" } }
+        Log.i(
+            "SemmSlicingTest",
+            "B87 skywing dragon tool counts: T0=${toolCounts[0]} T1=${toolCounts[1]} " +
+                "T2=${toolCounts[2]} T3=${toolCounts[3]} (extCount=$extCount)"
+        )
+
+        val toolsPresent = toolCounts.count { it > 0 }
+        assertTrue(
+            "B87: skywing dragon has 3 paint states (0, 4, 8) over 3 declared filaments " +
+                "— slice output should use >= 2 distinct tools, got $toolsPresent " +
+                "(counts=$toolCounts). A single-tool slice means the paint states > nColors " +
+                "were silently dropped instead of folded to the declared filament range.",
+            toolsPresent >= 2
+        )
+
+        // B87 core assertion: the bottom layers (user reports "black on bottom layers
+        // disappearing after slicing") must themselves carry a tool change. If the
+        // entire bottom shell is emitted with T0 (object extruder), the painted colour
+        // never appears on the bed — matching what DC15 printed.
+        val layerChanges = lines.mapIndexedNotNull { idx, line ->
+            val trimmed = line.trim()
+            if (trimmed.startsWith(";LAYER_CHANGE") || trimmed.startsWith("; CHANGE_LAYER")) idx
+            else null
+        }
+        val layer3Index = layerChanges.getOrNull(3) ?: lines.size
+        val bottomLines = lines.subList(0, layer3Index)
+        val bottomTools = bottomLines
+            .mapNotNull { Regex("""^T([0-3])\b""").find(it.trim())?.groupValues?.get(1)?.toIntOrNull() }
+            .toSet()
+        Log.i(
+            "SemmSlicingTest",
+            "B87 skywing dragon bottom-3-layers tool set=$bottomTools layerChangesFound=${layerChanges.size}"
+        )
+        assertTrue(
+            "B87: the first 3 printed layers must include at least one painted tool change " +
+                "(user reports the 'black' bottom layers disappear in the sliced output). " +
+                "bottomTools=$bottomTools — if the set is {0} or empty, paint segmentation " +
+                "is not applied to the bottom shell.",
+            bottomTools.any { it > 0 }
+        )
+    }
 }

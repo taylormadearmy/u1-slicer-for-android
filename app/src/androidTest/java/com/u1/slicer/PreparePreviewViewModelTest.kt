@@ -352,6 +352,158 @@ class PreparePreviewViewModelTest {
         }
     }
 
+    /**
+     * B88: Plate-switch on Buzz Lightyear multi-plate 3MF leaves Prepare preview
+     * showing the previous plate's colour(s) instead of the new plate's palette.
+     *
+     * User report (DC15 on v1.6.7): switching to plate 9 shows a single colour that
+     * matches the previously viewed plate, while the post-slice G-code viewer shows
+     * a different single colour that matches the true plate 9 palette.
+     *
+     * This test loads plate 1, then plate 9, and asserts for plate 9:
+     *   1. `threeMfInfo.detectedColors` for plate 9 is populated.
+     *   2. `colorMapping` is consistent with plate 9's detected colours — i.e. its
+     *      size equals `detectedColors.size` (fresh derivation, not stale slice).
+     *   3. `activeExtruderColors` matches plate 9's colour palette.
+     *   4. The recoloured Prepare preview mesh uses plate 9's palette — the set of
+     *      distinct RGBA values matches the distinct mapping slots.
+     *
+     * Red: should FAIL on v1.6.7 where plate 9 inherits plate 1's state.
+     */
+    @Test
+    fun buzzLightyear_plateSwitch_preparePreviewReflectsCurrentPlatePalette() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Buzz_Multipart_3MF_Bambu.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            // Buzz 3MF is ~73MB — parsing + plate enumeration may take >90s on device.
+            waitUntil("buzz plate selector visible or error", timeoutMs = 240_000L) {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val loadState = viewModel.state.value
+            if (loadState is SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("Buzz 3MF load failed: ${loadState.message}")
+            }
+
+            // ----- Plate 1: establish a known palette / mapping -----
+            viewModel.selectPlate(1)
+            waitUntil("buzz plate 1 loaded", timeoutMs = 120_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+            Thread.sleep(400) // let refreshMappedPreviewColors settle
+
+            val plate1Info = viewModel.threeMfInfo.value!!
+            val plate1Mapping = viewModel.colorMapping.value!!
+            val plate1Colors = viewModel.activeExtruderColors.value.toList()
+            val plate1DetectedColors = plate1Info.detectedColors.toList()
+
+            // ----- Plate 9: the reported-broken plate -----
+            viewModel.selectPlate(9)
+            waitUntil("buzz plate 9 loaded", timeoutMs = 120_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+            Thread.sleep(400)
+
+            val plate9Info = viewModel.threeMfInfo.value!!
+            val plate9Mapping = viewModel.colorMapping.value!!
+            val plate9Colors = viewModel.activeExtruderColors.value.toList()
+            val plate9DetectedColors = plate9Info.detectedColors.toList()
+            val plate9PreviewForDiag = NativeLibrary().getPreparePreviewMesh()
+            val plate9MeshIndices = plate9PreviewForDiag
+                ?.extruderIndices
+                ?.map { it.toInt() and 0xFF }
+                ?.groupingBy { it }
+                ?.eachCount()
+            val plate9ObjExtruderMap = plate9Info.objectExtruderMap
+            val plate9Plate = plate9Info.plates.firstOrNull { it.plateId == 9 }
+            val plate9PlateFilamentIndices = plate9Plate?.filamentIndices
+            val plate9PlateLayerToolColors = plate9Plate?.layerToolColors
+            val plate9PlateObjectIds = plate9Plate?.objectIds
+
+            val diag = """
+                |B88 plate-switch state:
+                |  plate1 detectedColors=${plate1DetectedColors}
+                |  plate1 colorMapping=${plate1Mapping}
+                |  plate1 activeExtruderColors=${plate1Colors}
+                |  plate9 detectedColors=${plate9DetectedColors}
+                |  plate9 colorMapping=${plate9Mapping}
+                |  plate9 activeExtruderColors=${plate9Colors}
+                |  plate9 native mesh extruderIndex distribution=${plate9MeshIndices}
+                |  plate9 objectExtruderMap=${plate9ObjExtruderMap}
+                |  plate9 plate.objectIds=${plate9PlateObjectIds}
+                |  plate9 plate.filamentIndices=${plate9PlateFilamentIndices}
+                |  plate9 plate.layerToolColors=${plate9PlateLayerToolColors}
+                |  plate9 hasPaintData=${plate9Info.hasPaintData}
+                |  plate9 hasMultiExtruderAssignments=${plate9Info.hasMultiExtruderAssignments}
+                |  plate9 detectedExtruderCount=${plate9Info.detectedExtruderCount}
+            """.trimMargin()
+
+            // Invariant 1: plate 9's detected colours exist.
+            assertTrue(
+                "plate 9 must expose detectedColors\n$diag",
+                plate9DetectedColors.isNotEmpty()
+            )
+
+            // Invariant 2: colorMapping size matches detectedColors size (stale detection).
+            // If plate 9 inherited plate 1's mapping, size will equal plate 1 palette — not plate 9.
+            assertEquals(
+                "plate 9 colorMapping size must match plate 9 detectedColors size\n$diag",
+                plate9DetectedColors.size,
+                plate9Mapping.size
+            )
+
+            // Invariant 3: at least one of detectedColors, mapping, or activeExtruderColors
+            // actually changed between the two plates (for different palettes) — otherwise
+            // plate 9 is rendering with stale plate-1 state.
+            val differsFromPlate1 =
+                plate9DetectedColors != plate1DetectedColors ||
+                    plate9Mapping != plate1Mapping ||
+                    plate9Colors != plate1Colors
+            assertTrue(
+                "plate 9 state must differ from plate 1 state — stale leak suspected\n$diag",
+                differsFromPlate1
+            )
+
+            // Invariant 4: preview mesh distinct RGBA count should match plate 9's
+            // expected distinct slot count when recoloured with plate 9's palette.
+            val preview = NativeLibrary().getPreparePreviewMesh()
+            assertNotNull("plate 9 preview mesh required", preview)
+            val mesh = preview!!.toMeshData()!!
+            val palette = plate9Mapping.map { slot ->
+                SlicerViewModel.staticHexColorToFloatArray(plate9Colors.getOrElse(slot) { "" })
+            }
+            mesh.recolor(palette)
+
+            val distinctRgba = mutableSetOf<Int>()
+            val buf = mesh.vertices
+            val triCount = mesh.vertexCount / 3
+            for (tri in 0 until triCount) {
+                val base = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX
+                val r = (buf.get(base + 6) * 255).toInt()
+                val g = (buf.get(base + 7) * 255).toInt()
+                val b = (buf.get(base + 8) * 255).toInt()
+                distinctRgba.add((r shl 16) or (g shl 8) or b)
+                if (distinctRgba.size >= 8) break
+            }
+            val expectedDistinctSlots = plate9Mapping.distinct().size
+            assertEquals(
+                "plate 9 preview mesh distinct RGBA count must match plate 9 mapping's distinct slots\n" +
+                    "$diag\n  distinctRgba=${distinctRgba.size} expected=$expectedDistinctSlots",
+                expectedDistinctSlots,
+                distinctRgba.size
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
     @Test
     fun flippy_layerToolOnly_hasSegments_andRecolorByZBandsProducesMultipleColours() {
         val application = targetContext.applicationContext as U1SlicerApplication
