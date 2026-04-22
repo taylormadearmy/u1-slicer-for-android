@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -1078,5 +1079,373 @@ class PreparePreviewViewModelTest {
             Thread.sleep(100)
         }
         throw AssertionError("Timed out waiting for $label")
+    }
+
+    /**
+     * B94: User drags a single-object model to the right side of the bed;
+     * after slicing, the G-code preview shows the model back at its default
+     * centre position instead of the drag destination. Reproduces on
+     * `spiderman-hanging-pre-cut.3mf` per Discord user DC15.
+     *
+     * Test flow: load spiderman, wait for ModelLoaded, simulate a drag far
+     * to the right via `applyPlacementPositions`, slice, read the G-code
+     * and assert the print moves (excluding wipe tower) hit the drag X.
+     *
+     * Red: pre-fix the G-code shows object X extents centred around the bed
+     * default regardless of the drag.
+     */
+    @Test
+    fun spiderman_dragToRight_preservesPositionThroughSlice() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("spiderman-hanging-pre-cut.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("spiderman loaded (or error / plate selector)", timeoutMs = 120_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error ||
+                    viewModel.showPlateSelector.value
+            }
+
+            // Spiderman file may or may not be multi-plate. If it is, just pick plate 1.
+            if (viewModel.showPlateSelector.value) {
+                viewModel.selectPlate(1)
+                waitUntil("spiderman plate 1 loaded", timeoutMs = 120_000L) {
+                    viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+                }
+            }
+
+            val loadState = viewModel.state.value
+            if (loadState is SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("Spiderman load failed: ${loadState.message}")
+            }
+            Thread.sleep(400) // let mapping settle
+
+            // Drag the object far to the right: put its bounding-box bottom-left
+            // corner at X_DRAG. The default CopyArrangeCalculator would place the
+            // same object at (bedX - sizeX) / 2, which for a ~130mm-wide object
+            // lands around X=70. X_DRAG=200 is unambiguously to the right.
+            val modelInfo = viewModel.modelInfo.value
+            assertNotNull("lastModelInfo required for B94 test", modelInfo)
+            val sizeX = modelInfo!!.sizeX
+            val sizeY = modelInfo.sizeY
+            val defaultX = maxOf(0f, (270f - sizeX) / 2f)
+            val dragX = (270f - sizeX).coerceAtLeast(defaultX + 50f)
+            val dragY = maxOf(0f, (270f - sizeY) / 2f)
+            assertTrue(
+                "B94: dragX=$dragX must sit to the right of the default placement X=$defaultX " +
+                    "(otherwise the assertion below is meaningless)",
+                dragX > defaultX + 20f
+            )
+            val dragPositions = floatArrayOf(dragX, dragY)
+            val wipeTowerPos = Pair(
+                viewModel.config.value.wipeTowerX,
+                viewModel.config.value.wipeTowerY
+            )
+            viewModel.applyPlacementPositions(dragPositions, wipeTowerPos)
+
+            // Slice.
+            viewModel.startSlicing()
+            waitUntil("spiderman slice complete", timeoutMs = 240_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val sliceState = viewModel.state.value
+            if (sliceState is SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("Spiderman slice failed: ${sliceState.message}")
+            }
+            val result = (sliceState as SlicerViewModel.SlicerState.SliceComplete).result
+            val gcode = java.io.File(result.gcodePath).readText()
+
+            // Parse extrusion X extents, excluding the wipe tower area. OrcaSlicer
+            // marks wipe-tower G-code with `; FEATURE: Prime tower` between moves.
+            val moveRe = Regex("""^G1\s+(?:X([\d.]+))?.*?(?:Y([\d.]+))?.*?E""")
+            var maxX = Float.NEGATIVE_INFINITY
+            var currentX = 0f
+            var inWipeTower = false
+            for (raw in gcode.lineSequence()) {
+                val line = raw.trim()
+                if (line.startsWith("; FEATURE:")) {
+                    inWipeTower = line.contains("Prime tower", ignoreCase = true) ||
+                        line.contains("Wipe", ignoreCase = true)
+                    continue
+                }
+                if (!line.startsWith("G1")) continue
+                val m = moveRe.find(line) ?: continue
+                val xStr = m.groupValues.getOrNull(1).orEmpty()
+                if (xStr.isNotBlank()) {
+                    currentX = xStr.toFloatOrNull() ?: currentX
+                }
+                if (!inWipeTower && currentX > maxX) maxX = currentX
+            }
+
+            // If the drag took effect, the object's bottom-left sits at dragX so
+            // the right edge is at dragX + sizeX (close to the 270mm bed edge for
+            // our chosen dragX). If the drag was ignored, the object stays at the
+            // auto-placement centre so the right edge is at defaultX + sizeX.
+            // Threshold sits midway between the two: fails clearly when the drag
+            // is ignored, passes when it's applied.
+            val noDragRightEdge = defaultX + sizeX
+            val dragRightEdge = dragX + sizeX
+            val midpoint = (noDragRightEdge + dragRightEdge) / 2f
+            val diag = "B94 diag: sizeX=$sizeX sizeY=$sizeY defaultX=$defaultX " +
+                "dragX=$dragX maxX(model)=$maxX noDragRightEdge=$noDragRightEdge " +
+                "dragRightEdge=$dragRightEdge midpoint=$midpoint " +
+                "wipeTowerX=${wipeTowerPos.first}"
+            assertTrue(
+                "B94: the sliced G-code must reflect the user's drag to X=$dragX " +
+                    "(right edge ~$dragRightEdge). maxX of print moves should sit " +
+                    "well above the no-drag midpoint $midpoint. Got maxX=$maxX. $diag",
+                maxX >= midpoint
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
+     * B93 phase 1: On multi-plate Bambu 3MFs the initial `prepareImportedModelArtifacts`
+     * must skip the full-file `embedProfile` call. For a 73MB / 80-component /
+     * 296K paint_color file (Buzz Lightyear) the full-file embed was ~20-40s of
+     * throwaway work before the user even picks a plate. After phase 1, the
+     * sanitized+embedded artifact pair stored on the ViewModel (`sourceModelFile`
+     * and `currentModelPath`) must point at the same underlying file — the
+     * sanitized processed file — signalling that `embedProfile` was skipped.
+     *
+     * The timing budget is intentionally generous (180s on Pixel 8a) to avoid
+     * flake; pre-fix measurements were ~100s on the same device and we expect
+     * post-fix to sit under ~60s.
+     */
+    @Test
+    fun buzzLightyear_coldLoad_skipsFullFileEmbedOnMultiPlate() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Buzz_Multipart_3MF_Bambu.3mf")
+
+        try {
+            val started = System.currentTimeMillis()
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("buzz plate selector visible or error", timeoutMs = 180_000L) {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val elapsedMs = System.currentTimeMillis() - started
+            val loadState = viewModel.state.value
+            if (loadState is SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("Buzz 3MF load failed: ${loadState.message}")
+            }
+
+            assertTrue(
+                "B93: Buzz cold load to plate selector must complete within 180s, took ${elapsedMs}ms",
+                elapsedMs < 180_000L
+            )
+
+            // Structural check: after load but before plate selection, the
+            // currentModelPath exposed for 3D viewer navigation should point at
+            // the sanitized processed file (named `sanitized_*.3mf`), NOT the
+            // full-file embedded artifact (named `embedded_sanitized_*.3mf`).
+            // This confirms the full-file `embedProfile` call was skipped.
+            val currentPath = viewModel.currentModelPath
+            assertNotNull("currentModelPath must be set after load", currentPath)
+            val name = java.io.File(currentPath!!).name
+            assertFalse(
+                "B93: multi-plate cold load must NOT produce an embedded full-file " +
+                    "artifact. ProfileEmbedder names its output embedded_<input>.3mf; " +
+                    "the sanitized pre-embed file is named sanitized_<input>.3mf. " +
+                    "Got $name",
+                name.startsWith("embedded_", ignoreCase = true)
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
+     * B92: On Buzz plate 8 (object default extruder=10, paint state using
+     * filament 3), Prepare and the post-slice G-code viewer disagree on which
+     * tool maps to which mesh region. Prepare's compact-0 is filament-ascending
+     * (painted brown) while the slicer emits T0 for the object default
+     * (unpainted white). Without the B92 fix, normalizeGcodePreviewColors
+     * renders T0 with Prepare-compact-0's colour (E1 red) even though T0 is the
+     * unpainted region, producing Preview = painted-white + unpainted-red
+     * (the opposite of Prepare).
+     *
+     * Assertion strategy: the set of RGBA colours that Prepare renders matches
+     * the set of Preview colours returned by normalizeGcodePreviewColors for the
+     * T-indices the G-code actually contains, **and** for each triangle count
+     * rank the colour at that rank agrees between Prepare and Preview. This
+     * catches the swap (both sides have the same colours, but the large/small
+     * region assignment is inverted).
+     */
+    @Test
+    fun buzzLightyear_plate8_prepareAndPreviewColoursAgreeByRegionSize() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Buzz_Multipart_3MF_Bambu.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("buzz plate selector visible or error", timeoutMs = 240_000L) {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val loadState = viewModel.state.value
+            if (loadState is SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("Buzz 3MF load failed: ${loadState.message}")
+            }
+
+            viewModel.selectPlate(8)
+            waitUntil("buzz plate 8 loaded", timeoutMs = 120_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+            Thread.sleep(600) // let refreshMappedPreviewColors / slicerColorOrder settle
+
+            val colorMapping = viewModel.colorMapping.value!!
+            val extruderColors = viewModel.activeExtruderColors.value.toList()
+            val slicerColorOrder = viewModel.slicerColorOrder.value
+            val semmColorPermutation = viewModel.semmColorPermutationFlow.value
+
+            // ---- Prepare: recolour the mesh and tally per-colour triangle counts ----
+            val preview = NativeLibrary().getPreparePreviewMesh()
+            assertNotNull("plate 8 preview mesh required", preview)
+            val mesh = preview!!.toMeshData()!!
+            val palette = colorMapping.map { slot ->
+                SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" })
+            }
+            mesh.recolor(palette)
+            val prepareCounts = mutableMapOf<Int, Int>()
+            val buf = mesh.vertices
+            val triCount = mesh.vertexCount / 3
+            for (tri in 0 until triCount) {
+                val base = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX
+                val r = (buf.get(base + 6) * 255).toInt().coerceIn(0, 255)
+                val g = (buf.get(base + 7) * 255).toInt().coerceIn(0, 255)
+                val b = (buf.get(base + 8) * 255).toInt().coerceIn(0, 255)
+                val rgb = (r shl 16) or (g shl 8) or b
+                prepareCounts[rgb] = (prepareCounts[rgb] ?: 0) + 1
+            }
+            assertTrue(
+                "Buzz plate 8 Prepare mesh must have at least 2 distinct RGBA colours (painted + unpainted)",
+                prepareCounts.size >= 2
+            )
+
+            // ---- Slice and read T-counts from the G-code ----
+            viewModel.startSlicing()
+            waitUntil("buzz plate 8 slice complete", timeoutMs = 300_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val sliceState = viewModel.state.value
+            if (sliceState is SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("Buzz plate 8 slice failed: ${sliceState.message}")
+            }
+            val result = (sliceState as SlicerViewModel.SlicerState.SliceComplete).result
+            val gcode = java.io.File(result.gcodePath).readText()
+            val lines = gcode.lines()
+            val toolCounts = (0..3).associateWith { t -> lines.count { it.trim() == "T$t" } }
+                .filter { it.value > 0 }
+            assertTrue(
+                "Buzz plate 8 must have at least 2 distinct tools in G-code, got $toolCounts",
+                toolCounts.size >= 2
+            )
+
+            // ---- Preview: colours via the now-wired normalizeGcodePreviewColors ----
+            val previewColorsForTools = normalizeGcodePreviewColors(
+                extruderColors = extruderColors,
+                colorMapping = colorMapping,
+                semmColorPermutation = semmColorPermutation,
+                slicerColorOrder = slicerColorOrder
+            )
+
+            fun hexToRgb(hex: String): Int? {
+                if (hex.isBlank()) return null
+                val h = if (hex.startsWith("#")) hex.substring(1) else hex
+                if (h.length != 6) return null
+                return try {
+                    h.toInt(16)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+
+            val diag = StringBuilder().apply {
+                appendLine("B92 diag:")
+                appendLine("  colorMapping=$colorMapping")
+                appendLine("  extruderColors=$extruderColors")
+                appendLine("  slicerColorOrder=$slicerColorOrder")
+                appendLine("  semmColorPermutation=$semmColorPermutation")
+                appendLine("  prepareCounts=${prepareCounts.mapKeys { (k, _) -> String.format("#%06X", k) }}")
+                appendLine("  toolCounts=$toolCounts")
+                appendLine("  previewColorsForTools=${previewColorsForTools.mapIndexed { i, c -> "T$i=$c" }}")
+            }.toString()
+
+            // Set equality: Prepare's distinct colours must match Preview's distinct
+            // colours for the T-indices actually present in the G-code.
+            val prepareSet = prepareCounts.keys.toSet()
+            val previewSet = toolCounts.keys.mapNotNull { t -> hexToRgb(previewColorsForTools.getOrNull(t).orEmpty()) }.toSet()
+            assertEquals(
+                "Preview palette (for present tools) must contain the same RGBA set as Prepare\n$diag",
+                prepareSet, previewSet
+            )
+
+            // B92 core assertion: slicerColorOrder must be non-null for the Buzz
+            // plate 8 shape (object default extruder=10 with higher source filament
+            // than the paint state 3). Without it, the G-code viewer would render
+            // T0 with detectedColors[0]'s assigned colour (E1 red = painted's slot)
+            // instead of detectedColors[1]'s assigned colour (E4 white = unpainted's
+            // slot), producing the reported Prepare/Preview swap.
+            assertNotNull(
+                "B92: slicerColorOrder must be populated for plate 8 (object default " +
+                    "has higher source filament than the paint state)\n$diag",
+                slicerColorOrder
+            )
+            assertNotNull(
+                "B92: semmColorPermutation must be populated when the user's mapping " +
+                    "is non-identity\n$diag",
+                semmColorPermutation
+            )
+            val slicerOrder = slicerColorOrder!!
+            val semmPerm = semmColorPermutation!!
+
+            // The slicer-order mapping must differ from identity [0,1,…] because
+            // detectedColors[1] (unpainted white) is the object default and sits
+            // after detectedColors[0] (painted brown) in filament-ascending order,
+            // yet leads in OrcaSlicer's tool ordering.
+            val identityOrder = (0 until slicerOrder.size).toList()
+            assertNotEquals(
+                "B92: slicerColorOrder must be non-identity for Buzz plate 8 " +
+                    "(object default sits at detectedColors[1])\n$diag",
+                identityOrder, slicerOrder
+            )
+
+            // For each present physical T-index, the Preview palette must match the
+            // user's intent for the detected colour that slicer T<k>=detected[slicerOrder[k]]
+            // → physical T<semmPerm[k]>. Any divergence means the viewer renders
+            // at least one tool with the wrong colour.
+            for (slicerCompactIdx in semmPerm.indices) {
+                val physicalSlot = semmPerm[slicerCompactIdx]
+                if (physicalSlot !in toolCounts) continue
+                val detectedIdx = slicerOrder.getOrElse(slicerCompactIdx) { slicerCompactIdx }
+                val userSlot = colorMapping.getOrNull(detectedIdx) ?: continue
+                val expected = extruderColors.getOrNull(userSlot).orEmpty()
+                if (expected.isBlank()) continue
+                val actual = previewColorsForTools.getOrNull(physicalSlot).orEmpty()
+                assertEquals(
+                    "B92: T$physicalSlot (slicer T$slicerCompactIdx → detectedColors[$detectedIdx] " +
+                        "→ user slot $userSlot) must render in $expected\n$diag",
+                    expected.uppercase(), actual.uppercase()
+                )
+            }
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
     }
 }

@@ -1240,6 +1240,8 @@ fun PreviewScreen(
     val config by viewModel.config.collectAsState()
     val extruderPresets by viewModel.extruderPresets.collectAsState()
     val sliceStale by viewModel.sliceStale.collectAsState()
+    val semmColorPermutation by viewModel.semmColorPermutationFlow.collectAsState()
+    val slicerColorOrder by viewModel.slicerColorOrder.collectAsState()
 
     Scaffold(
         topBar = {
@@ -1339,6 +1341,8 @@ fun PreviewScreen(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
                             colorMapping = gcodeColorMapping,
+                            semmColorPermutation = semmColorPermutation,
+                            slicerColorOrder = slicerColorOrder,
                             slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D,
                             cameraState = sharedPreviewCameraState,
@@ -3412,6 +3416,8 @@ fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
     colorMapping: List<Int>? = null,
+    semmColorPermutation: List<Int>? = null,
+    slicerColorOrder: List<Int>? = null,
     slicerLayerCount: Int = 0,
     onExpand: () -> Unit,
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
@@ -3429,8 +3435,8 @@ fun InlineGcodePreview(
         ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
     else 1
 
-    val previewColors = remember(extruderColors, colorMapping) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping)
+    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder)
     }
 
     LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState) {
@@ -3570,16 +3576,72 @@ fun InlineGcodePreview(
     }
 }
 
+/**
+ * Build a palette for the G-code preview, indexed by the T-index that appears in
+ * the final (post-composeSemmRemap) G-code.
+ *
+ * For every entry n in the returned list: `normalized[n]` is the hex colour the
+ * viewer should render for `T<n>` toolpaths.
+ *
+ * Indexing contract by pipeline branch:
+ *
+ *   1. Identity slicer order (no paint data, H2C, simple SEMM where detectedColors
+ *      order already matches OrcaSlicer's tool order):
+ *        `slicerColorOrder == null && semmColorPermutation == null` →
+ *        after post-processing T<n> is the physical slot n, so
+ *        `normalized[n] = extruderColors[n]`.
+ *
+ *   2. SEMM with non-identity colour mapping but slicer order == detectedColors
+ *      order (Flarewing 4-colour with user-reassigned extruders):
+ *        `slicerColorOrder == null && semmColorPermutation != null` →
+ *        post-slice GcodeToolRemapper has already mapped slicer T<k> →
+ *        physical T<semmPerm[k]>, so T<physicalSlot> is the user's chosen slot,
+ *        `normalized[physicalSlot] = extruderColors[physicalSlot]` is correct.
+ *        (Same init behaviour as branch 1.)
+ *
+ *   3. B92: SEMM where slicer tool order differs from detectedColors order
+ *      (Buzz plate 8 shape — object default has a higher source filament index
+ *      than some paint states):
+ *        `slicerColorOrder != null && semmColorPermutation != null` →
+ *        for each slicer compact idx k, physical slot is semmPerm[k], the
+ *        detected colour is detectedColors[slicerColorOrder[k]], and the user's
+ *        chosen slot for that detected colour is colorMapping[slicerColorOrder[k]].
+ *        So `normalized[semmPerm[k]] = extruderColors[colorMapping[slicerColorOrder[k]]]`.
+ *
+ *   4. Legacy per-object without paint data (toolRemapSlots path, no semmPerm):
+ *        `slicerColorOrder == null && semmColorPermutation == null` with
+ *        non-identity colorMapping → the original compact-index-based override
+ *        is preserved so existing non-SEMM callers keep working.
+ */
 internal fun normalizeGcodePreviewColors(
     extruderColors: List<String>,
-    colorMapping: List<Int>?
+    colorMapping: List<Int>?,
+    semmColorPermutation: List<Int>? = null,
+    slicerColorOrder: List<Int>? = null
 ): List<String> {
     val normalized = MutableList(4) { "" }
     for (slot in 0..3) {
         normalized[slot] = extruderColors.getOrNull(slot).orEmpty()
     }
-    // Ensure compact tool indices (T0/T1...) also resolve to the mapped slot colors.
-    if (!colorMapping.isNullOrEmpty()) {
+    if (slicerColorOrder != null && semmColorPermutation != null && !colorMapping.isNullOrEmpty()) {
+        // Branch 3: align Preview palette with Prepare's compact → slot mapping.
+        semmColorPermutation.forEachIndexed { slicerCompactIdx, physicalSlot ->
+            if (physicalSlot in 0..3) {
+                val detectedIdx = slicerColorOrder.getOrNull(slicerCompactIdx) ?: slicerCompactIdx
+                val userSlot = colorMapping.getOrNull(detectedIdx)
+                if (userSlot != null && userSlot in 0..3) {
+                    val color = extruderColors.getOrNull(userSlot).orEmpty()
+                    if (color.isNotBlank()) {
+                        normalized[physicalSlot] = color
+                    }
+                }
+            }
+        }
+    } else if (semmColorPermutation == null && !colorMapping.isNullOrEmpty()) {
+        // Branch 4: legacy compat — only apply the compact-index override when the
+        // SEMM post-slice remap was NOT active. If semmPerm was active (branch 2),
+        // GcodeToolRemapper has already moved tool indices to physical slots and the
+        // init loop above already produced the right colours.
         colorMapping.take(4).forEachIndexed { compactIdx, slot ->
             if (slot in 0..3) {
                 val slotColor = extruderColors.getOrNull(slot).orEmpty()

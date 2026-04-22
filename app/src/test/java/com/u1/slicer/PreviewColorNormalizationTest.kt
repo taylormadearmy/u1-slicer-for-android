@@ -116,4 +116,92 @@ class PreviewColorNormalizationTest {
         assertEquals("T1 is scrambled to red (NOT green) when SEMM mapping is applied",
             "#FF0000", result[1])
     }
+
+    // ── B92: Preview palette alignment with slicer tool order ───────────────
+
+    /**
+     * B92 canonical case — Buzz plate 8 shape:
+     *
+     *   detectedColors  = [#6F5034 brown (source filament 3, painted),
+     *                      #FFFFFF white (source filament 10, object default)]
+     *   colorMapping    = [0, 3]              // brown→E1, white→E4
+     *   extruderColors  = [red, _, _, white]  // user's E1=red, E4=white
+     *   slicerColorOrder= [1, 0]              // slicer T0=default=detectedColors[1];
+     *                                          //  slicer T1=paint state=detectedColors[0]
+     *   semmColorPerm   = [0, 3]              // slicer T0→physical T0; T1→T3
+     *
+     * After GcodeToolRemapper the G-code has T0 and T3. Under the OLD code, T0
+     * rendered as red and T3 as white — which swapped Preview vs Prepare because
+     * T0 is actually the object-default region (unpainted) while Prepare's
+     * compact-0 entry is the painted region. The B92 fix returns palette where
+     * T0 = white (the slot assigned to unpainted) and T3 = red (the slot assigned
+     * to painted).
+     */
+    @Test
+    fun `normalizeGcodePreviewColors B92 Buzz plate 8 shape aligns Preview with Prepare`() {
+        val extruderColors = listOf("#FF0000", "", "", "#FFFFFF")
+        val colorMapping = listOf(0, 3)
+        val semmColorPermutation = listOf(0, 3)
+        val slicerColorOrder = listOf(1, 0)
+
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            semmColorPermutation = semmColorPermutation,
+            slicerColorOrder = slicerColorOrder
+        )
+
+        // T0 prints the unpainted region (slicer T0 = detectedColors[1] = white,
+        // user assigned white → slot 3 = E4 = "#FFFFFF"), so Preview should render
+        // T0 segments with #FFFFFF.
+        assertEquals("T0 (unpainted) must render in E4 white", "#FFFFFF", result[0])
+        // T3 prints the painted region (slicer T1 = detectedColors[0] = brown,
+        // user assigned brown → slot 0 = E1 = "#FF0000"), so Preview should render
+        // T3 segments with #FF0000.
+        assertEquals("T3 (painted) must render in E1 red", "#FF0000", result[3])
+    }
+
+    /**
+     * B92 identity case: slicerColorOrder = null means slicer tool order matches
+     * detectedColors order (simple SEMM, H2C, non-paint). normalizeGcodePreviewColors
+     * should preserve direct slot colours (init loop) without applying the
+     * legacy compact-index override when semmColorPermutation is active.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors with semmPerm and identity slicer order uses direct slot colours`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = listOf(3, 0, 2, 1),
+            semmColorPermutation = listOf(3, 0, 2, 1),
+            slicerColorOrder = null
+        )
+        // After GcodeToolRemapper the G-code has T0..T3 where T<n> is the physical
+        // slot. Preview should render each T<n> with extruderColors[n] (direct slot).
+        assertEquals("#FF0000", result[0])
+        assertEquals("#00FF00", result[1])
+        assertEquals("#0000FF", result[2])
+        assertEquals("#FFFFFF", result[3])
+    }
+
+    /**
+     * B92 legacy caller: semmColorPermutation=null (no SEMM remap), non-null
+     * colorMapping — preserves pre-v1.6.10 behaviour used by per-object path and
+     * single-colour SEMM callers that don't pass the new params.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors legacy call without semmPerm retains compact override`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = listOf(2, 3),
+            semmColorPermutation = null,
+            slicerColorOrder = null
+        )
+        // Compact 0 → slot 2 (blue), compact 1 → slot 3 (white).
+        assertEquals("#0000FF", result[0])
+        assertEquals("#FFFFFF", result[1])
+        assertEquals("#0000FF", result[2])
+        assertEquals("#FFFFFF", result[3])
+    }
 }
