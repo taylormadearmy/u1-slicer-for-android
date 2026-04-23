@@ -1227,9 +1227,11 @@ class PreparePreviewViewModelTest {
      * and `currentModelPath`) must point at the same underlying file — the
      * sanitized processed file — signalling that `embedProfile` was skipped.
      *
-     * The timing budget is intentionally generous (180s on Pixel 8a) to avoid
-     * flake; pre-fix measurements were ~100s on the same device and we expect
-     * post-fix to sit under ~60s.
+     * Timing budget is 90s on Pixel 8a — tight enough to flag a regression but
+     * generous against CI/emulator variance. Pre-v1.6.10 measurements were
+     * ~100s; v1.6.10 phase 1 dropped to ~62s; v1.6.11 phase 2 (full-file
+     * `ThreeMfParser.parse` skips the per-component paint-state scan for
+     * multi-plate files) drops to ~42s.
      */
     @Test
     fun buzzLightyear_coldLoad_skipsFullFileEmbedOnMultiPlate() {
@@ -1252,8 +1254,9 @@ class PreparePreviewViewModelTest {
             }
 
             assertTrue(
-                "B93: Buzz cold load to plate selector must complete within 180s, took ${elapsedMs}ms",
-                elapsedMs < 180_000L
+                "B93: Buzz cold load to plate selector must complete within 90s " +
+                    "(baseline ~42s after phases 1+2), took ${elapsedMs}ms",
+                elapsedMs < 90_000L
             )
 
             // Structural check: after load but before plate selection, the
