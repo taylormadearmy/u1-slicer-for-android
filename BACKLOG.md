@@ -4,6 +4,18 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B95: Buzz plate 9 paint state 8 dropped by slicer — only T0 in G-code (GitHub #102)
+- **Symptom**: On v1.6.10, Buzz Lightyear plate 9 Prepare shows 2 distinct colours correctly (peach #FFD6C1 + white #FFFFFF per the B90 detection fix), but the sliced G-code contains only `T0` (3 tool changes across 605 layers) with no `T1`/`T2`/`T3`. Slice summary reports a single extruder; G-code 3D preview renders the whole model in the renderer's default slot-0 colour (orange) because no user colour is assigned to physical slot 0 for this plate.
+- **Distinct from B92**: B92 was about Prepare ↔ Preview palette alignment on plates where OrcaSlicer's print order disagreed with detectedColors. Plate 9's slicer never emits the paint state as a tool change, so this is a paint-segmentation / embedder issue upstream of any palette alignment.
+- **Reproduction**: `DC15BuzzRepro.dc15_buzzPlate9_diagnosticDump` — loads Buzz, selects plate 9, slices, dumps tool counts + G-code header. On current main: `T0=3 T1=0 T2=0 T3=0`. The embedder's `filament_colour` header is `#000000;#0086D6` (Bambu filaments 1+2) instead of `#FFD6C1;#FFFFFF` (the actually-used filaments 8+10) — same embedder smell flagged in #96, but here it plausibly correlates with the slicer's inability to emit paint-state 8 as a tool change (paint state index > compact embedded profile size).
+- **Root-cause hypotheses** (not yet verified):
+  1. `BambuSanitizer` rewrites object `extruder` attributes but doesn't consistently compact `paint_color` attributes to match — state 8 stays as "8" in the sanitized 3MF, and native `multi_material_segmentation_by_painting()` silently drops it against the 2-entry compact `filament_colour` array.
+  2. `computeEmbedTargetCount` under-sizes `filament_colour` for this shape (object default + single high-index paint state with total 2 distinct detected colours) — a targeted version of the B48 fix.
+  3. Native paint segmentation discards paint states beyond `num_facets_states = filament_colour.size()+1` on startup without expanding.
+- **Not affected**: Plate 1 (4-colour object-extruder) emits all 4 tools; plate 8 (object 10 + paint state 3, lower-indexed) emits T0+T3 correctly after v1.6.10.
+- **Test file**: `Buzz_Multipart_3MF_Bambu.3mf` plate 9 (already in `app/src/androidTest/assets/`).
+- **Source**: Discord user DC15, 2026-04-23
+
 ### B94: User drag-to-move object position lost after slicing (GitHub #99) — REGRESSION GUARD v1.6.10
 - **Symptom (reported)**: User drags object to a new bed position on Prepare → slice → Preview shows the object back at the default (front-centre) position. Reproduces on single-object Spiderman file. Wipe tower IS preserved.
 - **Investigation**: New instrumented test `spiderman_dragToRight_preservesPositionThroughSlice` calls `applyPlacementPositions(dragPositions)` directly, slices, and parses the G-code's X extents. Passes on Pixel 8a — the ViewModel → native `setModelInstances(custom)` path correctly propagates the drag offset through re-embed and slice, and the G-code reflects the drag destination (right edge ~270mm for dragX chosen to push the bottom-left to the far-right edge).
