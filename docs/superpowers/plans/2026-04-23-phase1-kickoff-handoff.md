@@ -187,3 +187,37 @@ Out of scope (deferred to sub-plan #2b):
 - `ThreeMfParser.parseForPlateSelection`, `SlicerViewModel.mergeThreeMfInfoForPlate` — same reasoning.
 
 Next: Sub-plan #4 (object extruder map) — the 20 remaining `objects.size` entries. Sub-plan #3 (custom gcode per layer) likely has little remaining to do since per-plate customGcode already flowed through sub-plan #2's promoted `append_plate` emitter, but may still carry a production migration for `LayerToolPauseInjector`.
+
+## Sub-plan #4 status: LANDED (2026-04-23)
+
+Baseline closure:
+- Pre-sub-plan-#4 total: 20 entries.
+- Post-sub-plan-#4 total: **0 entries** (100% diff-harness closure).
+- Closed: 20 `objects.size` entries, one per fixture.
+
+Root cause of the `objects.size` diffs: Kotlin's `ThreeMfInfo.objects` filtered `<object>` elements to those with > 0 inline vertices, while native's `g_model.objects` contains every object after Slic3r's import-time component-ref merge. For component-ref 3MFs (e.g. colored_3DBenchy) Kotlin reported 0 objects; native reported the merged count.
+
+Changes shipped (snapshot-only, Option A per the design notes):
+- New JNI accessor `NativeLibrary.nativeGetObjectExtruderMap(): String?` — returns a JSON array of `{objectId, name, extruder, sourcePath}` for every `g_model.objects` entry.
+- New C++ TU `sapil_bambu_objects.cpp` owns the JNI entry; reuses `sapil::append_object` (promoted out of the `sapil_bambu_snapshot.cpp` anonymous namespace alongside the prior `append_plate` / `json_escape` promotions).
+- `KotlinBambuSnapshot.snapshot` builds `BambuFileSnapshot.objects` from the new accessor under the existing `previewMutex + loadModel` scope. Runtime ObjectID fills `ObjectSnapshot.objectId`.
+
+Deliberately untouched:
+- `ThreeMfInfo.objectExtruderMap: Map<String, Int>` (XML-id keyed) — production consumers (`SlicerViewModel`, `ProfileEmbedder`, `BambuSanitizer`) continue to read this Kotlin-parsed map. ObjectID identity is a snapshot-level concern; runtime `size_t` cannot be reverse-mapped to XML id without re-parsing the ZIP, and there is no production consumer that needs both.
+
+Tests:
+- `BambuParserDifferentialTest` 21/21 green with **empty baseline**.
+- `NativeObjectExtruderMapTest` 3/3 green (new).
+- `NativeLibraryCorrectnessTest` 12/12 green.
+- `NativePlateDataTest` 5/5 green.
+- `KotlinBambuSnapshotTest` 1/1 green.
+- Full Bambu instrumented package 26/26 green.
+- JVM unit suite green.
+
+Phase 1 diff-harness closure trajectory: **664 → 242 (#1) → 150 (#5) → 20 (#2) → 0 (#4)**. Every field in `BambuFileSnapshot` now agrees between the Kotlin snapshot path (fed by new JNI accessors) and the native `bambu_snapshot_json` path.
+
+Remaining Phase 1 work:
+- Sub-plan #3 (custom gcode per-layer production migration) — `plates[*].customGcode` content already closed via sub-plan #2's promoted `append_plate` emitter. Remaining scope is code cleanup: delete `LayerToolCustomGcodeXml.kt` and migrate `LayerToolPauseInjector.kt` to consume `nativeGetPlateData` output. No baseline entries to close; a source-reduction follow-up.
+- `ThreeMfMeshParser` retirement (deferred since sub-plan #1).
+- `BambuSanitizer.extractPlate` slice-time migration (sub-plan #2b).
+- Optional `objectId` field rename now that it is positional, not identity (noted in sub-plan #1 LANDED appendix).
