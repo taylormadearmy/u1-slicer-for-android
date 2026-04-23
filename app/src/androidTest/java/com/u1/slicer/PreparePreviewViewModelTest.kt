@@ -1463,4 +1463,130 @@ class PreparePreviewViewModelTest {
             modelFile.delete()
         }
     }
+
+    /**
+     * B92 (#96) re-surfaced after v1.6.10/v1.6.11: with default presets
+     * (E1=red, E2=green, E3=blue, E4=white) Buzz plate 8 auto-resolves to
+     * colorMapping=[0, 3]. Prepare correctly renders RED/WHITE stripes.
+     * Preview reportedly shows the painted stripes as **sky blue** —
+     * GcodeRenderer's untouched default palette colour for slot 1 (0.2,
+     * 0.7, 1.0). This proves the parsed G-code being fed into the renderer
+     * still has moves tagged with the pre-remap compact tool index `1`.
+     *
+     * The remap step (`GcodeToolRemapper.remap`) DOES rewrite T1 → T3 in
+     * the G-code file. But `validateSliceOutput` parses the file BEFORE
+     * the remap runs (see SlicerViewModel.startSlicing flow), and the
+     * resulting `ParsedGcode` is what `_parsedGcode.value` exposes to the
+     * Preview screen. So `parsedGcode.value` keeps the stale compact
+     * indices and the renderer paints them with its default palette.
+     *
+     * Two-layer red assertion (one or both should fail before fix):
+     *   (1) The G-code file post-remap must NOT contain any pre-remap
+     *       T1 patterns (T1, M10[49] T1, SM_ EXTRUDER=1 / INDEX=1).
+     *       If this fails, the remapper missed a pattern.
+     *   (2) The `parsedGcode` StateFlow must NOT tag any move with an
+     *       extruder index that the user's mapping never claimed
+     *       (here: slots 1 and 2). If this fails, the parser was fed a
+     *       stale pre-remap copy of the G-code.
+     */
+    @Test
+    fun buzzPlate8_parsedGcodeMustReflectPostRemapToolIndices() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val settingsRepo = application.container.settingsRepository
+        // Force default presets to match user's reproduction environment.
+        runBlocking {
+            settingsRepo.saveExtruderPresets(com.u1.slicer.data.defaultExtruderPresets())
+        }
+        Thread.sleep(300)
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Buzz_Multipart_3MF_Bambu.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("buzz plate selector visible or error", timeoutMs = 240_000L) {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            (viewModel.state.value as? SlicerViewModel.SlicerState.Error)?.let {
+                throw AssertionError("Buzz 3MF load failed: ${it.message}")
+            }
+
+            viewModel.selectPlate(8)
+            waitUntil("buzz plate 8 loaded", timeoutMs = 120_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+            Thread.sleep(600)
+
+            val colorMapping = viewModel.colorMapping.value!!
+            // Sanity: with default presets brown→E1, white→E4 → mapping [0, 3]
+            assertEquals(
+                "Default presets must auto-resolve Buzz plate 8 to colorMapping=[0, 3]; " +
+                    "got $colorMapping. If this changes, update the unused-slots set below.",
+                listOf(0, 3), colorMapping
+            )
+
+            viewModel.startSlicing()
+            waitUntil("buzz plate 8 slice complete", timeoutMs = 300_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            (viewModel.state.value as? SlicerViewModel.SlicerState.Error)?.let {
+                throw AssertionError("Buzz plate 8 slice failed: ${it.message}")
+            }
+            val result = (viewModel.state.value as SlicerViewModel.SlicerState.SliceComplete).result
+
+            // ---- Layer 1 (primary): parsedGcode StateFlow must reflect post-remap indices ----
+            // This is what the renderer reads. A move tagged with extruder=1 paints with
+            // GcodeRenderer's default slot-1 palette colour (sky blue) when the user's
+            // mapping never claimed slot 1, exactly reproducing the user screenshot.
+            val parsed = viewModel.parsedGcode.value
+            assertNotNull("parsedGcode StateFlow must be populated after slice", parsed)
+            val extrudersUsed = parsed!!.layers.flatMap { it.moves }.map { it.extruder }.toSet()
+            val unusedSlots = setOf(1, 2)
+            val intersection = extrudersUsed intersect unusedSlots
+            assertTrue(
+                "B92: parsedGcode (StateFlow exposed to Preview) must not tag any " +
+                    "move with extruder slots ${unusedSlots} when colorMapping=$colorMapping " +
+                    "(used physical slots [0, 3]). Got extrudersUsed=$extrudersUsed; " +
+                    "intersection=$intersection. The renderer would paint moves tagged with " +
+                    "slot 1 using GcodeRenderer's default sky-blue palette, reproducing the " +
+                    "user's blue-stripes screenshot exactly.",
+                intersection.isEmpty()
+            )
+
+            // ---- Layer 2 (sanity): G-code file's executable lines must be remap-clean ----
+            // Strip comments before checking — a "; preheat T1 time" trailing comment is
+            // cosmetic and ignored by GcodeParser. We only care about parser-visible patterns.
+            val gcode = File(result.gcodePath).readText()
+            val toolLineRe = Regex("""^T(\d+)$""")
+            val mTempT1Re = Regex("""\bM10[49]\b.*?\bT1\b""")
+            val smParamRe = Regex("""\bSM_\S+.*?(?:EXTRUDER|INDEX)=1\b""")
+            val orphanT1Lines = mutableListOf<Pair<Int, String>>()
+            gcode.lineSequence().forEachIndexed { idx, line ->
+                val semicolonIdx = line.indexOf(';')
+                val executable = if (semicolonIdx >= 0) line.substring(0, semicolonIdx) else line
+                val stripped = executable.trim()
+                if (stripped.isEmpty()) return@forEachIndexed
+                val tMatch = toolLineRe.matchEntire(stripped)
+                val isStandaloneT1 = tMatch != null && tMatch.groupValues[1] == "1"
+                if (isStandaloneT1 ||
+                    mTempT1Re.containsMatchIn(stripped) ||
+                    smParamRe.containsMatchIn(stripped)
+                ) {
+                    orphanT1Lines += (idx + 1) to line
+                }
+            }
+            assertTrue(
+                "B92 sanity: G-code post-remap must not retain any executable T1 references " +
+                    "(standalone T1, M104/M109 T1, SM_ EXTRUDER=1, SM_ INDEX=1) in non-comment " +
+                    "text. Found ${orphanT1Lines.size}: first 5 = ${orphanT1Lines.take(5)}",
+                orphanT1Lines.isEmpty()
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
 }

@@ -2341,6 +2341,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             "Injected layer-change pause commands into ${result.gcodePath} using ${layerToolMetadataFile?.name}"
                         )
                     }
+                    // B92: Apply tool remap BEFORE parsing the G-code for the Preview viewer.
+                    // The remap rewrites compact T-indices (T0, T1, ...) to physical slots
+                    // (e.g. T1 → T3 when colorMapping=[0, 3]). validateSliceOutput parses the
+                    // file into ParsedGcode that drives the Preview renderer, so it MUST see
+                    // the post-remap T-indices — otherwise the renderer paints moves with
+                    // GcodeRenderer's default-palette colour at the unmapped slot (sky blue
+                    // for slot 1), reproducing the user's blue-stripes screenshot.
+                    val composedRemap = composeSemmRemap(toolRemapSlots, semmColorPermutation)
+                    if (composedRemap != null) {
+                        GcodeToolRemapper.remap(result.gcodePath, composedRemap)
+                        Log.i("SlicerVM", "Post-processed G-code: remapped tools to $composedRemap (toolRemap=$toolRemapSlots, semmPerm=$semmColorPermutation)")
+                    }
                     val outputValidation = validateSliceOutput(
                         result,
                         buildExpectedModelFootprint(mi, copies, custom),
@@ -2367,15 +2379,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             "estimatedTimeSeconds" to result.estimatedTimeSeconds
                         )
                     )
-                    // Post-process G-code to remap compact tool indices to physical slots.
-                    // Two possible remaps: toolRemapSlots (sparse slot compaction, e.g. T0→T2)
-                    // and semmColorPermutation (colour order for SEMM models, e.g. T0→T3).
-                    // composeSemmRemap merges them — permutation subsumes compaction when both present.
-                    val composedRemap = composeSemmRemap(toolRemapSlots, semmColorPermutation)
-                    if (composedRemap != null) {
-                        GcodeToolRemapper.remap(result.gcodePath, composedRemap)
-                        Log.i("SlicerVM", "Post-processed G-code: remapped tools to $composedRemap (toolRemap=$toolRemapSlots, semmPerm=$semmColorPermutation)")
-                    }
                     // Inject preview thumbnails into G-code for Klipper/Moonraker.
                     // 3MF: extract preview image from ZIP. STL: fall back to GL capture bitmap.
                     try {
