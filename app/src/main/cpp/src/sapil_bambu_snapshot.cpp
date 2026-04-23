@@ -47,8 +47,9 @@ extern Slic3r::Semver g_file_version;
 // empty slice_filaments_info) can still surface the effective per-plate palette.
 extern Slic3r::DynamicPrintConfig& getModelConfig();
 
-namespace {
-
+// Promoted to namespace sapil for reuse by sub-plan #5's sapil_bambu_project.cpp.
+// Bodies unchanged — callers inside the anonymous namespace below still resolve
+// via unqualified lookup (anon namespace in sapil → sapil::json_escape).
 std::string json_escape(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 8);
@@ -83,6 +84,8 @@ std::string colour_to_hex(const std::string& raw) {
     if (raw[0] == '#') return raw;
     return "#" + raw;
 }
+
+namespace {
 
 // NOTE: Returns BambuStudio's canonical enum names (matching CustomGCode::Item::from_json's
 // str2type map). The Kotlin snapshot path emits the raw XML attribute "1"/"2"/etc., so this
