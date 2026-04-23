@@ -524,7 +524,7 @@
       },
       {
         "path": "plates[0].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -544,7 +544,7 @@
       },
       {
         "path": "plates[1].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -579,7 +579,7 @@
       },
       {
         "path": "plates[3].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -599,7 +599,7 @@
       },
       {
         "path": "plates[4].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -701,7 +701,7 @@
       },
       {
         "path": "plates[2].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -726,7 +726,7 @@
       },
       {
         "path": "plates[3].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -751,12 +751,12 @@
       },
       {
         "path": "plates[4].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
         "path": "plates[4].customGcode[1]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -1903,7 +1903,7 @@
       },
       {
         "path": "plates[0].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -1928,7 +1928,7 @@
       },
       {
         "path": "plates[1].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -1973,7 +1973,7 @@
       },
       {
         "path": "plates[3].customGcode[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
@@ -2336,7 +2336,7 @@
       },
       {
         "path": "plates[0].plateConfig[print_sequence]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "Kotlin gap - plateConfig unread by Kotlin parser; Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       },
       {
@@ -2401,7 +2401,7 @@
       },
       {
         "path": "plates[4].plateConfig[print_sequence]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "Kotlin gap - plateConfig unread by Kotlin parser; Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       },
       {
@@ -3324,17 +3324,17 @@
       },
       {
         "path": "plates[0].filamentColours[0]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - RGB vs RGBA hex; Phase 1 normalises in filamentColours sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
         "path": "plates[0].filamentColours[2]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - RGB vs RGBA hex; Phase 1 normalises in filamentColours sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
         "path": "plates[0].filamentColours[3]",
-        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "reason": "intentional - RGB vs RGBA hex; Phase 1 normalises in filamentColours sub-plan",
         "recordedAt": "2026-04-23"
       },
       {
