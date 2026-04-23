@@ -3879,6 +3879,16 @@ internal fun buildCompactExtruderRemap(
  *   slot count from the mapping — same as pre-B48 behaviour.
  * - Per-object models with tool remap: use distinct slot count from toolRemapSlots.
  * - Everything else: use the physical extruder count.
+ *
+ * Note on B95: an attempt was made to bump the embed count to
+ * `max(usedExtruderIndices)` for plates like Buzz 9 where the source references
+ * a high-index paint state. It worked at the embed level (filament_colour sized
+ * to 10) but the slicer's paint segmentation still only emitted T_<default>
+ * — the paint state's bit-packed encoding decodes to a state different from
+ * what the Kotlin first-char heuristic reports. The real fix requires either
+ * decoding/re-encoding the bit-packed paint_color attribute or a native patch
+ * inside `multi_material_segmentation_by_painting()`. Left as a known-open
+ * investigation.
  */
 internal fun computeEmbedTargetCount(
     colorMapping: List<Int>?,

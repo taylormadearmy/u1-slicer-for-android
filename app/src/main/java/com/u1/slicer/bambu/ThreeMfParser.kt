@@ -184,14 +184,24 @@ object ThreeMfParser {
                 // Only scoped to large components to avoid unnecessary I/O on small
                 // non-painted Bambu files.  sourceConfig values are String or List<String>.
                 val hasLargeComponents = componentModels.any { it.size > 10_000_000L }
-                val paintStateCount = if (hasPaintData || (!hasPaintData && isBambu && !skipPaintDetection && hasLargeComponents)) {
+                // B93 phase 2: multi-plate files re-parse per plate via
+                // `parseForPlateSelection()` when the user selects a plate. The
+                // full-file `detectedExtruderCount` is only used as an early
+                // "show plate selector" hint, and the paint state count doesn't
+                // change that decision. Skip the expensive per-component scan
+                // for multi-plate files — on Buzz Lightyear (73 MB, 80+ component
+                // .model entries, 296K paint_color attributes) this loop alone
+                // was ~47s on a Pixel 8a before this skip.
+                val paintStateCount = if (isMultiPlate) {
+                    0
+                } else if (hasPaintData || (!hasPaintData && isBambu && !skipPaintDetection && hasLargeComponents)) {
                     val states = mutableSetOf<Int>()
                     val modelFiles = mutableListOf<java.util.zip.ZipEntry>()
                     if (modelEntry != null) modelFiles.add(modelEntry)
                     zip.entries().toList().filterTo(modelFiles) { e ->
                         e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
                     }
-                    for (entry in modelFiles) {
+                    outer@ for (entry in modelFiles) {
                         streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
                             val ch = spec.firstOrNull() ?: return@streamCollectPaintSpecs
                             val state = paintCharToState(ch)
@@ -200,7 +210,16 @@ object ThreeMfParser {
                             // Fold AMS2 states (5-8) back to AMS1 (1-4)
                             val folded = if (state > 4) ((state - 1) % 4) + 1 else state
                             states.add(folded)
+                            // B93 phase 2: folded state range is 1..4. Once we've
+                            // collected all 4, further reads can't add new states —
+                            // bail to save I/O on files like Buzz Lightyear
+                            // (73 MB, 80+ component .model entries, 296K paint_color
+                            // attributes). Saturation is usually reached in the
+                            // first 1-2 component files; skipping the rest cuts
+                            // multi-plate cold load by another ~20-30s on Pixel 8a.
+                            if (states.size >= 4) throw EarlyExit
                         }
+                        if (states.size >= 4) break@outer
                     }
                     states.size
                 } else 0
