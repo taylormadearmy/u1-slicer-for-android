@@ -1,4 +1,3367 @@
 {
-  "_doc": "Per-fixture allowlist of diff paths the Kotlin and native parsers disagree on. Each entry: { path: <diff path>, reason: <Kotlin bug|C++ bug|intentional|unknown>, recordedAt: <YYYY-MM-DD> }",
-  "fixtures": {}
+  "_doc": "Per-fixture allowlist of diff paths the Kotlin and native parsers disagree on. Each entry: { path: <diff path>, reason: <Kotlin bug|Kotlin gap|C++ bug|intentional|unknown>, recordedAt: <YYYY-MM-DD> }. Phase 1 will close most 'Kotlin gap' entries by deleting the redundant Kotlin parsers.",
+  "fixtures": {
+    "SENSORY+TWIST+BALL+FIDGETS+optimised.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "skywing-seawing-silkwing.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[4]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[5]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[6]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[7]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[8]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[9]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[10]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[11]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[12]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[13]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[14]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[15]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[16]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[17]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[18]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[19]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[20]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[21]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[22]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[23]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[24]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[25]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[26]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[27]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[28]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[29]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[30]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[31]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[32]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[33]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[34]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[35]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[36]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[37]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[38]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[39]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "Dragon Scale infinity.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[4]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[5]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[6]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[7]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[8]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "slip slide spin fidget.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "u1-auxiliary-fan-cover-hex_mw.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "flippy+flappy+mini-with-plate-painted.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[4]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "Shashibo-h2s-textured.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].customGcode[1]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[4]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[5]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[6]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[7]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[8]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[9]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[10]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[11]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[12]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[13]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[14]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[15]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[16]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[17]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[18]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[19]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[20]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[21]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[22]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[23]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "Dragon Scale infinity-1-plate-2-colours-new-plate.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "calib-cube-10-dual-colour-merged.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "Dragon Scale infinity-1-plate-2-colours.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "Button-for-S-trousers.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[4]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[5]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[6]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[7]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[8]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[9]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[10]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[11]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[12]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[13]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[14]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[15]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[16]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[17]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[18]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[19]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[20]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[21]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[22]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[23]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[24]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[25]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[26]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[27]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[28]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[29]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[30]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[31]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[32]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[33]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[34]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[35]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[36]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[37]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[38]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[39]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[40]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[41]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[42]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[43]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[44]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[45]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[46]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[47]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[48]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[49]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[50]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[51]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[52]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[53]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[54]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[55]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[56]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[57]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[58]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[59]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[60]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[61]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[62]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[63]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[64]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[65]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[66]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[67]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[68]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[69]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[70]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[71]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[72]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[73]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[74]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[75]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[76]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[77]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[78]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[79]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[80]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[81]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[82]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[83]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[84]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[85]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[86]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[87]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[88]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[89]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[90]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[91]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[92]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[93]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[94]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[95]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[96]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[97]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[98]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[99]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[100]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[101]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[102]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[103]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[104]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[105]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[106]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[107]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[108]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[109]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[110]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[111]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[112]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[113]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[114]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[115]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[116]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[117]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[118]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[119]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[120]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[121]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[122]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[123]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[124]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[125]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[126]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[127]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[128]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[129]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[130]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[131]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[132]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[133]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[134]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[135]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[136]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[137]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[138]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[139]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[140]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[141]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[142]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[143]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[144]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[145]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[146]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[147]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "old.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "flippy+flappy+mini.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].customGcode[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "spiderman-hanging-pre-cut.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "foldy+coaster (1).3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[6].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[6].filamentColours.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[6].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[6].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[4]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[5]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[6]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[7]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[8]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[9]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[10]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[11]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[12]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[13]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[14]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[15]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[16]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[17]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[18]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "PrusaSlicer-printables-Korok_mask_4colour.3mf": [
+      {
+        "path": "plates.size",
+        "reason": "Unknown - Phase 1 to investigate",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects[1]",
+        "reason": "Unknown - Phase 1 to investigate",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects[4253]",
+        "reason": "Unknown - Phase 1 to investigate",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "Buzz_Multipart_3MF_Bambu.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateConfig[print_sequence]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[1].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[2].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[3].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[4].plateConfig[print_sequence]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[5].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[6].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[6].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[6].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[7].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[7].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[7].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[8].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[8].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[8].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[9].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[9].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[9].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[4]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[5]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[6]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[7]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[8]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[9]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[10]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[11]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[12]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[13]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[14]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[15]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[16]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[17]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[18]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[19]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[20]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[21]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[22]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[23]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[24]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[25]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[26]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[27]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[28]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[29]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[30]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[31]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[32]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[33]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[34]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[35]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[36]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[37]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[38]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[39]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[40]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[41]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[42]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[43]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[44]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[45]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[46]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[47]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[48]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[49]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[50]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[51]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[52]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[53]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[54]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[55]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[56]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[57]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[58]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[59]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[60]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[61]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[62]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[63]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[64]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[65]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[66]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[67]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[68]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[69]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[70]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[71]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[72]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[73]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[74]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[75]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[76]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[77]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[78]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[79]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[80]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[81]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[82]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[83]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[84]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[85]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[86]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[87]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[88]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[89]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[90]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[91]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[92]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[93]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[94]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[95]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[96]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[97]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[98]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "Goat ( Gray ).3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[2]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[3]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[4]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[5]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[6]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[7]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[8]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[9]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[10]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[11]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[12]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[13]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[14]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[15]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[16]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[17]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[18]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[19]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[20]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[21]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[22]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[23]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[24]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[25]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[26]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[27]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[28]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[29]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[30]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[31]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[32]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[33]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[34]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[35]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[36]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[37]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[38]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[39]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[40]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[41]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[42]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[43]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[44]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[45]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[46]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[47]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "3DBenchy-H2C-Multi-Color.3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ],
+    "colored_3DBenchy (1).3mf": [
+      {
+        "path": "fileVersion",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].plateIndex",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentColours[0]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentColours[2]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentColours[3]",
+        "reason": "Kotlin bug - Phase 1 investigation will refine",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].filamentSettingsIds.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "plates[0].objectInstanceMap",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "objects.size",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[0]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      },
+      {
+        "path": "volumes[1]",
+        "reason": "Kotlin gap - Phase 1 closes by deletion",
+        "recordedAt": "2026-04-23"
+      }
+    ]
+  }
 }
