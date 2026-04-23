@@ -78,6 +78,7 @@ fun U1NavGraph(
             val slicerState by viewModel.state.collectAsState()
             val semmColorPermutation by viewModel.semmColorPermutationFlow.collectAsState()
             val slicerColorOrder by viewModel.slicerColorOrder.collectAsState()
+            val gcodeUsesPhysicalSlots by viewModel.gcodeUsesPhysicalSlots.collectAsState()
             val slicerLayerCount = (slicerState as? com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete)?.result?.totalLayers ?: 0
             if (parsedGcode != null) {
                 // B48: H2C models (>4 model colours) — slicer's T0-T3 are physical
@@ -94,6 +95,7 @@ fun U1NavGraph(
                     semmColorPermutation = semmColorPermutation,
                     slicerColorOrder = slicerColorOrder,
                     slicerLayerCount = slicerLayerCount,
+                    useDirectSlots = gcodeUsesPhysicalSlots,
                     onBack = { navController.popBackStack() }
                 )
             }

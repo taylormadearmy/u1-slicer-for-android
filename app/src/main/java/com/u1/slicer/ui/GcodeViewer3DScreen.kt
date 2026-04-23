@@ -34,6 +34,7 @@ fun GcodeViewer3DScreen(
     semmColorPermutation: List<Int>? = null,
     slicerColorOrder: List<Int>? = null,
     slicerLayerCount: Int = 0,
+    useDirectSlots: Boolean = false,
     onBack: () -> Unit
 ) {
     val gcodeLayerCount = parsedGcode.layers.size
@@ -48,8 +49,8 @@ fun GcodeViewer3DScreen(
     // Set colors + upload gcode atomically on the GL thread.
     // suspendCancellableCoroutine waits for the GL work to finish before
     // clearing the loading indicator.
-    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder)
+    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots)
     }
 
     LaunchedEffect(parsedGcode, previewColors, viewerView) {

@@ -1242,6 +1242,7 @@ fun PreviewScreen(
     val sliceStale by viewModel.sliceStale.collectAsState()
     val semmColorPermutation by viewModel.semmColorPermutationFlow.collectAsState()
     val slicerColorOrder by viewModel.slicerColorOrder.collectAsState()
+    val gcodeUsesPhysicalSlots by viewModel.gcodeUsesPhysicalSlots.collectAsState()
 
     Scaffold(
         topBar = {
@@ -1344,6 +1345,7 @@ fun PreviewScreen(
                             semmColorPermutation = semmColorPermutation,
                             slicerColorOrder = slicerColorOrder,
                             slicerLayerCount = s.result.totalLayers,
+                            useDirectSlots = gcodeUsesPhysicalSlots,
                             onExpand = onNavigateGcodeViewer3D,
                             cameraState = sharedPreviewCameraState,
                             onCameraStateChange = onSharedPreviewCameraStateChange,
@@ -3419,6 +3421,7 @@ fun InlineGcodePreview(
     semmColorPermutation: List<Int>? = null,
     slicerColorOrder: List<Int>? = null,
     slicerLayerCount: Int = 0,
+    useDirectSlots: Boolean = false,
     onExpand: () -> Unit,
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
     onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
@@ -3435,8 +3438,8 @@ fun InlineGcodePreview(
         ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
     else 1
 
-    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder)
+    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots)
     }
 
     LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState) {
@@ -3617,12 +3620,20 @@ internal fun normalizeGcodePreviewColors(
     extruderColors: List<String>,
     colorMapping: List<Int>?,
     semmColorPermutation: List<Int>? = null,
-    slicerColorOrder: List<Int>? = null
+    slicerColorOrder: List<Int>? = null,
+    useDirectSlots: Boolean = false
 ): List<String> {
     val normalized = MutableList(4) { "" }
     for (slot in 0..3) {
         normalized[slot] = extruderColors.getOrNull(slot).orEmpty()
     }
+    // B95: when the post-slice GcodeToolRemapper applies an expanded filament-index
+    // remap (because the embedded filament_colour was bumped to fit a high-index
+    // source filament), parsedGcode's `move.extruder` values are already physical
+    // slot indices — the renderer just needs `extruderColors[slot]` directly. The
+    // legacy branch 3 / branch 4 swaps are designed for the OLD compact-T-index
+    // pipeline and produce incorrect palettes for the new direct-slot world.
+    if (useDirectSlots) return normalized
     if (slicerColorOrder != null && semmColorPermutation != null && !colorMapping.isNullOrEmpty()) {
         // Branch 3: align Preview palette with Prepare's compact → slot mapping.
         semmColorPermutation.forEachIndexed { slicerCompactIdx, physicalSlot ->

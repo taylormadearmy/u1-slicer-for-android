@@ -313,6 +313,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _semmColorPermutationFlow = MutableStateFlow<List<Int>?>(null)
     val semmColorPermutationFlow: StateFlow<List<Int>?> = _semmColorPermutationFlow.asStateFlow()
 
+    // B95: true when the post-slice GcodeToolRemapper applied an expanded
+    // filament-index → physical-slot remap (because the embedded filament_colour
+    // was bumped to fit a high-index source filament). When true, the parsedGcode
+    // exposed via [parsedGcode] already carries physical-slot indices, so the
+    // Preview's [normalizeGcodePreviewColors] should bypass the slicerColorOrder
+    // / semmColorPermutation swap branches and use [activeExtruderColors] directly.
+    private val _gcodeUsesPhysicalSlots = MutableStateFlow(false)
+    val gcodeUsesPhysicalSlots: StateFlow<Boolean> = _gcodeUsesPhysicalSlots.asStateFlow()
+
     // B49: cache the Prepare preview MeshData so returning from G-code view is instant.
     // The native side caches the raw mesh, but toMeshData() (normal computation + FloatBuffer
     // allocation) is expensive for large SEMM models (2M tris).  This cache avoids re-conversion.
@@ -337,6 +346,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         semmColorPermutation = null
         _semmColorPermutationFlow.value = null
         _slicerColorOrder.value = null
+        _gcodeUsesPhysicalSlots.value = false
     }
 
     // Filament library — StateFlow so .value is accessible synchronously (e.g. for nozzle temp lookup at slice time)
@@ -1698,9 +1708,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val extCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
         val colorMapping = _colorMapping.value
+        // B95: pass max source filament index so plates with paint_color attributes
+        // referencing high-index filaments (Buzz Lightyear plate 9: state 11 from "8C")
+        // get an embedded filament_colour large enough for the slicer's segmentation
+        // pass to address them. Without this, the high-index paint state is silently
+        // dropped and the resulting G-code contains only the object-default tool.
+        val maxSourceFilamentIndex = info.usedExtruderIndices.maxOrNull() ?: 0
         val targetCount = computeEmbedTargetCount(
             colorMapping, info.hasPaintData, usedSlots, extCount,
-            hasMultiExtruderAssignments = info.hasMultiExtruderAssignments
+            hasMultiExtruderAssignments = info.hasMultiExtruderAssignments,
+            maxSourceFilamentIndex = maxSourceFilamentIndex
         )
         // No extruder remap in the 3MF — keep compact numbering (1,2,…).
         // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.
@@ -2348,10 +2365,41 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // the post-remap T-indices — otherwise the renderer paints moves with
                     // GcodeRenderer's default-palette colour at the unmapped slot (sky blue
                     // for slot 1), reproducing the user's blue-stripes screenshot.
-                    val composedRemap = composeSemmRemap(toolRemapSlots, semmColorPermutation)
+                    //
+                    // B95: when the embedded filament_colour was bumped to fit a high-index
+                    // source filament (Buzz plate 9: state 11 from `paint_color="8C"`), the
+                    // slicer emits T<filament-1> for each used filament instead of compact
+                    // T0..T(N-1). computeExpandedGcodeRemap returns a list mapping each
+                    // emitted T-index back to the user's physical slot via colorMapping.
+                    // This expanded remap takes precedence over the legacy
+                    // semmColorPermutation when both apply.
+                    val sliceInfo = _threeMfInfo.value
+                    val sliceColorMapping = _colorMapping.value
+                    val maxSourceFilamentIndex = sliceInfo?.usedExtruderIndices?.maxOrNull() ?: 0
+                    val embeddedFilamentCount = computeEmbedTargetCount(
+                        colorMapping = sliceColorMapping,
+                        hasPaintData = sliceInfo?.hasPaintData == true,
+                        toolRemapSlots = toolRemapSlots,
+                        fallbackExtCount = _config.value.extruderCount.coerceAtLeast(1),
+                        hasMultiExtruderAssignments = sliceInfo?.hasMultiExtruderAssignments == true,
+                        maxSourceFilamentIndex = maxSourceFilamentIndex
+                    )
+                    val expandedRemap = computeExpandedGcodeRemap(
+                        usedExtruderIndices = sliceInfo?.usedExtruderIndices.orEmpty(),
+                        colorMapping = sliceColorMapping,
+                        embeddedFilamentCount = embeddedFilamentCount
+                    )
+                    val composedRemap = expandedRemap
+                        ?: composeSemmRemap(toolRemapSlots, semmColorPermutation)
+                    _gcodeUsesPhysicalSlots.value = expandedRemap != null
                     if (composedRemap != null) {
                         GcodeToolRemapper.remap(result.gcodePath, composedRemap)
-                        Log.i("SlicerVM", "Post-processed G-code: remapped tools to $composedRemap (toolRemap=$toolRemapSlots, semmPerm=$semmColorPermutation)")
+                        Log.i(
+                            "SlicerVM",
+                            "Post-processed G-code: remapped tools to $composedRemap " +
+                                "(expandedRemap=${expandedRemap != null}, " +
+                                "toolRemap=$toolRemapSlots, semmPerm=$semmColorPermutation)"
+                        )
                     }
                     val outputValidation = validateSliceOutput(
                         result,
@@ -3898,7 +3946,8 @@ internal fun computeEmbedTargetCount(
     hasPaintData: Boolean,
     toolRemapSlots: List<Int>?,
     fallbackExtCount: Int,
-    hasMultiExtruderAssignments: Boolean = false
+    hasMultiExtruderAssignments: Boolean = false,
+    maxSourceFilamentIndex: Int = 0
 ): Int {
     if (hasPaintData && colorMapping != null && colorMapping.isNotEmpty()) {
         val distinctSlots = colorMapping.distinct().size.coerceAtLeast(1)
@@ -3916,11 +3965,20 @@ internal fun computeEmbedTargetCount(
         // matches the physical slots exactly).
         val isHybridSingleDedup = hasMultiExtruderAssignments &&
             (colorMapping.size - distinctSlots) == 1
-        return if (isH2c || isHybridSingleDedup) {
+        val baseSize = if (isH2c || isHybridSingleDedup) {
             colorMapping.size
         } else {
             distinctSlots
         }
+        // B95: when paint_color attributes reference 1-based filament indices higher
+        // than the user's distinct-slot count, the embedded filament_colour must be
+        // sized to address them or `multi_material_segmentation_by_painting()` will
+        // silently drop the high-index states (`if (state > max_ebt) state = NONE`).
+        // Buzz Lightyear plate 9 has paint_color="8C" → state 11 against detected-
+        // colour count 2; without this bump, the 4-extruder Snapmaker U1 receives a
+        // single-tool G-code instead of two. The post-slice GcodeToolRemapper
+        // remaps the resulting high T-indices back to the user's physical slots.
+        return maxOf(baseSize, maxSourceFilamentIndex)
     }
     if (toolRemapSlots != null) return toolRemapSlots.distinct().size
     return fallbackExtCount
@@ -4004,6 +4062,47 @@ internal fun computeSlicerColorOrder(
     val identity = (0 until n).toList()
     if (result == identity) return null
     return result
+}
+
+/**
+ * B95: Compute the post-slice tool remap for paint plates whose embedded
+ * `filament_colour` was bumped to fit a high-index source filament (e.g. Buzz
+ * Lightyear plate 9: state 11 from `paint_color="8C"`). The slicer emits
+ * `T<filament_index - 1>` for each paint state and object extruder; this
+ * function returns a list `out` such that `out[t]` is the physical slot
+ * (0..3) the user wants for slicer tool index `t`.
+ *
+ * Returns `null` when the bump didn't apply (`embeddedFilamentCount` is at or
+ * below the user's distinct-slot count) and the existing
+ * [computeSemmColorPermutation] / [toolRemapSlots] paths should drive the
+ * remap instead.
+ *
+ * Entries for tool indices the slicer never emits are populated with a
+ * harmless identity fallback (`t` itself coerced into 0..3) so any stray
+ * out-of-band T-index lands on a valid slot rather than being left as a
+ * wrap-around to slot 3 by `GcodeParser`'s `coerceIn(0, 3)`.
+ */
+internal fun computeExpandedGcodeRemap(
+    usedExtruderIndices: Iterable<Int>,
+    colorMapping: List<Int>?,
+    embeddedFilamentCount: Int
+): List<Int>? {
+    if (colorMapping.isNullOrEmpty()) return null
+    if (embeddedFilamentCount <= 0) return null
+    // Only useful when the embed was bumped beyond the distinct-slot count;
+    // otherwise the existing semmColorPermutation / toolRemapSlots logic
+    // keeps the same final mapping with less plumbing.
+    val distinctSlots = colorMapping.distinct().size
+    if (embeddedFilamentCount <= distinctSlots) return null
+    val sortedFilaments = usedExtruderIndices.toSortedSet().toList()
+    if (sortedFilaments.isEmpty()) return null
+    val out = MutableList(embeddedFilamentCount) { idx -> idx.coerceIn(0, 3) }
+    sortedFilaments.forEachIndexed { detectedIdx, filamentIdx ->
+        val tIndex = filamentIdx - 1
+        val userSlot = colorMapping.getOrNull(detectedIdx) ?: detectedIdx
+        if (tIndex in out.indices && userSlot in 0..3) out[tIndex] = userSlot
+    }
+    return out
 }
 
 /**
