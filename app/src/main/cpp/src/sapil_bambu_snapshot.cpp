@@ -78,6 +78,12 @@ std::string colour_to_hex(const std::string& raw) {
     return "#" + raw;
 }
 
+// NOTE: Returns BambuStudio's canonical enum names (matching CustomGCode::Item::from_json's
+// str2type map). The Kotlin snapshot path emits the raw XML attribute "1"/"2"/etc., so this
+// will appear as a known disagreement in the Task 9 diff harness — documented in
+// known-disagreements.json rather than fixed at source. Both representations are correct;
+// pick one to normalise to in Phase 1 if it ever causes confusion.
+//
 // Maps CustomGCode::Type enum (libslic3r/CustomGCode.hpp) to the canonical
 // names BambuStudio uses in its JSON serialisation — kept in sync with the
 // str2type map in CustomGCode::Item::from_json.
@@ -103,7 +109,24 @@ std::string bambu_snapshot_json() {
     out << "{";
     out << "\"source\":\"" << json_escape(g_model_info.filename) << "\",";
     out << "\"isBbl\":" << (g_is_bbl ? "true" : "false") << ",";
-    out << "\"fileVersion\":\"" << json_escape(g_file_version.to_string()) << "\",";
+    // Kotlin's snapshot path emits "" when the <metadata name="BambuStudio:3mfVersion">
+    // entry is missing. Slic3r::Semver default-constructs to {0,0,0,0} whose
+    // to_string() is "0.0.0.0" — if we passed that through unchanged the diff
+    // harness would fire on every file without a fileVersion metadata entry.
+    // Semver::valid() returns false for zero/inf/invalid, matching that empty case.
+    out << "\"fileVersion\":\"" << json_escape(g_file_version.valid() ? g_file_version.to_string() : "") << "\",";
+
+    // Project-level palette lookups are hoisted out of the plate loop — these
+    // model-level config options (filament_colour / filament_ids /
+    // filament_settings_id) do not change between plates. PlateData's own
+    // slice_filaments_info is still consulted first inside the loop; this is
+    // only the fallback for non-sliced 3MFs where PlateData carries an empty
+    // filaments list and the plate reuses the project palette.
+    const auto& project_cfg = getModelConfig();
+    const auto* project_colours = project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_colour");
+    const auto* project_filament_ids = project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_ids");
+    const auto* project_filament_settings_id =
+        project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_settings_id");
 
     out << "\"plates\":[";
     for (size_t i = 0; i < g_plate_data_list.size(); ++i) {
@@ -113,18 +136,6 @@ std::string bambu_snapshot_json() {
 
         out << "{";
         out << "\"plateIndex\":" << p.plate_index << ",";
-
-        // PlateData::slice_filaments_info is only populated for 3MFs that
-        // have been pre-sliced (the BBS importer reads it from slice_info.config
-        // <filament> entries). For the far more common non-sliced 3MF the plate
-        // reuses the project-level palette from project_settings.config. Fall
-        // back to that palette so the snapshot reflects the *effective* per-plate
-        // filament set a user would see when opening the file.
-        const auto& project_cfg = getModelConfig();
-        const auto* project_colours = project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_colour");
-        const auto* project_filament_ids = project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_ids");
-        const auto* project_filament_settings_id =
-            project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_settings_id");
 
         out << "\"filamentColours\":[";
         if (!p.slice_filaments_info.empty()) {
@@ -181,8 +192,14 @@ std::string bambu_snapshot_json() {
             for (size_t j = 0; j < items.size(); ++j) {
                 if (j) out << ",";
                 const auto& g = items[j];
+                // %.17g is the IEEE-754 round-trip-safe format for doubles.
+                // ostringstream defaults to 6 significant digits, which would
+                // round real layer Zs like 12.3456789 to "12.3457" and diverge
+                // from Kotlin's Double.toString() representation in Task 9.
+                char zbuf[32];
+                std::snprintf(zbuf, sizeof(zbuf), "%.17g", g.print_z);
                 out << "{"
-                    << "\"printZ\":" << g.print_z << ","
+                    << "\"printZ\":" << zbuf << ","
                     << "\"type\":\"" << json_escape(custom_gcode_type_name(static_cast<int>(g.type))) << "\","
                     << "\"extruder\":" << g.extruder << ","
                     << "\"color\":\"" << json_escape(g.color) << "\""
