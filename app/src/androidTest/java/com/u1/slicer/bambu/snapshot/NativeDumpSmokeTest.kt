@@ -117,4 +117,31 @@ class NativeDumpSmokeTest {
                        it.extruder in 0..32)
         }
     }
+
+    @Test
+    fun nativeDumpBambuModel_populates_volume_paintStateSet_for_H2C_benchy() {
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val tmp = File(targetContext.cacheDir, "h2c_benchy.3mf")
+        assetContext.assets.open("3DBenchy-H2C-Multi-Color.3mf").use { input ->
+            tmp.outputStream().use { input.copyTo(it) }
+        }
+        val native = NativeLibrary()
+        assertTrue(native.loadModel(tmp.absolutePath))
+        val snap = NativeBambuSnapshot.parse(native.nativeDumpBambuModel(tmp.absolutePath)!!)
+
+        assertTrue("expected at least one volume, got ${snap.volumes.size}",
+                   snap.volumes.isNotEmpty())
+        val mmPaintedVolumes = snap.volumes.filter { it.isMmPainted }
+        assertTrue("H2C benchy should have mm-painted volumes",
+                   mmPaintedVolumes.isNotEmpty())
+        val totalPaintStates = mmPaintedVolumes.flatMap { it.paintStateSet.keys }.toSet()
+        assertTrue("H2C benchy is known to use 5+ paint states, got: $totalPaintStates",
+                   totalPaintStates.size >= 5)
+        mmPaintedVolumes.forEach { vol ->
+            vol.paintStateSet.values.forEach { count ->
+                assertTrue("triangle count must be positive, got $count", count > 0)
+            }
+        }
+    }
 }

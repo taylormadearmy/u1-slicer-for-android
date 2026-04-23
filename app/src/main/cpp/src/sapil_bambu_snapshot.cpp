@@ -17,12 +17,15 @@
 #include <sstream>
 #include <string>
 
+#include <map>
+
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/ProjectTask.hpp"  // FilamentInfo
 #include "libslic3r/Semver.hpp"
+#include "libslic3r/TriangleSelector.hpp"  // EnforcerBlockerType
 
 namespace sapil {
 
@@ -223,6 +226,77 @@ void append_object(std::ostringstream& out, const Slic3r::ModelObject& mo) {
         << "}";
 }
 
+// Counts triangles per paint state for one FacetsAnnotation on a ModelVolume.
+// Returns map<state_value, triangle_count> for every state with non-zero triangle
+// count. State 0 (NONE) is never emitted — it is the unpainted default.
+//
+// EnforcerBlockerType is a scoped enum with the useful state range
+// 1..ExtruderMax (currently 16). For mmu_segmentation, state N maps to the
+// 1-based paint-slot index (Extruder1=1, Extruder2=2, ...). For supported_facets,
+// state 1 = ENFORCER and state 2 = BLOCKER. We iterate the full range and let
+// has_facets filter — the cost is 16 boolean calls per volume per annotation,
+// negligible compared to the parse cost.
+std::map<int, int> count_paint_states(const Slic3r::ModelVolume& mv,
+                                      const Slic3r::FacetsAnnotation& facets) {
+    std::map<int, int> counts;
+    const int max_state = static_cast<int>(Slic3r::EnforcerBlockerType::ExtruderMax);
+    for (int state = 1; state <= max_state; ++state) {
+        auto type = static_cast<Slic3r::EnforcerBlockerType>(state);
+        if (facets.has_facets(mv, type)) {
+            indexed_triangle_set its = facets.get_facets(mv, type);
+            int n = static_cast<int>(its.indices.size());
+            if (n > 0) counts[state] = n;
+        }
+    }
+    return counts;
+}
+
+// Emit one VolumeSnapshot. `extruder` is nullable per the Task 1 contract:
+// when the volume has no per-volume extruder override (config.has("extruder")
+// is false) we emit JSON null rather than 0, distinguishing "inherit from
+// object" from "explicitly set to 0" on the wire. Object-level extruder uses
+// 0-as-inherit in ObjectSnapshot because that matches Slic3r's own
+// representation (ModelConfigObject stores int with 0=unset); at the volume
+// level we go with the tri-state the Kotlin data class already exposes.
+void append_volume(std::ostringstream& out,
+                   long long object_id,
+                   size_t volume_index,
+                   const Slic3r::ModelVolume& mv) {
+    out << "{";
+    out << "\"objectId\":" << object_id << ",";
+    out << "\"volumeIndex\":" << volume_index << ",";
+
+    if (mv.config.has("extruder")) {
+        out << "\"extruder\":" << mv.config.opt_int("extruder") << ",";
+    } else {
+        out << "\"extruder\":null,";
+    }
+
+    auto mmu_counts = count_paint_states(mv, mv.mmu_segmentation_facets);
+    out << "\"paintStateSet\":{";
+    bool first = true;
+    for (const auto& kv : mmu_counts) {
+        if (!first) out << ",";
+        out << "\"" << kv.first << "\":" << kv.second;
+        first = false;
+    }
+    out << "},";
+
+    auto sup_counts = count_paint_states(mv, mv.supported_facets);
+    out << "\"paintSupportsStateSet\":{";
+    first = true;
+    for (const auto& kv : sup_counts) {
+        if (!first) out << ",";
+        out << "\"" << kv.first << "\":" << kv.second;
+        first = false;
+    }
+    out << "},";
+
+    out << "\"isMmPainted\":" << (mv.is_mm_painted() ? "true" : "false") << ",";
+    out << "\"isSeamPainted\":" << (mv.is_seam_painted() ? "true" : "false");
+    out << "}";
+}
+
 } // namespace
 
 std::string bambu_snapshot_json() {
@@ -267,7 +341,20 @@ std::string bambu_snapshot_json() {
     }
     out << "],";
 
-    out << "\"volumes\":[]";    // Task 7
+    out << "\"volumes\":[";
+    bool first_vol = true;
+    for (size_t oi = 0; oi < g_model.objects.size(); ++oi) {
+        const Slic3r::ModelObject* mo = g_model.objects[oi];
+        if (mo == nullptr) continue;
+        long long obj_id = static_cast<long long>(mo->id().id);
+        for (size_t vi = 0; vi < mo->volumes.size(); ++vi) {
+            if (mo->volumes[vi] == nullptr) continue;
+            if (!first_vol) out << ",";
+            first_vol = false;
+            append_volume(out, obj_id, vi, *mo->volumes[vi]);
+        }
+    }
+    out << "]";
     out << "}";
     return out.str();
 }
