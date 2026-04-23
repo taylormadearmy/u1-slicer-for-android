@@ -172,6 +172,11 @@ private:
     Impl* pImpl;
 };
 
+// ---- Bambu Snapshot (Phase 0 diff harness) ----
+// Walks the global Slic3r::Model after Model::read_from_file and emits
+// a BambuFileSnapshot-shaped JSON. Returns "" if g_model has no objects.
+std::string bambu_snapshot_json();
+
 // ---- JNI Helpers ----
 SliceConfig configFromJava(JNIEnv* env, jobject jconfig);
 jobject configToJava(JNIEnv* env, const SliceConfig& config);

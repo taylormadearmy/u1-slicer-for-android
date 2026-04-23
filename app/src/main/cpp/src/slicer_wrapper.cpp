@@ -134,6 +134,24 @@ Java_com_u1_slicer_NativeLibrary_getGcodePreview(JNIEnv* env, jobject, jint maxL
     return env->NewStringUTF(preview.c_str());
 }
 
+// ---- Bambu Snapshot (Phase 0 diff harness) ----
+JNIEXPORT jstring JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeDumpBambuModel(JNIEnv* env, jobject, jstring jpath) {
+    if (!g_engine) return nullptr;
+    if (jpath == nullptr) return nullptr;
+
+    // Re-load to guarantee a clean snapshot, independent of any prior
+    // setModelRotation / setModelInstances mutations.
+    const char* path = env->GetStringUTFChars(jpath, nullptr);
+    bool ok = g_engine->loadModel(std::string(path));
+    env->ReleaseStringUTFChars(jpath, path);
+    if (!ok) return nullptr;
+
+    std::string json = sapil::bambu_snapshot_json();
+    if (json.empty()) return nullptr;
+    return env->NewStringUTF(json.c_str());
+}
+
 // ---- Multiple Copies ----
 // positions: flat float array [x0, y0, x1, y1, ...] in mm (bed-space)
 JNIEXPORT jboolean JNICALL

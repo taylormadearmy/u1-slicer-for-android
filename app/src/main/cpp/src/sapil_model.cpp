@@ -29,9 +29,9 @@
 namespace sapil {
 
 // Persistent model state
-static Slic3r::Model g_model;
+Slic3r::Model g_model;                             // exposed to sapil_bambu_snapshot.cpp
 static Slic3r::DynamicPrintConfig g_model_config;  // Config from 3MF project_settings.config
-static ModelInfo g_model_info;
+ModelInfo g_model_info;                            // exposed to sapil_bambu_snapshot.cpp
 static bool g_model_loaded = false;
 static std::string g_files_dir;  // App files directory, derived from model path
 static std::vector<std::vector<int>> g_model_preview_extruders;
