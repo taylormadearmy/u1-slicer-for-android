@@ -31,6 +31,13 @@ import java.util.zip.ZipFile
  */
 object KotlinBambuSnapshot {
 
+    /**
+     * Bambu object IDs are always numeric integers in well-formed files. Non-numeric IDs
+     * indicate a malformed file; we surface them as `-1` rather than silently dropping
+     * so the diff harness flags the malformation instead of hiding it.
+     */
+    private fun parseObjectId(s: String): Int = s.toIntOrNull() ?: -1
+
     fun snapshot(file: File): BambuFileSnapshot {
         if (!file.exists() || !file.name.endsWith(".3mf", ignoreCase = true)) {
             return empty(file.name)
@@ -51,8 +58,10 @@ object KotlinBambuSnapshot {
                 filamentSettingsIds = emptyList(),
                 // objectInstanceMap: ThreeMfPlate.objectIds is the only per-plate source.
                 // Instance IDs are not tracked by the current parser, so we record 0.
-                objectInstanceMap = plate.objectIds.mapNotNull { it.toIntOrNull() }
-                    .map { ObjectInstance(objectId = it, instanceId = 0) },
+                // M-2: use parseObjectId (-1 sentinel for non-numeric) to match the
+                // `objects` list translation — surfaces malformed IDs in the diff.
+                objectInstanceMap = plate.objectIds
+                    .map { ObjectInstance(objectId = parseObjectId(it), instanceId = 0) },
                 customGcode = customGcodeByPlate[plate.plateId].orEmpty(),
                 // plateConfig: Bambu ships per-plate config under
                 // Metadata/plate_N.config / plate_N.json, but no Kotlin parser reads
@@ -64,7 +73,7 @@ object KotlinBambuSnapshot {
         val objects = info.objects.map { obj ->
             val extruder = info.objectExtruderMap[obj.objectId] ?: 0
             ObjectSnapshot(
-                objectId = obj.objectId.toIntOrNull() ?: -1,
+                objectId = parseObjectId(obj.objectId),
                 name = obj.name,
                 // ObjectSnapshot.extruder is non-null Int with 0 meaning "unset/inherit".
                 // ThreeMfParser returns the assigned 1-based extruder or omits the entry;
@@ -145,11 +154,15 @@ object KotlinBambuSnapshot {
                 ?: continue
             val entries = layerRegex.findAll(content).mapNotNull { match ->
                 val attrs = match.groupValues[1]
+                // I-2: drop entries with no `type` attribute — Bambu always emits type for layer-tool entries; absent type is malformed.
+                // Native populator (Task 3+) MUST follow the same convention to keep the diff harness honest.
                 val type = typeRegex.find(attrs)?.groupValues?.getOrNull(1) ?: return@mapNotNull null
                 // The existing Kotlin parser only counts type 1 or 2 as tool changes, but
                 // the snapshot records every layer entry (so the native loader can be
                 // compared on its full emission).
-                val topZ = topZRegex.find(attrs)?.groupValues?.getOrNull(1)?.toDoubleOrNull() ?: 0.0
+                // I-1: drop entries without parseable top_z; matches parseLayerToolSegments behaviour.
+                val topZ = topZRegex.find(attrs)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
+                    ?: return@mapNotNull null
                 val extruder = extruderRegex.find(attrs)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
                 val color = colorRegex.find(attrs)?.groupValues?.getOrNull(1) ?: ""
                 CustomGcodeEntry(printZ = topZ, type = type, extruder = extruder, color = color)
