@@ -161,6 +161,19 @@ class NativeLibrary {
      */
     external fun nativeGetPlateData(plateIndex: Int): String?
 
+    /**
+     * Returns a JSON array of every ModelObject in g_model:
+     *   [{"objectId": <runtime-size_t>, "name": "...", "extruder": <int>, "sourcePath": "..."}, ...]
+     *
+     * `objectId` is Slic3r's process-local runtime ObjectID — NOT the XML
+     * object id. `extruder` 0 means inherit/unset. Returns null when no
+     * model is loaded. Callers MUST hold [previewMutex].
+     *
+     * Production code that needs XML-id-keyed maps should continue to read
+     * `ThreeMfInfo.objectExtruderMap`; this accessor is snapshot-scoped.
+     */
+    external fun nativeGetObjectExtruderMap(): String?
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)

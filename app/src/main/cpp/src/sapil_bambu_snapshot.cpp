@@ -213,8 +213,9 @@ void append_plate(std::ostringstream& out,
     out << "}";
 }
 
-namespace {
-
+// Promoted to namespace sapil for reuse by sub-plan #4's sapil_bambu_objects.cpp.
+// Body unchanged.
+//
 // Emit the JSON body for a single ObjectSnapshot. `extruder` follows the
 // BambuFileSnapshot contract: 1-based with 0 meaning "unset / inherit"
 // — which happens to match Slic3r's own representation (ModelConfigObject
@@ -234,6 +235,8 @@ void append_object(std::ostringstream& out, const Slic3r::ModelObject& mo) {
         << "\"sourcePath\":\"" << json_escape(mo.input_file) << "\""
         << "}";
 }
+
+namespace {
 
 // Emit one VolumeSnapshot. `extruder` is nullable per the Task 1 contract:
 // when the volume has no per-volume extruder override (config.has("extruder")

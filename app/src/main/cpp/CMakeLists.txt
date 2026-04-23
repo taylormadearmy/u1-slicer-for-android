@@ -1122,6 +1122,7 @@ add_library(prusaslicer-jni SHARED
     src/sapil_bambu_volumes.cpp
     src/sapil_bambu_project.cpp
     src/sapil_bambu_plate.cpp
+    src/sapil_bambu_objects.cpp
 )
 
 target_include_directories(prusaslicer-jni PRIVATE

@@ -111,15 +111,19 @@ class KotlinBambuSnapshotTest {
             plate.plateConfig.keys.all { it is String }
         )
 
-        // objects: `ThreeMfInfo.objects` is populated from <object> elements in
-        // 3D/3dmodel.model that have > 0 inline vertices. Benchy's main model
-        // uses component refs to `3D/Objects/*.model` sub-files for the geometry,
-        // so the root model has **zero** direct-geometry objects and this list
-        // is empty. The per-plate `objectInstanceMap` above still identifies the
-        // objects — this is a known Kotlin peculiarity that the diff harness will
-        // surface vs the native loader (which merges component models into the
-        // object list).
-        assertEquals(emptyList<ObjectSnapshot>(), snapshot.objects)
+        // Phase 1 sub-plan #4: snapshot.objects now sourced from native
+        // g_model.objects. colored_3DBenchy is a component-ref 3MF where
+        // Kotlin used to report 0 objects (filter on inline vertex count);
+        // native surfaces the merged result. Expect non-empty with runtime
+        // ObjectIDs (size_t) > 0 and sane extruder values.
+        assertTrue(
+            "expected non-empty objects list post sub-plan #4, got ${snapshot.objects.size}",
+            snapshot.objects.isNotEmpty()
+        )
+        for (o in snapshot.objects) {
+            assertTrue("objectId should be > 0 (runtime ObjectID), got ${o.objectId}", o.objectId > 0)
+            assertTrue("extruder should be >= 0, got ${o.extruder}", o.extruder >= 0)
+        }
 
         // volumes: Phase 1 sub-plan #1 populates via native accessors.
         // Previous Task 2 assertion (emptyList) is replaced by positive checks.

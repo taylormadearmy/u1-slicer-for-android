@@ -29,6 +29,7 @@ object KotlinBambuSnapshot {
         val volumes: List<VolumeSnapshot>,
         val projectConfig: ProjectConfig?,
         val plates: List<NativePlate>?,  // null when loadModel failed
+        val objects: List<ObjectSnapshot>?,  // null when loadModel failed
     )
 
     private data class ProjectConfig(
@@ -98,7 +99,13 @@ object KotlinBambuSnapshot {
                 plateConfig = emptyMap(),
             )
         }
-        val objects = info.objects.map { obj ->
+        // Sub-plan #4: objects sourced from native g_model.objects via
+        // nativeGetObjectExtruderMap. Kotlin's previous path filtered <object>
+        // elements to those with > 0 inline vertices and missed component-ref
+        // merges; native walks every object after Slic3r's import-time merge.
+        // Runtime ObjectID fills ObjectSnapshot.objectId and is NOT the XML id;
+        // production code keeps reading ThreeMfInfo.objectExtruderMap for that.
+        val objects: List<ObjectSnapshot> = nativeData.objects ?: info.objects.map { obj ->
             val extruder = info.objectExtruderMap[obj.objectId] ?: 0
             ObjectSnapshot(
                 objectId = parseObjectId(obj.objectId),
@@ -136,7 +143,12 @@ object KotlinBambuSnapshot {
         native: NativeLibrary,
     ): NativeData = NativeLibrary.previewMutex.withLock {
         if (!native.loadModel(file.absolutePath)) {
-            return@withLock NativeData(volumes = emptyList(), projectConfig = null, plates = null)
+            return@withLock NativeData(
+                volumes = emptyList(),
+                projectConfig = null,
+                plates = null,
+                objects = null,
+            )
         }
         val objectCount = native.nativeGetObjectCount()
         val volumes = buildList {
@@ -172,7 +184,36 @@ object KotlinBambuSnapshot {
                 parseNativePlate(json)?.let { add(it) }
             }
         }
-        NativeData(volumes = volumes, projectConfig = projectConfig, plates = plates)
+        val objects = parseObjectArray(native.nativeGetObjectExtruderMap())
+        NativeData(
+            volumes = volumes,
+            projectConfig = projectConfig,
+            plates = plates,
+            objects = objects,
+        )
+    }
+
+    private fun parseObjectArray(json: String?): List<ObjectSnapshot>? {
+        if (json.isNullOrEmpty()) return null
+        return try {
+            val arr = org.json.JSONArray(json)
+            List(arr.length()) { i ->
+                val o = arr.optJSONObject(i) ?: return@List ObjectSnapshot(
+                    objectId = -1, name = "", extruder = 0, sourcePath = ""
+                )
+                ObjectSnapshot(
+                    // Runtime ObjectID (size_t) arrives as a JSON number; Int
+                    // truncation matches VolumeSnapshot.objectId's Int contract
+                    // established by sub-plan #1.
+                    objectId = o.optLong("objectId", -1L).toInt(),
+                    name = o.optString("name", ""),
+                    extruder = o.optInt("extruder", 0),
+                    sourcePath = o.optString("sourcePath", ""),
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun parseProjectConfig(json: String?): ProjectConfig? {

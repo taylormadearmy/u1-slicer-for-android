@@ -14,6 +14,7 @@ namespace Slic3r {
     class FacetsAnnotation;
     class ConfigOptionStrings;
     struct PlateData;
+    class ModelObject;
 }
 
 namespace sapil {
@@ -52,5 +53,14 @@ void append_plate(std::ostringstream& out,
                   const Slic3r::ConfigOptionStrings* project_colours,
                   const Slic3r::ConfigOptionStrings* project_filament_ids,
                   const Slic3r::ConfigOptionStrings* project_filament_settings_id);
+
+/**
+ * Emit the Phase 0 per-object JSON body (braces included) for one ModelObject.
+ * Matches the BambuFileSnapshot contract: objectId = runtime ObjectID (size_t),
+ * extruder 0 = inherit/unset, sourcePath = input_file (component refs).
+ *
+ * Shared with Phase 1 sub-plan #4 JNI accessor (sapil_bambu_objects.cpp).
+ */
+void append_object(std::ostringstream& out, const Slic3r::ModelObject& mo);
 
 } // namespace sapil
