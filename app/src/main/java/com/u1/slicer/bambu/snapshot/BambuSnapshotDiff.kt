@@ -59,7 +59,16 @@ object BambuSnapshotDiff {
     }
 
     private fun diffVolumes(out: MutableList<Disagreement>, k: List<VolumeSnapshot>, n: List<VolumeSnapshot>) {
-        // Same approach: index by (objectId, volumeIndex)
+        // Size mismatch is a single top-level disagreement — emit once and stop.
+        // Without this, the prior code emitted volumes[0]..volumes[N-1] every time
+        // one side returned empty (common case: KotlinBambuSnapshot.volumes = emptyList()
+        // while native populates from g_model), creating ~420 brittle per-index baseline
+        // entries that would re-index if upstream Orca reordered ModelObject::volumes.
+        if (k.size != n.size) {
+            out += Disagreement("volumes.size", "${k.size}", "${n.size}")
+            return
+        }
+        // Sizes match: index by (objectId, volumeIndex) for order-independent match.
         val key: (VolumeSnapshot) -> Pair<Int, Int> = { it.objectId to it.volumeIndex }
         val kMap = k.associateBy(key); val nMap = n.associateBy(key)
         (kMap.keys + nMap.keys).sortedWith(compareBy({ it.first }, { it.second })).forEachIndexed { i, vk ->

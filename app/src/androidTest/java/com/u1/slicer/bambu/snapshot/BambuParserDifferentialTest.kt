@@ -49,14 +49,34 @@ class BambuParserDifferentialTest {
             (0 until arr.length()).map { arr.getJSONObject(it).getString("path") }.toSet()
         } ?: emptySet()
 
+        val diffPaths = diffs.map { it.path }.toSet()
         val unexpected = diffs.filterNot { it.path in allowedPaths }
+        val stale = allowedPaths - diffPaths
+
         if (unexpected.isNotEmpty()) {
             val report = unexpected.joinToString("\n") {
                 "  ${it.path}\n    kotlin = ${it.kotlinValue}\n    native = ${it.nativeValue}"
             }
+            val staleNote = if (stale.isNotEmpty()) {
+                "\n\nAlso: ${stale.size} stale baseline entries (no longer produce a diff) — " +
+                    "remove from known-disagreements.json while you're in there:\n" +
+                    stale.sorted().joinToString("\n") { "  - $it" }
+            } else ""
             fail(
                 "Unexpected diffs for $assetName (${unexpected.size}):\n$report\n\n" +
-                    "If intentional, add to known-disagreements.json under fixtures.\"$assetName\"."
+                    "If intentional, add to known-disagreements.json under fixtures.\"$assetName\"." +
+                    staleNote
+            )
+        } else if (stale.isNotEmpty()) {
+            // Test passes but allowlist has stale entries — fail anyway so Phase 1
+            // work that closes baseline entries forces a baseline cleanup. Without
+            // this, the allowlist quietly grows stale and inflates the accepted
+            // disagreement surface.
+            val report = stale.sorted().joinToString("\n") { "  - $it" }
+            fail(
+                "Baseline has ${stale.size} stale entries for $assetName " +
+                    "(listed in known-disagreements.json but no longer produce a diff):\n$report\n\n" +
+                    "Remove them from known-disagreements.json under fixtures.\"$assetName\"."
             )
         }
     }

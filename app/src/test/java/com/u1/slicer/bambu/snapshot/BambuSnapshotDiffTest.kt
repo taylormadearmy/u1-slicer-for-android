@@ -55,4 +55,23 @@ class BambuSnapshotDiffTest {
         val diffs = BambuSnapshotDiff.diff(k, n)
         assertEquals("volumes[0].paintStateSet[2]", diffs.single().path)
     }
+
+    @Test
+    fun `volumes size mismatch is reported once at top level`() {
+        // The common case: Kotlin returns empty, native populates. Previously this
+        // emitted volumes[0]..volumes[N-1] (one per native volume) which created
+        // hundreds of brittle baseline entries. Now it should collapse to one.
+        val nVolumes = (0 until 50).map { i ->
+            VolumeSnapshot(objectId = i, volumeIndex = 0, extruder = null,
+                paintStateSet = emptyMap(), paintSupportsStateSet = emptyMap(),
+                isMmPainted = false, isSeamPainted = false)
+        }
+        val k = blank()
+        val n = blank().copy(volumes = nVolumes)
+        val diffs = BambuSnapshotDiff.diff(k, n)
+        assertEquals(1, diffs.size)
+        assertEquals("volumes.size", diffs[0].path)
+        assertEquals("0", diffs[0].kotlinValue)
+        assertEquals("50", diffs[0].nativeValue)
+    }
 }

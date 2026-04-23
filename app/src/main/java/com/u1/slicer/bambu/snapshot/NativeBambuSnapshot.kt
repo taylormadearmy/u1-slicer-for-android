@@ -13,18 +13,20 @@ import java.io.File
 object NativeBambuSnapshot {
 
     /**
-     * Loads `file` via NativeLibrary.loadModel and returns a snapshot of g_model.
-     * Holds NativeLibrary.previewMutex for the entire load+dump to prevent races
-     * against concurrent setModelRotation / getPreparePreviewMesh callers.
+     * Loads `file` and returns a snapshot of g_model. Holds NativeLibrary.previewMutex
+     * for the whole call to prevent races against concurrent setModelRotation /
+     * getPreparePreviewMesh callers.
      *
-     * Suspend because previewMutex is a coroutine Mutex; callers in instrumented
-     * tests should wrap with runBlocking { }.
+     * No separate loadModel call: the JNI entry nativeDumpBambuModel re-loads g_model
+     * internally (to guarantee a clean snapshot independent of any prior rotation /
+     * instance mutations) and returns null on load failure. parseOrEmpty produces the
+     * empty-snapshot fallback when that happens.
+     *
+     * Suspend because previewMutex is a coroutine Mutex; callers in instrumented tests
+     * should wrap with runBlocking { }.
      */
     suspend fun snapshot(file: File, native: NativeLibrary): BambuFileSnapshot =
         NativeLibrary.previewMutex.withLock {
-            if (!native.loadModel(file.absolutePath)) {
-                return@withLock parseOrEmpty(null, fallbackSource = file.name)
-            }
             val json = native.nativeDumpBambuModel(file.absolutePath)
             parseOrEmpty(json, fallbackSource = file.name)
         }

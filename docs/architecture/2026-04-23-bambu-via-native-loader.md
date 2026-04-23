@@ -144,6 +144,8 @@ Order by leverage (highest first):
 
 Each step is independently shippable behind a feature flag (`useNativeBambuLoader`), gated by the diff harness staying green. Each gets its own plan written when we get to it (so we can use what Phase 0 reveals).
 
+**Phase 1 sub-plan #1 scope update (2026-04-23, post-Phase-0 pre-flight research):** the production hot-path preview (`InlineModelPreview` in `MainActivity.kt`) already went fully native in the B46 fix. The only remaining production caller of `ThreeMfMeshParser.parse` is `ModelViewerScreen.kt:42`, which doesn't use the paint data — it renders with the default grey. So sub-plan #1 is fundamentally a **diff-harness closure job**, not a production refactor. Start with a **counts-only** JNI accessor (Option C in `docs/superpowers/plans/2026-04-23-phase1-painted-facets-design-notes.md`) — ~15 lines of C++ lifted from `sapil_bambu_snapshot.cpp`'s `count_paint_states` — which closes the ~420 `volumes[N]` baseline entries without touching any render path. Retiring `ThreeMfMeshParser` entirely + migrating `ModelViewerScreen` to the native preview path is a later cleanup, possibly bundled with sub-plan #2 or done as its own commit.
+
 ---
 
 ## Success metrics
