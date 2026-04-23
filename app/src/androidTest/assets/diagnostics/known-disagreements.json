@@ -3,42 +3,12 @@
   "fixtures": {
     "SENSORY+TWIST+BALL+FIDGETS+optimised.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "skywing-seawing-silkwing.3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -47,72 +17,12 @@
     ],
     "Dragon Scale infinity.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "slip slide spin fidget.3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -121,92 +31,12 @@
     ],
     "u1-auxiliary-fan-cover-hex_mw.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "flippy+flappy+mini-with-plate-painted.3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -215,102 +45,12 @@
     ],
     "Shashibo-h2s-textured.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].customGcode[1]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[5].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[5].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "Dragon Scale infinity-1-plate-2-colours-new-plate.3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -319,32 +59,12 @@
     ],
     "calib-cube-10-dual-colour-merged.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "Dragon Scale infinity-1-plate-2-colours.3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -353,52 +73,12 @@
     ],
     "Button-for-S-trousers.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "old.3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -407,117 +87,12 @@
     ],
     "flippy+flappy+mini.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].filamentColours.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].filamentSettingsIds.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].filamentColours.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].filamentSettingsIds.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].filamentColours.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].filamentSettingsIds.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].filamentColours.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].filamentSettingsIds.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].customGcode[0]",
-        "reason": "intentional - enum vs XML attr string; Phase 1 normalises in customGcode sub-plan",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "spiderman-hanging-pre-cut.3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -526,199 +101,12 @@
     ],
     "foldy+coaster (1).3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[5].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[5].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[6].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[6].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
-    "PrusaSlicer-printables-Korok_mask_4colour.3mf": [
-      {
-        "path": "plates.size",
-        "reason": "Unknown - Phase 1 to investigate",
-        "recordedAt": "2026-04-23"
-      }
-    ],
     "Buzz_Multipart_3MF_Bambu.3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].plateConfig[print_sequence]",
-        "reason": "Kotlin gap - plateConfig unread by Kotlin parser; Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[1].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[2].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[3].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[4].plateConfig[print_sequence]",
-        "reason": "Kotlin gap - plateConfig unread by Kotlin parser; Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[5].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[5].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[6].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[6].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[7].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[7].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[8].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[8].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[9].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[9].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -727,32 +115,12 @@
     ],
     "Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "Goat ( Gray ).3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
@@ -761,32 +129,12 @@
     ],
     "3DBenchy-H2C-Multi-Color.3mf": [
       {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
     "colored_3DBenchy (1).3mf": [
-      {
-        "path": "plates[0].plateIndex",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "plates[0].objectInstanceMap",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
       {
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
