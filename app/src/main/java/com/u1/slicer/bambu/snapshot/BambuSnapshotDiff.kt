@@ -44,17 +44,15 @@ object BambuSnapshotDiff {
             out += Disagreement("objects.size", "${k.size}", "${n.size}")
             return
         }
-        // Compare by objectId to be order-independent.
-        val kMap = k.associateBy { it.objectId }
-        val nMap = n.associateBy { it.objectId }
-        (kMap.keys + nMap.keys).sorted().forEach { id ->
-            val ko = kMap[id]; val no = nMap[id]
-            if (ko == null || no == null) {
-                out += Disagreement("objects[$id]", "$ko", "$no")
-            } else {
-                cmp(out, "objects[$id].extruder", ko.extruder, no.extruder)
-                cmp(out, "objects[$id].name", ko.name, no.name)
-            }
+        // Match by list position, not by objectId. Kotlin parses the XML object id
+        // (ThreeMfParser.parseObjectId), Native emits Slic3r's runtime ObjectID
+        // (reassigned per Model::read_from_file) — the two id spaces never align,
+        // and runtime IDs are not stable across loads, so ID-keyed matching produces
+        // spurious diffs whose indices drift between runs. The per-object field
+        // comparisons (name, extruder) are what's semantically meaningful.
+        k.zip(n).forEachIndexed { i, (ko, no) ->
+            cmp(out, "objects[$i].extruder", ko.extruder, no.extruder)
+            cmp(out, "objects[$i].name", ko.name, no.name)
         }
     }
 
@@ -68,15 +66,16 @@ object BambuSnapshotDiff {
             out += Disagreement("volumes.size", "${k.size}", "${n.size}")
             return
         }
-        // Sizes match: index by (objectId, volumeIndex) for order-independent match.
-        val key: (VolumeSnapshot) -> Pair<Int, Int> = { it.objectId to it.volumeIndex }
-        val kMap = k.associateBy(key); val nMap = n.associateBy(key)
-        (kMap.keys + nMap.keys).sortedWith(compareBy({ it.first }, { it.second })).forEachIndexed { i, vk ->
-            val ko = kMap[vk]; val no = nMap[vk]
+        // Sub-plan #1: both Kotlin and Native now source volumes from g_model and
+        // iterate in identical deterministic order (g_model.objects[oi].volumes[vi],
+        // nulls skipped). Match by list position rather than (objectId, volumeIndex)
+        // because Slic3r's runtime ObjectID is reassigned per Model::read_from_file;
+        // the two snapshot paths each trigger their own load, so their ObjectIDs
+        // never agree by construction. ObjectID identity across loads is not a
+        // meaningful invariant to compare.
+        k.zip(n).forEachIndexed { i, (ko, no) ->
             val base = "volumes[$i]"
-            if (ko == null || no == null) {
-                out += Disagreement(base, "$ko", "$no"); return@forEachIndexed
-            }
+            cmp(out, "$base.volumeIndex", ko.volumeIndex, no.volumeIndex)
             cmp(out, "$base.extruder", ko.extruder, no.extruder)
             cmp(out, "$base.isMmPainted", ko.isMmPainted, no.isMmPainted)
             cmp(out, "$base.isSeamPainted", ko.isSeamPainted, no.isSeamPainted)

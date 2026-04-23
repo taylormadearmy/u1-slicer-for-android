@@ -2,6 +2,8 @@ package com.u1.slicer.bambu.snapshot
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.u1.slicer.NativeLibrary
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -49,7 +51,8 @@ class KotlinBambuSnapshotTest {
 
     @Test
     fun snapshots_colored_3DBenchy_via_existing_Kotlin_parsers() {
-        val snapshot = KotlinBambuSnapshot.snapshot(fixture)
+        val native = NativeLibrary()
+        val snapshot = runBlocking { KotlinBambuSnapshot.snapshot(fixture, native) }
 
         assertEquals("colored_3DBenchy (1).3mf", snapshot.source)
         assertTrue("isBbl should be true for Bambu 3MF fixture", snapshot.isBbl)
@@ -104,9 +107,20 @@ class KotlinBambuSnapshotTest {
         // object list).
         assertEquals(emptyList<ObjectSnapshot>(), snapshot.objects)
 
-        // volumes: left empty by Task 2. Volume-level paint state data is not
-        // exposed by ThreeMfParser today — the diff harness will surface this
-        // as a known gap.
-        assertEquals(emptyList<VolumeSnapshot>(), snapshot.volumes)
+        // volumes: Phase 1 sub-plan #1 populates via native accessors.
+        // Previous Task 2 assertion (emptyList) is replaced by positive checks.
+
+        // Phase 1 sub-plan #1: volumes are populated via native accessors.
+        assertTrue(
+            "expected at least one volume for colored benchy, got 0",
+            snapshot.volumes.isNotEmpty()
+        )
+        val firstVolume = snapshot.volumes.first()
+        assertTrue("objectId must be > 0, got ${firstVolume.objectId}", firstVolume.objectId > 0)
+        assertEquals(0, firstVolume.volumeIndex)
+        assertTrue(
+            "expected at least one mm-painted volume in colored benchy",
+            snapshot.volumes.any { it.isMmPainted }
+        )
     }
 }

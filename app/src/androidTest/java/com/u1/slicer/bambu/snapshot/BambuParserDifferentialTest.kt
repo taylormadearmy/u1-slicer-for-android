@@ -42,7 +42,7 @@ class BambuParserDifferentialTest {
 
         val native = NativeLibrary()
         val nativeSnapshot = runBlocking { NativeBambuSnapshot.snapshot(tmp, native) }
-        val kotlinSnapshot = KotlinBambuSnapshot.snapshot(tmp)
+        val kotlinSnapshot = runBlocking { KotlinBambuSnapshot.snapshot(tmp, native) }
 
         val diffs = BambuSnapshotDiff.diff(kotlinSnapshot, nativeSnapshot)
         val allowedPaths: Set<String> = baseline.optJSONArray(assetName)?.let { arr ->

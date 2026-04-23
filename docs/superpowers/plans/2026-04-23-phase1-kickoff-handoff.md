@@ -93,3 +93,29 @@ Update `project-bambu-refactor.md` memory with the baseline-closure count. Then 
   - `/tmp/diff-corpus-baseline.txt`, `/tmp/diff-per-fixture-clean.txt` — from Task 9 (may have been cleaned)
 
 - Key Phase 0 commits to grep history (post-rebase SHAs will differ from my list above — use `git log --grep=phase0` to find them by message).
+
+## Sub-plan #1 status: LANDED (2026-04-23)
+
+Baseline closure:
+- Pre-sub-plan-#1 total: 265 entries (post-cleanup-#4).
+- Post-sub-plan-#1 total: 242 entries.
+- Closed in this sub-plan: 23 = 21 `volumes.size` entries (the headline) + 2 ID-keyed `objects[N]` entries that became stale once `BambuSnapshotDiff.diffObjects` switched to positional matching.
+
+Changes shipped:
+- Five counts-only JNI accessors on `NativeLibrary`: `nativeGetObjectCount`, `nativeGetVolumeCount`, `nativeGetObjectModelId`, `nativeGetVolumeScalars`, `nativeGetPaintStateCounts` (kind 0 mmu / 1 supports). All pure reads of `g_model`; callers hold `NativeLibrary.previewMutex`.
+- `sapil::count_paint_states` promoted from anonymous namespace in `sapil_bambu_snapshot.cpp` to a public helper declared in `sapil_bambu_snapshot.h` so Phase 0's JSON emitter and the new JNI accessors share one implementation.
+- `KotlinBambuSnapshot.snapshot` gained a `suspend` signature + `NativeLibrary` param; populates `volumes` by walking the new accessors under `previewMutex`.
+- `BambuSnapshotDiff.diffObjects` + `diffVolumes` switched from `(objectId, volumeIndex)` map matching to positional zip matching. Reason: Slic3r runtime `ObjectID` is reassigned per `Model::read_from_file`, so the two snapshot paths (each of which triggers its own load) never agree on ID by construction. The per-field checks (name / extruder / paint counts / flags) are what's semantically meaningful.
+
+Tests:
+- 6 new `NativeLibraryCorrectnessTest` cases (4 Flarewing-Dragon based + 1 empty-model guard + 1 `kind=1` supports structural smoke), all green on Pixel 8a.
+- `KotlinBambuSnapshotTest` upgraded with volumes assertions (volume list non-empty, objectId > 0, at least one `isMmPainted`).
+- Full differential suite 21/21 green.
+- Full Bambu instrumented suite 26/26 green (no regression).
+- JVM unit suite green.
+
+Out of scope (explicitly deferred):
+- `ThreeMfMeshParser` retirement — `ModelViewerScreen.kt:42` remains the last production caller but doesn't use paint data; bundling retirement with a later sub-plan.
+- `ObjectSnapshot`/`VolumeSnapshot` renaming `objectId` → `objectIndex` — the semantics have shifted (positional diff, not ID identity), but the field name stays for now to keep the Phase 0 JSON contract. Worth a follow-up cleanup.
+
+Next: Sub-plan #5 (project config + filament colours) per roadmap — closes 46 entries and establishes the `DynamicPrintConfig` accessor pattern #2 needs.

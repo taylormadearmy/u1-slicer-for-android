@@ -110,4 +110,185 @@ class NativeLibraryCorrectnessTest {
         assertNotNull(info)
         assertEquals("", info!!.filename)
     }
+
+    /**
+     * Phase 1 sub-plan #1: g_model iteration accessors.
+     * Loads a Bambu fixture (Flarewing Dragon — plate-heavy + multi-volume) and
+     * asserts that nativeGetObjectCount / nativeGetVolumeCount report the same
+     * counts that Phase 0's bambu_snapshot_json emits.
+     */
+    @Test
+    fun nativeGetObjectCount_matchesGModelState_forBambuFixture() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(targetContext.cacheDir, "phase1_fixture.3mf")
+        assetContext.assets.open("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            assertTrue(lib.loadModel(fixture.absolutePath))
+            val objectCount = lib.nativeGetObjectCount()
+            assertTrue("expected >= 1 ModelObject for Bambu fixture, got $objectCount", objectCount >= 1)
+            var sawVolumes = false
+            for (oi in 0 until objectCount) {
+                val vc = lib.nativeGetVolumeCount(oi)
+                if (vc > 0) sawVolumes = true
+                assertTrue("volume count must be non-negative, got $vc at oi=$oi", vc >= 0)
+            }
+            assertTrue("at least one object must have >= 1 volume", sawVolumes)
+            assertEquals(0, lib.nativeGetVolumeCount(objectCount))
+            assertEquals(0, lib.nativeGetVolumeCount(-1))
+        } finally {
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun nativeGetObjectCount_returnsZero_whenNoModelLoaded() {
+        lib.clearModel()
+        assertEquals(0, lib.nativeGetObjectCount())
+        assertEquals(0, lib.nativeGetVolumeCount(0))
+    }
+
+    @Test
+    fun nativeGetObjectModelId_isNonZero_forLoadedBambuFixture() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(targetContext.cacheDir, "phase1_fixture.3mf")
+        assetContext.assets.open("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            assertTrue(lib.loadModel(fixture.absolutePath))
+            val objectCount = lib.nativeGetObjectCount()
+            for (oi in 0 until objectCount) {
+                val id = lib.nativeGetObjectModelId(oi)
+                assertTrue("object $oi ObjectID must be > 0, got $id", id > 0L)
+            }
+            assertEquals(0L, lib.nativeGetObjectModelId(objectCount))
+            assertEquals(0L, lib.nativeGetObjectModelId(-1))
+        } finally {
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun nativeGetVolumeScalars_returnsThreePackedInts_forBambuFixture() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(targetContext.cacheDir, "phase1_fixture.3mf")
+        assetContext.assets.open("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            assertTrue(lib.loadModel(fixture.absolutePath))
+            val objectCount = lib.nativeGetObjectCount()
+            var sawPaintedVolume = false
+            for (oi in 0 until objectCount) {
+                val vc = lib.nativeGetVolumeCount(oi)
+                for (vi in 0 until vc) {
+                    val scalars = lib.nativeGetVolumeScalars(oi, vi)
+                    assertNotNull("scalars must be non-null for in-range (oi=$oi,vi=$vi)", scalars)
+                    scalars!!
+                    assertEquals("scalars must be 3 ints", 3, scalars.size)
+                    assertTrue(
+                        "extruder must be -1 or >= 1, got ${scalars[0]}",
+                        scalars[0] == -1 || scalars[0] >= 1
+                    )
+                    assertTrue("isMmPainted flag must be 0 or 1, got ${scalars[1]}", scalars[1] in 0..1)
+                    assertTrue("isSeamPainted flag must be 0 or 1, got ${scalars[2]}", scalars[2] in 0..1)
+                    if (scalars[1] == 1) sawPaintedVolume = true
+                }
+            }
+            assertTrue("expected at least one mm-painted volume", sawPaintedVolume)
+            assertNull(lib.nativeGetVolumeScalars(-1, 0))
+            assertNull(lib.nativeGetVolumeScalars(0, -1))
+            assertNull(lib.nativeGetVolumeScalars(objectCount, 0))
+            // Upper-bound volumeIndex OOR: one past the last volume of object 0.
+            val vc0 = lib.nativeGetVolumeCount(0)
+            assertNull(lib.nativeGetVolumeScalars(0, vc0))
+        } finally {
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun nativeGetPaintStateCounts_matchesPhase0Snapshot_forFlarewing() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(targetContext.cacheDir, "phase1_fixture.3mf")
+        assetContext.assets.open("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            assertTrue(lib.loadModel(fixture.absolutePath))
+            val objectCount = lib.nativeGetObjectCount()
+            var sawMmuCounts = false
+            for (oi in 0 until objectCount) {
+                val vc = lib.nativeGetVolumeCount(oi)
+                for (vi in 0 until vc) {
+                    val mm = lib.nativeGetPaintStateCounts(oi, vi, 0)
+                    assertNotNull("mmu counts must be non-null for in-range (oi=$oi,vi=$vi)", mm)
+                    mm!!
+                    assertEquals("packed length must be even", 0, mm.size % 2)
+                    var i = 0
+                    while (i < mm.size) {
+                        val state = mm[i]
+                        val count = mm[i + 1]
+                        assertTrue("state must be 1..16, got $state", state in 1..16)
+                        assertTrue("count must be > 0, got $count", count > 0)
+                        i += 2
+                    }
+                    if (mm.isNotEmpty()) sawMmuCounts = true
+                }
+            }
+            assertTrue("Flarewing Dragon must have at least one volume with mmu counts", sawMmuCounts)
+            assertNull(lib.nativeGetPaintStateCounts(0, 0, 2))
+            assertNull(lib.nativeGetPaintStateCounts(0, 0, -1))
+            assertNull(lib.nativeGetPaintStateCounts(-1, 0, 0))
+            assertNull(lib.nativeGetPaintStateCounts(0, -1, 0))
+            assertNull(lib.nativeGetPaintStateCounts(objectCount, 0, 0))
+            val vc0 = lib.nativeGetVolumeCount(0)
+            assertNull(lib.nativeGetPaintStateCounts(0, vc0, 0))
+        } finally {
+            fixture.delete()
+        }
+    }
+
+    /**
+     * kind = 1 selects the supported_facets annotation. Flarewing Dragon does
+     * not paint supports, so counts will typically be empty — the assertion is
+     * the structural invariant (non-null, even-length, states 1..16, counts > 0),
+     * not a specific non-empty result.
+     */
+    @Test
+    fun nativeGetPaintStateCounts_supportsKind_returnsStructurallyValidArray() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(targetContext.cacheDir, "phase1_fixture.3mf")
+        assetContext.assets.open("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            assertTrue(lib.loadModel(fixture.absolutePath))
+            val objectCount = lib.nativeGetObjectCount()
+            for (oi in 0 until objectCount) {
+                val vc = lib.nativeGetVolumeCount(oi)
+                for (vi in 0 until vc) {
+                    val sup = lib.nativeGetPaintStateCounts(oi, vi, 1)
+                    assertNotNull("supports counts must be non-null for in-range", sup)
+                    sup!!
+                    assertEquals("packed length must be even", 0, sup.size % 2)
+                    var i = 0
+                    while (i < sup.size) {
+                        assertTrue("state must be 1..16, got ${sup[i]}", sup[i] in 1..16)
+                        assertTrue("count must be > 0, got ${sup[i + 1]}", sup[i + 1] > 0)
+                        i += 2
+                    }
+                }
+            }
+        } finally {
+            fixture.delete()
+        }
+    }
 }

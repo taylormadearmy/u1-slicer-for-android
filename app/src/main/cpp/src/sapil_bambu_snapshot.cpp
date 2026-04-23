@@ -226,31 +226,6 @@ void append_object(std::ostringstream& out, const Slic3r::ModelObject& mo) {
         << "}";
 }
 
-// Counts triangles per paint state for one FacetsAnnotation on a ModelVolume.
-// Returns map<state_value, triangle_count> for every state with non-zero triangle
-// count. State 0 (NONE) is never emitted — it is the unpainted default.
-//
-// EnforcerBlockerType is a scoped enum with the useful state range
-// 1..ExtruderMax (currently 16). For mmu_segmentation, state N maps to the
-// 1-based paint-slot index (Extruder1=1, Extruder2=2, ...). For supported_facets,
-// state 1 = ENFORCER and state 2 = BLOCKER. We iterate the full range and let
-// has_facets filter — the cost is 16 boolean calls per volume per annotation,
-// negligible compared to the parse cost.
-std::map<int, int> count_paint_states(const Slic3r::ModelVolume& mv,
-                                      const Slic3r::FacetsAnnotation& facets) {
-    std::map<int, int> counts;
-    const int max_state = static_cast<int>(Slic3r::EnforcerBlockerType::ExtruderMax);
-    for (int state = 1; state <= max_state; ++state) {
-        auto type = static_cast<Slic3r::EnforcerBlockerType>(state);
-        if (facets.has_facets(mv, type)) {
-            indexed_triangle_set its = facets.get_facets(mv, type);
-            int n = static_cast<int>(its.indices.size());
-            if (n > 0) counts[state] = n;
-        }
-    }
-    return counts;
-}
-
 // Emit one VolumeSnapshot. `extruder` is nullable per the Task 1 contract:
 // when the volume has no per-volume extruder override (config.has("extruder")
 // is false) we emit JSON null rather than 0, distinguishing "inherit from
@@ -298,6 +273,31 @@ void append_volume(std::ostringstream& out,
 }
 
 } // namespace
+
+// Counts triangles per paint state for one FacetsAnnotation on a ModelVolume.
+// Returns map<state_value, triangle_count> for every state with non-zero triangle
+// count. State 0 (NONE) is never emitted — it is the unpainted default.
+//
+// EnforcerBlockerType is a scoped enum with the useful state range
+// 1..ExtruderMax (currently 16). For mmu_segmentation, state N maps to the
+// 1-based paint-slot index (Extruder1=1, Extruder2=2, ...). For supported_facets,
+// state 1 = ENFORCER and state 2 = BLOCKER. We iterate the full range and let
+// has_facets filter — the cost is 16 boolean calls per volume per annotation,
+// negligible compared to the parse cost.
+std::map<int, int> count_paint_states(const Slic3r::ModelVolume& mv,
+                                      const Slic3r::FacetsAnnotation& facets) {
+    std::map<int, int> counts;
+    const int max_state = static_cast<int>(Slic3r::EnforcerBlockerType::ExtruderMax);
+    for (int state = 1; state <= max_state; ++state) {
+        auto type = static_cast<Slic3r::EnforcerBlockerType>(state);
+        if (facets.has_facets(mv, type)) {
+            indexed_triangle_set its = facets.get_facets(mv, type);
+            int n = static_cast<int>(its.indices.size());
+            if (n > 0) counts[state] = n;
+        }
+    }
+    return counts;
+}
 
 std::string bambu_snapshot_json() {
     if (g_model.objects.empty()) return "";

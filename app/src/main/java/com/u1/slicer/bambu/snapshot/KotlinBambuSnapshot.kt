@@ -1,33 +1,21 @@
 package com.u1.slicer.bambu.snapshot
 
+import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.ThreeMfParser
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.zip.ZipFile
 
 /**
- * Composes the existing Kotlin Bambu parsers (currently just [ThreeMfParser] —
- * the other Kotlin helpers in this package either consume a
- * [com.u1.slicer.bambu.ThreeMfInfo] or rewrite the file on disk, so the
- * snapshot-worthy observations come from [ThreeMfParser.parse] plus a light
- * re-read of the 3MF ZIP for fields the parser doesn't surface) into a single
- * [BambuFileSnapshot].
+ * Composes the existing Kotlin Bambu parsers (currently just [ThreeMfParser])
+ * with a native walk of g_model for the volumes list into a single
+ * [BambuFileSnapshot]. Phase 1 sub-plan #1 moved the volumes field from
+ * Kotlin-parsed-empty to native-sourced via five thin JNI accessors on
+ * [NativeLibrary]; plates / objects / custom gcode remain Kotlin-parsed
+ * until later sub-plans take them.
  *
- * Pure observation: **no parser logic changes here.** If a snapshot field has
- * no current Kotlin source — for example `fileVersion` (nowhere in ThreeMfInfo),
- * `filamentSettingsIds` (parser skips the `filament_settings_id` array),
- * `sourcePath` (parser never tracks component `.model` paths per object), and
- * the volumes list (parser does not enumerate per-volume paint state triangle
- * counts) — we return the empty default. The diff harness surfaces those gaps
- * as known disagreements vs the native loader; Phase 1 closes them by deletion.
- *
- * The only fresh parsing in this file is the Bambu `custom_gcode_per_layer.xml`
- * re-read: [ThreeMfParser.parseForPlateSelection] already owns a regex that
- * pulls top_z / type / extruder / color per plate, but its internal data class
- * `LayerToolCustomGcodeXmlInfo` discards `top_z`. Rather than change the parser,
- * we re-read the XML from the ZIP and run the four attribute regexes ourselves
- * to build [CustomGcodeEntry]s with `printZ` populated.
- *
- * Phase 0 only. Phase 1 deletes [ThreeMfParser] once the native loader agrees.
+ * Phase 0 only pure-Kotlin. Phase 1 sub-plan #1 adds the native volumes path.
+ * Later sub-plans will delete [ThreeMfParser] entirely.
  */
 object KotlinBambuSnapshot {
 
@@ -38,36 +26,30 @@ object KotlinBambuSnapshot {
      */
     private fun parseObjectId(s: String): Int = s.toIntOrNull() ?: -1
 
-    fun snapshot(file: File): BambuFileSnapshot {
+    /**
+     * Builds a snapshot combining Kotlin-parsed plates/objects/custom-gcode
+     * with a native walk of g_model for the volumes list.
+     *
+     * Suspend because [NativeLibrary.previewMutex] is a coroutine Mutex and
+     * the volumes walk needs exclusive access for loadModel + per-volume
+     * accessor calls. Callers in instrumented tests wrap with `runBlocking { }`.
+     */
+    suspend fun snapshot(file: File, native: NativeLibrary): BambuFileSnapshot {
         if (!file.exists() || !file.name.endsWith(".3mf", ignoreCase = true)) {
             return empty(file.name)
         }
         val info = ThreeMfParser.parse(file)
         val customGcodeByPlate = readCustomGcodeByPlate(file)
+
         val plates = info.plates.map { plate ->
             PlateSnapshot(
                 plateIndex = plate.plateId,
-                // filamentColours: ThreeMfParser stores detected colours on the top-level
-                // ThreeMfInfo, not per plate. For a single-plate file (like the benchy)
-                // this is effectively per-plate. For multi-plate files the colours are
-                // a file-wide palette — the native loader will emit per-plate colours
-                // and the diff harness will flag the disagreement.
                 filamentColours = info.detectedColors.toList(),
-                // filamentSettingsIds: not parsed by ThreeMfParser. Left empty so the
-                // diff harness surfaces the gap.
                 filamentSettingsIds = emptyList(),
-                // objectInstanceMap: ThreeMfPlate.objectIds is the only per-plate source.
-                // Instance IDs are not tracked by the current parser, so we record 0.
-                // M-2: use parseObjectId (-1 sentinel for non-numeric) to match the
-                // `objects` list translation — surfaces malformed IDs in the diff.
                 objectInstanceMap = plate.objectIds
                     .map { ObjectInstance(objectId = parseObjectId(it), instanceId = 0) },
                 customGcode = customGcodeByPlate[plate.plateId].orEmpty(),
-                // plateConfig: Bambu ships per-plate config under
-                // Metadata/plate_N.config / plate_N.json, but no Kotlin parser reads
-                // those entries into a typed map today. Left empty so the diff harness
-                // surfaces the gap.
-                plateConfig = emptyMap()
+                plateConfig = emptyMap(),
             )
         }
         val objects = info.objects.map { obj ->
@@ -75,33 +57,72 @@ object KotlinBambuSnapshot {
             ObjectSnapshot(
                 objectId = parseObjectId(obj.objectId),
                 name = obj.name,
-                // ObjectSnapshot.extruder is non-null Int with 0 meaning "unset/inherit".
-                // ThreeMfParser returns the assigned 1-based extruder or omits the entry;
-                // an absent entry maps to 0 here.
                 extruder = extruder,
-                // sourcePath: ThreeMfParser records a per-object vertex/triangle count
-                // but not the component `.model` ZIP entry it came from. Left empty.
-                sourcePath = ""
+                sourcePath = "",
             )
         }
-        // Volumes: ThreeMfMeshParser does parse per-triangle paint states when it
-        // builds meshes for OpenGL, but that code path needs a live OpenGL renderer
-        // and doesn't expose aggregate per-volume paint state counts through a public
-        // API. Task 2 leaves the volume list empty — the diff harness will flag this
-        // as a known Kotlin gap to be closed by the native loader in later phases.
-        val volumes = emptyList<VolumeSnapshot>()
+
+        val volumes = readVolumesViaNative(file, native)
 
         return BambuFileSnapshot(
             source = file.name,
-            // ThreeMfInfo carries no dedicated fileVersion field. Bambu markers drive
-            // isBambu; we default fileVersion to empty so the diff harness surfaces
-            // the gap vs the native loader (which reads <metadata name="BambuStudio:3mfVersion">).
             isBbl = info.isBambu,
             fileVersion = "",
             plates = plates,
             objects = objects,
-            volumes = volumes
+            volumes = volumes,
         )
+    }
+
+    /**
+     * Walks g_model via the Phase 1 JNI accessors to produce the
+     * [VolumeSnapshot] list. Holds [NativeLibrary.previewMutex] across the
+     * whole loadModel + per-volume accessor walk so no concurrent
+     * setModelRotation / getPreparePreviewMesh caller races the read.
+     *
+     * Returns [emptyList] if loadModel fails — a corrupt 3MF surfaces as
+     * "no volumes" rather than blowing up the whole snapshot.
+     */
+    private suspend fun readVolumesViaNative(
+        file: File,
+        native: NativeLibrary,
+    ): List<VolumeSnapshot> = NativeLibrary.previewMutex.withLock {
+        if (!native.loadModel(file.absolutePath)) return@withLock emptyList()
+        val objectCount = native.nativeGetObjectCount()
+        buildList {
+            for (oi in 0 until objectCount) {
+                // VolumeSnapshot.objectId is Int. Slic3r ObjectID is size_t;
+                // truncation is safe in practice (IDs start at ~1 and increment).
+                val objectModelId = native.nativeGetObjectModelId(oi).toInt()
+                val volumeCount = native.nativeGetVolumeCount(oi)
+                for (vi in 0 until volumeCount) {
+                    val scalars = native.nativeGetVolumeScalars(oi, vi) ?: continue
+                    val extruder = if (scalars[0] == -1) null else scalars[0]
+                    val mmPacked = native.nativeGetPaintStateCounts(oi, vi, 0) ?: intArrayOf()
+                    val supPacked = native.nativeGetPaintStateCounts(oi, vi, 1) ?: intArrayOf()
+                    add(
+                        VolumeSnapshot(
+                            objectId = objectModelId,
+                            volumeIndex = vi,
+                            extruder = extruder,
+                            paintStateSet = unpackStateCounts(mmPacked),
+                            paintSupportsStateSet = unpackStateCounts(supPacked),
+                            isMmPainted = scalars[1] != 0,
+                            isSeamPainted = scalars[2] != 0,
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun unpackStateCounts(packed: IntArray): Map<Int, Int> {
+        if (packed.isEmpty()) return emptyMap()
+        require(packed.size % 2 == 0) { "packed paint-state counts must be even-length" }
+        val out = LinkedHashMap<Int, Int>(packed.size / 2)
+        var i = 0
+        while (i < packed.size) { out[packed[i]] = packed[i + 1]; i += 2 }
+        return out
     }
 
     private fun empty(name: String) = BambuFileSnapshot(
@@ -110,18 +131,20 @@ object KotlinBambuSnapshot {
         fileVersion = "",
         plates = emptyList(),
         objects = emptyList(),
-        volumes = emptyList()
+        volumes = emptyList(),
     )
 
     /**
      * Re-read `Metadata/custom_gcode_per_layer.xml` and split into per-plate
      * [CustomGcodeEntry]s. Mirrors the regexes in
-     * [com.u1.slicer.bambu.parseLayerToolCustomGcodeXml] / `parseLayerToolCustomGcodeXmlPerPlate`
-     * but preserves `top_z` (which the existing parser discards). This is pure
-     * re-derivation — no change to the shipped parser.
+     * [com.u1.slicer.bambu.parseLayerToolCustomGcodeXml] /
+     * `parseLayerToolCustomGcodeXmlPerPlate` but preserves `top_z` (which the
+     * existing parser discards). This is pure re-derivation — no change to
+     * the shipped parser.
      *
-     * If the ZIP has no such entry (common for non-Bambu 3MFs or Bambu single-colour
-     * files) we return an empty map so callers see empty lists per plate.
+     * If the ZIP has no such entry (common for non-Bambu 3MFs or Bambu
+     * single-colour files) we return an empty map so callers see empty lists
+     * per plate.
      */
     private fun readCustomGcodeByPlate(file: File): Map<Int, List<CustomGcodeEntry>> {
         return try {
@@ -132,8 +155,6 @@ object KotlinBambuSnapshot {
                 parseCustomGcodeXmlPerPlate(xml)
             }
         } catch (_: Exception) {
-            // Matches the existing parser's swallow-and-return-empty behaviour on
-            // malformed XML — we're snapshotting what Kotlin would currently see.
             emptyMap()
         }
     }
@@ -147,20 +168,13 @@ object KotlinBambuSnapshot {
 
     private fun parseCustomGcodeXmlPerPlate(xml: String): Map<Int, List<CustomGcodeEntry>> {
         val out = mutableMapOf<Int, List<CustomGcodeEntry>>()
-        // Same section split pattern as parseLayerToolCustomGcodeXmlPerPlate.
         for (section in xml.split("<plate>").drop(1)) {
             val content = section.substringBefore("</plate>")
             val plateId = plateInfoIdRegex.find(content)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: continue
             val entries = layerRegex.findAll(content).mapNotNull { match ->
                 val attrs = match.groupValues[1]
-                // I-2: drop entries with no `type` attribute — Bambu always emits type for layer-tool entries; absent type is malformed.
-                // Native populator (Task 3+) MUST follow the same convention to keep the diff harness honest.
                 val type = typeRegex.find(attrs)?.groupValues?.getOrNull(1) ?: return@mapNotNull null
-                // The existing Kotlin parser only counts type 1 or 2 as tool changes, but
-                // the snapshot records every layer entry (so the native loader can be
-                // compared on its full emission).
-                // I-1: drop entries without parseable top_z; matches parseLayerToolSegments behaviour.
                 val topZ = topZRegex.find(attrs)?.groupValues?.getOrNull(1)?.toDoubleOrNull()
                     ?: return@mapNotNull null
                 val extruder = extruderRegex.find(attrs)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0

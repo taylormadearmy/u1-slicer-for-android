@@ -26,11 +26,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "skywing-seawing-silkwing.3mf": [
@@ -71,11 +66,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -150,11 +140,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "slip slide spin fidget.3mf": [
@@ -212,11 +197,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "u1-auxiliary-fan-cover-hex_mw.3mf": [
@@ -242,11 +222,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -354,11 +329,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -513,11 +483,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "Dragon Scale infinity-1-plate-2-colours-new-plate.3mf": [
@@ -543,11 +508,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -577,11 +537,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "Dragon Scale infinity-1-plate-2-colours.3mf": [
@@ -607,11 +562,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -686,11 +636,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "old.3mf": [
@@ -716,11 +661,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -830,11 +770,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "spiderman-hanging-pre-cut.3mf": [
@@ -860,11 +795,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -1019,32 +949,12 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "PrusaSlicer-printables-Korok_mask_4colour.3mf": [
       {
         "path": "plates.size",
         "reason": "Unknown - Phase 1 to investigate",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "objects[1]",
-        "reason": "Unknown - Phase 1 to investigate",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "objects[2122]",
-        "reason": "Unknown - native runtime ObjectID drift across process restarts; Phase 1 #4 (object extruder map) resolves by switching to a stable ID",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
     ],
@@ -1218,11 +1128,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf": [
@@ -1248,11 +1153,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -1282,11 +1182,6 @@
         "path": "objects.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
       }
     ],
     "3DBenchy-H2C-Multi-Color.3mf": [
@@ -1312,11 +1207,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }
@@ -1359,11 +1249,6 @@
       },
       {
         "path": "objects.size",
-        "reason": "Kotlin gap - Phase 1 closes by deletion",
-        "recordedAt": "2026-04-23"
-      },
-      {
-        "path": "volumes.size",
         "reason": "Kotlin gap - Phase 1 closes by deletion",
         "recordedAt": "2026-04-23"
       }

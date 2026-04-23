@@ -83,6 +83,50 @@ class NativeLibrary {
     // Returns null if the file fails to load.
     external fun nativeDumpBambuModel(path: String): String?
 
+    // ---- Phase 1 sub-plan #1: g_model volume walkers ----
+    // Pure reads of g_model. Callers MUST hold NativeLibrary.previewMutex across a
+    // logical sequence of these calls (to prevent races with loadModel / setModelRotation).
+    // These five accessors back KotlinBambuSnapshot.volumes population.
+
+    /** Count of ModelObjects in g_model. Returns 0 when no model loaded. */
+    external fun nativeGetObjectCount(): Int
+
+    /** Count of ModelVolumes on g_model.objects[objectIndex]. Returns 0 for OOR. */
+    external fun nativeGetVolumeCount(objectIndex: Int): Int
+
+    /**
+     * Slic3r runtime ObjectID (ObjectBase::id().id, size_t → Long).
+     * Matches the VolumeSnapshot.objectId contract from sapil_bambu_snapshot.cpp
+     * append_volume(). Returns 0L for out-of-range objectIndex.
+     */
+    external fun nativeGetObjectModelId(objectIndex: Int): Long
+
+    /**
+     * Packed per-volume scalars: [extruder, isMmPaintedBool, isSeamPaintedBool].
+     *   - extruder: mv.config.opt_int("extruder") when mv.config.has("extruder"),
+     *     else -1 as the null sentinel (decoded into VolumeSnapshot.extruder: Int?).
+     *   - isMmPaintedBool / isSeamPaintedBool: 1 or 0.
+     * Returns null for out-of-range indices or when no model is loaded.
+     */
+    external fun nativeGetVolumeScalars(objectIndex: Int, volumeIndex: Int): IntArray?
+
+    /**
+     * Triangle counts per painted state on a single FacetsAnnotation.
+     *   - kind = 0 -> mv.mmu_segmentation_facets
+     *   - kind = 1 -> mv.supported_facets
+     * Returns a packed array [state1, count1, state2, count2, ...] sorted by
+     * state ascending. Empty array when the annotation has no painted triangles.
+     * Null for out-of-range indices, invalid kind, or when no model is loaded.
+     *
+     * Internally delegates to sapil::count_paint_states — the same helper used
+     * by bambu_snapshot_json, so counts are guaranteed to match Phase 0's output.
+     */
+    external fun nativeGetPaintStateCounts(
+        objectIndex: Int,
+        volumeIndex: Int,
+        kind: Int,
+    ): IntArray?
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)
