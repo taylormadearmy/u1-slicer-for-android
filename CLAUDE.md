@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.6.9` (`versionCode 253`)
+Current release: `v1.6.10` (`versionCode 255`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
@@ -51,8 +51,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 839 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 191 instrumented tests (uses Orchestrator)
+./gradlew testDebugUnitTest                        # 851 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 194 instrumented tests (uses Orchestrator)
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -95,7 +95,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `printer/PrinterViewModelTest.kt` (4) — camera keepalive idempotency helper and LED-sync connection-edge helper
 - `AppEventNotifierTest.kt` (13) — notification title/body/channel/navigate-target for all event types
 - `PreviewSummaryMappingTest.kt` (7) — preview summary data class mapping, F65 resolveExtruderMaterialType by slot, F68 single-colour material label
-- `PreviewColorNormalizationTest.kt` (7) — preview colour normalization
+- `PreviewColorNormalizationTest.kt` (10) — preview colour normalization, B92 Buzz plate 8 slicer-tool-order palette alignment + identity + legacy paths
 - `PreparePreviewPlacementTest.kt` (5) — native 3MF wipe tower visibility, object-placement rules, and large-preview fallback state retention
 - `viewer/NativePreviewMeshTest.kt` (4) — preview budget guardrails, MAX_DECIMATED_TRIANGLES constant, F48 subsampled mesh vertex count, B88 toMeshData compaction contract
 - `viewer/NativePreviewMeshCompactionTest.kt` (6) — B88 `compactExtruderIndices`: sparse high indices → compact 0..N-1, already-compact no-op, sparse gaps, single index, empty input, full-byte range
@@ -117,6 +117,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `SliceStalenessTest.kt` (4) — F67 _sliceStale StateFlow contract: initial false, config mutation sets true, startSlicing resets false, extruderPresets drop(1) skips startup
 - `SliceCancelTest.kt` (5) — B55 cancel state machine: SliceResult.cancelled field, Cancelling state singleton
 - `SemmColorPermutationTest.kt` (11) — B64 computeSemmColorPermutation: identity/permuted/H2C/non-SEMM/sparse guards; composeSemmRemap: priority, both-present, both-null
+- `SlicerColorOrderTest.kt` (9) — B92 computeSlicerColorOrder: null for non-paint / H2C / single colour / size mismatch / default at index 0 / tied dominant extruder; Buzz plate 8 shape permutes to `[1, 0]`; three-colour object-default-at-top case permutes
 - `FilamentTypeHeaderPatchTest.kt` (6) — B63 fixFilamentTypeHeader: single/multi-extruder replacement, absent line guard, empty list guard, missing file, first-occurrence-only
 - `network/UpdateCheckerTest.kt` (12) — F70 GitHub release JSON parsing, semantic version comparison, download URL extraction
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
@@ -137,7 +138,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/NativePreparePreviewTest.kt` (16) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation, H2C benchy full/decimated 7-index preservation + green recolor + interleaving guard, layer-tool Z-band recolor, triangle count cap, B51 old.3mf bounding box + Korok orientation, B72 multi-instance post-slice bounds, B78 Shashibo plate 5 file-scale+centre preservation on fresh load + post-slice dirty-path reset
 - `viewer/ThreeMfMeshParserTest.kt` (4) - 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
-- `PreparePreviewViewModelTest.kt` (10) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix, entry-point equivalence for `loadModel(uri)` vs `loadModelFromFile(file)`, B86 S-Buttons user-like presets (E2=white/E4=pink) 4-distinct-colour guard
+- `PreparePreviewViewModelTest.kt` (13) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix, entry-point equivalence for `loadModel(uri)` vs `loadModelFromFile(file)`, B86 S-Buttons user-like presets (E2=white/E4=pink) 4-distinct-colour guard, B92 Buzz plate 8 Prepare/Preview colour agreement with explicit slicerColorOrder permutation, B93 Buzz multi-plate cold load skips full-file embedProfile, B94 Spiderman drag-to-right preserved through slice
 - `ui/MakerWorldBrowserUtilsInstrumentedTest.kt` (6) — resolveDownloadFilename with URLUtil, RFC 5987, path traversal sanitization
 
 ### Red-green TDD for bug fixes

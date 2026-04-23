@@ -300,6 +300,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Applied post-slice via GcodeToolRemapper, independently of toolRemapSlots.
     private var semmColorPermutation: List<Int>? = null
 
+    // B92: for each slicer compact tool index k (0..N-1), which index into
+    // detectedColors does it represent. Required when OrcaSlicer's print-order
+    // differs from detectedColors order (e.g. Buzz plate 8: object default is
+    // filament 10 but the painted state is filament 3, so slicer T0=detectedColors[1]
+    // and slicer T1=detectedColors[0]). Null when identity (simple SEMM cases).
+    // Used by the G-code viewer to align Preview palette with Prepare palette.
+    private val _slicerColorOrder = MutableStateFlow<List<Int>?>(null)
+    val slicerColorOrder: StateFlow<List<Int>?> = _slicerColorOrder.asStateFlow()
+
+    // B92: expose semmColorPermutation to Compose so Preview can reindex correctly.
+    private val _semmColorPermutationFlow = MutableStateFlow<List<Int>?>(null)
+    val semmColorPermutationFlow: StateFlow<List<Int>?> = _semmColorPermutationFlow.asStateFlow()
+
     // B49: cache the Prepare preview MeshData so returning from G-code view is instant.
     // The native side caches the raw mesh, but toMeshData() (normal computation + FloatBuffer
     // allocation) is expensive for large SEMM models (2M tris).  This cache avoids re-conversion.
@@ -312,6 +325,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun invalidatePrepareMeshCache() {
         cachedPrepareMesh = null
         cachedPrepareMeshPath = null
+    }
+
+    /**
+     * B92: reset both the post-slice tool-remap state and the Preview palette-alignment
+     * state so a fresh applyMultiColorAssignments / plate-switch / single-colour path
+     * doesn't carry stale permutation data forward.
+     */
+    private fun resetToolRemapState() {
+        toolRemapSlots = null
+        semmColorPermutation = null
+        _semmColorPermutationFlow.value = null
+        _slicerColorOrder.value = null
     }
 
     // Filament library — StateFlow so .value is accessible synchronously (e.g. for nozzle temp lookup at slice time)
@@ -1094,8 +1119,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 else
                     plateInfo
                 _threeMfInfo.value = mergedPlateInfo
-                toolRemapSlots = null
-                semmColorPermutation = null
+                resetToolRemapState()
                 // Re-embed the selected plate so slice-time config preserves the
                 // original file's layer-change settings (SEMM/pause G-code), not just
                 // the preview metadata merged above.
@@ -1223,8 +1247,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         val previewSlots = initialMapping.distinct().sorted()
                         _activeExtruderColors.value = buildPreviewSlotColors(presets, previewSlots)
                         _selectedExtruder.value = 0
-                        toolRemapSlots = null
-                        semmColorPermutation = null
+                        resetToolRemapState()
                         customWipeTowerPos = null
                         _config.value = _config.value.copy(
                             extruderCount = 1,
@@ -1268,8 +1291,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Reset multi-extruder state: single-color model uses 1 extruder.
                     // Without this, stale extruderCount from a previous multi-color model
                     // forces the prime tower on and produces 2-extruder G-code (B24 fix).
-                    toolRemapSlots = null
-                    semmColorPermutation = null
+                    resetToolRemapState()
                     customWipeTowerPos = null
                     val presets = extruderPresets.value
                     _config.value = _config.value.copy(
@@ -1342,6 +1364,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // B64: compute SEMM colour permutation for post-slice G-code remapping.
         semmColorPermutation = computeSemmColorPermutation(
             colorMapping = modelColorToExtruder,
+            hasPaintData = hasPaintData,
+            isH2cStyle = isH2cStyle
+        )
+        _semmColorPermutationFlow.value = semmColorPermutation
+        // B92: derive slicer tool-order mapping so the G-code preview can align its
+        // palette with Prepare's compact ordering when OrcaSlicer prints the object
+        // default tool first instead of filament-index-ascending.
+        val info = _threeMfInfo.value
+        _slicerColorOrder.value = computeSlicerColorOrder(
+            detectedColors = info?.detectedColors.orEmpty(),
+            usedExtruderIndices = info?.usedExtruderIndices ?: emptySet(),
+            objectExtruderMap = info?.objectExtruderMap ?: emptyMap(),
             hasPaintData = hasPaintData,
             isH2cStyle = isH2cStyle
         )
@@ -1454,8 +1488,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val temp = computeSingleColorTemp(index)
         if (index == 0) {
             // E1 selected — identity mapping, no remap needed
-            toolRemapSlots = null
-            semmColorPermutation = null
+            resetToolRemapState()
             _config.value = _config.value.copy(
                 extruderCount = 1,
                 wipeTowerEnabled = false,
@@ -1628,10 +1661,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         sourceModelFile = processed
         sourceModelInfo = processedInfo
         if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
-        toolRemapSlots = null
-        semmColorPermutation = null
+        resetToolRemapState()
 
-        val embedded = embedProfile(processed, mergedInfo, workspaceDir)
+        // B93 phase 1: skip the full-file embedProfile for multi-plate 3MFs.
+        // The user must pick a plate next, at which point selectPlate() extracts
+        // the plate from `processed` and re-embeds only that plate. The full-file
+        // embed was ~20-40s of throwaway work on large files (Buzz 73MB).
+        // Export paths and currentModelPath fall back to the sanitized file for
+        // pre-plate-selection state, which is acceptable because export of a
+        // multi-plate file without a plate selection is already ambiguous.
+        val willRequirePlateSelection = origInfo.isMultiPlate && mergedInfo.plates.size > 1
+        val embedded = if (willRequirePlateSelection) {
+            Log.i("SlicerVM", "B93: skipping full-file embedProfile for multi-plate " +
+                "(${mergedInfo.plates.size} plates) — waiting for plate selection")
+            processed
+        } else {
+            embedProfile(processed, mergedInfo, workspaceDir)
+        }
         return PreparedModelArtifacts(
             rawFile = sourceFile,
             origInfo = origInfo,
@@ -3015,8 +3061,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _copyCount.value = 1
         customObjectPositions = null
         customWipeTowerPos = null
-        toolRemapSlots = null
-        semmColorPermutation = null
+        resetToolRemapState()
         // Reset multi-extruder config to single extruder
         _config.value = _config.value.copy(
             extruderCount = 1,
@@ -3888,6 +3933,64 @@ internal fun computeSemmColorPermutation(
     val identity = (0 until colorMapping.size).toList()
     if (colorMapping == identity) return null
     return colorMapping
+}
+
+/**
+ * B92: Compute the mapping from a slicer compact tool index (k, 0-based) to the
+ * corresponding index into `detectedColors`.
+ *
+ * OrcaSlicer's tool ordering for SEMM paint models is **print-order**: the object's
+ * default extruder is emitted as T0 first, and paint states are emitted as T1, T2, ...
+ * in ascending paint-state order. `detectedColors`, by contrast, is built by
+ * `parseForPlateSelection` in **source-filament-ascending order**.
+ *
+ * When the object default has a higher source filament than one of the paint
+ * states — Buzz plate 8 (object=10, paint state 3) is the canonical example —
+ * the two orderings disagree. The Prepare preview uses detectedColors order; the
+ * G-code uses slicer print order. Without correcting this, the Preview viewer
+ * paints T0 with `detectedColors[0]`'s assigned colour even though T0 is really
+ * `detectedColors[defaultIndex]`'s tool.
+ *
+ * Returns `null` when the slicer order equals `detectedColors` order (identity case,
+ * safe to keep current behaviour) — includes non-paint, H2C, and simple paint-only
+ * models where the default extruder sits at index 0 of detectedColors.
+ *
+ * For the non-identity case (Buzz plate 8 shape), returns a permutation:
+ *   result[0] = defaultIndex      // slicer T0 = object default = detectedColors[defaultIndex]
+ *   result[1..N-1] = remaining detectedColors indices in ascending order.
+ */
+internal fun computeSlicerColorOrder(
+    detectedColors: List<String>,
+    usedExtruderIndices: Set<Int>,
+    objectExtruderMap: Map<String, Int>,
+    hasPaintData: Boolean,
+    isH2cStyle: Boolean
+): List<Int>? {
+    if (!hasPaintData) return null
+    if (isH2cStyle) return null
+    val n = detectedColors.size
+    if (n < 2) return null
+    // usedExtruderIndices is the sorted-ascending source filament list backing
+    // detectedColors (mergeThreeMfInfoForPlate keeps them aligned).
+    val extruders = usedExtruderIndices.toList()
+    if (extruders.size != n) return null
+    // Determine the dominant object extruder — the one most objects reference.
+    // Models with mixed per-object extruders + paint data fall back to identity
+    // because there is no single "object default" for OrcaSlicer to lead with.
+    val counts = objectExtruderMap.values.groupingBy { it }.eachCount()
+    if (counts.isEmpty()) return null
+    val maxCount = counts.values.max()
+    val dominantCandidates = counts.entries.filter { it.value == maxCount }.map { it.key }
+    if (dominantCandidates.size != 1) return null
+    val defaultExtruder = dominantCandidates.first()
+    val defaultIndex = extruders.indexOf(defaultExtruder)
+    if (defaultIndex <= 0) return null
+    // Slicer order: default first, then paint states ascending (excluding the default).
+    val result = mutableListOf(defaultIndex)
+    for (i in 0 until n) if (i != defaultIndex) result.add(i)
+    val identity = (0 until n).toList()
+    if (result == identity) return null
+    return result
 }
 
 /**
