@@ -203,13 +203,18 @@ object ThreeMfParser {
                     }
                     outer@ for (entry in modelFiles) {
                         streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
-                            val ch = spec.firstOrNull() ?: return@streamCollectPaintSpecs
-                            val state = paintCharToState(ch)
-                                ?.takeIf { it > 0 }
-                                ?: return@streamCollectPaintSpecs
-                            // Fold AMS2 states (5-8) back to AMS1 (1-4)
-                            val folded = if (state > 4) ((state - 1) % 4) + 1 else state
-                            states.add(folded)
+                            // B95: Use full bit-packed decoder instead of first-char heuristic.
+                            // Single-leaf simple specs ("4"=state 1, "8"=state 2) decode the same
+                            // way the heuristic did, so AMS1 (1-4) folding still works. Extended
+                            // specs ("8C"=state 11, "3C"=state 6) now decode to their real states
+                            // — previously the first-char heuristic returned 8 and 3 instead.
+                            val decoded = PaintColorDecoder.decodeStates(spec)
+                            for (state in decoded) {
+                                if (state <= 0) continue
+                                // Fold AMS2 states (5-8) back to AMS1 (1-4)
+                                val folded = if (state > 4) ((state - 1) % 4) + 1 else state
+                                states.add(folded)
+                            }
                             // B93 phase 2: folded state range is 1..4. Once we've
                             // collected all 4, further reads can't add new states —
                             // bail to save I/O on files like Buzz Lightyear
@@ -820,10 +825,24 @@ object ThreeMfParser {
                     val entry = zip.getEntry(path) ?: continue
                     streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
                         if (paintSpecs.size < specCollectionCap) paintSpecs.add(spec)
-                        val c = spec.firstOrNull() ?: return@streamCollectPaintSpecs
-                        val state = paintCharToState(c) ?: return@streamCollectPaintSpecs
-                        allPaintStates.add(state)
-                        if (state > 0) paintExtruderStates.add(state)
+                        // B95: Use full bit-packed decoder instead of first-char heuristic.
+                        // Plate 9 of Buzz Lightyear has paint_color values like "8C" (state 11)
+                        // and "3C" (state 6) that the prior heuristic mis-decoded as states
+                        // 8 and 3 — too low for the slicer's segmentation pass to address
+                        // them once embedded against a 4-entry filament_colour array.
+                        val decoded = PaintColorDecoder.decodeStates(spec)
+                        if (decoded.isEmpty()) {
+                            if (spec.isNotEmpty()) {
+                                // Single-char "0" or similar simple no-paint spec — preserve
+                                // the prior behaviour where allPaintStates included state 0
+                                // so the simple-vs-complex encoding discriminator (paintSpecs.size
+                                // == allPaintStates.size) keeps firing on simple-encoded files.
+                                allPaintStates.add(0)
+                            }
+                        } else {
+                            allPaintStates.addAll(decoded)
+                            paintExtruderStates.addAll(decoded)
+                        }
                         // B91: once we've saturated the spec cap and any new states would
                         // only swell paintSpecs.size further past the simple/complex
                         // threshold, stop reading. AllPaintStates is bounded by 16 states

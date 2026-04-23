@@ -10,7 +10,6 @@ import com.u1.slicer.data.SliceConfig
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -123,7 +122,6 @@ class B95Plate9PaintStateTest {
      * Leaving the assertion in the tree as documentation of the desired
      * behaviour — unignore when the real fix lands.
      */
-    @Ignore("B95 open — see #102 and Discord thread; fix requires bit-packed paint_color handling")
     @Test
     fun plate9_slicedGcodeHasTwoTools() {
         val input = asset("Buzz_Multipart_3MF_Bambu.3mf")
@@ -153,7 +151,8 @@ class B95Plate9PaintStateTest {
             hasPaintData = plateInfo.hasPaintData,
             toolRemapSlots = null,
             fallbackExtCount = detectedSize,
-            hasMultiExtruderAssignments = plateInfo.hasMultiExtruderAssignments
+            hasMultiExtruderAssignments = plateInfo.hasMultiExtruderAssignments,
+            maxSourceFilamentIndex = plateInfo.usedExtruderIndices.maxOrNull() ?: 0
         )
         android.util.Log.i("B95",
             "plate 9 embed setup: detectedSize=$detectedSize " +
@@ -187,21 +186,37 @@ class B95Plate9PaintStateTest {
             hasPaintData = plateInfo.hasPaintData,
             isH2cStyle = false
         )
-        val composed = com.u1.slicer.composeSemmRemap(null, semmPerm)
-        android.util.Log.i("B95", "plate 9 composedRemap=$composed")
+        // B95: when the embed was bumped to address high-index source filaments,
+        // the slicer emits T<filament-1> for each used filament (T9 + T10 for plate 9).
+        // computeExpandedGcodeRemap returns a list that maps every emitted T-index back
+        // to a physical slot via the user's colorMapping; this list takes priority
+        // over the legacy compact semmColorPermutation when present.
+        val expanded = com.u1.slicer.computeExpandedGcodeRemap(
+            usedExtruderIndices = plateInfo.usedExtruderIndices,
+            colorMapping = colorMapping,
+            embeddedFilamentCount = targetCount
+        )
+        val composed = expanded ?: com.u1.slicer.composeSemmRemap(null, semmPerm)
+        android.util.Log.i("B95", "plate 9 composedRemap=$composed expanded=$expanded")
         if (composed != null) {
             com.u1.slicer.gcode.GcodeToolRemapper.remap(result.gcodePath, composed)
         }
 
         val gcode = File(result.gcodePath).readText()
         val lines = gcode.lines()
+        // Diagnostic: count ALL T-indices (0..15) in the post-remap G-code so we can
+        // see whether the slicer emitted high-index tools (T9/T10 for paint states 10/11)
+        // that the renderer-facing 0..3 view doesn't capture.
+        val allCounts = (0..15).associateWith { t -> lines.count { it.trim() == "T$t" } }
+            .filter { it.value > 0 }
         val toolCounts = (0..3).map { t -> lines.count { it.trim() == "T$t" } }
         android.util.Log.i(
             "B95",
             "plate 9 slice: T0=${toolCounts[0]} T1=${toolCounts[1]} " +
                 "T2=${toolCounts[2]} T3=${toolCounts[3]} " +
                 "detectedColors=${plateInfo.detectedColors} " +
-                "physicalExtruderCount=$physicalExtruderCount"
+                "physicalExtruderCount=$physicalExtruderCount " +
+                "allCounts=$allCounts"
         )
 
         val activeTools = toolCounts.count { it > 0 }
