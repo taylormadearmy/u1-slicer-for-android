@@ -1,6 +1,7 @@
 package com.u1.slicer.bambu.snapshot
 
 import com.u1.slicer.NativeLibrary
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 
 /**
@@ -11,13 +12,22 @@ import java.io.File
  */
 object NativeBambuSnapshot {
 
-    fun snapshot(file: File, native: NativeLibrary): BambuFileSnapshot {
-        if (!native.loadModel(file.absolutePath)) {
-            return parseOrEmpty(null, fallbackSource = file.name)
+    /**
+     * Loads `file` via NativeLibrary.loadModel and returns a snapshot of g_model.
+     * Holds NativeLibrary.previewMutex for the entire load+dump to prevent races
+     * against concurrent setModelRotation / getPreparePreviewMesh callers.
+     *
+     * Suspend because previewMutex is a coroutine Mutex; callers in instrumented
+     * tests should wrap with runBlocking { }.
+     */
+    suspend fun snapshot(file: File, native: NativeLibrary): BambuFileSnapshot =
+        NativeLibrary.previewMutex.withLock {
+            if (!native.loadModel(file.absolutePath)) {
+                return@withLock parseOrEmpty(null, fallbackSource = file.name)
+            }
+            val json = native.nativeDumpBambuModel(file.absolutePath)
+            parseOrEmpty(json, fallbackSource = file.name)
         }
-        val json = native.nativeDumpBambuModel(file.absolutePath)
-        return parseOrEmpty(json, fallbackSource = file.name)
-    }
 
     fun parseOrEmpty(json: String?, fallbackSource: String): BambuFileSnapshot =
         if (json.isNullOrBlank()) {

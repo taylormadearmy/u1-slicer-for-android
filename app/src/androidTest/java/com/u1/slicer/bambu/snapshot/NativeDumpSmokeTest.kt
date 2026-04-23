@@ -31,6 +31,9 @@ class NativeDumpSmokeTest {
         val root = JSONObject(json!!)
         assertEquals("colored_3DBenchy.3mf", root.getString("source"))
         assertTrue("isBbl should be true for a Bambu Studio file", root.getBoolean("isBbl"))
+        assertEquals("fileVersion is stubbed to empty in skeleton", "", root.getString("fileVersion"))
         assertTrue("plates array should be present", root.has("plates"))
+        assertTrue("objects array should be present", root.has("objects"))
+        assertTrue("volumes array should be present", root.has("volumes"))
     }
 }
