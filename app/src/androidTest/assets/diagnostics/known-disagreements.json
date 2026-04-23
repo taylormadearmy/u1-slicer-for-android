@@ -1,0 +1,4 @@
+{
+  "_doc": "Per-fixture allowlist of diff paths the Kotlin and native parsers disagree on. Each entry: { path: <diff path>, reason: <Kotlin bug|C++ bug|intentional|unknown>, recordedAt: <YYYY-MM-DD> }",
+  "fixtures": {}
+}
