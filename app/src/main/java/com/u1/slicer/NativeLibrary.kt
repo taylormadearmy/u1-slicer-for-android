@@ -76,6 +76,13 @@ class NativeLibrary {
     // Used by instrumented tests only.
     external fun getInstanceOffsets(): FloatArray
 
+    // ---- Diagnostics — Phase 0 differential harness ----
+    // Returns a JSON dump of g_model after Model::read_from_file.
+    // Path must be the same path passed to loadModel(); native re-loads to ensure
+    // a clean snapshot independent of any prior mutations (rotation/scale/instances).
+    // Returns null if the file fails to load.
+    external fun nativeDumpBambuModel(path: String): String?
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)
