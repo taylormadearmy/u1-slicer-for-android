@@ -1120,6 +1120,7 @@ add_library(prusaslicer-jni SHARED
     src/sapil_arrange.cpp
     src/sapil_bambu_snapshot.cpp
     src/sapil_bambu_volumes.cpp
+    src/sapil_bambu_project.cpp
 )
 
 target_include_directories(prusaslicer-jni PRIVATE

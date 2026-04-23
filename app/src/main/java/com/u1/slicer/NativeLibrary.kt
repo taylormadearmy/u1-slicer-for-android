@@ -127,6 +127,23 @@ class NativeLibrary {
         kind: Int,
     ): IntArray?
 
+    /**
+     * Returns a JSON object with five project-level fields read from g_model after
+     * a successful [loadModel]:
+     *   {
+     *     "isBbl":               bool,                  // g_is_bbl
+     *     "fileVersion":         "x.y.z" | "",          // g_file_version.to_string() when valid, else ""
+     *     "filamentColours":     ["#RRGGBB", ...],      // project config: filament_colour
+     *     "filamentSettingsIds": ["Preset name", ...],  // filament_settings_id > filament_ids (first non-null)
+     *     "filamentIds":         ["GFB98", ...]         // project config: filament_ids (raw)
+     *   }
+     *
+     * Returns null when no model is loaded (same contract as the sub-plan #1
+     * volume accessors). Callers MUST hold [previewMutex] for the duration of
+     * any loadModel + accessor sequence.
+     */
+    external fun nativeGetProjectConfig(): String?
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)

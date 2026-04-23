@@ -3,6 +3,7 @@ package com.u1.slicer.bambu.snapshot
 import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.ThreeMfParser
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -20,6 +21,23 @@ import java.util.zip.ZipFile
 object KotlinBambuSnapshot {
 
     /**
+     * Holds both native-sourced blocks read under one previewMutex+loadModel scope.
+     * Sub-plan #1 added volumes; sub-plan #5 adds projectConfig.
+     */
+    private data class NativeData(
+        val volumes: List<VolumeSnapshot>,
+        val projectConfig: ProjectConfig?,
+    )
+
+    private data class ProjectConfig(
+        val isBbl: Boolean,
+        val fileVersion: String,
+        val filamentColours: List<String>,
+        val filamentSettingsIds: List<String>,
+        val filamentIds: List<String>,
+    )
+
+    /**
      * Bambu object IDs are always numeric integers in well-formed files. Non-numeric IDs
      * indicate a malformed file; we surface them as `-1` rather than silently dropping
      * so the diff harness flags the malformation instead of hiding it.
@@ -28,11 +46,12 @@ object KotlinBambuSnapshot {
 
     /**
      * Builds a snapshot combining Kotlin-parsed plates/objects/custom-gcode
-     * with a native walk of g_model for the volumes list.
+     * with a native walk of g_model for the volumes list and project config.
      *
      * Suspend because [NativeLibrary.previewMutex] is a coroutine Mutex and
-     * the volumes walk needs exclusive access for loadModel + per-volume
-     * accessor calls. Callers in instrumented tests wrap with `runBlocking { }`.
+     * the native reads need exclusive access for loadModel + per-volume and
+     * project-config accessor calls. Callers in instrumented tests wrap with
+     * `runBlocking { }`.
      */
     suspend fun snapshot(file: File, native: NativeLibrary): BambuFileSnapshot {
         if (!file.exists() || !file.name.endsWith(".3mf", ignoreCase = true)) {
@@ -40,12 +59,18 @@ object KotlinBambuSnapshot {
         }
         val info = ThreeMfParser.parse(file)
         val customGcodeByPlate = readCustomGcodeByPlate(file)
+        val nativeData = readNativeData(file, native)
+
+        // Sub-plan #5: project-level palette is the uniform per-plate fallback
+        // until sub-plan #2 overrides with PlateData.slice_filaments_info.
+        val plateFilamentColours = nativeData.projectConfig?.filamentColours ?: emptyList()
+        val plateFilamentSettingsIds = nativeData.projectConfig?.filamentSettingsIds ?: emptyList()
 
         val plates = info.plates.map { plate ->
             PlateSnapshot(
                 plateIndex = plate.plateId,
-                filamentColours = info.detectedColors.toList(),
-                filamentSettingsIds = emptyList(),
+                filamentColours = plateFilamentColours,
+                filamentSettingsIds = plateFilamentSettingsIds,
                 objectInstanceMap = plate.objectIds
                     .map { ObjectInstance(objectId = parseObjectId(it), instanceId = 0) },
                 customGcode = customGcodeByPlate[plate.plateId].orEmpty(),
@@ -62,34 +87,38 @@ object KotlinBambuSnapshot {
             )
         }
 
-        val volumes = readVolumesViaNative(file, native)
-
         return BambuFileSnapshot(
             source = file.name,
-            isBbl = info.isBambu,
-            fileVersion = "",
+            // Sub-plan #5: isBbl sourced from g_is_bbl via JNI; fall back to the
+            // Kotlin ZIP-marker detection when native loadModel failed (corrupt file).
+            isBbl = nativeData.projectConfig?.isBbl ?: info.isBambu,
+            // Sub-plan #5: fileVersion from g_file_version.to_string() via JNI.
+            fileVersion = nativeData.projectConfig?.fileVersion ?: "",
             plates = plates,
             objects = objects,
-            volumes = volumes,
+            volumes = nativeData.volumes,
         )
     }
 
     /**
-     * Walks g_model via the Phase 1 JNI accessors to produce the
-     * [VolumeSnapshot] list. Holds [NativeLibrary.previewMutex] across the
-     * whole loadModel + per-volume accessor walk so no concurrent
+     * Walks g_model via the Phase 1 JNI accessors to produce the volumes list
+     * and project-level config. Holds [NativeLibrary.previewMutex] across the
+     * whole loadModel + accessor sequence so no concurrent
      * setModelRotation / getPreparePreviewMesh caller races the read.
      *
-     * Returns [emptyList] if loadModel fails — a corrupt 3MF surfaces as
-     * "no volumes" rather than blowing up the whole snapshot.
+     * Returns [NativeData] with empty volumes and null projectConfig if loadModel
+     * fails — a corrupt 3MF surfaces as "no native data" rather than blowing up
+     * the whole snapshot.
      */
-    private suspend fun readVolumesViaNative(
+    private suspend fun readNativeData(
         file: File,
         native: NativeLibrary,
-    ): List<VolumeSnapshot> = NativeLibrary.previewMutex.withLock {
-        if (!native.loadModel(file.absolutePath)) return@withLock emptyList()
+    ): NativeData = NativeLibrary.previewMutex.withLock {
+        if (!native.loadModel(file.absolutePath)) {
+            return@withLock NativeData(volumes = emptyList(), projectConfig = null)
+        }
         val objectCount = native.nativeGetObjectCount()
-        buildList {
+        val volumes = buildList {
             for (oi in 0 until objectCount) {
                 // VolumeSnapshot.objectId is Int. Slic3r ObjectID is size_t;
                 // truncation is safe in practice (IDs start at ~1 and increment).
@@ -114,6 +143,29 @@ object KotlinBambuSnapshot {
                 }
             }
         }
+        val projectConfig = parseProjectConfig(native.nativeGetProjectConfig())
+        NativeData(volumes = volumes, projectConfig = projectConfig)
+    }
+
+    private fun parseProjectConfig(json: String?): ProjectConfig? {
+        if (json.isNullOrEmpty()) return null
+        return try {
+            val obj = JSONObject(json)
+            ProjectConfig(
+                isBbl = obj.optBoolean("isBbl", false),
+                fileVersion = obj.optString("fileVersion", ""),
+                filamentColours = readStringArray(obj, "filamentColours"),
+                filamentSettingsIds = readStringArray(obj, "filamentSettingsIds"),
+                filamentIds = readStringArray(obj, "filamentIds"),
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun readStringArray(obj: JSONObject, key: String): List<String> {
+        val arr = obj.optJSONArray(key) ?: return emptyList()
+        return List(arr.length()) { arr.optString(it, "") }
     }
 
     private fun unpackStateCounts(packed: IntArray): Map<Int, Int> {
