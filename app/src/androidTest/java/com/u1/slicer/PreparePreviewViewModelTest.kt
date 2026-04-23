@@ -506,17 +506,23 @@ class PreparePreviewViewModelTest {
                 plate9DetectedColors.isNotEmpty()
             )
 
-            // Invariant 1b (B90): plate 9 objects use extruder=10 and paint state 8.
-            // Before the fix, `parseForPlateSelection` synthesized (1..visualCount) =
-            // (1..2) as effectiveExtruders, dropping filament 10 (white) and filament 8
-            // (peach) and substituting filaments 1 (black) and 2 (blue) instead.
-            // After the fix, detectedColors must include filament 10 (#FFFFFF) and
-            // filament 8 (#FFD6C1).
-            val expectedPlate9Colors = setOf("#FFFFFF", "#FFD6C1")
+            // Invariant 1b (B90 + B95): plate 9 objects use extruder=10 (filament 10 white)
+            // and have a painted region encoded as `paint_color="8C"`. Before the B90 fix,
+            // `parseForPlateSelection` synthesized (1..visualCount) = (1..2) as effective
+            // extruders, dropping filaments 10 + 11 entirely and substituting filaments 1
+            // (black) and 2 (blue). After B90 the union path picked up the right filaments,
+            // but the Kotlin first-char `paintCharToState` heuristic mis-decoded `"8C"` as
+            // state 8 — so detectedColors used filament 8's source colour (#FFD6C1). B95's
+            // bit-packed `PaintColorDecoder` decodes `"8C"` to its real state 11, so the
+            // peach paint state is now correctly identified as filament 11 (#8E9089). The
+            // assertion below tracks the corrected mapping; the (#FFFFFF, #FFD6C1) pair
+            // documented for v1.6.9 was based on the buggy heuristic and never matched what
+            // OrcaSlicer's `multi_material_segmentation_by_painting()` actually addresses.
+            val expectedPlate9Colors = setOf("#FFFFFF", "#8E9089")
             assertTrue(
                 "plate 9 detectedColors must include both filament 10 (#FFFFFF white, " +
-                    "object extruder) and filament 8 (#FFD6C1 peach, paint state 8). " +
-                    "Got ${plate9DetectedColors}\n$diag",
+                    "object extruder) and filament 11 (#8E9089 peach, paint_color=\"8C\" " +
+                    "decoded as state 11 by PaintColorDecoder). Got ${plate9DetectedColors}\n$diag",
                 plate9DetectedColors.toSet().containsAll(expectedPlate9Colors)
             )
 
