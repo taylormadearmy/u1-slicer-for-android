@@ -56,27 +56,36 @@ class KotlinBambuSnapshotTest {
 
         assertEquals("colored_3DBenchy (1).3mf", snapshot.source)
         assertTrue("isBbl should be true for Bambu 3MF fixture", snapshot.isBbl)
-        // fileVersion is not exposed by the current Kotlin parsers — Task 2 leaves it empty.
-        assertEquals("", snapshot.fileVersion)
+        // Phase 1 sub-plan #5: fileVersion sourced from native (g_file_version.to_string()).
+        // colored_3DBenchy has a BambuStudio:3mfVersion metadata entry — expect non-empty.
+        assertTrue(
+            "expected non-empty fileVersion post sub-plan #5, got '${snapshot.fileVersion}'",
+            snapshot.fileVersion.isNotEmpty()
+        )
 
         // Exactly one plate in this single-plate Bambu file.
         assertEquals(1, snapshot.plates.size)
         val plate = snapshot.plates.single()
         assertEquals(1, plate.plateIndex)
 
-        // The Kotlin parser resolves colours from project_settings.config's
-        // filament_colour array. The file's palette has 4 slots even though the
-        // model itself is dual-colour, because project_settings.config lists the
-        // full device palette. Exact captured values at the time of Task 2:
-        //   [#0086D6, #FB0207, #F4EE2A, #E2DEDB]
+        // Phase 1 sub-plan #5: plate.filamentColours now sourced from the
+        // project-level filament_colour array via nativeGetProjectConfig. The
+        // previous Kotlin path (detectedColors) ran a regex that truncated to 7
+        // chars; the native reader preserves the raw stored hex, which for this
+        // fixture is 8-char `#RRGGBBAA` for three of the four slots.
+        // Sub-plan #2 will override per-plate when slice_filaments_info is set.
         assertEquals(
-            listOf("#0086D6", "#FB0207", "#F4EE2A", "#E2DEDB"),
+            listOf("#0086D6FF", "#FB0207", "#F4EE2AFF", "#E2DEDBFF"),
             plate.filamentColours
         )
 
-        // Kotlin doesn't parse filament_settings_id today — left empty so the
-        // diff harness surfaces the gap vs the native loader.
-        assertEquals(emptyList<String>(), plate.filamentSettingsIds)
+        // Phase 1 sub-plan #5: filamentSettingsIds sourced from project config
+        // (filament_settings_id with filament_ids fallback). Non-empty for
+        // colored_3DBenchy since the file has a 4-slot project palette.
+        assertTrue(
+            "expected filamentSettingsIds non-empty post sub-plan #5, got ${plate.filamentSettingsIds}",
+            plate.filamentSettingsIds.isNotEmpty()
+        )
 
         // Plate → object instance map comes from model_settings.config's
         // `<model_instance><metadata key="object_id" .../></model_instance>`.

@@ -291,4 +291,68 @@ class NativeLibraryCorrectnessTest {
             fixture.delete()
         }
     }
+
+    /**
+     * Phase 1 sub-plan #5: project config accessor — exercises the single
+     * JSON blob that carries isBbl, fileVersion, filamentColours,
+     * filamentSettingsIds, and filamentIds from getModelConfig() back to Kotlin.
+     * Flarewing Dragon is a real 4-colour Bambu fixture with a
+     * BambuStudio:3mfVersion metadata entry, so fileVersion must be non-empty.
+     */
+    @Test
+    fun nativeGetProjectConfig_returnsPopulatedJson_forFlarewingDragon() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(targetContext.cacheDir, "phase1_fixture.3mf")
+        assetContext.assets.open("Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            assertTrue(lib.loadModel(fixture.absolutePath))
+            val json = lib.nativeGetProjectConfig()
+            assertNotNull("nativeGetProjectConfig should be non-null for a Bambu fixture", json)
+            val obj = org.json.JSONObject(json!!)
+
+            assertTrue("isBbl should be true for Bambu 3MF", obj.getBoolean("isBbl"))
+            val version = obj.getString("fileVersion")
+            assertTrue(
+                "fileVersion should be non-empty for Flarewing Dragon, got '$version'",
+                version.isNotEmpty()
+            )
+
+            val colours = obj.getJSONArray("filamentColours")
+            assertTrue(
+                "filamentColours should be non-empty for a 4-colour fixture, got length ${colours.length()}",
+                colours.length() > 0
+            )
+            for (i in 0 until colours.length()) {
+                val hex = colours.getString(i)
+                assertTrue(
+                    "filamentColours[$i]='$hex' should start with '#'",
+                    hex.startsWith("#")
+                )
+            }
+
+            // filamentSettingsIds is the filament_settings_id > filament_ids fallback.
+            // Both are arrays; at least one should be non-empty for a real preset.
+            val settings = obj.getJSONArray("filamentSettingsIds")
+            val filamentIds = obj.getJSONArray("filamentIds")
+            assertTrue(
+                "at least one of filamentSettingsIds/filamentIds should be populated " +
+                    "(got ${settings.length()}/${filamentIds.length()})",
+                settings.length() > 0 || filamentIds.length() > 0
+            )
+        } finally {
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun nativeGetProjectConfig_returnsNull_whenNoModelLoaded() {
+        lib.clearModel()
+        assertNull(
+            "nativeGetProjectConfig must return null after clearModel / before any load",
+            lib.nativeGetProjectConfig()
+        )
+    }
 }
