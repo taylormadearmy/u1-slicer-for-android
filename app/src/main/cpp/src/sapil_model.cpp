@@ -13,11 +13,14 @@
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/Format/STL.hpp"
 #include "libslic3r/Format/3mf.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/STEP.hpp"
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 #include "libslic3r/QuadricEdgeCollapse.hpp"
+#include "libslic3r/Semver.hpp"
+#include "libslic3r/Preset.hpp"
 
 // miniz for direct ZIP extraction of project_settings.config
 #include "miniz.h"
@@ -32,6 +35,11 @@ namespace sapil {
 Slic3r::Model g_model;                             // exposed to sapil_bambu_snapshot.cpp
 static Slic3r::DynamicPrintConfig g_model_config;  // Config from 3MF project_settings.config
 ModelInfo g_model_info;                            // exposed to sapil_bambu_snapshot.cpp
+// Bambu-specific out-params captured from Slic3r::Model::read_from_file.
+// Non-static so sapil_bambu_snapshot.cpp can extern them. Reset each load.
+Slic3r::PlateDataPtrs g_plate_data_list;           // exposed to sapil_bambu_snapshot.cpp
+bool g_is_bbl = false;                             // exposed to sapil_bambu_snapshot.cpp
+Slic3r::Semver g_file_version;                     // exposed to sapil_bambu_snapshot.cpp
 static bool g_model_loaded = false;
 static std::string g_files_dir;  // App files directory, derived from model path
 static std::vector<std::vector<int>> g_model_preview_extruders;
@@ -110,6 +118,12 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
     SAPIL_LOGI("Loading model: %s", filepath.c_str());
     g_model_preview_extruders.clear();
 
+    // Reset Bambu diff-harness out-params so a previous load can't leak state.
+    Slic3r::release_PlateData_list(g_plate_data_list);
+    g_plate_data_list.clear();
+    g_is_bbl = false;
+    g_file_version = Slic3r::Semver();
+
     // Determine format from extension
     std::string ext = filepath.substr(filepath.find_last_of('.') + 1);
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -132,8 +146,13 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
         Slic3r::DynamicPrintConfig config;
         Slic3r::ConfigSubstitutionContext config_substitutions(Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
 
+        // Capture plate_data_list / is_bbl / file_version out-params for the
+        // Bambu differential harness (sapil_bambu_snapshot.cpp reads them via extern).
+        // project_presets is unused here but required to advance the arg list.
+        std::vector<Slic3r::Preset*> project_presets;
         g_model = Slic3r::Model::read_from_file(filepath, &config, &config_substitutions,
-            Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::LoadConfig | Slic3r::LoadStrategy::AddDefaultInstances);
+            Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::LoadConfig | Slic3r::LoadStrategy::AddDefaultInstances,
+            &g_plate_data_list, &project_presets, &g_is_bbl, &g_file_version);
 
         // Store the embedded config (from 3MF project_settings.config).
         // This contains machine_start_gcode, change_filament_gcode, and all profile
@@ -583,6 +602,10 @@ void SlicerEngine::clearModel() {
     g_model = Slic3r::Model();
     g_model_config = Slic3r::DynamicPrintConfig();
     g_model_info = ModelInfo();
+    Slic3r::release_PlateData_list(g_plate_data_list);
+    g_plate_data_list.clear();
+    g_is_bbl = false;
+    g_file_version = Slic3r::Semver();
     g_model_loaded = false;
     g_preview_mesh_valid = false;
     g_cached_preview_mesh = PreviewMesh();

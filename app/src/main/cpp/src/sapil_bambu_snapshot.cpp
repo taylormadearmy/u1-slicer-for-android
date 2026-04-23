@@ -5,16 +5,21 @@
 // the Kotlin BambuFileSnapshot. Compared against the Kotlin parser path
 // to surface drift.
 //
-// Initial commit only emits header fields (source, isBbl, fileVersion,
-// empty plates/objects/volumes arrays). Subsequent commits expand to
-// per-plate, per-object, per-volume sections.
+// Task 5: per-plate fields populated from PlateData. isBbl/fileVersion
+// now reflect the actual out-params from Model::read_from_file.
 
 #include "sapil_bambu_snapshot.h"
 
+#include <cstdio>
 #include <sstream>
 #include <string>
 
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Config.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
+#include "libslic3r/CustomGCode.hpp"
+#include "libslic3r/ProjectTask.hpp"  // FilamentInfo
+#include "libslic3r/Semver.hpp"
 
 namespace sapil {
 
@@ -24,6 +29,17 @@ extern Slic3r::Model g_model;
 // ModelInfo is defined in sapil.h within namespace sapil.
 // g_model_info.filename is populated by SlicerEngine::loadModel.
 extern ModelInfo g_model_info;
+
+// Bambu-specific out-params captured by SlicerEngine::loadModel from
+// Slic3r::Model::read_from_file. Reset at the top of each load.
+extern Slic3r::PlateDataPtrs g_plate_data_list;
+extern bool g_is_bbl;
+extern Slic3r::Semver g_file_version;
+
+// Accessor for the model-level embedded config (Metadata/project_settings.config).
+// Defined in sapil_model.cpp, exposed here so non-sliced 3MFs (PlateData has
+// empty slice_filaments_info) can still surface the effective per-plate palette.
+extern Slic3r::DynamicPrintConfig& getModelConfig();
 
 namespace {
 
@@ -37,10 +53,45 @@ std::string json_escape(const std::string& s) {
             case '\n': out += "\\n"; break;
             case '\r': out += "\\r"; break;
             case '\t': out += "\\t"; break;
-            default:   out += c;       break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x",
+                                  static_cast<unsigned int>(static_cast<unsigned char>(c)));
+                    out += buf;
+                } else {
+                    out += c;
+                }
+                break;
         }
     }
     return out;
+}
+
+// PlateData stores filament colours as `#RRGGBB` already, but defensively
+// prefix a missing `#` so the Kotlin decoder's `startsWith("#")` check holds.
+std::string colour_to_hex(const std::string& raw) {
+    if (raw.empty()) return "";
+    if (raw[0] == '#') return raw;
+    return "#" + raw;
+}
+
+// Maps CustomGCode::Type enum (libslic3r/CustomGCode.hpp) to the canonical
+// names BambuStudio uses in its JSON serialisation — kept in sync with the
+// str2type map in CustomGCode::Item::from_json.
+const char* custom_gcode_type_name(int type) {
+    using Slic3r::CustomGCode::Type;
+    switch (static_cast<Type>(type)) {
+        case Type::ColorChange: return "ColorChange";
+        case Type::PausePrint:  return "PausePrint";
+        case Type::ToolChange:  return "ToolChange";
+        case Type::Template:    return "Template";
+        case Type::Custom:      return "Custom";
+        case Type::Unknown:     return "Unknown";
+    }
+    return "Unknown";
 }
 
 } // namespace
@@ -51,13 +102,112 @@ std::string bambu_snapshot_json() {
     std::ostringstream out;
     out << "{";
     out << "\"source\":\"" << json_escape(g_model_info.filename) << "\",";
-    // isBbl: stubbed to true for this skeleton commit; Task 5 will derive from
-    // the is_bbl out-param of Model::read_from_file.
-    out << "\"isBbl\":true,";
-    // fileVersion: stubbed to empty; Task 5 will populate from the file_version
-    // out-param.
-    out << "\"fileVersion\":\"\",";
-    out << "\"plates\":[],";    // Task 5
+    out << "\"isBbl\":" << (g_is_bbl ? "true" : "false") << ",";
+    out << "\"fileVersion\":\"" << json_escape(g_file_version.to_string()) << "\",";
+
+    out << "\"plates\":[";
+    for (size_t i = 0; i < g_plate_data_list.size(); ++i) {
+        if (i) out << ",";
+        if (g_plate_data_list[i] == nullptr) { out << "null"; continue; }
+        const Slic3r::PlateData& p = *g_plate_data_list[i];
+
+        out << "{";
+        out << "\"plateIndex\":" << p.plate_index << ",";
+
+        // PlateData::slice_filaments_info is only populated for 3MFs that
+        // have been pre-sliced (the BBS importer reads it from slice_info.config
+        // <filament> entries). For the far more common non-sliced 3MF the plate
+        // reuses the project-level palette from project_settings.config. Fall
+        // back to that palette so the snapshot reflects the *effective* per-plate
+        // filament set a user would see when opening the file.
+        const auto& project_cfg = getModelConfig();
+        const auto* project_colours = project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_colour");
+        const auto* project_filament_ids = project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_ids");
+        const auto* project_filament_settings_id =
+            project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_settings_id");
+
+        out << "\"filamentColours\":[";
+        if (!p.slice_filaments_info.empty()) {
+            for (size_t j = 0; j < p.slice_filaments_info.size(); ++j) {
+                if (j) out << ",";
+                out << "\"" << json_escape(colour_to_hex(p.slice_filaments_info[j].color)) << "\"";
+            }
+        } else if (project_colours != nullptr) {
+            for (size_t j = 0; j < project_colours->values.size(); ++j) {
+                if (j) out << ",";
+                out << "\"" << json_escape(colour_to_hex(project_colours->values[j])) << "\"";
+            }
+        }
+        out << "],";
+
+        // filamentSettingsIds: prefer PlateData's per-filament `filament_id`
+        // (tray profile id) when present, else fall back to the project-level
+        // `filament_settings_id` array (user-preset names), else `filament_ids`.
+        out << "\"filamentSettingsIds\":[";
+        if (!p.slice_filaments_info.empty()) {
+            for (size_t j = 0; j < p.slice_filaments_info.size(); ++j) {
+                if (j) out << ",";
+                out << "\"" << json_escape(p.slice_filaments_info[j].filament_id) << "\"";
+            }
+        } else {
+            const Slic3r::ConfigOptionStrings* fallback =
+                project_filament_settings_id != nullptr ? project_filament_settings_id : project_filament_ids;
+            if (fallback != nullptr) {
+                for (size_t j = 0; j < fallback->values.size(); ++j) {
+                    if (j) out << ",";
+                    out << "\"" << json_escape(fallback->values[j]) << "\"";
+                }
+            }
+        }
+        out << "],";
+
+        out << "\"objectInstanceMap\":[";
+        for (size_t j = 0; j < p.objects_and_instances.size(); ++j) {
+            if (j) out << ",";
+            out << "{\"objectId\":" << p.objects_and_instances[j].first
+                << ",\"instanceId\":" << p.objects_and_instances[j].second << "}";
+        }
+        out << "],";
+
+        // PlateData::plate_index is **normalised to 0-based** by the BBS
+        // importer (see bbs_3mf.cpp ~line 1485: `plate->plate_index = raw-1`).
+        // Model::plates_custom_gcodes is also keyed by 0-based plate index
+        // (BambuStudio stores XML `<plate_info id="N">` at key `N-1`; see
+        // bbs_3mf.cpp ~line 3099). So the lookup here is a direct match.
+        out << "\"customGcode\":[";
+        auto it = g_model.plates_custom_gcodes.find(p.plate_index);
+        if (it != g_model.plates_custom_gcodes.end()) {
+            const auto& items = it->second.gcodes;
+            for (size_t j = 0; j < items.size(); ++j) {
+                if (j) out << ",";
+                const auto& g = items[j];
+                out << "{"
+                    << "\"printZ\":" << g.print_z << ","
+                    << "\"type\":\"" << json_escape(custom_gcode_type_name(static_cast<int>(g.type))) << "\","
+                    << "\"extruder\":" << g.extruder << ","
+                    << "\"color\":\"" << json_escape(g.color) << "\""
+                    << "}";
+            }
+        }
+        out << "],";
+
+        // plateConfig: stringify every key in p.config via opt_serialize so
+        // the Kotlin decoder's getString() call succeeds on every entry
+        // (see BambuFileSnapshot.kt PlateSnapshot.plateConfig KDoc).
+        out << "\"plateConfig\":{";
+        bool first_kv = true;
+        for (const std::string& key : p.config.keys()) {
+            if (!first_kv) out << ",";
+            out << "\"" << json_escape(key) << "\":\""
+                << json_escape(p.config.opt_serialize(key)) << "\"";
+            first_kv = false;
+        }
+        out << "}";
+
+        out << "}";
+    }
+    out << "],";
+
     out << "\"objects\":[],";   // Task 6
     out << "\"volumes\":[]";    // Task 7
     out << "}";
