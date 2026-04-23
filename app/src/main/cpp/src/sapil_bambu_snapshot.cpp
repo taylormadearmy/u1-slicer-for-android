@@ -7,6 +7,9 @@
 //
 // Task 5: per-plate fields populated from PlateData. isBbl/fileVersion
 // now reflect the actual out-params from Model::read_from_file.
+// Task 6: per-object fields (objectId/name/extruder/sourcePath) populated
+// from g_model.objects; bambu_snapshot_json refactored into a thin
+// orchestrator over append_plate/append_object helpers.
 
 #include "sapil_bambu_snapshot.h"
 
@@ -100,6 +103,126 @@ const char* custom_gcode_type_name(int type) {
     return "Unknown";
 }
 
+// Emit the JSON body for a single PlateSnapshot. Hoisted out of
+// bambu_snapshot_json so the orchestrator stays scannable as Task 7 adds
+// more sections. Project-level palette fallbacks are injected from the
+// caller — they're invariant across plates, so looking them up once and
+// threading them in keeps the inner loop honest about what varies.
+void append_plate(std::ostringstream& out,
+                  const Slic3r::PlateData& p,
+                  const Slic3r::ConfigOptionStrings* project_colours,
+                  const Slic3r::ConfigOptionStrings* project_filament_ids,
+                  const Slic3r::ConfigOptionStrings* project_filament_settings_id) {
+    out << "{";
+    out << "\"plateIndex\":" << p.plate_index << ",";
+
+    out << "\"filamentColours\":[";
+    if (!p.slice_filaments_info.empty()) {
+        for (size_t j = 0; j < p.slice_filaments_info.size(); ++j) {
+            if (j) out << ",";
+            out << "\"" << json_escape(colour_to_hex(p.slice_filaments_info[j].color)) << "\"";
+        }
+    } else if (project_colours != nullptr) {
+        for (size_t j = 0; j < project_colours->values.size(); ++j) {
+            if (j) out << ",";
+            out << "\"" << json_escape(colour_to_hex(project_colours->values[j])) << "\"";
+        }
+    }
+    out << "],";
+
+    // filamentSettingsIds: prefer PlateData's per-filament `filament_id`
+    // (tray profile id) when present, else fall back to the project-level
+    // `filament_settings_id` array (user-preset names), else `filament_ids`.
+    out << "\"filamentSettingsIds\":[";
+    if (!p.slice_filaments_info.empty()) {
+        for (size_t j = 0; j < p.slice_filaments_info.size(); ++j) {
+            if (j) out << ",";
+            out << "\"" << json_escape(p.slice_filaments_info[j].filament_id) << "\"";
+        }
+    } else {
+        const Slic3r::ConfigOptionStrings* fallback =
+            project_filament_settings_id != nullptr ? project_filament_settings_id : project_filament_ids;
+        if (fallback != nullptr) {
+            for (size_t j = 0; j < fallback->values.size(); ++j) {
+                if (j) out << ",";
+                out << "\"" << json_escape(fallback->values[j]) << "\"";
+            }
+        }
+    }
+    out << "],";
+
+    out << "\"objectInstanceMap\":[";
+    for (size_t j = 0; j < p.objects_and_instances.size(); ++j) {
+        if (j) out << ",";
+        out << "{\"objectId\":" << p.objects_and_instances[j].first
+            << ",\"instanceId\":" << p.objects_and_instances[j].second << "}";
+    }
+    out << "],";
+
+    // PlateData::plate_index is **normalised to 0-based** by the BBS
+    // importer (see bbs_3mf.cpp ~line 1485: `plate->plate_index = raw-1`).
+    // Model::plates_custom_gcodes is also keyed by 0-based plate index
+    // (BambuStudio stores XML `<plate_info id="N">` at key `N-1`; see
+    // bbs_3mf.cpp ~line 3099). So the lookup here is a direct match.
+    out << "\"customGcode\":[";
+    auto it = g_model.plates_custom_gcodes.find(p.plate_index);
+    if (it != g_model.plates_custom_gcodes.end()) {
+        const auto& items = it->second.gcodes;
+        for (size_t j = 0; j < items.size(); ++j) {
+            if (j) out << ",";
+            const auto& g = items[j];
+            // %.17g is the IEEE-754 round-trip-safe format for doubles.
+            // ostringstream defaults to 6 significant digits, which would
+            // round real layer Zs like 12.3456789 to "12.3457" and diverge
+            // from Kotlin's Double.toString() representation in Task 9.
+            char zbuf[32];
+            std::snprintf(zbuf, sizeof(zbuf), "%.17g", g.print_z);
+            out << "{"
+                << "\"printZ\":" << zbuf << ","
+                << "\"type\":\"" << json_escape(custom_gcode_type_name(static_cast<int>(g.type))) << "\","
+                << "\"extruder\":" << g.extruder << ","
+                << "\"color\":\"" << json_escape(g.color) << "\""
+                << "}";
+        }
+    }
+    out << "],";
+
+    // plateConfig: stringify every key in p.config via opt_serialize so
+    // the Kotlin decoder's getString() call succeeds on every entry
+    // (see BambuFileSnapshot.kt PlateSnapshot.plateConfig KDoc).
+    out << "\"plateConfig\":{";
+    bool first_kv = true;
+    for (const std::string& key : p.config.keys()) {
+        if (!first_kv) out << ",";
+        out << "\"" << json_escape(key) << "\":\""
+            << json_escape(p.config.opt_serialize(key)) << "\"";
+        first_kv = false;
+    }
+    out << "}";
+
+    out << "}";
+}
+
+// Emit the JSON body for a single ObjectSnapshot. `extruder` follows the
+// BambuFileSnapshot contract: 1-based with 0 meaning "unset / inherit"
+// — which happens to match Slic3r's own representation (ModelConfigObject
+// stores extruder as int with 0 = no override), so no translation is
+// needed here. The diff harness expects objectId as Slic3r's internal
+// runtime ObjectID (from ObjectBase::id().id, a size_t); the Kotlin
+// parser path will populate this with a parity value in Task 9.
+void append_object(std::ostringstream& out, const Slic3r::ModelObject& mo) {
+    int extruder_value = 0;
+    if (mo.config.has("extruder")) {
+        extruder_value = mo.config.opt_int("extruder");
+    }
+    out << "{"
+        << "\"objectId\":" << static_cast<long long>(mo.id().id) << ","
+        << "\"name\":\"" << json_escape(mo.name) << "\","
+        << "\"extruder\":" << extruder_value << ","
+        << "\"sourcePath\":\"" << json_escape(mo.input_file) << "\""
+        << "}";
+}
+
 } // namespace
 
 std::string bambu_snapshot_json() {
@@ -119,9 +242,9 @@ std::string bambu_snapshot_json() {
     // Project-level palette lookups are hoisted out of the plate loop — these
     // model-level config options (filament_colour / filament_ids /
     // filament_settings_id) do not change between plates. PlateData's own
-    // slice_filaments_info is still consulted first inside the loop; this is
-    // only the fallback for non-sliced 3MFs where PlateData carries an empty
-    // filaments list and the plate reuses the project palette.
+    // slice_filaments_info is still consulted first inside append_plate; this
+    // is only the fallback for non-sliced 3MFs where PlateData carries an
+    // empty filaments list and the plate reuses the project palette.
     const auto& project_cfg = getModelConfig();
     const auto* project_colours = project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_colour");
     const auto* project_filament_ids = project_cfg.opt<Slic3r::ConfigOptionStrings>("filament_ids");
@@ -132,100 +255,18 @@ std::string bambu_snapshot_json() {
     for (size_t i = 0; i < g_plate_data_list.size(); ++i) {
         if (i) out << ",";
         if (g_plate_data_list[i] == nullptr) { out << "null"; continue; }
-        const Slic3r::PlateData& p = *g_plate_data_list[i];
-
-        out << "{";
-        out << "\"plateIndex\":" << p.plate_index << ",";
-
-        out << "\"filamentColours\":[";
-        if (!p.slice_filaments_info.empty()) {
-            for (size_t j = 0; j < p.slice_filaments_info.size(); ++j) {
-                if (j) out << ",";
-                out << "\"" << json_escape(colour_to_hex(p.slice_filaments_info[j].color)) << "\"";
-            }
-        } else if (project_colours != nullptr) {
-            for (size_t j = 0; j < project_colours->values.size(); ++j) {
-                if (j) out << ",";
-                out << "\"" << json_escape(colour_to_hex(project_colours->values[j])) << "\"";
-            }
-        }
-        out << "],";
-
-        // filamentSettingsIds: prefer PlateData's per-filament `filament_id`
-        // (tray profile id) when present, else fall back to the project-level
-        // `filament_settings_id` array (user-preset names), else `filament_ids`.
-        out << "\"filamentSettingsIds\":[";
-        if (!p.slice_filaments_info.empty()) {
-            for (size_t j = 0; j < p.slice_filaments_info.size(); ++j) {
-                if (j) out << ",";
-                out << "\"" << json_escape(p.slice_filaments_info[j].filament_id) << "\"";
-            }
-        } else {
-            const Slic3r::ConfigOptionStrings* fallback =
-                project_filament_settings_id != nullptr ? project_filament_settings_id : project_filament_ids;
-            if (fallback != nullptr) {
-                for (size_t j = 0; j < fallback->values.size(); ++j) {
-                    if (j) out << ",";
-                    out << "\"" << json_escape(fallback->values[j]) << "\"";
-                }
-            }
-        }
-        out << "],";
-
-        out << "\"objectInstanceMap\":[";
-        for (size_t j = 0; j < p.objects_and_instances.size(); ++j) {
-            if (j) out << ",";
-            out << "{\"objectId\":" << p.objects_and_instances[j].first
-                << ",\"instanceId\":" << p.objects_and_instances[j].second << "}";
-        }
-        out << "],";
-
-        // PlateData::plate_index is **normalised to 0-based** by the BBS
-        // importer (see bbs_3mf.cpp ~line 1485: `plate->plate_index = raw-1`).
-        // Model::plates_custom_gcodes is also keyed by 0-based plate index
-        // (BambuStudio stores XML `<plate_info id="N">` at key `N-1`; see
-        // bbs_3mf.cpp ~line 3099). So the lookup here is a direct match.
-        out << "\"customGcode\":[";
-        auto it = g_model.plates_custom_gcodes.find(p.plate_index);
-        if (it != g_model.plates_custom_gcodes.end()) {
-            const auto& items = it->second.gcodes;
-            for (size_t j = 0; j < items.size(); ++j) {
-                if (j) out << ",";
-                const auto& g = items[j];
-                // %.17g is the IEEE-754 round-trip-safe format for doubles.
-                // ostringstream defaults to 6 significant digits, which would
-                // round real layer Zs like 12.3456789 to "12.3457" and diverge
-                // from Kotlin's Double.toString() representation in Task 9.
-                char zbuf[32];
-                std::snprintf(zbuf, sizeof(zbuf), "%.17g", g.print_z);
-                out << "{"
-                    << "\"printZ\":" << zbuf << ","
-                    << "\"type\":\"" << json_escape(custom_gcode_type_name(static_cast<int>(g.type))) << "\","
-                    << "\"extruder\":" << g.extruder << ","
-                    << "\"color\":\"" << json_escape(g.color) << "\""
-                    << "}";
-            }
-        }
-        out << "],";
-
-        // plateConfig: stringify every key in p.config via opt_serialize so
-        // the Kotlin decoder's getString() call succeeds on every entry
-        // (see BambuFileSnapshot.kt PlateSnapshot.plateConfig KDoc).
-        out << "\"plateConfig\":{";
-        bool first_kv = true;
-        for (const std::string& key : p.config.keys()) {
-            if (!first_kv) out << ",";
-            out << "\"" << json_escape(key) << "\":\""
-                << json_escape(p.config.opt_serialize(key)) << "\"";
-            first_kv = false;
-        }
-        out << "}";
-
-        out << "}";
+        append_plate(out, *g_plate_data_list[i],
+                     project_colours, project_filament_ids, project_filament_settings_id);
     }
     out << "],";
 
-    out << "\"objects\":[],";   // Task 6
+    out << "\"objects\":[";
+    for (size_t i = 0; i < g_model.objects.size(); ++i) {
+        if (i) out << ",";
+        append_object(out, *g_model.objects[i]);
+    }
+    out << "],";
+
     out << "\"volumes\":[]";    // Task 7
     out << "}";
     return out.str();

@@ -97,4 +97,24 @@ class NativeDumpSmokeTest {
             snapshot.plates.any { it.customGcode.isNotEmpty() }
         )
     }
+
+    @Test
+    fun nativeDumpBambuModel_populates_objects_with_extruder_for_colored_3DBenchy() {
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val tmp = File(targetContext.cacheDir, "colored_3DBenchy_o.3mf")
+        assetContext.assets.open("colored_3DBenchy (1).3mf").use { input ->
+            tmp.outputStream().use { input.copyTo(it) }
+        }
+        val native = NativeLibrary()
+        assertTrue(native.loadModel(tmp.absolutePath))
+        val snapshot = NativeBambuSnapshot.parse(native.nativeDumpBambuModel(tmp.absolutePath)!!)
+
+        assertTrue("expected at least one object, got ${snapshot.objects.size}",
+                   snapshot.objects.isNotEmpty())
+        snapshot.objects.forEach {
+            assertTrue("extruder must be 0..32 (0=inherit), got ${it.extruder}",
+                       it.extruder in 0..32)
+        }
+    }
 }
