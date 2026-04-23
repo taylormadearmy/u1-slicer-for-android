@@ -152,3 +152,38 @@ Out of scope (deferred):
 - Production `isBambu` / `detectedColors` call sites remain on the Kotlin fast path; the new accessor is snapshot-only.
 
 Next: Sub-plan #2 (per-plate PlateData) per roadmap — the largest sub-plan, targeting the remaining plate-level entries: `plateIndex`, `objectInstanceMap`, any surviving filamentColours per-plate content diffs, and `plateConfig`.
+
+## Sub-plan #2 status: LANDED (2026-04-23)
+
+Baseline closure:
+- Pre-sub-plan-#2 total: 150 entries.
+- Post-sub-plan-#2 total: 20 entries.
+- Closed: 130 (roadmap predicted ~115 — customGcode closures came for free from shared JSON shape).
+
+Closure breakdown (per differential-suite stale-entry report — zero unexpected diffs):
+- 54 `plates[*].plateIndex` (Kotlin was 1-based; native is 0-based from `PlateData::plate_index`).
+- 54 `plates[*].objectInstanceMap` (Kotlin fabricated `instanceId=0` from XML `object_id`; native sources from `PlateData::objects_and_instances` including real instance ids, and returns empty for component-ref 3MFs where BBS importer doesn't populate the vector — both sides now agree on whatever native emits).
+- 11 `plates[*].customGcode[N]` (type-name normalisation — Kotlin was emitting the raw XML `"1"`/`"2"` attribute; now consumes `"ColorChange"`/`"ToolChange"` from the native `append_plate` JSON).
+- 4 `plates[*].filamentColours[N]` per-plate content diffs.
+- 4 `plates[*].filamentSettingsIds[N]` per-plate content diffs.
+- 2 `plates[*].plateConfig[print_sequence]`.
+- 1 `plates.size`.
+
+Changes shipped (snapshot-only, as the design notes recommended Option A):
+- Two new JNI accessors: `NativeLibrary.nativeGetPlateCount(): Int` and `NativeLibrary.nativeGetPlateData(plateIndex): String?`.
+- New C++ TU `sapil_bambu_plate.cpp` owns the JNI entry points; reuses `sapil::append_plate` (promoted with its helper `custom_gcode_type_name` from the anonymous namespace to `namespace sapil` in this sub-plan). Pure read of `g_plate_data_list` + `getModelConfig()`.
+- `KotlinBambuSnapshot.snapshot` builds `PlateSnapshot`s from native JSON under the existing `previewMutex + loadModel` scope (`NativeData` extended with a `plates: List<NativePlate>?` block). `ThreeMfParser`-based fallback retained for corrupt files where `loadModel` returns false.
+
+Tests:
+- `BambuParserDifferentialTest` 21/21 green, baseline 20 entries.
+- `NativePlateDataTest` 5/5 green (new).
+- `NativeLibraryCorrectnessTest` 12/12 green.
+- `KotlinBambuSnapshotTest` 1/1 green with updated structural assertions.
+- Full Bambu instrumented package 26/26 green.
+- JVM unit suite green.
+
+Out of scope (deferred to sub-plan #2b):
+- `BambuSanitizer.extractPlate` slice-time migration — deliberately untouched per the design notes' Option A.
+- `ThreeMfParser.parseForPlateSelection`, `SlicerViewModel.mergeThreeMfInfoForPlate` — same reasoning.
+
+Next: Sub-plan #4 (object extruder map) — the 20 remaining `objects.size` entries. Sub-plan #3 (custom gcode per layer) likely has little remaining to do since per-plate customGcode already flowed through sub-plan #2's promoted `append_plate` emitter, but may still carry a production migration for `LayerToolPauseInjector`.
