@@ -85,8 +85,9 @@ std::string colour_to_hex(const std::string& raw) {
     return "#" + raw;
 }
 
-namespace {
-
+// Promoted to namespace sapil for reuse by sub-plan #2's sapil_bambu_plate.cpp.
+// Body unchanged.
+//
 // NOTE: Returns BambuStudio's canonical enum names (matching CustomGCode::Item::from_json's
 // str2type map). The Kotlin snapshot path emits the raw XML attribute "1"/"2"/etc., so this
 // will appear as a known disagreement in the Task 9 diff harness — documented in
@@ -109,6 +110,9 @@ const char* custom_gcode_type_name(int type) {
     return "Unknown";
 }
 
+// Promoted to namespace sapil for reuse by sub-plan #2's sapil_bambu_plate.cpp.
+// Body unchanged.
+//
 // Emit the JSON body for a single PlateSnapshot. Hoisted out of
 // bambu_snapshot_json so the orchestrator stays scannable as Task 7 adds
 // more sections. Project-level palette fallbacks are injected from the
@@ -208,6 +212,8 @@ void append_plate(std::ostringstream& out,
 
     out << "}";
 }
+
+namespace {
 
 // Emit the JSON body for a single ObjectSnapshot. `extruder` follows the
 // BambuFileSnapshot contract: 1-based with 0 meaning "unset / inherit"

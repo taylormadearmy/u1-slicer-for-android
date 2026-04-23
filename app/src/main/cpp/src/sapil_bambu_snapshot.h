@@ -6,11 +6,14 @@
 
 #include "../include/sapil.h"
 #include <map>
+#include <sstream>
 #include <string>
 
 namespace Slic3r {
     class ModelVolume;
     class FacetsAnnotation;
+    class ConfigOptionStrings;
+    struct PlateData;
 }
 
 namespace sapil {
@@ -36,5 +39,18 @@ std::string json_escape(const std::string& s);
  * Empty input returns empty. Shared with sub-plan #5.
  */
 std::string colour_to_hex(const std::string& raw);
+
+/**
+ * Emit the Phase 0 per-plate JSON body (braces included) for one PlateData.
+ * Project-level palette pointers are injected so the `filamentColours` and
+ * `filamentSettingsIds` fallbacks cascade exactly as in bambu_snapshot_json.
+ *
+ * Shared with Phase 1 sub-plan #2 JNI accessor (sapil_bambu_plate.cpp).
+ */
+void append_plate(std::ostringstream& out,
+                  const Slic3r::PlateData& p,
+                  const Slic3r::ConfigOptionStrings* project_colours,
+                  const Slic3r::ConfigOptionStrings* project_filament_ids,
+                  const Slic3r::ConfigOptionStrings* project_filament_settings_id);
 
 } // namespace sapil
