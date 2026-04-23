@@ -119,3 +119,36 @@ Out of scope (explicitly deferred):
 - `ObjectSnapshot`/`VolumeSnapshot` renaming `objectId` → `objectIndex` — the semantics have shifted (positional diff, not ID identity), but the field name stays for now to keep the Phase 0 JSON contract. Worth a follow-up cleanup.
 
 Next: Sub-plan #5 (project config + filament colours) per roadmap — closes 46 entries and establishes the `DynamicPrintConfig` accessor pattern #2 needs.
+
+## Sub-plan #5 status: LANDED (2026-04-23)
+
+Baseline closure:
+- Pre-sub-plan-#5 total: 242 entries.
+- Post-sub-plan-#5 total: 150 entries.
+- Closed: 92 (larger than the roadmap's 46 estimate — see breakdown below).
+
+Closure breakdown (per differential-suite stale-entry report — zero unexpected diffs):
+- 20 `fileVersion` entries (one per fixture).
+- 19 `plates[*].filamentColours.size` entries.
+- 50 `plates[*].filamentSettingsIds.size` entries — larger than predicted because the Kotlin snapshot path used to emit `emptyList()` for this field; populating from project-level `filament_settings_id` / `filament_ids` closed the entire gap at once. The roadmap under-counted because it scoped `filament_settings_id` to sub-plan #2's per-plate work, but the project-level fallback covers the unsliced-plate case for free.
+- 3 `plates[0].filamentColours[N]` content entries on `colored_3DBenchy` — the RGBA vs RGB hex-format diffs. Both sides now flow through `sapil::colour_to_hex`, so the 8-char native values also reach Kotlin (where the regex-based detector was truncating to 7 chars). Closed incidentally.
+
+Changes shipped:
+- New JNI accessor `NativeLibrary.nativeGetProjectConfig(): String?` returning a JSON blob with `isBbl`, `fileVersion`, `filamentColours`, `filamentSettingsIds`, `filamentIds`. Pure read of `g_is_bbl`, `g_file_version`, and `getModelConfig()`.
+- New C++ TU `sapil_bambu_project.cpp` owns the JNI entry point.
+- `sapil::json_escape` and `sapil::colour_to_hex` promoted from the anonymous namespace in `sapil_bambu_snapshot.cpp` to `namespace sapil` so the new TU can reuse them without duplication.
+- `KotlinBambuSnapshot.snapshot` parses the new JSON under the existing `previewMutex + loadModel` scope (method renamed `readVolumesViaNative` → `readNativeData`) and maps the five fields into `BambuFileSnapshot.isBbl`, `BambuFileSnapshot.fileVersion`, `PlateSnapshot.filamentColours` (uniform project palette per plate), and `PlateSnapshot.filamentSettingsIds`. Kotlin fallbacks retained when native `loadModel` fails (corrupt file).
+
+Tests:
+- `BambuParserDifferentialTest` 21/21 green against pruned baseline.
+- `NativeLibraryCorrectnessTest` 12/12 green (including 2 new `nativeGetProjectConfig` tests).
+- `KotlinBambuSnapshotTest` 1/1 green with updated assertions (8-char hex values, non-empty fileVersion + filamentSettingsIds).
+- Full Bambu instrumented package 26/26 green.
+- JVM unit suite green.
+
+Out of scope (deferred):
+- Per-plate `slice_filaments_info` override for `PlateSnapshot.filamentColours` — sub-plan #2's job.
+- `ThreeMfMeshParser` retirement — still deferred.
+- Production `isBambu` / `detectedColors` call sites remain on the Kotlin fast path; the new accessor is snapshot-only.
+
+Next: Sub-plan #2 (per-plate PlateData) per roadmap — the largest sub-plan, targeting the remaining plate-level entries: `plateIndex`, `objectInstanceMap`, any surviving filamentColours per-plate content diffs, and `plateConfig`.
