@@ -24,6 +24,12 @@ data class PlateSnapshot(
     val filamentSettingsIds: List<String>,
     val objectInstanceMap: List<ObjectInstance>,
     val customGcode: List<CustomGcodeEntry>,
+    /**
+     * Per-plate config overrides. **All values are pre-stringified by the populator** —
+     * Bambu's plate config contains heterogeneous types (numbers, booleans, comma-arrays);
+     * both the Kotlin and C++ paths MUST `toString()` / `opt_serialize` them before insert.
+     * The decoder calls `getString` on each value and will throw if a non-string slips through.
+     */
     val plateConfig: Map<String, String>
 )
 
@@ -36,10 +42,18 @@ data class CustomGcodeEntry(
     val color: String
 )
 
+/**
+ * Per-object facts. `extruder` is 1-based; `0` is the canonical "unset / inherit"
+ * sentinel — both the Kotlin parser path and the C++ native loader path MUST
+ * normalise an absent extruder to `0`. Use a non-null Int (rather than Int?)
+ * because Bambu's own loader (`Slic3r::ModelObject::config`) stores extruder
+ * as int with 0 meaning "no override", and matching that representation keeps
+ * the diff harness directly comparable without per-side translation.
+ */
 data class ObjectSnapshot(
     val objectId: Int,
     val name: String,
-    val extruder: Int,
+    val extruder: Int,  // 1-based; 0 = unset/inherit (see KDoc)
     val sourcePath: String
 )
 
