@@ -144,6 +144,23 @@ class NativeLibrary {
      */
     external fun nativeGetProjectConfig(): String?
 
+    /**
+     * Number of plates in g_plate_data_list. Returns 0 when no model is loaded.
+     * Callers MUST hold [previewMutex] for any loadModel + accessor sequence.
+     */
+    external fun nativeGetPlateCount(): Int
+
+    /**
+     * Returns the Phase 0 append_plate JSON for the plate at the given 0-based
+     * index — a JSON object with plateIndex, filamentColours,
+     * filamentSettingsIds, objectInstanceMap [{objectId,instanceId}],
+     * customGcode, and a stringified plateConfig key/value map.
+     *
+     * Returns null when no model is loaded, plateIndex is out of range, or the
+     * plate slot is null. Callers MUST hold [previewMutex].
+     */
+    external fun nativeGetPlateData(plateIndex: Int): String?
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)

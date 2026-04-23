@@ -21,12 +21,14 @@ import java.util.zip.ZipFile
 object KotlinBambuSnapshot {
 
     /**
-     * Holds both native-sourced blocks read under one previewMutex+loadModel scope.
-     * Sub-plan #1 added volumes; sub-plan #5 adds projectConfig.
+     * Holds native-sourced blocks read under one previewMutex+loadModel scope.
+     * Sub-plan #1 added volumes; sub-plan #5 added projectConfig; sub-plan #2
+     * added plates.
      */
     private data class NativeData(
         val volumes: List<VolumeSnapshot>,
         val projectConfig: ProjectConfig?,
+        val plates: List<NativePlate>?,  // null when loadModel failed
     )
 
     private data class ProjectConfig(
@@ -35,6 +37,15 @@ object KotlinBambuSnapshot {
         val filamentColours: List<String>,
         val filamentSettingsIds: List<String>,
         val filamentIds: List<String>,
+    )
+
+    private data class NativePlate(
+        val plateIndex: Int,
+        val filamentColours: List<String>,
+        val filamentSettingsIds: List<String>,
+        val objectInstanceMap: List<ObjectInstance>,
+        val customGcode: List<CustomGcodeEntry>,
+        val plateConfig: Map<String, String>,
     )
 
     /**
@@ -61,16 +72,26 @@ object KotlinBambuSnapshot {
         val customGcodeByPlate = readCustomGcodeByPlate(file)
         val nativeData = readNativeData(file, native)
 
-        // Sub-plan #5: project-level palette is the uniform per-plate fallback
-        // until sub-plan #2 overrides with PlateData.slice_filaments_info.
-        val plateFilamentColours = nativeData.projectConfig?.filamentColours ?: emptyList()
-        val plateFilamentSettingsIds = nativeData.projectConfig?.filamentSettingsIds ?: emptyList()
-
-        val plates = info.plates.map { plate ->
+        // Sub-plan #2: plates sourced from native PlateData via nativeGetPlateData.
+        // When loadModel fails (corrupt 3MF), fall back to the Kotlin
+        // ThreeMfParser-derived plate list + project palette so the snapshot is
+        // still populated.
+        val plates: List<PlateSnapshot> = nativeData.plates?.map { np ->
+            PlateSnapshot(
+                plateIndex = np.plateIndex,
+                filamentColours = np.filamentColours,
+                filamentSettingsIds = np.filamentSettingsIds,
+                objectInstanceMap = np.objectInstanceMap,
+                customGcode = np.customGcode,
+                plateConfig = np.plateConfig,
+            )
+        } ?: info.plates.map { plate ->
+            val fallbackColours = nativeData.projectConfig?.filamentColours.orEmpty()
+            val fallbackSettingsIds = nativeData.projectConfig?.filamentSettingsIds.orEmpty()
             PlateSnapshot(
                 plateIndex = plate.plateId,
-                filamentColours = plateFilamentColours,
-                filamentSettingsIds = plateFilamentSettingsIds,
+                filamentColours = fallbackColours,
+                filamentSettingsIds = fallbackSettingsIds,
                 objectInstanceMap = plate.objectIds
                     .map { ObjectInstance(objectId = parseObjectId(it), instanceId = 0) },
                 customGcode = customGcodeByPlate[plate.plateId].orEmpty(),
@@ -115,7 +136,7 @@ object KotlinBambuSnapshot {
         native: NativeLibrary,
     ): NativeData = NativeLibrary.previewMutex.withLock {
         if (!native.loadModel(file.absolutePath)) {
-            return@withLock NativeData(volumes = emptyList(), projectConfig = null)
+            return@withLock NativeData(volumes = emptyList(), projectConfig = null, plates = null)
         }
         val objectCount = native.nativeGetObjectCount()
         val volumes = buildList {
@@ -144,7 +165,14 @@ object KotlinBambuSnapshot {
             }
         }
         val projectConfig = parseProjectConfig(native.nativeGetProjectConfig())
-        NativeData(volumes = volumes, projectConfig = projectConfig)
+        val plateCount = native.nativeGetPlateCount()
+        val plates = buildList<NativePlate> {
+            for (pi in 0 until plateCount) {
+                val json = native.nativeGetPlateData(pi) ?: continue
+                parseNativePlate(json)?.let { add(it) }
+            }
+        }
+        NativeData(volumes = volumes, projectConfig = projectConfig, plates = plates)
     }
 
     private fun parseProjectConfig(json: String?): ProjectConfig? {
@@ -166,6 +194,57 @@ object KotlinBambuSnapshot {
     private fun readStringArray(obj: JSONObject, key: String): List<String> {
         val arr = obj.optJSONArray(key) ?: return emptyList()
         return List(arr.length()) { arr.optString(it, "") }
+    }
+
+    private fun parseNativePlate(json: String): NativePlate? {
+        return try {
+            val obj = JSONObject(json)
+            NativePlate(
+                plateIndex = obj.optInt("plateIndex", -1),
+                filamentColours = readStringArray(obj, "filamentColours"),
+                filamentSettingsIds = readStringArray(obj, "filamentSettingsIds"),
+                objectInstanceMap = readObjectInstanceMap(obj),
+                customGcode = readCustomGcodeArray(obj),
+                plateConfig = readPlateConfig(obj),
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun readObjectInstanceMap(obj: JSONObject): List<ObjectInstance> {
+        val arr = obj.optJSONArray("objectInstanceMap") ?: return emptyList()
+        return List(arr.length()) { i ->
+            val o = arr.optJSONObject(i)
+            ObjectInstance(
+                objectId = o?.optInt("objectId", -1) ?: -1,
+                instanceId = o?.optInt("instanceId", 0) ?: 0,
+            )
+        }
+    }
+
+    private fun readCustomGcodeArray(obj: JSONObject): List<CustomGcodeEntry> {
+        val arr = obj.optJSONArray("customGcode") ?: return emptyList()
+        return List(arr.length()) { i ->
+            val o = arr.optJSONObject(i)
+            CustomGcodeEntry(
+                printZ = o?.optDouble("printZ", 0.0) ?: 0.0,
+                type = o?.optString("type", "") ?: "",
+                extruder = o?.optInt("extruder", 0) ?: 0,
+                color = o?.optString("color", "") ?: "",
+            )
+        }
+    }
+
+    private fun readPlateConfig(obj: JSONObject): Map<String, String> {
+        val o = obj.optJSONObject("plateConfig") ?: return emptyMap()
+        val result = LinkedHashMap<String, String>()
+        val keys = o.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            result[k] = o.optString(k, "")
+        }
+        return result
     }
 
     private fun unpackStateCounts(packed: IntArray): Map<Int, Int> {
