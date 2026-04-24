@@ -1511,11 +1511,20 @@ $componentRefs    </components>
     }
 
     /**
-     * @param hasPlateJsons  If provided, overrides auto-detection.  Pass the value from
-     *   [ThreeMfInfo.hasPlateJsons] (parsed from the *original* file) when calling on a
-     *   processed/sanitised file that has had its Metadata/plate_N.json entries stripped.
-     *   When null (default), the flag is auto-detected by inspecting the inputFile ZIP.
+     * Sub-plan #2c (2026-04-24): RETIRED. The production slice path no longer runs Kotlin
+     * ZIP rewriting — `SlicerViewModel.selectPlate` now feeds the native BBS importer the
+     * embedded source file with a `plate_id` filter (see `NativeLibrary.loadModelForPlate`).
+     * Per-plate metadata comes from `ThreeMfParser.parse` + `SlicerViewModel.buildSelectedPlateInfo`.
+     *
+     * This is dead code awaiting full deletion. Unresolved-reference errors on this
+     * symbol indicate a stale test caller that should be migrated or deleted — do not
+     * revive this function as a quick fix.
      */
+    @Deprecated(
+        message = "Retired in sub-plan #2c. Production uses NativeLibrary.loadModelForPlate + " +
+            "SlicerViewModel.buildSelectedPlateInfo. Migrate callers or delete the test.",
+        level = DeprecationLevel.WARNING
+    )
     fun extractPlate(inputFile: File, targetPlateId: Int, outputDir: File,
                      hasPlateJsons: Boolean? = null,
                      plateObjectIds: Set<String>? = null,
@@ -1654,17 +1663,19 @@ $componentRefs    </components>
     }
 
     /**
-     * Restructure an extracted single-plate file: inline component meshes into
-     * the main model so OrcaSlicer can assign per-volume extruders.
+     * Sub-plan #2c (2026-04-24): RETIRED. The native BBS importer now performs per-plate
+     * object filtering + per-volume extruder assignment directly from the source file.
+     * This Kotlin regex-based inlining pass is no longer reached by production.
      *
-     * This is needed for multi-plate files where [process] skips restructuring
-     * to avoid oversized XML.  After [extractPlate] produces a manageable
-     * single-plate file, this method inlines the component meshes and generates
-     * the correct Slic3r_PE_model.config for per-object extruder assignments.
-     *
-     * @return The restructured file, or [plateFile] unchanged if no
-     *   restructuring was needed.
+     * This is dead code awaiting full deletion. Unresolved-reference errors on this
+     * symbol indicate a stale test caller that should be migrated or deleted — do not
+     * revive this function as a quick fix.
      */
+    @Deprecated(
+        message = "Retired in sub-plan #2c. Native BBS importer handles per-plate filtering " +
+            "+ per-volume extruder assignment at ingestion. Migrate callers or delete the test.",
+        level = DeprecationLevel.WARNING
+    )
     fun restructurePlateFile(plateFile: File, outDir: File): File {
         ZipFile(plateFile).use { srcZip ->
             // 1. Parse extruder assignments from model_settings.config
