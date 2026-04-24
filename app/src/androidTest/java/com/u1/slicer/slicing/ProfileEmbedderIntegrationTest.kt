@@ -396,11 +396,12 @@ class ProfileEmbedderIntegrationTest {
         assertNotNull("slice should return a result", result)
         assertTrue("layer-change sample should slice successfully: ${result?.errorMessage}", result!!.success)
 
-        // Same as app: native slice omits pause lines; LayerToolPauseInjector adds them from source 3MF metadata.
-        // Dual-path guard: injector also reads nativeGetPlateData(0) and check()s the two agree in debug builds.
+        // Same as app: native slice omits pause lines; LayerToolPauseInjector adds them from
+        // nativeGetPlateData(0) — which reads from the currently-loaded g_model (the embedded
+        // file, which preserves the plate-level customGcode after sanitization).
         assertTrue(
             "pause injector should run using source asset metadata",
-            LayerToolPauseInjector.injectFrom3mf(result.gcodePath, sourceAsset, 0, lib)
+            LayerToolPauseInjector.injectFrom3mf(result.gcodePath, sourceAsset, 0, lib::nativeGetPlateData)
         )
         val gcode = File(result.gcodePath).readText()
         assertTrue(

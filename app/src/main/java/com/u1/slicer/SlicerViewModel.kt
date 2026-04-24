@@ -2359,7 +2359,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 result.gcodePath,
                                 it,
                                 plateIdxForInjector,
-                                native
+                                native::nativeGetPlateData
                             )
                         }
                         ?: false

@@ -2,7 +2,6 @@ package com.u1.slicer.gcode
 
 import androidx.annotation.VisibleForTesting
 import com.u1.slicer.BuildConfig
-import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.parseLayerToolSegments
 import org.json.JSONArray
 import org.json.JSONException
@@ -31,7 +30,7 @@ object LayerToolPauseInjector {
         gcodePath: String,
         model3mf: File,
         plateIdx: Int,
-        native: NativeLibrary?
+        getPlateData: ((Int) -> String?)?
     ): Boolean {
         if (!model3mf.exists() || !model3mf.name.endsWith(".3mf", ignoreCase = true)) return false
 
@@ -49,36 +48,42 @@ object LayerToolPauseInjector {
             }
         } ?: "M400 U1"
 
-        // Native path: read customGcode from g_model via JNI. Caller is expected to still hold
-        // a valid g_model — in production this runs inside the slicing coroutine immediately
-        // after native.slice() returned, with no intervening clearModel. plateIdx < 0 or a
-        // null NativeLibrary handle (JVM unit-test / legacy paths) short-circuits to no
-        // native-path participation.
-        val nativeJson = if (plateIdx >= 0 && native != null) {
-            try { native.nativeGetPlateData(plateIdx) } catch (_: Throwable) { null }
+        // Native path: read customGcode from g_model via JNI. Production passes a method
+        // reference to NativeLibrary.nativeGetPlateData. Returns null when no model is loaded,
+        // plateIdx is out of range, or the plate slot is null — including post-slice state
+        // where g_model may have been mutated and no longer contains the source customGcode.
+        // XML path is the permanent fallback for those cases.
+        val nativeJson = if (plateIdx >= 0 && getPlateData != null) {
+            try { getPlateData(plateIdx) } catch (_: Throwable) { null }
         } else null
         val nativeTargetsOrNull = nativeJson?.let { extractPauseTargetsFromNativeJson(it) }
 
-        // In debug builds, assert the two data sources agree. This is the sub-plan #3 silent-
-        // G-code-corruption tripwire. If it fires on a fixture, STOP — do not paper over it.
-        if (BuildConfig.DEBUG && nativeTargetsOrNull != null) {
+        // In debug builds, when BOTH paths produced data, assert they agree. Silent-G-code-
+        // corruption tripwire for future changes to either data source. If it fires, stop.
+        if (BuildConfig.DEBUG && nativeTargetsOrNull != null && nativeTargetsOrNull.isNotEmpty()) {
             val xmlSorted = xmlTargets
                 .distinctBy { it.topZ to it.extruderBambu }
                 .sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
             val nativeSorted = nativeTargetsOrNull
                 .distinctBy { it.topZ to it.extruderBambu }
                 .sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
-            check(xmlSorted == nativeSorted) {
-                "LayerToolPauseInjector dual-path divergence: " +
-                    "xml=$xmlSorted native=$nativeSorted plateIdx=$plateIdx model=${model3mf.name}"
+            if (xmlSorted.isNotEmpty()) {
+                check(xmlSorted == nativeSorted) {
+                    "LayerToolPauseInjector dual-path divergence: " +
+                        "xml=$xmlSorted native=$nativeSorted plateIdx=$plateIdx model=${model3mf.name}"
+                }
             }
         }
 
-        // Production: prefer native-derived targets when available, else fall back to XML.
-        // Fallback is belt-and-braces — native should always return a payload when a model
-        // is loaded, but STL and pre-migration fixtures may hit the null branch harmlessly.
+        // Prefer native-derived targets when present and non-empty (reflects the live g_model
+        // customGcode at injection time — most accurate for per-plate selection). Fall through
+        // to XML when native is null (model cleared) or empty (post-slice state that drops
+        // plates_custom_gcodes, or embedded file with metadata stripped for native-slice
+        // fallback — see flippyFlappyMini_embedDropsLayerToolMetadataForNativeSliceFallback).
         val pauseTargets: MutableList<PauseTarget> =
-            (nativeTargetsOrNull ?: xmlTargets).toMutableList()
+            nativeTargetsOrNull?.takeIf { it.isNotEmpty() }
+                ?.toMutableList()
+                ?: xmlTargets.toMutableList()
 
         if (pauseTargets.isEmpty()) return false
 
@@ -182,8 +187,10 @@ object LayerToolPauseInjector {
      * and `"ToolChange"`. `printZ` (Double) narrows to [Float]; `extruder` stays 1-based.
      * Returns an empty list on any parse error — never throws.
      *
-     * Paired with the Kotlin-XML path [extractPauseTargets] for dual-path verification during
-     * Phase 1 migration. See `docs/superpowers/plans/2026-04-24-phase1-layer-tool-pause-injector.md`.
+     * Paired with the Kotlin-XML path [extractPauseTargets]: native wins when g_model has
+     * customGcode rows present; XML is the permanent fallback for post-slice / embedded-file
+     * cases where native returns null or empty. See
+     * `docs/superpowers/plans/2026-04-24-phase1-layer-tool-pause-injector.md`.
      */
     private fun extractPauseTargetsFromNativeJson(plateJson: String): List<PauseTarget> {
         return try {
