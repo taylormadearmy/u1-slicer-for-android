@@ -698,9 +698,12 @@ class MergeThreeMfInfoTest {
     @Test
     fun `mergeThreeMfInfoForPlate painted plate shows hasPaintData true`() {
         // After selecting plate 5 (painted SEMM), hasPaintData must be true in merged result.
+        // Sub-plan #2c: merge now sources plate-level paint state from the sourcePlate's
+        // hasPaintData field (set at parse time by ThreeMfParser's per-plate visual-colour
+        // pass). Tests construct the plate with the flag to reflect the new contract.
         val sourceInfo = ThreeMfInfo(
             objects = emptyList(),
-            plates = listOf(ThreeMfPlate(5, "Plate 5", listOf("obj5"))),
+            plates = listOf(ThreeMfPlate(plateId = 5, name = "Plate 5", objectIds = listOf("obj5"), hasPaintData = true)),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
             hasPaintData = true,
@@ -712,7 +715,7 @@ class MergeThreeMfInfoTest {
         val plateInfo = ThreeMfInfo(
             objects = emptyList(), plates = emptyList(),
             isBambu = false, isMultiPlate = false,
-            hasPaintData = true,   // plate 5 has paint
+            hasPaintData = true,   // legacy fallback; merge uses sourcePlate.hasPaintData first
             usedExtruderIndices = setOf(1, 2)
         )
         val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 5)
@@ -872,10 +875,14 @@ class MergeThreeMfInfoTest {
     @Test
     fun `mergeThreeMfInfoForPlate is NOT Hueforge when plate has paint data`() {
         // SEMM plate with layer-tool changes: plate-level hasPaintData=true overrides isHueforgePlate.
+        // Sub-plan #2c: merge now sources plate-level paint state from
+        // sourceInfo.plates[N].hasPaintData (set at parse time by ThreeMfParser's
+        // per-plate visual-colour pass). Tests construct the sourcePlate with the flag
+        // to reflect the post-#2c contract.
         val sourceInfo = ThreeMfInfo(
             objects = emptyList(),
             plates = listOf(
-                ThreeMfPlate(1, "painted", listOf("1"))
+                ThreeMfPlate(plateId = 1, name = "painted", objectIds = listOf("1"), hasPaintData = true)
             ),
             isBambu = true, isMultiPlate = false,
             hasLayerToolChanges = true,
@@ -888,7 +895,7 @@ class MergeThreeMfInfoTest {
         val plateInfo = ThreeMfInfo(
             objects = emptyList(), plates = emptyList(),
             isBambu = false, isMultiPlate = false,
-            hasPaintData = true,  // this plate's extracted file has paint data
+            hasPaintData = true,  // legacy fallback; ignored when sourcePlate.hasPaintData is set
             usedExtruderIndices = setOf(1, 2)
         )
         val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 1)

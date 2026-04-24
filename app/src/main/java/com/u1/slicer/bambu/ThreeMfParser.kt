@@ -314,6 +314,24 @@ object ThreeMfParser {
                     detectedColors.clear()
                     detectedColors.addAll(layerToolColors)
                 }
+                // Sub-plan #2c: compute per-plate paint state so ThreeMfPlate.hasPaintData
+                // carries plate-scoped information. mergeThreeMfInfoForPlate reads this to
+                // decide whether a selected plate is painted — replaces the pre-#2c Kotlin
+                // extractPlate + parseForPlateSelection pass that derived hasPaintData by
+                // running the parse on a single-plate extracted file.
+                val paintByPlate: Map<Int, Boolean> = if (modelEntry != null && plateObjectMap.isNotEmpty()) {
+                    val componentPathsByObject = zip.getInputStream(modelEntry).use(::parseComponentPaths)
+                    computeVisualColorCountByPlate(
+                        zip = zip,
+                        modelEntry = modelEntry,
+                        plateObjectMap = plateObjectMap,
+                        componentPathsByObject = componentPathsByObject,
+                        extruderAssignments = extruderAssignments
+                    ).mapValues { it.value.hasPaint }
+                } else {
+                    emptyMap()
+                }
+
                 // Build plates: use model_settings.config plate→object mappings when
                 // available (groups multiple objects per plate correctly), otherwise
                 // fall back to 1 build item = 1 plate (old behavior for non-Bambu files).
@@ -340,7 +358,8 @@ object ThreeMfParser {
                             thumbnailBytes = thumbnailBytes,
                             layerToolColors = plateLtInfo?.colors.orEmpty(),
                             layerToolExtruders = plateLtInfo?.extruders.orEmpty(),
-                            hasLayerToolChanges = plateLtInfo?.hasToolChanges == true
+                            hasLayerToolChanges = plateLtInfo?.hasToolChanges == true,
+                            hasPaintData = paintByPlate[plateId] == true
                         )
                     }
                 } else {
@@ -468,7 +487,11 @@ object ThreeMfParser {
                         plateId = plateId,
                         name = plateNames[plateId] ?: "Plate $plateId",
                         objectIds = plateObjectMap[plateId]?.toList() ?: emptyList(),
-                        filamentIndices = plateFilamentMap[plateId] ?: emptySet()
+                        filamentIndices = plateFilamentMap[plateId] ?: emptySet(),
+                        // Sub-plan #2c: per-plate paint state so mergeThreeMfInfoForPlate
+                        // can derive hasPaintData from sourceInfo directly instead of
+                        // re-running extractPlate + parseForPlateSelection on disk.
+                        hasPaintData = visualColorCountByPlate[plateId]?.hasPaint == true
                     )
                 }
                 val hasPaintDataForPlate = visualColorCountByPlate.values.any { it.hasPaint }

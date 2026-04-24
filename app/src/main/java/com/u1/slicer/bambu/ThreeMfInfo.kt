@@ -13,7 +13,15 @@ data class ThreeMfPlate(
     /** Per-plate layer-tool change extruder indices (1-based) for this plate's XML section. */
     val layerToolExtruders: Set<Int> = emptySet(),
     /** True if this plate's XML section contains at least one type-1 or type-2 layer entry. */
-    val hasLayerToolChanges: Boolean = false
+    val hasLayerToolChanges: Boolean = false,
+    /**
+     * True when this plate's objects carry paint data (paint_color / mmu_segmentation attributes).
+     * Sourced from [ThreeMfParser]'s `computeVisualColorCountByPlate` pass. Sub-plan #2c relies on
+     * this flag to let `mergeThreeMfInfoForPlate` derive plate-local paint state without running
+     * a separate Kotlin plate extraction + reparse pass. Defaults to `false` for non-Bambu files
+     * and any plate the visual-colour pass didn't classify as painted.
+     */
+    val hasPaintData: Boolean = false
 ) {
     val translationX: Float get() = transform[9]
     val translationY: Float get() = transform[10]
