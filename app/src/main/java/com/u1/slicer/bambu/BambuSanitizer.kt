@@ -1621,7 +1621,7 @@ $componentRefs    </components>
         return outputFile
     }
 
-    private fun filterCustomGcodePerLayer(xml: String, targetPlateId: Int): String {
+    internal fun filterCustomGcodePerLayer(xml: String, targetPlateId: Int): String {
         val header = """<?xml version="1.0" encoding="utf-8"?>"""
         val plateRegex = Regex("""<plate>[\s\S]*?</plate>""")
         val selectedBlock = plateRegex.findAll(xml)
