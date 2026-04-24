@@ -488,7 +488,8 @@ class ProfileEmbedder(private val context: Context) {
         config: Map<String, Any>,
         outputDir: File,
         info: ThreeMfInfo,
-        extruderRemap: Map<Int, Int>? = null
+        extruderRemap: Map<Int, Int>? = null,
+        plateId: Int? = null
     ): File {
         val outputFile = File(outputDir, "embedded_${inputFile.name}")
         val configIni = serializeConfig(config)
@@ -571,7 +572,31 @@ class ProfileEmbedder(private val context: Context) {
                         // native slice path becomes extremely slow when this metadata is present,
                         // while the U1-compatible output is produced by LayerToolPauseInjector.
                         name == "Metadata/custom_gcode_per_layer.xml" && info.hasLayerToolChanges -> {
-                            Log.i(TAG, "Skipping custom_gcode_per_layer.xml in embedded file; native slice uses pause-injection fallback")
+                            // Sub-plan #2b: when a plateId is supplied (from
+                            // SlicerViewModel.selectPlate), retain the XML but filter it
+                            // to the target plate so sub-plan #3's XML fallback in
+                            // LayerToolPauseInjector has plate-scoped entries at injection
+                            // time. Legacy callers that pass plateId=null keep the previous
+                            // "drop" behaviour (native slice still runs clean; fallback
+                            // simply finds nothing).
+                            //
+                            // filterCustomGcodePerLayer takes a 1-based plate_info id (same
+                            // as Bambu's XML convention); SlicerViewModel passes plateId
+                            // from UI (1-based already).
+                            if (plateId != null) {
+                                val content = srcZip.getInputStream(entry).readBytes()
+                                val filtered = BambuSanitizer.filterCustomGcodePerLayer(
+                                    String(content), plateId
+                                )
+                                if (filtered.isNotBlank()) {
+                                    writeStored(destZip, name, filtered.toByteArray())
+                                    Log.i(TAG, "Filtered custom_gcode_per_layer.xml to plate $plateId")
+                                } else {
+                                    Log.w(TAG, "filterCustomGcodePerLayer returned blank for plate $plateId; dropping")
+                                }
+                            } else {
+                                Log.i(TAG, "Skipping custom_gcode_per_layer.xml in embedded file; native slice uses pause-injection fallback")
+                            }
                         }
                         else -> {
                             rawCopyEntry(srcZip, entry, destZip)
