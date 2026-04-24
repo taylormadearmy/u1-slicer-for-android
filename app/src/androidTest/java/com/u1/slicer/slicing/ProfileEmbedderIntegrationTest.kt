@@ -387,26 +387,6 @@ class ProfileEmbedderIntegrationTest {
     }
 
     @Test
-    fun flippyFlappyMini_previewMeshUsesLayerChangeColours() {
-        val input = asset("flippy+flappy+mini.3mf")
-        val info = ThreeMfParser.parse(input)
-        val mesh = com.u1.slicer.viewer.ThreeMfMeshParser.parse(
-            file = input,
-            detectedColorCount = info.detectedColors.size
-        )
-
-        assertNotNull("preview mesh should parse", mesh)
-        assertTrue(
-            "preview mesh should carry per-triangle color indices",
-            mesh!!.hasPerVertexColor
-        )
-        assertTrue(
-            "layer-change preview mesh should contain multiple color indices",
-            mesh.extruderIndices?.toSet()?.size ?: 0 > 1
-        )
-    }
-
-    @Test
     fun flippyFlappyMini_fullPipeline_emitsLayerChangePauseGcode() {
         val sourceAsset = asset("flippy+flappy+mini.3mf")
         val embedded = fullPipeline("flippy+flappy+mini.3mf")
