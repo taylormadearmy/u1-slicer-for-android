@@ -1130,13 +1130,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     plateInfo
                 _threeMfInfo.value = mergedPlateInfo
                 resetToolRemapState()
-                // Re-embed the selected plate so slice-time config preserves the
-                // original file's layer-change settings (SEMM/pause G-code), not just
-                // the preview metadata merged above.
-                val embeddedPlateFile = embedProfile(plateFile, mergedPlateInfo, workspaceDir)
+                // Phase 1 sub-plan #2b: embed profile on the ORIGINAL source file with
+                // plateId threaded through, not on the Kotlin-extracted plateFile. Native
+                // loadModelForPlate filters objects to plate N at BBS import (bbs_3mf.cpp:1921-1940).
+                // ProfileEmbedder.embed(plateId = plateId) keeps custom_gcode_per_layer.xml
+                // but filters it to plate N so sub-plan #3's XML fallback sees only the
+                // target plate's layer-tool rows.
+                //
+                // extractPlate + restructurePlateFile above still run — their output feeds
+                // parseForPlateSelection above to preserve the exact plateInfo shape the
+                // merge expects (single-plate hasPaintData is B81-critical). They no longer
+                // feed native, which is the slice-time path #2b is retiring from disk.
+                val embeddedPlateFile = embedProfile(file, mergedPlateInfo, workspaceDir, plateId = plateId)
                 ensureActive()
                 currentModelFile = embeddedPlateFile
-                loadNativeModel(embeddedPlateFile)
+                // plateId is 1-based from the UI; loadNativeModel's plateIdx is 0-based Kotlin
+                // convention; the JNI wrapper converts to BBS plate_id = plateIdx + 1.
+                loadNativeModel(embeddedPlateFile, plateId - 1)
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
@@ -1175,7 +1185,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (_multiPlatePlates.value.isNotEmpty()) _showPlateSelector.value = true
     }
 
-    private suspend fun loadNativeModel(file: File) {
+    private suspend fun loadNativeModel(file: File, plateIdx: Int = -1) {
         val firstModelLoadThisLaunch = diagnostics.markFirstModelLoad()
         // Stale cached mesh from a previous model/plate load would cause InlineModelPreview's
         // LaunchedEffect(modelRotation, modelFilePath) to hit the B49 early-return guard and
@@ -1185,8 +1195,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // getPreparePreviewMesh (on the preview coroutine) is iterating model volumes
         // while we clear+reload here.  Large model QEM decimation can hold the lock for
         // 30+ seconds; without this, loading a new model while QEM is running crashes.
+        // Phase 1 sub-plan #2b: plateIdx >= 0 routes through loadModelForPlate so the
+        // BBS importer filters objects to m_plater_data[plateIdx+1] at ingestion.
+        // plateIdx = -1 (the default) preserves the legacy loadModel(path) behaviour.
         val success = NativeLibrary.previewMutex.withLock {
-            native.loadModel(file.absolutePath)
+            if (plateIdx >= 0) {
+                native.loadModelForPlate(file.absolutePath, plateIdx)
+            } else {
+                native.loadModel(file.absolutePath)
+            }
         }
         diagnostics.recordEvent(
             "native_model_load",
@@ -1703,7 +1720,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Build Snapmaker profile config and embed it into the 3MF file.
      * Replaces BambuSanitizer.process() for the OrcaSlicer backend.
      */
-    private fun embedProfile(file: java.io.File, info: ThreeMfInfo, outputDir: java.io.File): java.io.File {
+    private fun embedProfile(file: java.io.File, info: ThreeMfInfo, outputDir: java.io.File, plateId: Int? = null): java.io.File {
         val cfg = _config.value
         val extCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
@@ -1750,7 +1767,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             overrides = buildProfileOverrides(cfg, targetCount, usedSlots, hasSourceConfig = sourceConfig != null),
             targetExtruderCount = targetCount
         )
-        return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap)
+        return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
     }
 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
