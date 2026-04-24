@@ -2354,15 +2354,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
                     Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
 
+                    // Sub-plan #2c P1 fix: when a plate is selected (currentPlateId > 0), the
+                    // plate-filtered custom_gcode_per_layer.xml lives in currentModelFile
+                    // (the embedded file produced with plateId threading via ProfileEmbedder).
+                    // sourceModelFile carries the FULL multi-plate source whose XML has all
+                    // plates' layer-tool entries — reading it as the fallback would inject
+                    // pauses for non-selected plates post-slice. Prefer currentModelFile
+                    // whenever a plate is selected; fall back to sourceModelFile only for
+                    // non-plate (STL / single-plate) flows.
+                    val activePlateIdUi = _currentPlateId.value
                     val layerToolMetadataFile = when {
                         _threeMfInfo.value?.hasLayerToolChanges != true -> null
+                        activePlateIdUi > 0 && currentModelFile?.exists() == true -> currentModelFile
                         sourceModelFile?.exists() == true -> sourceModelFile
                         else -> currentModelFile
                     }
                     // Native nativeGetPlateData takes a 0-based plate index. _currentPlateId is
                     // 1-based (or -1 when no plate selected — treat as plate 0 for the injector
                     // fallback, matching the STL / single-plate default used elsewhere).
-                    val plateIdxForInjector = (_currentPlateId.value - 1).coerceAtLeast(0)
+                    val plateIdxForInjector = (activePlateIdUi - 1).coerceAtLeast(0)
                     val injectedLayerToolPause = layerToolMetadataFile
                         ?.let {
                             LayerToolPauseInjector.injectFrom3mf(

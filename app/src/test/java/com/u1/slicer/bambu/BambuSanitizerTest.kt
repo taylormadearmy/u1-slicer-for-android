@@ -845,6 +845,70 @@ class BambuSanitizerTest {
         assertEquals("Scalar value clamped", "231.000", config["wipe_tower_y"])
     }
 
+    // ── Sub-plan #2c P2 regression tests for filterCustomGcodePerLayer ───────
+
+    @Test
+    fun `filterCustomGcodePerLayer returns blank when target plate not in xml`() {
+        // P2 fail-closed: pre-fix this returned the full unfiltered XML on miss,
+        // which silently routed all plates' layer-tool entries into the embedded
+        // output post-sub-plan-#2b. Post-fix: miss = blank = embed drops the XML.
+        val xml = """<?xml version="1.0"?>
+<custom_gcodes_per_layer>
+  <plate>
+    <plate_info id="1"/>
+    <layer top_z="1.6" type="2" extruder="2" color="#AA0000"/>
+  </plate>
+  <plate>
+    <plate_info id="2"/>
+    <layer top_z="3.2" type="2" extruder="3" color="#00AA00"/>
+  </plate>
+</custom_gcodes_per_layer>"""
+        val result = BambuSanitizer.filterCustomGcodePerLayer(xml, targetPlateId = 99)
+        assertEquals("missing target plate must return blank (fail-closed)", "", result)
+    }
+
+    @Test
+    fun `filterCustomGcodePerLayer tolerates attribute-order and whitespace variants`() {
+        // P2 flexible match: Bambu exports may use minor format variations
+        // (whitespace before />, extra attributes, attribute order). Pre-fix
+        // exact-string matching would miss these and fail-open to the full
+        // unfiltered XML. Post-fix uses the flexible regex that matches
+        // ThreeMfParser.parseLayerToolCustomGcodeXmlPerPlate's contract.
+        val variants = listOf(
+            """<plate_info id="1"/>""",
+            """<plate_info id="1" />""",
+            """<plate_info  id="1"/>""",
+            """<plate_info id="1" name="Plate 1"/>""",
+            """<plate_info name="Plate 1" id="1"/>"""
+        )
+        for (variant in variants) {
+            val xml = """<?xml version="1.0"?>
+<custom_gcodes_per_layer>
+  <plate>
+    $variant
+    <layer top_z="1.6" type="2" extruder="2" color="#AA0000"/>
+  </plate>
+  <plate>
+    <plate_info id="2"/>
+    <layer top_z="3.2" type="2" extruder="3" color="#00AA00"/>
+  </plate>
+</custom_gcodes_per_layer>"""
+            val result = BambuSanitizer.filterCustomGcodePerLayer(xml, targetPlateId = 1)
+            assertTrue(
+                "variant '$variant' should produce non-blank filtered output",
+                result.isNotBlank()
+            )
+            assertTrue(
+                "variant '$variant' must keep plate 1's layer (top_z=1.6)",
+                result.contains("""top_z="1.6"""")
+            )
+            assertFalse(
+                "variant '$variant' must NOT keep plate 2's layer (top_z=3.2)",
+                result.contains("""top_z="3.2"""")
+            )
+        }
+    }
+
     // Helper: simplified INI parser matching BambuSanitizer's logic
     private fun parseTestIniConfig(content: String): MutableMap<String, Any> {
         val config = mutableMapOf<String, Any>()

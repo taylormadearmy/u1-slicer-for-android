@@ -1632,17 +1632,28 @@ $componentRefs    </components>
 
     internal fun filterCustomGcodePerLayer(xml: String, targetPlateId: Int): String {
         val header = """<?xml version="1.0" encoding="utf-8"?>"""
+        // Sub-plan #2c P2 fix: use a flexible plate_info id matcher matching
+        // ThreeMfParser.parseLayerToolCustomGcodeXmlPerPlate's regex — tolerates
+        // whitespace, attribute order, namespace prefixes, and trailing attrs.
+        // Fail-closed on miss (return blank) instead of the pre-#2b "return full
+        // unfiltered XML" behaviour — post-#2b this is on the production plate
+        // selection path, so returning unfiltered would silently route all plates'
+        // layer-tool entries into the embedded output and then into the pause
+        // injector on post-slice fallback.
         val plateRegex = Regex("""<plate>[\s\S]*?</plate>""")
+        val plateInfoIdRegex = Regex("""<plate_info\b[^>]*\bid="(\d+)"""")
         val selectedBlock = plateRegex.findAll(xml)
             .map { it.value }
             .firstOrNull { block ->
-                block.contains("""<plate_info id="$targetPlateId"/>""")
+                plateInfoIdRegex.find(block)?.groupValues?.getOrNull(1)?.toIntOrNull() == targetPlateId
             }
-            ?: return xml
-        val renumberedBlock = selectedBlock.replace(
-            Regex("""<plate_info id="$targetPlateId"\s*/>"""),
-            """<plate_info id="1"/>"""
-        )
+            ?: return ""
+        // Renumber the selected plate's plate_info id to 1 so downstream consumers
+        // see a normalised single-plate XML. Use the flexible regex so we rewrite
+        // any attribute-order / whitespace variant the match tolerated.
+        val renumberedBlock = selectedBlock.replace(plateInfoIdRegex) { match ->
+            match.value.replace(Regex("""id="\d+""""), """id="1"""")
+        }
         return buildString {
             appendLine(header)
             appendLine("<custom_gcodes_per_layer>")
