@@ -1098,7 +1098,7 @@ object ThreeMfParser {
                                                 // Per-part extruder: map part ID → extruder.
                                                 // Part IDs match component mesh object IDs in
                                                 // restructured files, enabling per-component
-                                                // coloring in ThreeMfMeshParser.
+                                                // coloring downstream.
                                                 extruderAssignments[currentPartId!!] = ext
                                             } else {
                                                 // Object-level extruder: track as default for

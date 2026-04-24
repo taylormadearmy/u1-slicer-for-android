@@ -2188,9 +2188,9 @@ fun InlineModelPreview(
     onMeshCached: ((MeshData) -> Unit)? = null,
     extruderMap: Map<Int, Byte>? = null,
     colorMapping: List<Int>? = null,
-    // Use Kotlin ThreeMfMeshParser only for painted/SEMM models (hasPaintData=true).
-    // All other 3MF files use the native getPreparePreviewMesh() path (QEM decimation).
-    // Avoids parsing giant uncompressed XML streams for large multi-colour models (F1 calendar).
+    // Painted/SEMM models (hasPaintData=true) are gated on the larger triangle budget
+    // (MAX_KOTLIN_PREVIEW_TRIANGLES) before falling back to LargePreviewFallback — avoids
+    // OOM on giant multi-colour models (F1 calendar).
     hasPaintData: Boolean = false,
     // Placement mode
     objectPositions: FloatArray? = null,
@@ -2283,11 +2283,8 @@ fun InlineModelPreview(
                     modelFilePath.endsWith(".stl", ignoreCase = true) ->
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
-                        // B46 fix: ALL 3MF models use the native getPreparePreviewMesh()
-                        // path via the rotation LaunchedEffect below. The Kotlin
-                        // ThreeMfMeshParser created seam artifacts at color boundaries
-                        // and lost color regions for painted/SEMM models. The native path
-                        // produces clean meshes with correct per-state color grouping.
+                        // B46: all 3MF models use the native getPreparePreviewMesh() path
+                        // via the rotation LaunchedEffect below.
                         null  // rotation effect owns this fetch for all 3MF
                     else -> null
                 }
@@ -2358,9 +2355,7 @@ fun InlineModelPreview(
         v.requestRender()
     }
 
-    // Re-fetch preview mesh when rotation changes (all 3MF models).
-    // B46 fix: painted/SEMM models also use this native path now — the Kotlin
-    // ThreeMfMeshParser path created seam artifacts and lost color boundaries.
+    // Re-fetch preview mesh when rotation changes (all 3MF models, painted included).
     // Rotation is not user-adjustable for painted models, but the initial call
     // (rot=0,0,0) correctly initializes instance transforms via setModelRotation()
     // before calling getPreparePreviewMesh().

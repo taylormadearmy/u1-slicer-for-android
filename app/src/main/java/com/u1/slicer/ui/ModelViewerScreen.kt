@@ -41,10 +41,9 @@ fun ModelViewerScreen(
                 mesh = when {
                     file.name.endsWith(".stl", ignoreCase = true) -> StlParser.parse(file)
                     file.name.endsWith(".3mf", ignoreCase = true) -> {
-                        // Sub-plan #1 retirement: the native preview mesh path replaces the
-                        // Kotlin ThreeMfMeshParser. Load-then-read under previewMutex so we
-                        // don't race with the Prepare screen's concurrent slicing / rotation
-                        // actions. loadModel is idempotent for the same file.
+                        // Load then read under previewMutex so we don't race the Prepare
+                        // screen's concurrent slicing / rotation actions; loadModel is
+                        // idempotent for the same file.
                         val native = NativeLibrary()
                         NativeLibrary.previewMutex.withLock {
                             if (native.loadModel(file.absolutePath)) {
