@@ -61,7 +61,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 810 tests across 57 classes
+### Unit tests (`app/src/test/`) - 812 tests across 57 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -104,7 +104,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `WipeTowerClampTest.kt` (8) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width; resolveWipeTowerWidth/resolveWipeTowerDepth: return active override or config default
 - `data/WipeTowerDepthEstimatorTest.kt` (8) — height-based depth lookup table; primeVolume override wins when larger than height-based minimum
 - `viewer/GcodeRendererGeometryTest.kt` (21) — segment packer: chain construction, shared vertices, travel breaks, turning angles (90°, straight, caps), z-offset, layer ranges, extruder/feature colors, brightness gradient, color encode/decode round-trip, texture dimensions, 400k stress test
-- `gcode/LayerToolPauseInjectorTest.kt` (9) — PAUSE_PRINT injection for layer-tool colour swaps
+- `gcode/LayerToolPauseInjectorTest.kt` (11) — PAUSE_PRINT injection for layer-tool colour swaps; includes 2 direct unit tests for extractPauseTargetsFromNativeJson (sub-plan #3 native-JSON path)
 - `LargeModelLoadingMessageTest.kt` (5) — large model loading state messages
 - `SliceResultFromJobTest.kt` (2) — SliceResult construction from SliceJob
 - `printer/PrintProgressNotifierTest.kt` (3) — print progress notification logic
