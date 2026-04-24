@@ -127,6 +127,8 @@ object ThreeMfParser {
                 val plateFilamentMap = mutableMapOf<Int, Set<Int>>()
 
                 val allExtruderValuesMain = mutableSetOf<Int>()
+                val objectPartExtrudersMain = mutableMapOf<String, MutableSet<Int>>()
+                val compoundPartParentsMain = mutableMapOf<String, String>()
                 if (isBambu) {
                     val msEntry = zip.getEntry("Metadata/model_settings.config")
                     if (msEntry != null) {
@@ -135,7 +137,9 @@ object ThreeMfParser {
                             plateNames, objectNames, extruderAssignments,
                             plateObjectMap,
                             plateFilamentMap,
-                            allExtruderValues = allExtruderValuesMain
+                            allExtruderValues = allExtruderValuesMain,
+                            objectPartExtruders = objectPartExtrudersMain,
+                            compoundPartParents = compoundPartParentsMain
                         )
                         if (plateObjectMap.isNotEmpty()) {
                             Log.i(TAG, "Plate→object mapping: ${plateObjectMap.size} plates — $plateObjectMap")
@@ -432,6 +436,8 @@ object ThreeMfParser {
                     hasPlateJsons = plateJsonCount > 1,
                     usedExtruderIndices = uniqueExtruders,
                     objectExtruderMap = extruderAssignments.toMap(),
+                    objectPartExtruders = objectPartExtrudersMain.mapValues { it.value.toSet() },
+                    compoundPartParents = compoundPartParentsMain.toMap(),
                     layerToolSegments = layerToolSegments
                 )
             }
@@ -464,13 +470,17 @@ object ThreeMfParser {
                 val msEntry = zip.getEntry("Metadata/model_settings.config")
                     ?: zip.getEntry("Metadata/Slic3r_PE_model.config")
                 val allExtruderValues = mutableSetOf<Int>()
+                val objectPartExtrudersLite = mutableMapOf<String, MutableSet<Int>>()
+                val compoundPartParentsLite = mutableMapOf<String, String>()
                 if (msEntry != null) {
                     parseModelSettingsConfig(
                         zip.getInputStream(msEntry),
                         plateNames, objectNames, extruderAssignments,
                         plateObjectMap,
                         plateFilamentMap,
-                        allExtruderValues = allExtruderValues
+                        allExtruderValues = allExtruderValues,
+                        objectPartExtruders = objectPartExtrudersLite,
+                        compoundPartParents = compoundPartParentsLite
                     )
                 }
 
@@ -573,7 +583,9 @@ object ThreeMfParser {
                     detectedColors = detectedColors,
                     detectedExtruderCount = detectedExtruderCount,
                     usedExtruderIndices = if (filteredExtruders.isNotEmpty()) filteredExtruders else effectiveExtruders,
-                    objectExtruderMap = extruderAssignments.toMap()
+                    objectExtruderMap = extruderAssignments.toMap(),
+                    objectPartExtruders = objectPartExtrudersLite.mapValues { it.value.toSet() },
+                    compoundPartParents = compoundPartParentsLite.toMap()
                 )
             }
         } catch (e: Exception) {
@@ -1053,7 +1065,9 @@ object ThreeMfParser {
         extruderAssignments: MutableMap<String, Int>,
         plateObjectMap: MutableMap<Int, MutableList<String>> = mutableMapOf(),
         plateFilamentMap: MutableMap<Int, Set<Int>> = mutableMapOf(),
-        allExtruderValues: MutableSet<Int>? = null
+        allExtruderValues: MutableSet<Int>? = null,
+        objectPartExtruders: MutableMap<String, MutableSet<Int>>? = null,
+        compoundPartParents: MutableMap<String, String>? = null
     ) {
         try {
             val parser = createParser(inputStream)
@@ -1086,6 +1100,14 @@ object ThreeMfParser {
                                 // The part id matches the inlined mesh object ID in restructured
                                 // files, so we track it for per-part extruder assignment.
                                 currentPartId = parser.getAttributeValue(null, "id")
+                                // Sub-plan #2c fix: track part→parent mapping so plate-scoped
+                                // filters (buildSelectedPlateInfo) can identify parts as
+                                // belonging to their parent object's plate.
+                                val partId = currentPartId
+                                val objId = currentObjectId
+                                if (partId != null && objId != null) {
+                                    compoundPartParents?.put(partId, objId)
+                                }
                             }
                             "metadata" -> {
                                 val key = parser.getAttributeValue(null, "key") ?: ""
@@ -1138,6 +1160,17 @@ object ThreeMfParser {
                                                 if (ext > current) extruderAssignments[currentObjectId!!] = ext
                                             }
                                             allExtruderValues?.add(ext)
+                                            // Sub-plan #2c fix: track ALL extruders used by this
+                                            // object, including per-part extruders. Unlike
+                                            // extruderAssignments (max-per-object), this captures
+                                            // the full per-part palette — critical for compound
+                                            // objects like Dragon Scale plate 3 (one object, three
+                                            // parts each on a different extruder) where the
+                                            // object-level-only view would collapse to a single
+                                            // extruder in buildSelectedPlateInfo.
+                                            objectPartExtruders
+                                                ?.getOrPut(currentObjectId!!) { mutableSetOf() }
+                                                ?.add(ext)
                                         }
                                     }
                                 }

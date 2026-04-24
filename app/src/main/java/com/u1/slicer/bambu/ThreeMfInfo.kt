@@ -66,6 +66,26 @@ data class ThreeMfInfo(
     /** Per-object extruder assignments: objectId (String) → 1-based extruder index.
      *  Used by mesh preview to color per-volume. */
     val objectExtruderMap: Map<String, Int> = emptyMap(),
+    /**
+     * Per-object ALL-extruders — for each object, the set of 1-based extruder indices
+     * used by that object's parts (sub-volumes) plus the object-level default. For
+     * Bambu compound objects (one `<object>` with many `<part>` children each on a
+     * different extruder), this captures the full per-part palette that the
+     * object-level-only `objectExtruderMap` collapses. Sub-plan #2c
+     * `buildSelectedPlateInfo` reads this to produce correct
+     * `sourcePlateObjectExtruders` for multi-part-single-object plates like Dragon
+     * Scale plate 3.
+     */
+    val objectPartExtruders: Map<String, Set<Int>> = emptyMap(),
+    /**
+     * Compound-object parent mapping — for each `<part>` id that appears inside an
+     * `<object>`, record the parent object's id. Lets plate-scoped filters treat a
+     * part as belonging to its parent object for plate-membership tests. Without
+     * this, `objectExtruderMap` filter by `sourcePlate.objectIds` would drop all
+     * part entries (their ids don't appear in plate→object mappings), losing the
+     * per-part extruder assignments needed by preview / embed downstream.
+     */
+    val compoundPartParents: Map<String, String> = emptyMap(),
     val layerToolSegments: List<LayerToolSegment>? = null
 ) {
     /** Whether the original Bambu structure must be preserved (not rebuilt with trimesh) */

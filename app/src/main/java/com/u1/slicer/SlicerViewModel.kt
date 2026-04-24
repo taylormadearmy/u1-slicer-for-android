@@ -3685,8 +3685,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val sourcePlate = sourceInfo.plates.firstOrNull { it.plateId == selectedPlateId }
                 ?: return sourceInfo
             val platesNarrowed = listOf(sourcePlate)
+            // Sub-plan #2c fix (Dragon Scale plate 3 regression): prefer per-object
+            // all-extruders (captures per-part extruders from `<part>` children) over
+            // the object-level default. Pre-#2c `restructurePlateFile` inlined parts as
+            // separate objects, which made per-object-only lookups sufficient. Post-#2c
+            // we consume the source file directly where a compound object's parts live
+            // inside a single `<object>` and their extruders must be unioned explicitly.
             val plateObjectExtruders = sourcePlate.objectIds
-                .mapNotNull { sourceInfo.objectExtruderMap[it] }
+                .flatMap { objectId ->
+                    val perPart = sourceInfo.objectPartExtruders[objectId]
+                    if (!perPart.isNullOrEmpty()) perPart
+                    else listOfNotNull(sourceInfo.objectExtruderMap[objectId])
+                }
                 .filter { it > 0 }
                 .toSet()
             // Sub-plan #2c review fix (completeness): for painted plates, use the
@@ -3707,9 +3717,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // into downstream consumers like computeSlicerColorOrder (painted-plate
             // dominance) and the preview palette, letting other plates influence the
             // selected plate's palette order.
+            //
+            // Sub-plan #2c fix (Dragon Scale plate 3): compound-object part entries
+            // live in objectExtruderMap keyed by partId, not objectId — and partIds
+            // don't appear in any plate's objectIds (they're inside the parent
+            // object). Keep a part iff its parent object is in the selected plate.
             val plateObjectIdSet = sourcePlate.objectIds.toSet()
             val plateScopedObjectExtruderMap = sourceInfo.objectExtruderMap
-                .filterKeys { it in plateObjectIdSet }
+                .filterKeys { key ->
+                    key in plateObjectIdSet ||
+                        sourceInfo.compoundPartParents[key]?.let { it in plateObjectIdSet } == true
+                }
             return sourceInfo.copy(
                 plates = platesNarrowed,
                 usedExtruderIndices = plateUsedExtruders,

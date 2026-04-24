@@ -529,7 +529,31 @@ class ProfileEmbedder(private val context: Context) {
                             } else {
                                 val content = srcZip.getInputStream(entry).readBytes()
                                 val cleaned = cleanModelXmlForOrcaSlicer(content, info.hasPaintData)
-                                writeStored(destZip, name, cleaned)
+                                // Sub-plan #2c defensive fix: when a plateId is supplied
+                                // (from SlicerViewModel.selectPlate), filter the main model's
+                                // <build> items to the target plate's objects. Belt-and-braces
+                                // against files where the native BBS plate_id filter silently
+                                // doesn't take effect (e.g., files lacking proper plate
+                                // model_instance entries). Without this, selecting a plate
+                                // from a multi-plate file would load all plates' build items
+                                // and slice with a 625×625mm+ bounding box.
+                                val finalBytes = if (plateId != null && name == "3D/3dmodel.model") {
+                                    val plateObjectIds = info.plates
+                                        .firstOrNull { it.plateId == plateId }
+                                        ?.objectIds
+                                        ?.toSet()
+                                    val filtered = BambuSanitizer.filterModelToPlate(
+                                        String(cleaned),
+                                        targetPlateId = plateId,
+                                        hasPlateJsons = info.hasPlateJsons,
+                                        plateObjectIds = plateObjectIds
+                                    )
+                                    Log.i(TAG, "Filtered 3D/3dmodel.model <build> to plate $plateId (${plateObjectIds?.size ?: 0} objectIds)")
+                                    filtered.toByteArray()
+                                } else {
+                                    cleaned
+                                }
+                                writeStored(destZip, name, finalBytes)
                             }
                         }
 

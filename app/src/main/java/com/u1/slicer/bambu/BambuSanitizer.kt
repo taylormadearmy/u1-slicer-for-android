@@ -1912,7 +1912,7 @@ $componentRefs    </components>
      *   safe to filter to 1 item).  false = older format (Dragon Scale / Shashibo style)
      *   where build items share component file refs and OrcaSlicer needs all of them.
      */
-    private fun filterModelToPlate(xml: String, targetPlateId: Int,
+    internal fun filterModelToPlate(xml: String, targetPlateId: Int,
                                    hasPlateJsons: Boolean = true,
                                    plateObjectIds: Set<String>? = null): String {
         val targetPlateIndex = targetPlateId - 1  // p:object_id is 0-based
