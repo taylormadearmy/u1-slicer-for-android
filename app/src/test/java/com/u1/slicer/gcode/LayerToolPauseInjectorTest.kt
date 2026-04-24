@@ -347,6 +347,54 @@ class LayerToolPauseInjectorTest {
         }
     }
 
+    @Test
+    fun `extractPauseTargetsFromNativeJson accepts ColorChange and ToolChange and drops other types`() {
+        val json = """
+            {
+              "customGcode": [
+                {"printZ": 3.2, "type": "ColorChange", "extruder": 2, "color": "#AA0000"},
+                {"printZ": 1.6, "type": "ToolChange",  "extruder": 3, "color": "#00AA00"},
+                {"printZ": 2.0, "type": "PausePrint",  "extruder": 1, "color": "#000000"},
+                {"printZ": 2.5, "type": "Template",    "extruder": 1, "color": ""},
+                {"printZ": 4.0, "type": "Custom",      "extruder": 1, "color": ""},
+                {"printZ": 5.0, "type": "1",           "extruder": 1, "color": ""},
+                {"printZ": 6.0, "type": "2",           "extruder": 1, "color": ""}
+              ]
+            }
+        """.trimIndent()
+        val targets = LayerToolPauseInjector.extractPauseTargetsFromNativeJsonForTest(json)
+        assertEquals(
+            "only ColorChange and ToolChange rows become targets, sorted ascending by topZ",
+            listOf(1.6f to 3, 3.2f to 2),
+            targets.map { it.topZ to it.extruderBambu }
+        )
+    }
+
+    @Test
+    fun `extractPauseTargetsFromNativeJson tolerates empty, missing, and malformed input`() {
+        assertEquals(
+            "empty customGcode array → empty list",
+            emptyList<Pair<Float, Int>>(),
+            LayerToolPauseInjector.extractPauseTargetsFromNativeJsonForTest(
+                """{"customGcode": []}"""
+            ).map { it.topZ to it.extruderBambu }
+        )
+        assertEquals(
+            "missing customGcode key → empty list",
+            emptyList<Pair<Float, Int>>(),
+            LayerToolPauseInjector.extractPauseTargetsFromNativeJsonForTest(
+                """{"plateIndex": 0}"""
+            ).map { it.topZ to it.extruderBambu }
+        )
+        assertEquals(
+            "malformed JSON → empty list (never throws)",
+            emptyList<Pair<Float, Int>>(),
+            LayerToolPauseInjector.extractPauseTargetsFromNativeJsonForTest(
+                """not-a-json"""
+            ).map { it.topZ to it.extruderBambu }
+        )
+    }
+
     private fun write(zip: ZipOutputStream, name: String, text: String) {
         zip.putNextEntry(ZipEntry(name))
         zip.write(text.toByteArray())

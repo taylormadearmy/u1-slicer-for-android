@@ -1,6 +1,9 @@
 package com.u1.slicer.gcode
 
+import androidx.annotation.VisibleForTesting
 import com.u1.slicer.bambu.parseLayerToolSegments
+import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
 import java.util.zip.ZipFile
@@ -20,7 +23,7 @@ object LayerToolPauseInjector {
      * [topZ] is the first layer whose Z is strictly above this (see inject loop).
      * [extruderBambu] is 1-based as in the file (1→T0, 2→T1, …). If missing, treated as 1.
      */
-    private data class PauseTarget(val topZ: Float, val extruderBambu: Int)
+    internal data class PauseTarget(val topZ: Float, val extruderBambu: Int)
 
     fun injectFrom3mf(gcodePath: String, model3mf: File): Boolean {
         if (!model3mf.exists() || !model3mf.name.endsWith(".3mf", ignoreCase = true)) return false
@@ -134,6 +137,41 @@ object LayerToolPauseInjector {
 
     private fun extractPauseTargets(xml: String): List<PauseTarget> =
         parseLayerToolSegments(xml).map { PauseTarget(it.topZ, it.extruderBambu) }
+
+    /**
+     * Decode the `customGcode` array from [com.u1.slicer.NativeLibrary.nativeGetPlateData]'s JSON
+     * payload into [PauseTarget] rows. Accepts only canonical native type strings `"ColorChange"`
+     * and `"ToolChange"`. `printZ` (Double) narrows to [Float]; `extruder` stays 1-based.
+     * Returns an empty list on any parse error — never throws.
+     *
+     * Paired with the Kotlin-XML path [extractPauseTargets] for dual-path verification during
+     * Phase 1 migration. See `docs/superpowers/plans/2026-04-24-phase1-layer-tool-pause-injector.md`.
+     */
+    private fun extractPauseTargetsFromNativeJson(plateJson: String): List<PauseTarget> {
+        return try {
+            val obj = JSONObject(plateJson)
+            val arr: JSONArray = obj.optJSONArray("customGcode") ?: return emptyList()
+            val out = ArrayList<PauseTarget>(arr.length())
+            for (i in 0 until arr.length()) {
+                val row = arr.optJSONObject(i) ?: continue
+                val type = row.optString("type", "")
+                if (type != "ColorChange" && type != "ToolChange") continue
+                val topZ = row.optDouble("printZ", Double.NaN)
+                if (topZ.isNaN()) continue
+                val extruder = row.optInt("extruder", 1)
+                out.add(PauseTarget(topZ.toFloat(), extruder))
+            }
+            out.sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
+        } catch (_: JSONException) {
+            emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    @VisibleForTesting
+    internal fun extractPauseTargetsFromNativeJsonForTest(plateJson: String): List<PauseTarget> =
+        extractPauseTargetsFromNativeJson(plateJson)
 
     /** Bambu `project_settings.config` JSON: `nozzle_temperature` array index matches T index (0 = T0, …). */
     private fun parseNozzleTemperatures(projectSettingsJson: String): Map<Int, Int>? {
