@@ -51,8 +51,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 873 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 216 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 844 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 212 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -61,14 +61,13 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 839 tests across 58 classes
+### Unit tests (`app/src/test/`) - 810 tests across 57 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
 - `viewer/StlParserTest.kt` (10) — Binary/ASCII STL parsing, bounding box, vertex data, 10-float vertex format
 - `viewer/MeshDataTest.kt` (11) — MeshData 10-float vertex format, extruderIndices, recolor(), RGBA values, multi-extruder recolor
-- `viewer/ThreeMfMeshParserTest.kt` (29) - 3MF mesh parsing, per-triangle color extraction, extruderMap, MeshWithContext, SEMM paint_color parsing, multi-object extruder map
 - `network/MakerWorldUtilsTest.kt` (36) — URL parsing, design→instance ID resolution, download response parsing, error classification, cookie sanitization
 - `network/MoonrakerClientTest.kt` (38) — PrinterStatus computed properties, URL normalization, LED state, remoteScreenUrl(), B33 virtual_sdcard progress parsing, sendGcode network path, queryWebcamSnapshotCandidates monitor.jpg appending
 - `data/SliceConfigTest.kt` (25) — Default values match Snapmaker U1 hardware specs, wipe tower bounds clamping
@@ -123,7 +122,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 
-### Instrumented tests (`app/src/androidTest/`) - 209 tests across 20 classes
+### Instrumented tests (`app/src/androidTest/`) - 205 tests across 19 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -136,10 +135,9 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/SemmSlicingTest.kt` (5) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard, B64 Flarewing Dragon colour permutation remap
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
-- `slicing/ProfileEmbedderIntegrationTest.kt` (14) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
+- `slicing/ProfileEmbedderIntegrationTest.kt` (13) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/NativePreparePreviewTest.kt` (16) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation, H2C benchy full/decimated 7-index preservation + green recolor + interleaving guard, layer-tool Z-band recolor, triangle count cap, B51 old.3mf bounding box + Korok orientation, B72 multi-instance post-slice bounds, B78 Shashibo plate 5 file-scale+centre preservation on fresh load + post-slice dirty-path reset
-- `viewer/ThreeMfMeshParserTest.kt` (4) - 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
 - `PreparePreviewViewModelTest.kt` (14) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix, entry-point equivalence for `loadModel(uri)` vs `loadModelFromFile(file)`, B86 S-Buttons user-like presets (E2=white/E4=pink) 4-distinct-colour guard, B92 Buzz plate 8 Prepare/Preview colour agreement with explicit slicerColorOrder permutation, B93 Buzz multi-plate cold load skips full-file embedProfile, B94 Spiderman drag-to-right preserved through slice, B92.1 v1.6.12 parsedGcode StateFlow reflects post-remap T-indices (no orphan extruder=1 moves for colorMapping=[0,3])
 - `ui/MakerWorldBrowserUtilsInstrumentedTest.kt` (6) — resolveDownloadFilename with URLUtil, RFC 5987, path traversal sanitization
 
@@ -207,10 +205,9 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 - Android Test Orchestrator runs each instrumented test in its own process — prevents native memory OOM
 - `MeshData` vertex format: 10 floats per vertex (3 pos + 3 normal + 4 RGBA); `extruderIndices` ByteArray stores per-triangle extruder index; `recolor(extruderColors)` updates RGBA in-place from extruder index → color mapping
 - `ModelRenderer.pendingRecolor` — thread-safe recolor mechanism: UI thread sets `pendingRecolor = colors`, GL thread applies via `meshData.recolor()` + VBO re-upload in `onDrawFrame()`
-- `ThreeMfMeshParser.MeshWithContext` — data class holding parsed `MeshData` + `objectId`; `extruderMap: Map<String, Int>` parameter maps object IDs to extruder indices for per-triangle coloring; `parsePaintIndex()` extracts extruder index from `paint_color`/`mmu_segmentation` triangle attributes for SEMM models
 - `ExtruderPickerRow` composable — row of 4 extruder chips (E1-E4) with color circles for single-color model extruder selection on Prepare screen
 - `selectedExtruder` StateFlow on SlicerViewModel — tracks which extruder is selected for single-color models; triggers live recolor of 3D preview
-- `objectExtruderMap` on `ThreeMfInfo` — `Map<String, Int>` of per-object extruder assignments parsed from `model_settings.config`; used by `ThreeMfMeshParser` for per-triangle coloring of multi-extruder Bambu models
+- `objectExtruderMap` on `ThreeMfInfo` — `Map<String, Int>` of per-object extruder assignments parsed from `model_settings.config`; feeds the native per-triangle colouring path for multi-extruder Bambu models
 
 ## Profile Key Pipeline
 
