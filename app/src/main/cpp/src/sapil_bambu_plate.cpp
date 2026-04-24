@@ -28,6 +28,10 @@ extern "C" {
 
 JNIEXPORT jint JNICALL
 Java_com_u1_slicer_NativeLibrary_nativeGetPlateCount(JNIEnv*, jobject) {
+    // Symmetric guard with nativeGetPlateData / the sub-plan #1 volume
+    // accessors: "no model loaded" is reported as 0 regardless of whether
+    // g_plate_data_list has transient residual state from a prior load.
+    if (sapil::g_model.objects.empty()) return 0;
     return static_cast<jint>(sapil::g_plate_data_list.size());
 }
 

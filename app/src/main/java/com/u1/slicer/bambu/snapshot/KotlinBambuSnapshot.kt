@@ -74,9 +74,12 @@ object KotlinBambuSnapshot {
         val nativeData = readNativeData(file, native)
 
         // Sub-plan #2: plates sourced from native PlateData via nativeGetPlateData.
-        // When loadModel fails (corrupt 3MF), fall back to the Kotlin
-        // ThreeMfParser-derived plate list + project palette so the snapshot is
-        // still populated.
+        // When loadModel fails (corrupt 3MF) — and only then — fall back to
+        // the Kotlin ThreeMfParser-derived plate list + project palette so the
+        // snapshot is still populated. An EMPTY native list is a legitimate
+        // outcome for non-Bambu 3MFs (g_plate_data_list is Bambu-only) and
+        // must NOT trigger the fallback, or the snapshot will disagree with
+        // native on `plates.size` for every non-Bambu fixture.
         val plates: List<PlateSnapshot> = nativeData.plates?.map { np ->
             PlateSnapshot(
                 plateIndex = np.plateIndex,
@@ -193,7 +196,7 @@ object KotlinBambuSnapshot {
         )
     }
 
-    private fun parseObjectArray(json: String?): List<ObjectSnapshot>? {
+    internal fun parseObjectArray(json: String?): List<ObjectSnapshot>? {
         if (json.isNullOrEmpty()) return null
         return try {
             val arr = org.json.JSONArray(json)
@@ -232,7 +235,7 @@ object KotlinBambuSnapshot {
         }
     }
 
-    private fun readStringArray(obj: JSONObject, key: String): List<String> {
+    internal fun readStringArray(obj: JSONObject, key: String): List<String> {
         val arr = obj.optJSONArray(key) ?: return emptyList()
         return List(arr.length()) { arr.optString(it, "") }
     }
@@ -253,7 +256,7 @@ object KotlinBambuSnapshot {
         }
     }
 
-    private fun readObjectInstanceMap(obj: JSONObject): List<ObjectInstance> {
+    internal fun readObjectInstanceMap(obj: JSONObject): List<ObjectInstance> {
         val arr = obj.optJSONArray("objectInstanceMap") ?: return emptyList()
         return List(arr.length()) { i ->
             val o = arr.optJSONObject(i)
@@ -264,7 +267,7 @@ object KotlinBambuSnapshot {
         }
     }
 
-    private fun readCustomGcodeArray(obj: JSONObject): List<CustomGcodeEntry> {
+    internal fun readCustomGcodeArray(obj: JSONObject): List<CustomGcodeEntry> {
         val arr = obj.optJSONArray("customGcode") ?: return emptyList()
         return List(arr.length()) { i ->
             val o = arr.optJSONObject(i)
@@ -277,7 +280,7 @@ object KotlinBambuSnapshot {
         }
     }
 
-    private fun readPlateConfig(obj: JSONObject): Map<String, String> {
+    internal fun readPlateConfig(obj: JSONObject): Map<String, String> {
         val o = obj.optJSONObject("plateConfig") ?: return emptyMap()
         val result = LinkedHashMap<String, String>()
         val keys = o.keys()
@@ -288,7 +291,7 @@ object KotlinBambuSnapshot {
         return result
     }
 
-    private fun unpackStateCounts(packed: IntArray): Map<Int, Int> {
+    internal fun unpackStateCounts(packed: IntArray): Map<Int, Int> {
         if (packed.isEmpty()) return emptyMap()
         require(packed.size % 2 == 0) { "packed paint-state counts must be even-length" }
         val out = LinkedHashMap<Int, Int>(packed.size / 2)
