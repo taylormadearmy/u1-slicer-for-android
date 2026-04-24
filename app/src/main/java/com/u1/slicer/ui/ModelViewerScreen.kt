@@ -15,8 +15,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.viewer.MeshData
 import com.u1.slicer.viewer.ModelViewerView
+import com.u1.slicer.NativeLibrary
 import com.u1.slicer.viewer.StlParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -38,8 +40,18 @@ fun ModelViewerScreen(
                 val file = File(modelFilePath)
                 mesh = when {
                     file.name.endsWith(".stl", ignoreCase = true) -> StlParser.parse(file)
-                    file.name.endsWith(".3mf", ignoreCase = true) ->
-                        com.u1.slicer.viewer.ThreeMfMeshParser.parse(file)
+                    file.name.endsWith(".3mf", ignoreCase = true) -> {
+                        // Sub-plan #1 retirement: the native preview mesh path replaces the
+                        // Kotlin ThreeMfMeshParser. Load-then-read under previewMutex so we
+                        // don't race with the Prepare screen's concurrent slicing / rotation
+                        // actions. loadModel is idempotent for the same file.
+                        val native = NativeLibrary()
+                        NativeLibrary.previewMutex.withLock {
+                            if (native.loadModel(file.absolutePath)) {
+                                native.getPreparePreviewMesh()?.toMeshData()
+                            } else null
+                        }
+                    }
                     else -> null
                 }
                 if (mesh == null) error = "Unsupported file format for 3D preview"
