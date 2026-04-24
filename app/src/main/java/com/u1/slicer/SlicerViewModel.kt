@@ -2119,7 +2119,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         Log.i("SlicerVM", "Re-embedding 3MF ($reason) before slicing")
                         val isSingleExtruderRefresh = profileNeedsReEmbed && remap == null && _config.value.extruderCount <= 1
-                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir())
+                        // Sub-plan #2c blocker fix: post-#2c sourceModelFile is the full
+                        // multi-plate source, not a Kotlin-extracted single-plate file.
+                        // The re-embed path must thread currentPlateId through so the
+                        // embedded output and native load both scope to plate N.
+                        val activePlateId = _currentPlateId.value
+                        val reembedPlateId = activePlateId.takeIf { it > 0 }
+                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir(), plateId = reembedPlateId)
                         // Acquire previewMutex before touching native model — prevents SIGSEGV
                         // when getPreparePreviewMesh is concurrently iterating model volumes
                         // on the preview coroutine while we clear+reload here.
@@ -2132,7 +2138,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             // Single-extruder settings refresh: skip clearModel() — files are small
                             // (no OOM risk) and clearModel()+loadModel() can corrupt native statics,
                             // causing "Coordinate outside allowed range" Clipper errors (I2).
-                            native.loadModel(reembedded.absolutePath)
+                            if (reembedPlateId != null) {
+                                native.loadModelForPlate(reembedded.absolutePath, reembedPlateId - 1)
+                            } else {
+                                native.loadModel(reembedded.absolutePath)
+                            }
                         }
                         currentModelFile = reembedded
                         diagnostics.recordEvent(
@@ -3669,12 +3679,33 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 .mapNotNull { sourceInfo.objectExtruderMap[it] }
                 .filter { it > 0 }
                 .toSet()
-            val plateUsedExtruders = (plateObjectExtruders + sourcePlate.filamentIndices.filter { it > 0 }).toSortedSet()
+            // Sub-plan #2c review fix (completeness): for painted plates, use the
+            // file-level usedExtruderIndices because ThreeMfPlate does not carry
+            // per-plate paintExtruderStates — narrowing would drop paint states that
+            // reference extruders no object uses directly. For non-painted plates,
+            // include sourcePlate.layerToolExtruders so layer-tool-only extruders
+            // aren't dropped from the merged palette.
+            val plateUsedExtruders = if (sourcePlate.hasPaintData) {
+                sourceInfo.usedExtruderIndices
+            } else {
+                (plateObjectExtruders +
+                    sourcePlate.filamentIndices.filter { it > 0 } +
+                    sourcePlate.layerToolExtruders.filter { it > 0 }).toSortedSet()
+            }
+            // Sub-plan #2c blocker fix: narrow objectExtruderMap to the selected plate's
+            // objectIds only. Leaving the full-file map leaks other plates' extruders
+            // into downstream consumers like computeSlicerColorOrder (painted-plate
+            // dominance) and the preview palette, letting other plates influence the
+            // selected plate's palette order.
+            val plateObjectIdSet = sourcePlate.objectIds.toSet()
+            val plateScopedObjectExtruderMap = sourceInfo.objectExtruderMap
+                .filterKeys { it in plateObjectIdSet }
             return sourceInfo.copy(
                 plates = platesNarrowed,
                 usedExtruderIndices = plateUsedExtruders,
                 hasPaintData = sourcePlate.hasPaintData,
-                hasLayerToolChanges = sourcePlate.hasLayerToolChanges || sourceInfo.hasLayerToolChanges
+                hasLayerToolChanges = sourcePlate.hasLayerToolChanges || sourceInfo.hasLayerToolChanges,
+                objectExtruderMap = plateScopedObjectExtruderMap
             )
         }
     }

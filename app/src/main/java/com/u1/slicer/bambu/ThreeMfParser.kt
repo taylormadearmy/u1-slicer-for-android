@@ -319,18 +319,25 @@ object ThreeMfParser {
                 // decide whether a selected plate is painted — replaces the pre-#2c Kotlin
                 // extractPlate + parseForPlateSelection pass that derived hasPaintData by
                 // running the parse on a single-plate extracted file.
-                val paintByPlate: Map<Int, Boolean> = if (modelEntry != null && plateObjectMap.isNotEmpty()) {
-                    val componentPathsByObject = zip.getInputStream(modelEntry).use(::parseComponentPaths)
-                    computeVisualColorCountByPlate(
-                        zip = zip,
-                        modelEntry = modelEntry,
-                        plateObjectMap = plateObjectMap,
-                        componentPathsByObject = componentPathsByObject,
-                        extruderAssignments = extruderAssignments
-                    ).mapValues { it.value.hasPaint }
-                } else {
-                    emptyMap()
-                }
+                //
+                // Review fix (cost): gate on file-level hasPaintData. On non-painted files
+                // (which is the common case for multi-plate fixtures like Dragon Scale and
+                // non-painted Buzz plates) the per-plate scan is a pure waste of IO — B93
+                // regression risk. When hasPaintData is false we know no plate can be
+                // painted, so every plate's hasPaintData is false by definition.
+                val paintByPlate: Map<Int, Boolean> =
+                    if (hasPaintData && modelEntry != null && plateObjectMap.isNotEmpty()) {
+                        val componentPathsByObject = zip.getInputStream(modelEntry).use(::parseComponentPaths)
+                        computeVisualColorCountByPlate(
+                            zip = zip,
+                            modelEntry = modelEntry,
+                            plateObjectMap = plateObjectMap,
+                            componentPathsByObject = componentPathsByObject,
+                            extruderAssignments = extruderAssignments
+                        ).mapValues { it.value.hasPaint }
+                    } else {
+                        emptyMap()
+                    }
 
                 // Build plates: use model_settings.config plate→object mappings when
                 // available (groups multiple objects per plate correctly), otherwise
