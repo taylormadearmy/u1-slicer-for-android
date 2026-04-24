@@ -45,7 +45,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue("Bambu extruder 2 must map to T1 after pause", text.contains("T1"))
@@ -93,7 +93,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(text.contains("T1"))
@@ -115,7 +115,7 @@ class LayerToolPauseInjectorTest {
             val gcode = File(dir, "sample.gcode")
             gcode.writeText(";LAYER_CHANGE\n;Z:0.2\n")
 
-            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
         } finally {
             dir.deleteRecursively()
         }
@@ -140,7 +140,7 @@ class LayerToolPauseInjectorTest {
             val gcode = File(dir, "sample.gcode")
             gcode.writeText("M109 S215 T1\n;LAYER_CHANGE\n;Z:0.6\nG1 X2 Y2\n")
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
             val out = gcode.readText()
             assertTrue(out.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(out.contains("T1"))
@@ -178,7 +178,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(text.contains("T2"))
@@ -216,7 +216,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(text.contains("T2"))
@@ -260,7 +260,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
             val text = gcode.readText()
             assertTrue(text.contains("T2"))
             assertTrue("SM target temp fallback should provide explicit wait-temp for switched tool", text.contains("M109 S220 T2"))
@@ -296,7 +296,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
             val text = gcode.readText()
             assertTrue(text.contains("T1"))
             assertTrue("If tool-specific lookup fails, injector should still set switched tool temp", text.contains("M109 S220 T1"))
@@ -339,7 +339,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, -1, null))
             val text = gcode.readText()
             assertFalse(text.contains("; PAUSE_PRINT"))
         } finally {

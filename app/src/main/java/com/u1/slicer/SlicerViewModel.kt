@@ -2349,8 +2349,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         sourceModelFile?.exists() == true -> sourceModelFile
                         else -> currentModelFile
                     }
+                    // Native nativeGetPlateData takes a 0-based plate index. _currentPlateId is
+                    // 1-based (or -1 when no plate selected — treat as plate 0 for the injector
+                    // fallback, matching the STL / single-plate default used elsewhere).
+                    val plateIdxForInjector = (_currentPlateId.value - 1).coerceAtLeast(0)
                     val injectedLayerToolPause = layerToolMetadataFile
-                        ?.let { LayerToolPauseInjector.injectFrom3mf(result.gcodePath, it) }
+                        ?.let {
+                            LayerToolPauseInjector.injectFrom3mf(
+                                result.gcodePath,
+                                it,
+                                plateIdxForInjector,
+                                native
+                            )
+                        }
                         ?: false
                     if (injectedLayerToolPause) {
                         Log.i(

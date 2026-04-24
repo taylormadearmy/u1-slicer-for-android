@@ -1,6 +1,8 @@
 package com.u1.slicer.gcode
 
 import androidx.annotation.VisibleForTesting
+import com.u1.slicer.BuildConfig
+import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.parseLayerToolSegments
 import org.json.JSONArray
 import org.json.JSONException
@@ -25,15 +27,20 @@ object LayerToolPauseInjector {
      */
     internal data class PauseTarget(val topZ: Float, val extruderBambu: Int)
 
-    fun injectFrom3mf(gcodePath: String, model3mf: File): Boolean {
+    fun injectFrom3mf(
+        gcodePath: String,
+        model3mf: File,
+        plateIdx: Int,
+        native: NativeLibrary?
+    ): Boolean {
         if (!model3mf.exists() || !model3mf.name.endsWith(".3mf", ignoreCase = true)) return false
 
-        val pauseTargets = mutableListOf<PauseTarget>()
+        val xmlTargets = mutableListOf<PauseTarget>()
         var nozzleTemps: Map<Int, Int>? = null
         val pauseCommand = ZipFile(model3mf).use { zip ->
             zip.getEntry("Metadata/custom_gcode_per_layer.xml")?.let { entry ->
                 val xml = zip.getInputStream(entry).bufferedReader().readText()
-                pauseTargets += extractPauseTargets(xml)
+                xmlTargets += extractPauseTargets(xml)
             }
             zip.getEntry("Metadata/project_settings.config")?.let { entry ->
                 val json = zip.getInputStream(entry).bufferedReader().readText()
@@ -41,6 +48,37 @@ object LayerToolPauseInjector {
                 Regex(""""machine_pause_gcode"\s*:\s*"([^"]*)"""").find(json)?.groupValues?.getOrNull(1)
             }
         } ?: "M400 U1"
+
+        // Native path: read customGcode from g_model via JNI. Caller is expected to still hold
+        // a valid g_model — in production this runs inside the slicing coroutine immediately
+        // after native.slice() returned, with no intervening clearModel. plateIdx < 0 or a
+        // null NativeLibrary handle (JVM unit-test / legacy paths) short-circuits to no
+        // native-path participation.
+        val nativeJson = if (plateIdx >= 0 && native != null) {
+            try { native.nativeGetPlateData(plateIdx) } catch (_: Throwable) { null }
+        } else null
+        val nativeTargetsOrNull = nativeJson?.let { extractPauseTargetsFromNativeJson(it) }
+
+        // In debug builds, assert the two data sources agree. This is the sub-plan #3 silent-
+        // G-code-corruption tripwire. If it fires on a fixture, STOP — do not paper over it.
+        if (BuildConfig.DEBUG && nativeTargetsOrNull != null) {
+            val xmlSorted = xmlTargets
+                .distinctBy { it.topZ to it.extruderBambu }
+                .sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
+            val nativeSorted = nativeTargetsOrNull
+                .distinctBy { it.topZ to it.extruderBambu }
+                .sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
+            check(xmlSorted == nativeSorted) {
+                "LayerToolPauseInjector dual-path divergence: " +
+                    "xml=$xmlSorted native=$nativeSorted plateIdx=$plateIdx model=${model3mf.name}"
+            }
+        }
+
+        // Production: prefer native-derived targets when available, else fall back to XML.
+        // Fallback is belt-and-braces — native should always return a payload when a model
+        // is loaded, but STL and pre-migration fixtures may hit the null branch harmlessly.
+        val pauseTargets: MutableList<PauseTarget> =
+            (nativeTargetsOrNull ?: xmlTargets).toMutableList()
 
         if (pauseTargets.isEmpty()) return false
 
