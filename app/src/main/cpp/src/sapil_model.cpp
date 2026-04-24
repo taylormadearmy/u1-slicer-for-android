@@ -115,7 +115,11 @@ static std::vector<std::vector<int>> parsePreviewExtrudersFromModelConfig(const 
 }
 
 bool SlicerEngine::loadModel(const std::string& filepath) {
-    SAPIL_LOGI("Loading model: %s", filepath.c_str());
+    return loadModel(filepath, 0);
+}
+
+bool SlicerEngine::loadModel(const std::string& filepath, int plate_id) {
+    SAPIL_LOGI("Loading model: %s (plate_id=%d)", filepath.c_str(), plate_id);
     g_model_preview_extruders.clear();
 
     // Reset Bambu diff-harness out-params so a previous load can't leak state.
@@ -149,10 +153,18 @@ bool SlicerEngine::loadModel(const std::string& filepath) {
         // Capture plate_data_list / is_bbl / file_version out-params for the
         // Bambu differential harness (sapil_bambu_snapshot.cpp reads them via extern).
         // project_presets is unused here but required to advance the arg list.
+        //
+        // Phase 1 sub-plan #2b: plate_id > 0 causes the BBS importer to filter
+        // objects to m_plater_data[plate_id].obj_inst_map at ingestion
+        // (bbs_3mf.cpp:1921-1940). plate_id = 0 remains the "load all plates"
+        // default for STL / OBJ / STEP and for the existing loadModel(path)
+        // overload.
         std::vector<Slic3r::Preset*> project_presets;
-        g_model = Slic3r::Model::read_from_file(filepath, &config, &config_substitutions,
+        g_model = Slic3r::Model::read_from_file(
+            filepath, &config, &config_substitutions,
             Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::LoadConfig | Slic3r::LoadStrategy::AddDefaultInstances,
-            &g_plate_data_list, &project_presets, &g_is_bbl, &g_file_version);
+            &g_plate_data_list, &project_presets, &g_is_bbl, &g_file_version,
+            /*proFn=*/nullptr, /*stlFn=*/nullptr, /*project=*/nullptr, plate_id);
 
         // Store the embedded config (from 3MF project_settings.config).
         // This contains machine_start_gcode, change_filament_gcode, and all profile

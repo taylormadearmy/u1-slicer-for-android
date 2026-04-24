@@ -40,6 +40,20 @@ class NativeLibrary {
 
     // ---- Model ----
     external fun loadModel(path: String): Boolean
+
+    /**
+     * Load a Bambu multi-plate 3MF but restrict `g_model.objects` to the target plate.
+     *
+     * Forwards to `Model::read_from_file(..., plate_id = plateIdx + 1)` when `plateIdx >= 0`
+     * (the BBS importer convention is 1-based, 0 meaning "all plates"). `plateIdx = -1`
+     * is the Kotlin-side alias for "load all plates" — forwards with `plate_id = 0`.
+     *
+     * Callers MUST hold [previewMutex] for the load + any subsequent accessor sequence
+     * (same contract as [loadModel]). Phase 1 sub-plan #2b retires the Kotlin
+     * `BambuSanitizer.extractPlate` disk-rewrite pass in favour of this entry point.
+     */
+    external fun loadModelForPlate(path: String, plateIdx: Int): Boolean
+
     external fun clearModel()
     // Cancel an in-progress QEM preview decimation. Called from clearModel() before
     // acquiring previewMutex so QEM bails out immediately.

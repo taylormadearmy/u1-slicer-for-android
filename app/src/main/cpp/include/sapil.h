@@ -128,6 +128,18 @@ public:
 
     // Model operations
     bool loadModel(const std::string& filepath);
+
+    /**
+     * Load a 3MF, optionally filtered to one BBS plate.
+     *
+     * @param plate_id 0 = load all plates (default, same as loadModel(path));
+     *                 >0 = 1-based plate_id passed to Model::read_from_file, which
+     *                 causes the BBS importer to only instantiate objects in
+     *                 m_plater_data[plate_id]. Used by Phase 1 sub-plan #2b to
+     *                 retire the Kotlin BambuSanitizer.extractPlate disk rewrite.
+     */
+    bool loadModel(const std::string& filepath, int plate_id);
+
     ModelInfo getModelInfo() const;
     // Pass 0 (default) to auto-select budget: flat models get 500K, others 100K.
     PreviewMesh getPreparePreviewMesh(int max_triangles = 0) const;

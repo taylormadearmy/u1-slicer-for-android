@@ -355,4 +355,73 @@ class NativeLibraryCorrectnessTest {
             lib.nativeGetProjectConfig()
         )
     }
+
+    /**
+     * Phase 1 sub-plan #2b: loadModelForPlate smoke — single-plate fixture under
+     * plateIdx=0 must match the full-load object/volume counts. The BBS importer's
+     * plate_id>0 branch (bbs_3mf.cpp:1921) filters m_plater_data[plate_id].obj_inst_map;
+     * for a single-plate file, the filter is a no-op.
+     */
+    @Test
+    fun loadModelForPlate_coloredBenchyPlate0_matchesFullLoadObjectCount() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(targetContext.cacheDir, "sub_plan_2b_smoke.3mf")
+        assetContext.assets.open("colored_3DBenchy (1).3mf").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            assertTrue("loadModel must succeed on colored_3DBenchy", lib.loadModel(fixture.absolutePath))
+            val fullInfo = lib.getModelInfo()
+            assertNotNull("getModelInfo after full load", fullInfo)
+            val fullVolumes = fullInfo!!.volumeCount
+            val fullObjects = lib.nativeGetObjectCount()
+            lib.clearModel()
+
+            assertTrue(
+                "loadModelForPlate(plateIdx=0) must succeed on single-plate fixture",
+                lib.loadModelForPlate(fixture.absolutePath, 0)
+            )
+            val plateInfo = lib.getModelInfo()
+            assertNotNull("getModelInfo after plate-filtered load", plateInfo)
+            assertEquals(
+                "single-plate fixture must match full-load volume count under plateIdx=0",
+                fullVolumes,
+                plateInfo!!.volumeCount
+            )
+            assertEquals(
+                "single-plate fixture must match full-load object count under plateIdx=0",
+                fullObjects,
+                lib.nativeGetObjectCount()
+            )
+        } finally {
+            fixture.delete()
+        }
+    }
+
+    /**
+     * Phase 1 sub-plan #2b: plateIdx=-1 is the Kotlin alias for BBS plate_id=0
+     * (load all plates). This keeps loadModelForPlate usable for non-plate-aware
+     * callers and forms the safe default the JNI wrapper falls back to.
+     */
+    @Test
+    fun loadModelForPlate_negativePlateIdx_loadsAllPlates() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val fixture = File(targetContext.cacheDir, "sub_plan_2b_alias.3mf")
+        assetContext.assets.open("colored_3DBenchy (1).3mf").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            assertTrue(
+                "loadModelForPlate(plateIdx=-1) must succeed — all-plates alias",
+                lib.loadModelForPlate(fixture.absolutePath, -1)
+            )
+            val info = lib.getModelInfo()
+            assertNotNull("getModelInfo after plateIdx=-1 load", info)
+            assertTrue("volume count must be > 0 for colored_3DBenchy", info!!.volumeCount > 0)
+        } finally {
+            fixture.delete()
+        }
+    }
 }

@@ -55,6 +55,22 @@ Java_com_u1_slicer_NativeLibrary_loadModel(JNIEnv* env, jobject, jstring jpath) 
     return result ? JNI_TRUE : JNI_FALSE;
 }
 
+// Phase 1 sub-plan #2b: plate-aware model loader.
+// Kotlin convention: plateIdx = -1 means "load all plates" (BBS plate_id=0).
+// Kotlin plateIdx >= 0 means "load only plate N" (BBS plate_id = N+1, 1-based).
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_loadModelForPlate(
+        JNIEnv* env, jobject, jstring jpath, jint jplate_idx) {
+    if (!g_engine) return JNI_FALSE;
+
+    const int bbs_plate_id = (jplate_idx < 0) ? 0 : static_cast<int>(jplate_idx) + 1;
+
+    const char* path = env->GetStringUTFChars(jpath, nullptr);
+    bool result = g_engine->loadModel(std::string(path), bbs_plate_id);
+    env->ReleaseStringUTFChars(jpath, path);
+    return result ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL
 Java_com_u1_slicer_NativeLibrary_clearModel(JNIEnv* env, jobject) {
     if (g_engine) g_engine->clearModel();
