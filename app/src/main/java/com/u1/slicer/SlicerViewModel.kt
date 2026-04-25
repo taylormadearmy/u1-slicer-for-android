@@ -1102,16 +1102,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val fileInfo = _fileThreeMfInfo ?: _threeMfInfo.value
                 ensureActive()
 
-                // For embedProfile we still need a plate-scoped ThreeMfInfo for the
-                // embed-time config (extruder count, paint data flag). Use
-                // buildSelectedPlateInfo for this purpose only — the result is NOT used
-                // for UI state (that comes from native after load).
-                @Suppress("DEPRECATION")
-                val embedInfo = if (fileInfo != null) {
-                    buildSelectedPlateInfo(fileInfo, plateId)
-                } else {
-                    ThreeMfParser.parseForPlateSelection(file)
-                }
+                // Bucket-1 fix (F1 calendar #2 / H2C benchy #5 / Buttons race):
+                // pass file-level ThreeMfInfo to embedProfile, not the plate-scoped
+                // narrowed one. Plate-narrowing (buildSelectedPlateInfo) under-counts
+                // extruders for compound-object plates and SEMM-painted plates whose
+                // paint states include indices the per-part scan misses. The embedded
+                // filament_colour array sized to the narrowed count then drops paint
+                // states the slicer would otherwise emit — Buttons appears with the
+                // wrong colours on first load, F1 plate 1 misses its 4th colour, H2C
+                // benchy collapses to fewer tools post-slice. File-level over-sizes
+                // safely: extra filament entries past the active extruders are
+                // ignored by the slicer, but missing entries silently drop tool
+                // changes.
+                //
+                // Native plate scoping still happens at load time (plateId param to
+                // ProfileEmbedder.embed runs the strip pipeline + native plate_id
+                // filter). Geometry is plate-scoped; only the embedded filament
+                // palette is file-wide.
+                val embedInfo = fileInfo ?: ThreeMfParser.parseForPlateSelection(file)
                 sourceModelFile = file
                 sourceModelInfo = embedInfo
                 resetToolRemapState()
@@ -2152,10 +2160,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val needsReEmbed = remap != null || _config.value.extruderCount > 1 || profileNeedsReEmbed
                 if (needsReEmbed) {
                     val src = sourceModelFile
-                    // Use merged ThreeMfInfo (colours + extruder count from original file) so the
-                    // re-embedded profile carries the correct extruder_count.  sourceModelInfo for
-                    // plate files is plateInfo (0 colours); _threeMfInfo.value is correctly merged.
-                    val srcInfo = _threeMfInfo.value ?: sourceModelInfo
+                    // Use file-level ThreeMfInfo for the re-embed so filament_colour stays
+                    // sized to the file's full palette. _threeMfInfo (per-plate, native-first)
+                    // can under-count for compound objects + SEMM paint plates, dropping the
+                    // 4th colour on F1 calendar / collapsing tools on H2C benchy. File-level
+                    // over-sizes safely (extra entries are ignored by the slicer); native's
+                    // plateId filter at load time keeps geometry plate-scoped.
+                    val srcInfo = _fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo
                     val context = getApplication<Application>()
                     if (src != null && srcInfo != null) {
                         val reason = when {
