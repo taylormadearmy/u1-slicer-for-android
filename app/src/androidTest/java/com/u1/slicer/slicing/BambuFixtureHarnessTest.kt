@@ -62,21 +62,6 @@ class BambuFixtureHarnessTest {
         return out
     }
 
-    private fun loadFixtureSpecs(): List<FixtureSpec> {
-        val specFiles = assetContext.assets.list("fixture-specs") ?: return emptyList()
-        return specFiles.filter { it.endsWith(".json") }.mapNotNull { specFile ->
-            try {
-                val json = assetContext.assets.open("fixture-specs/$specFile").use {
-                    it.bufferedReader().readText()
-                }
-                parseSpec(JSONObject(json))
-            } catch (e: Exception) {
-                Log.w("FixtureHarness", "Failed to parse spec $specFile: ${e.message}")
-                null
-            }
-        }
-    }
-
     private fun parseSpec(json: JSONObject): FixtureSpec {
         val plates = mutableListOf<PlateSpec>()
         val platesArr = json.getJSONArray("plates")
@@ -177,69 +162,77 @@ class BambuFixtureHarnessTest {
         cacheDir.deleteRecursively()
     }
 
-    @Test
-    fun validate_all_approved_fixtures() {
-        val specs = loadFixtureSpecs()
-        if (specs.isEmpty()) {
-            Log.i("FixtureHarness", "No fixture specs found in assets/fixture-specs/")
+    /**
+     * Validate a single approved spec — exposed as one method per spec file so
+     * Android Test Orchestrator gives each its own process. Slicing accumulates
+     * native memory; running 6 fixtures in one method OOMs the process.
+     */
+    private fun validateSingleSpec(specFileName: String) {
+        val json = try {
+            assetContext.assets.open("fixture-specs/$specFileName").use {
+                it.bufferedReader().readText()
+            }
+        } catch (e: Exception) {
+            Log.i("FixtureHarness", "Spec $specFileName not present — skipping")
             return
         }
-
-        val approved = specs.filter { it.approved }
-        Log.i("FixtureHarness", "Validating ${approved.size} approved fixtures")
+        val spec = parseSpec(JSONObject(json))
+        if (!spec.approved) {
+            Log.i("FixtureHarness", "Spec $specFileName not approved — skipping")
+            return
+        }
+        Log.i("FixtureHarness", "Validating ${spec.file}")
         val failures = mutableListOf<String>()
 
-        for (spec in approved) {
-            for (plate in spec.plates) {
-                val tag = "${spec.file} plate ${plate.plateIndex}"
-                try {
-                    lib.clearModel()
-                    val plateIdx = plate.plateIndex.takeIf { it >= 0 }
-                    val (info, state) = embedAndLoadForPlate(spec.file, plateIdx)
-                    val enriched = enrichedUsedExtruders(lib, info, state, plateIdx)
+        for (plate in spec.plates) {
+            val tag = "${spec.file} plate ${plate.plateIndex}"
+            try {
+                lib.clearModel()
+                val plateIdx = plate.plateIndex.takeIf { it >= 0 }
+                val (info, state) = embedAndLoadForPlate(spec.file, plateIdx)
+                val enriched = enrichedUsedExtruders(lib, info, state, plateIdx)
 
-                    if (enriched.size != plate.expectedExtruderCount) {
-                        failures.add(
-                            "$tag: extruder count ${enriched.size} != ${plate.expectedExtruderCount} " +
-                                "(native=${state.usedExtruders}, enriched=$enriched)"
-                        )
-                    }
-                    if (state.hasPaintData != plate.hasPaintData) {
-                        failures.add(
-                            "$tag: hasPaintData ${state.hasPaintData} != ${plate.hasPaintData}"
-                        )
-                    }
-
-                    if (plate.expectedToolCounts.isNotEmpty()) {
-                        val result = lib.slice(SliceConfig())
-                        assertNotNull("$tag: slice returned null", result)
-                        assertTrue("$tag: slice failed: ${result!!.errorMessage}", result.success)
-                        val toolCounts = parseToolCounts(result.gcodePath)
-                        for ((tool, expected) in plate.expectedToolCounts) {
-                            val actual = toolCounts[tool] ?: 0
-                            if (abs(actual - expected) > plate.toolCountTolerance) {
-                                failures.add(
-                                    "$tag: $tool count $actual not within ±${plate.toolCountTolerance} of $expected"
-                                )
-                            }
-                        }
-                        val (width, height) = parseGcodeBounds(result.gcodePath)
-                        if (width > plate.maxBoundingBoxMm[0]) {
-                            failures.add(
-                                "$tag: G-code width ${width}mm > ${plate.maxBoundingBoxMm[0]}mm"
-                            )
-                        }
-                        if (height > plate.maxBoundingBoxMm[1]) {
-                            failures.add(
-                                "$tag: G-code height ${height}mm > ${plate.maxBoundingBoxMm[1]}mm"
-                            )
-                        }
-                    }
-
-                    Log.i("FixtureHarness", "PASS: $tag")
-                } catch (e: Exception) {
-                    failures.add("$tag: EXCEPTION ${e.message}")
+                if (enriched.size != plate.expectedExtruderCount) {
+                    failures.add(
+                        "$tag: extruder count ${enriched.size} != ${plate.expectedExtruderCount} " +
+                            "(native=${state.usedExtruders}, enriched=$enriched)"
+                    )
                 }
+                if (state.hasPaintData != plate.hasPaintData) {
+                    failures.add(
+                        "$tag: hasPaintData ${state.hasPaintData} != ${plate.hasPaintData}"
+                    )
+                }
+
+                if (plate.expectedToolCounts.isNotEmpty()) {
+                    val result = lib.slice(SliceConfig())
+                    assertNotNull("$tag: slice returned null", result)
+                    assertTrue("$tag: slice failed: ${result!!.errorMessage}", result.success)
+                    val toolCounts = parseToolCounts(result.gcodePath)
+                    for ((tool, expected) in plate.expectedToolCounts) {
+                        val actual = toolCounts[tool] ?: 0
+                        if (abs(actual - expected) > plate.toolCountTolerance) {
+                            failures.add(
+                                "$tag: $tool count $actual not within ±${plate.toolCountTolerance} of $expected"
+                            )
+                        }
+                    }
+                    val (width, height) = parseGcodeBounds(result.gcodePath)
+                    if (width > plate.maxBoundingBoxMm[0]) {
+                        failures.add(
+                            "$tag: G-code width ${width}mm > ${plate.maxBoundingBoxMm[0]}mm"
+                        )
+                    }
+                    if (height > plate.maxBoundingBoxMm[1]) {
+                        failures.add(
+                            "$tag: G-code height ${height}mm > ${plate.maxBoundingBoxMm[1]}mm"
+                        )
+                    }
+                }
+
+                Log.i("FixtureHarness", "PASS: $tag")
+            } catch (e: Exception) {
+                failures.add("$tag: EXCEPTION ${e.message}")
             }
         }
 
@@ -247,4 +240,11 @@ class BambuFixtureHarnessTest {
             fail("Fixture harness failures:\n" + failures.joinToString("\n"))
         }
     }
+
+    @Test fun fixture_dragon_scale_plate3() = validateSingleSpec("dragon-scale-plate3.json")
+    @Test fun fixture_button_for_s_trousers() = validateSingleSpec("button-for-s-trousers.json")
+    @Test fun fixture_colored_benchy() = validateSingleSpec("colored-benchy.json")
+    @Test fun fixture_shashibo_plate5() = validateSingleSpec("shashibo-plate5.json")
+    @Test fun fixture_slip_slide_spin_plate3() = validateSingleSpec("slip-slide-spin-plate3.json")
+    @Test fun fixture_flippy_flappy_plate4() = validateSingleSpec("flippy-flappy-plate4.json")
 }
