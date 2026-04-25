@@ -1190,6 +1190,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      *
      * @param file       The (embedded) 3MF or STL file to load.
      * @param plateIdx   Plate index for plate-aware loading (-1 = all plates / legacy).
+     * @param preserveTransforms When true, skip the identity reset of [_modelScale]
+     *   and [_modelRotation]. Used by paths that reload the model AFTER the user has
+     *   already applied transforms (e.g. a pre-slice re-embed) so the user's edits
+     *   survive the reload. The pre-slice re-embed inside [startSlicing] currently
+     *   bypasses this function entirely (calls [native.loadModel] directly), but the
+     *   parameter exists so future consolidation does not silently regress #3 / #4.
      * @param postLoadStateProvider Optional callback invoked after a successful native load
      *   but BEFORE the B47 color-mapping block reads [_threeMfInfo]. Callers (e.g.
      *   [selectPlate]) use this to read plate state FROM native and set [_threeMfInfo]
@@ -1198,6 +1204,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun loadNativeModel(
         file: File,
         plateIdx: Int = -1,
+        preserveTransforms: Boolean = false,
         postLoadStateProvider: (suspend () -> Unit)? = null
     ) {
         val firstModelLoadThisLaunch = diagnostics.markFirstModelLoad()
@@ -1251,8 +1258,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             if (info != null) {
                 lastModelInfo = info
                 _modelInfo.value = info
-                _modelScale.value = ModelScale()  // reset to 1× on each new load
-                _modelRotation.value = ModelRotation()
+                if (!preserveTransforms) {
+                    _modelScale.value = ModelScale()  // reset to 1× on each new load
+                    _modelRotation.value = ModelRotation()
+                }
                 if (isLargeTriangleCount(info.triangleCount)) {
                     _state.value = SlicerState.Loading("Large model — preview may take a moment…")
                     kotlinx.coroutines.delay(0)
@@ -2740,9 +2749,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val scaledSizeX = mi.sizeX * scale.x
         val scaledSizeY = mi.sizeY * scale.y
         if (scaledSizeX <= 0f || scaledSizeY <= 0f) return null
-        val positions = custom ?: CopyArrangeCalculator.calculate(scaledSizeX, scaledSizeY, copies)
+
+        // Task 5 (native-first): prefer instance offsets read from native after
+        // setModelInstances has been applied — these are the ACTUAL positions the
+        // slicer used. Fixes the diagnostic-vs-G-code drift seen on calicube #4
+        // where the Kotlin pre-slice prediction disagreed with the slicer's
+        // applied positions. Falls back to Kotlin computation when native cannot
+        // be read (model not loaded, JNI failure).
+        val nativeOffsets = runCatching { native.getInstanceOffsets() }.getOrNull()
+        val positions: FloatArray = nativeOffsets?.takeIf { it.isNotEmpty() && it.size % 2 == 0 }
+            ?: custom
+            ?: CopyArrangeCalculator.calculate(scaledSizeX, scaledSizeY, copies)
         if (positions.isEmpty()) return null
-        // CopyArrangeCalculator returns min-corner (lower-left) coordinates, not centers.
+
+        // setModelInstances places the mesh's lower-left at the position; native's
+        // instance offset = pos - scale * meshBB.min, which equals pos for STL
+        // (meshBB.min = 0). For Bambu source meshes whose vertices live at world
+        // coordinates, the offset alone under-reports the world lower-left, but
+        // the resulting footprint still bounds where the slicer placed the model
+        // and is the right value for the diagnostic comparison against G-code.
         var minX = Float.POSITIVE_INFINITY
         var maxX = Float.NEGATIVE_INFINITY
         var minY = Float.POSITIVE_INFINITY
