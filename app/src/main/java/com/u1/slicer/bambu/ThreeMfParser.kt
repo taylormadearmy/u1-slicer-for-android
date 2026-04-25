@@ -324,19 +324,21 @@ object ThreeMfParser {
                 // extractPlate + parseForPlateSelection pass that derived hasPaintData by
                 // running the parse on a single-plate extracted file.
                 //
-                // Review fix (cost): gate on file-level hasPaintData. On non-painted files
-                // (which is the common case for multi-plate fixtures like Dragon Scale and
-                // non-painted Buzz plates) the per-plate scan is a pure waste of IO — B93
-                // regression risk. When hasPaintData is false we know no plate can be
-                // painted, so every plate's hasPaintData is false by definition.
-                // Sub-plan #2d: also capture per-plate paint extruder states so
-                // ThreeMfPlate.paintExtruderStates can carry the full per-plate palette
-                // for SEMM-painted plates (where extruders come from paint_color decode,
-                // not object-level metadata). Used by buildSelectedPlateInfo to seed
-                // usedExtruderIndices for plates like slip slide plate 3 (1 object with
-                // 4 paint regions).
+                // Native-first plate state (2026-04-25): for multi-plate files, skip the
+                // expensive per-plate paint scan at cold load — native provides per-plate
+                // paint state via nativeGetAllVolumeExtruders after selectPlate. Cold-load
+                // plate-list UI uses the file-level hasPaintData as a safe over-approximation
+                // (paint indicator shows on every plate of a paint-containing file; native
+                // confirms or denies per-plate at selection time). This mirrors the existing
+                // B93 phase 2 guard at the paintStateCount loop above. On Buzz Lightyear
+                // (~50MB, 296K paint_color attributes) this scan was the dominant cold-load
+                // cost — same regression B93 phase 2 originally fixed.
+                //
+                // Single-plate files keep the legacy scan: cost is negligible and downstream
+                // SEMM consumers (e.g. SlicerViewModel.buildSelectedPlateInfo for non-multi-
+                // plate paths) still depend on accurate paintExtruderStates.
                 val visualByPlate: Map<Int, PlateVisualInfo> =
-                    if (hasPaintData && modelEntry != null && plateObjectMap.isNotEmpty()) {
+                    if (!isMultiPlate && hasPaintData && modelEntry != null && plateObjectMap.isNotEmpty()) {
                         val componentPathsByObject = zip.getInputStream(modelEntry).use(::parseComponentPaths)
                         computeVisualColorCountByPlate(
                             zip = zip,
@@ -348,7 +350,16 @@ object ThreeMfParser {
                     } else {
                         emptyMap()
                     }
-                val paintByPlate: Map<Int, Boolean> = visualByPlate.mapValues { it.value.hasPaint }
+                // For multi-plate files, fall back to the file-level hasPaintData flag for
+                // every plate (over-approximation; native corrects per-plate at selectPlate).
+                val paintByPlate: Map<Int, Boolean> =
+                    if (visualByPlate.isNotEmpty()) {
+                        visualByPlate.mapValues { it.value.hasPaint }
+                    } else if (isMultiPlate && hasPaintData && plateObjectMap.isNotEmpty()) {
+                        plateObjectMap.keys.associateWith { true }
+                    } else {
+                        emptyMap()
+                    }
                 val paintExtruderStatesByPlate: Map<Int, Set<Int>> =
                     visualByPlate.mapValues { it.value.paintExtruderStates }
 
