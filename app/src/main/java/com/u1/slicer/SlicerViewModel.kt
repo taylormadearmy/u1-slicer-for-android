@@ -4460,7 +4460,7 @@ internal fun computeSlicerColorOrder(
  * wrap-around to slot 3 by `GcodeParser`'s `coerceIn(0, 3)`.
  */
 internal fun computeExpandedGcodeRemap(
-    usedExtruderIndices: Iterable<Int>,
+    @Suppress("UNUSED_PARAMETER") usedExtruderIndices: Iterable<Int>,
     colorMapping: List<Int>?,
     embeddedFilamentCount: Int
 ): List<Int>? {
@@ -4471,38 +4471,26 @@ internal fun computeExpandedGcodeRemap(
     // keeps the same final mapping with less plumbing.
     val distinctSlots = colorMapping.distinct().size
     if (embeddedFilamentCount <= distinctSlots) return null
-    val out = MutableList(embeddedFilamentCount) { idx -> idx.coerceIn(0, 3) }
-    // For paint plates with `embeddedFilamentCount` filaments where the user has
-    // declared a `colorMapping` of equal-or-greater size (one entry per model
-    // colour → physical slot), drive the per-filament remap directly off the
-    // colorMapping index. The slicer emits T0..T(embeddedFilamentCount-1) for
-    // the embedded filaments in order, so `out[i] = colorMapping[i]` puts each
-    // emitted tool on the user's chosen physical slot.
+    // The slicer emits T0..T(embeddedFilamentCount-1) for the N embedded
+    // filaments in order. Drive the per-filament remap directly off the
+    // colorMapping index — `out[i] = colorMapping[i]` puts each emitted tool
+    // on the user's chosen physical slot.
     //
-    // H2C benchy regression: prior to this branch the function only iterated
-    // `usedExtruderIndices` (e.g. `{1}` for SEMM-paint files where only the
-    // object default extruder is registered), assigning colorMapping[0] to
-    // out[0] and leaving the other 6 entries as identity-coerced defaults
-    // [_, 1, 2, 3, 3, 3, 3]. Slicer-emitted T1..T6 then mapped to physical
-    // T1..T3 only — physical T0 was never reached even though the user had
-    // mapped multiple model colours to it. The expanded path below propagates
-    // every colorMapping entry, matching the SemmSlicingTest expectation that
-    // all four physical tools appear in H2C benchy G-code.
-    if (colorMapping.size >= embeddedFilamentCount) {
-        for (i in 0 until embeddedFilamentCount) {
-            val slot = colorMapping[i]
-            if (slot in 0..3) out[i] = slot
-        }
-        return out
+    // If `colorMapping` is shorter than `embeddedFilamentCount` (a higher
+    // index was bumped only by maxSourceFilamentIndex / paint-state encoding),
+    // pad the tail with identity-coerced defaults so any stray out-of-band
+    // T-index lands on a valid 0..3 slot rather than being wrap-coerced to
+    // slot 3 by GcodeParser. The previous version of this function had a
+    // separate `usedExtruderIndices`-driven sparse path; that path had a
+    // structural bug (only out[0] received the user's mapping for SEMM-paint
+    // files with `usedExtruderIndices = {1}`, leaving other slots on identity
+    // defaults). The unified dense+identity-tail formulation is correct for
+    // both H2C-style "more model colours than embedded filaments" and B95-style
+    // "high paint state index bumped the embed" cases.
+    return List(embeddedFilamentCount) { i ->
+        val mapped = colorMapping.getOrNull(i)
+        if (mapped != null && mapped in 0..3) mapped else i.coerceIn(0, 3)
     }
-    val sortedFilaments = usedExtruderIndices.toSortedSet().toList()
-    if (sortedFilaments.isEmpty()) return null
-    sortedFilaments.forEachIndexed { detectedIdx, filamentIdx ->
-        val tIndex = filamentIdx - 1
-        val userSlot = colorMapping.getOrNull(detectedIdx) ?: detectedIdx
-        if (tIndex in out.indices && userSlot in 0..3) out[tIndex] = userSlot
-    }
-    return out
 }
 
 /**
