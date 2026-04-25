@@ -329,7 +329,13 @@ object ThreeMfParser {
                 // non-painted Buzz plates) the per-plate scan is a pure waste of IO — B93
                 // regression risk. When hasPaintData is false we know no plate can be
                 // painted, so every plate's hasPaintData is false by definition.
-                val paintByPlate: Map<Int, Boolean> =
+                // Sub-plan #2d: also capture per-plate paint extruder states so
+                // ThreeMfPlate.paintExtruderStates can carry the full per-plate palette
+                // for SEMM-painted plates (where extruders come from paint_color decode,
+                // not object-level metadata). Used by buildSelectedPlateInfo to seed
+                // usedExtruderIndices for plates like slip slide plate 3 (1 object with
+                // 4 paint regions).
+                val visualByPlate: Map<Int, PlateVisualInfo> =
                     if (hasPaintData && modelEntry != null && plateObjectMap.isNotEmpty()) {
                         val componentPathsByObject = zip.getInputStream(modelEntry).use(::parseComponentPaths)
                         computeVisualColorCountByPlate(
@@ -338,10 +344,13 @@ object ThreeMfParser {
                             plateObjectMap = plateObjectMap,
                             componentPathsByObject = componentPathsByObject,
                             extruderAssignments = extruderAssignments
-                        ).mapValues { it.value.hasPaint }
+                        )
                     } else {
                         emptyMap()
                     }
+                val paintByPlate: Map<Int, Boolean> = visualByPlate.mapValues { it.value.hasPaint }
+                val paintExtruderStatesByPlate: Map<Int, Set<Int>> =
+                    visualByPlate.mapValues { it.value.paintExtruderStates }
 
                 // Build plates: use model_settings.config plate→object mappings when
                 // available (groups multiple objects per plate correctly), otherwise
@@ -370,7 +379,8 @@ object ThreeMfParser {
                             layerToolColors = plateLtInfo?.colors.orEmpty(),
                             layerToolExtruders = plateLtInfo?.extruders.orEmpty(),
                             hasLayerToolChanges = plateLtInfo?.hasToolChanges == true,
-                            hasPaintData = paintByPlate[plateId] == true
+                            hasPaintData = paintByPlate[plateId] == true,
+                            paintExtruderStates = paintExtruderStatesByPlate[plateId] ?: emptySet()
                         )
                     }
                 } else {

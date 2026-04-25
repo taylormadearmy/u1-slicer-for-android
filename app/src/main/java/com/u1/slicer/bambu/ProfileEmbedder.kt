@@ -497,6 +497,13 @@ class ProfileEmbedder(private val context: Context) {
         ZipFile(inputFile).use { srcZip ->
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
                 var wroteModelSettings = false
+                // Sub-plan #2d: when plateId is supplied and we strip unreferenced
+                // resource <object> blocks from the main model, capture the set of
+                // referenced object ids so model_settings.config / Slic3r_PE_model.config
+                // can be narrowed to only those objects (avoids OrcaSlicer's
+                // _handle_start_assemble_item "can not find object" error and any
+                // collisions over orphan objectids).
+                var plateReferencedObjectIds: Set<String>? = null
                 for (entry in srcZip.entries()) {
                     val name = entry.name
 
@@ -544,6 +551,7 @@ class ProfileEmbedder(private val context: Context) {
                                         .firstOrNull { it.plateId == plateId }
                                         ?.objectIds
                                         ?.toSet()
+                                    // Step 1: filter <build> items to the target plate.
                                     val filtered = BambuSanitizer.filterModelToPlate(
                                         String(cleaned),
                                         targetPlateId = plateId,
@@ -555,8 +563,21 @@ class ProfileEmbedder(private val context: Context) {
                                     // return "Failed to load model".
                                     val itemCount = Regex("""<item\b""").findAll(filtered).count()
                                     if (itemCount >= 1) {
-                                        Log.i(TAG, "Filtered 3D/3dmodel.model <build> to plate $plateId ($itemCount items, ${plateObjectIds?.size ?: 0} objectIds)")
-                                        filtered.toByteArray()
+                                        // Step 2 (sub-plan #2d): BFS over component refs from
+                                        // build items, strip orphan <object> blocks from
+                                        // <resources>. This is what BBS-compound-component
+                                        // files (Dragon Scale, Shashibo) need — without it,
+                                        // shared component objectids across resource objects
+                                        // cause the native loader to fail with "Failed to
+                                        // load model".
+                                        val (stripped, refIds) = BambuSanitizer.stripUnreferencedResources(filtered)
+                                        if (refIds != null) {
+                                            plateReferencedObjectIds = refIds
+                                            Log.i(TAG, "Sub-plan #2d: filterModelToPlate + stripUnreferencedResources → plate $plateId, $itemCount items, ${refIds.size} kept objects")
+                                        } else {
+                                            Log.i(TAG, "Filtered 3D/3dmodel.model <build> to plate $plateId ($itemCount items, ${plateObjectIds?.size ?: 0} objectIds; no orphan <object> blocks needed stripping)")
+                                        }
+                                        stripped.toByteArray()
                                     } else {
                                         // Filter produced empty build — file structure is unusual.
                                         // Fall back to unfiltered and let native plate_id filter
@@ -575,11 +596,21 @@ class ProfileEmbedder(private val context: Context) {
                         // applying extruder remap so OrcaSlicer uses correct is_extruder_used[N] slots.
                         name == "Metadata/Slic3r_PE_model.config" -> {
                             val content = srcZip.getInputStream(entry).readBytes()
-                            val modelSettings = convertToModelSettings(content, extruderRemap)
+                            var modelSettings = convertToModelSettings(content, extruderRemap)
+                            // Sub-plan #2d: strip <assemble> + unreferenced <object> blocks
+                            // when plate filtering is active (matches what BambuSanitizer.extractPlate
+                            // did pre-#2d).
+                            if (plateId != null) {
+                                modelSettings = BambuSanitizer.stripAssembleSection(modelSettings)
+                                plateReferencedObjectIds?.let { ids ->
+                                    modelSettings = BambuSanitizer.stripUnreferencedConfigObjects(modelSettings, ids)
+                                }
+                            }
                             writeStored(destZip, "Metadata/model_settings.config", modelSettings.toByteArray())
                             wroteModelSettings = true
                             Log.i(TAG, "Converted Slic3r_PE_model.config → model_settings.config" +
-                                    if (extruderRemap != null) " (remap=$extruderRemap)" else "")
+                                    if (extruderRemap != null) " (remap=$extruderRemap)" else "" +
+                                    if (plateId != null) " (plate=$plateId stripped)" else "")
                         }
 
                         // Sanitize existing model_settings.config (extractPlate path):
@@ -597,10 +628,22 @@ class ProfileEmbedder(private val context: Context) {
                                 if (extruderRemap != null) {
                                     sanitized = remapModelSettingsExtruders(sanitized, extruderRemap)
                                 }
+                                // Sub-plan #2d: strip <assemble> + unreferenced <object> blocks
+                                // when plate filtering is active. <assemble> referencing
+                                // non-loaded objects causes _handle_start_assemble_item to fail.
+                                if (plateId != null) {
+                                    val sanitizedStr = String(sanitized)
+                                    var stripped = BambuSanitizer.stripAssembleSection(sanitizedStr)
+                                    plateReferencedObjectIds?.let { ids ->
+                                        stripped = BambuSanitizer.stripUnreferencedConfigObjects(stripped, ids)
+                                    }
+                                    sanitized = stripped.toByteArray()
+                                }
                                 writeStored(destZip, name, sanitized)
                                 wroteModelSettings = true
                                 Log.i(TAG, "Sanitized model_settings.config" +
-                                        if (extruderRemap != null) " (remap=$extruderRemap)" else "")
+                                        (if (extruderRemap != null) " (remap=$extruderRemap)" else "") +
+                                        (if (plateId != null) " (plate=$plateId stripped)" else ""))
                             }
                         }
 

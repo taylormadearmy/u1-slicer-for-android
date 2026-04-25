@@ -21,7 +21,16 @@ data class ThreeMfPlate(
      * a separate Kotlin plate extraction + reparse pass. Defaults to `false` for non-Bambu files
      * and any plate the visual-colour pass didn't classify as painted.
      */
-    val hasPaintData: Boolean = false
+    val hasPaintData: Boolean = false,
+    /**
+     * Per-plate paint extruder states — the set of 1-based extruder indices encoded in the
+     * plate's `paint_color` / `mmu_segmentation` triangle attributes. Sub-plan #2d uses this
+     * to seed `usedExtruderIndices` for SEMM painted plates: when a plate has one object
+     * with multiple paint states (e.g. slip slide plate 3 = 1 object with 4 paint regions),
+     * the object-level `objectExtruderMap` collapses to a single extruder while paint
+     * decode reveals the full palette. Populated by `computeVisualColorCountByPlate`.
+     */
+    val paintExtruderStates: Set<Int> = emptySet()
 ) {
     val translationX: Float get() = transform[9]
     val translationY: Float get() = transform[10]
