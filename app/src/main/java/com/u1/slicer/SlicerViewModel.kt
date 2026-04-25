@@ -4471,9 +4471,32 @@ internal fun computeExpandedGcodeRemap(
     // keeps the same final mapping with less plumbing.
     val distinctSlots = colorMapping.distinct().size
     if (embeddedFilamentCount <= distinctSlots) return null
+    val out = MutableList(embeddedFilamentCount) { idx -> idx.coerceIn(0, 3) }
+    // For paint plates with `embeddedFilamentCount` filaments where the user has
+    // declared a `colorMapping` of equal-or-greater size (one entry per model
+    // colour → physical slot), drive the per-filament remap directly off the
+    // colorMapping index. The slicer emits T0..T(embeddedFilamentCount-1) for
+    // the embedded filaments in order, so `out[i] = colorMapping[i]` puts each
+    // emitted tool on the user's chosen physical slot.
+    //
+    // H2C benchy regression: prior to this branch the function only iterated
+    // `usedExtruderIndices` (e.g. `{1}` for SEMM-paint files where only the
+    // object default extruder is registered), assigning colorMapping[0] to
+    // out[0] and leaving the other 6 entries as identity-coerced defaults
+    // [_, 1, 2, 3, 3, 3, 3]. Slicer-emitted T1..T6 then mapped to physical
+    // T1..T3 only — physical T0 was never reached even though the user had
+    // mapped multiple model colours to it. The expanded path below propagates
+    // every colorMapping entry, matching the SemmSlicingTest expectation that
+    // all four physical tools appear in H2C benchy G-code.
+    if (colorMapping.size >= embeddedFilamentCount) {
+        for (i in 0 until embeddedFilamentCount) {
+            val slot = colorMapping[i]
+            if (slot in 0..3) out[i] = slot
+        }
+        return out
+    }
     val sortedFilaments = usedExtruderIndices.toSortedSet().toList()
     if (sortedFilaments.isEmpty()) return null
-    val out = MutableList(embeddedFilamentCount) { idx -> idx.coerceIn(0, 3) }
     sortedFilaments.forEachIndexed { detectedIdx, filamentIdx ->
         val tIndex = filamentIdx - 1
         val userSlot = colorMapping.getOrNull(detectedIdx) ?: detectedIdx

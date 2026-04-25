@@ -69,6 +69,17 @@ fun ensureMultiSlotMapping(rawMapping: List<Int>, colorCount: Int): List<Int> =
         colorCount <= 1 -> rawMapping
         colorCount <= 4 && rawMapping.distinct().size < colorCount ->
             (0 until colorCount).toList()
+        // F1 calendar regression: a Bambu file with 5 model colours auto-mapped via
+        // findClosestExtruder against a device whose extruder presets only have two
+        // populated colours collapsed to mapping=[0,0,3,3,0] — distinct slot count 2,
+        // colorCount 5. The previous `colorCount <= 4` guard didn't catch this because
+        // 5 > 4, so the bad mapping survived as the initial auto-apply. Extend the
+        // redistribution to any case where we have fewer distinct slots than physical
+        // extruders available (4) and fewer than the model demands. Wrap-distribute
+        // across all 4 physical slots so initial preview/slice uses the full palette;
+        // user can override via the inline colour-assignment UI.
+        rawMapping.distinct().size < minOf(colorCount, 4) ->
+            (0 until colorCount).map { it % minOf(colorCount, 4) }
         rawMapping.distinct().size < 2 ->
             (0 until colorCount).map { it % 2 }  // 0,1,0,1,… across compact slots
         else -> rawMapping
