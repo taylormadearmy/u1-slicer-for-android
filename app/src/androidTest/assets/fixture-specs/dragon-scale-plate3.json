@@ -1,0 +1,14 @@
+{
+  "file": "Dragon Scale infinity.3mf",
+  "approved": true,
+  "plates": [
+    {
+      "plateIndex": 2,
+      "expectedExtruderCount": 3,
+      "expectedToolCounts": {"T0": 50, "T2": 53, "T3": 90},
+      "toolCountTolerance": 5,
+      "hasPaintData": false,
+      "maxBoundingBoxMm": [270, 270]
+    }
+  ]
+}
