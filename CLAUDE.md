@@ -51,8 +51,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 844 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 212 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 851 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 218 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -61,7 +61,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 812 tests across 57 classes
+### Unit tests (`app/src/test/`) - 819 tests across 58 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -121,8 +121,9 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `network/UpdateCheckerTest.kt` (12) — F70 GitHub release JSON parsing, semantic version comparison, download URL extraction
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
+- `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
 
-### Instrumented tests (`app/src/androidTest/`) - 209 tests across 19 classes
+### Instrumented tests (`app/src/androidTest/`) - 215 tests across 21 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -136,6 +137,8 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
+- `slicing/BambuPlateStateRegressionTest.kt` (5) — Tier A regression tests for the 6 PM-reported plate state bugs: Dragon plate 3 / F1 calendar extruder counts (#1/#2), hanging file translate preserved through slice (#3), H2C benchy multi-tool G-code (#5), Buzz cold-load perf gate (#6)
+- `slicing/BambuFixtureHarnessTest.kt` (1) — Tier B data-driven harness validating each approved JSON spec under assets/fixture-specs/ (extruder count, paint flag, per-tool G-code counts, bounding box ceiling) — currently covers 6 fixtures: Dragon Scale plate 3, Button-for-S-trousers, colored Benchy, Shashibo plate 5, slip-slide-spin plate 3, flippy+flappy plate 4
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/NativePreparePreviewTest.kt` (16) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation, H2C benchy full/decimated 7-index preservation + green recolor + interleaving guard, layer-tool Z-band recolor, triangle count cap, B51 old.3mf bounding box + Korok orientation, B72 multi-instance post-slice bounds, B78 Shashibo plate 5 file-scale+centre preservation on fresh load + post-slice dirty-path reset
 - `PreparePreviewViewModelTest.kt` (14) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix, entry-point equivalence for `loadModel(uri)` vs `loadModelFromFile(file)`, B86 S-Buttons user-like presets (E2=white/E4=pink) 4-distinct-colour guard, B92 Buzz plate 8 Prepare/Preview colour agreement with explicit slicerColorOrder permutation, B93 Buzz multi-plate cold load skips full-file embedProfile, B94 Spiderman drag-to-right preserved through slice, B92.1 v1.6.12 parsedGcode StateFlow reflects post-remap T-indices (no orphan extruder=1 moves for colorMapping=[0,3])

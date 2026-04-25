@@ -29,7 +29,17 @@ data class ThreeMfPlate(
      * with multiple paint states (e.g. slip slide plate 3 = 1 object with 4 paint regions),
      * the object-level `objectExtruderMap` collapses to a single extruder while paint
      * decode reveals the full palette. Populated by `computeVisualColorCountByPlate`.
+     *
+     * Native-first plate state (2026-04-25): per-plate paint state is now read from native
+     * via [NativeLibrary.nativeGetAllVolumeExtruders] / [NativePlateState] after
+     * `loadModel`/`selectPlate`. This Kotlin field is still read by the embed-prep path
+     * inside `SlicerViewModel.buildSelectedPlateInfo`; it will be retired once embed-prep
+     * also moves to native reads.
      */
+    @Deprecated(
+        "Per-plate paint state should come from NativePlateState.hasPaintData / usedExtruders read after loadModel.",
+        level = DeprecationLevel.WARNING
+    )
     val paintExtruderStates: Set<Int> = emptySet()
 ) {
     val translationX: Float get() = transform[9]
@@ -84,7 +94,16 @@ data class ThreeMfInfo(
      * `buildSelectedPlateInfo` reads this to produce correct
      * `sourcePlateObjectExtruders` for multi-part-single-object plates like Dragon
      * Scale plate 3.
+     *
+     * Native-first plate state (2026-04-25): per-volume extruder breakdown is now
+     * read from native via [NativeLibrary.nativeGetAllVolumeExtruders] after
+     * `loadModel`/`selectPlate`. The Kotlin field still feeds embed-prep until
+     * embed-prep also migrates to native reads.
      */
+    @Deprecated(
+        "Use NativePlateState.objects[*].volumes from nativeGetAllVolumeExtruders.",
+        level = DeprecationLevel.WARNING
+    )
     val objectPartExtruders: Map<String, Set<Int>> = emptyMap(),
     /**
      * Compound-object parent mapping — for each `<part>` id that appears inside an
@@ -93,7 +112,15 @@ data class ThreeMfInfo(
      * this, `objectExtruderMap` filter by `sourcePlate.objectIds` would drop all
      * part entries (their ids don't appear in plate→object mappings), losing the
      * per-part extruder assignments needed by preview / embed downstream.
+     *
+     * Native-first plate state (2026-04-25): native owns per-volume membership
+     * directly via [NativePlateState.objects]. The Kotlin field still feeds
+     * embed-prep until that path migrates.
      */
+    @Deprecated(
+        "Native owns per-volume membership directly; no parent mapping needed for native reads.",
+        level = DeprecationLevel.WARNING
+    )
     val compoundPartParents: Map<String, String> = emptyMap(),
     val layerToolSegments: List<LayerToolSegment>? = null
 ) {
