@@ -529,14 +529,16 @@ class ProfileEmbedder(private val context: Context) {
                             } else {
                                 val content = srcZip.getInputStream(entry).readBytes()
                                 val cleaned = cleanModelXmlForOrcaSlicer(content, info.hasPaintData)
-                                // Sub-plan #2c defensive fix: when a plateId is supplied
-                                // (from SlicerViewModel.selectPlate), filter the main model's
-                                // <build> items to the target plate's objects. Belt-and-braces
+                                // Sub-plan #2c defensive fix: when plateId is supplied, run
+                                // BambuSanitizer.filterModelToPlate on the main 3D/3dmodel.model's
+                                // <build> section to strip non-plate items. Belt-and-braces
                                 // against files where the native BBS plate_id filter silently
-                                // doesn't take effect (e.g., files lacking proper plate
-                                // model_instance entries). Without this, selecting a plate
-                                // from a multi-plate file would load all plates' build items
-                                // and slice with a 625×625mm+ bounding box.
+                                // doesn't apply (e.g., files lacking proper per-plate
+                                // model_instance metadata). Sanity-check the filtered output:
+                                // if the filter produced an empty build (no matching items for
+                                // this plate — either the file structure is unusual or our
+                                // regex missed them), fall back to unfiltered rather than
+                                // handing a broken file to the native loader.
                                 val finalBytes = if (plateId != null && name == "3D/3dmodel.model") {
                                     val plateObjectIds = info.plates
                                         .firstOrNull { it.plateId == plateId }
@@ -548,8 +550,20 @@ class ProfileEmbedder(private val context: Context) {
                                         hasPlateJsons = info.hasPlateJsons,
                                         plateObjectIds = plateObjectIds
                                     )
-                                    Log.i(TAG, "Filtered 3D/3dmodel.model <build> to plate $plateId (${plateObjectIds?.size ?: 0} objectIds)")
-                                    filtered.toByteArray()
+                                    // Validate: must contain at least one <item> in <build>,
+                                    // else we'd hand native a zero-item model and it would
+                                    // return "Failed to load model".
+                                    val itemCount = Regex("""<item\b""").findAll(filtered).count()
+                                    if (itemCount >= 1) {
+                                        Log.i(TAG, "Filtered 3D/3dmodel.model <build> to plate $plateId ($itemCount items, ${plateObjectIds?.size ?: 0} objectIds)")
+                                        filtered.toByteArray()
+                                    } else {
+                                        // Filter produced empty build — file structure is unusual.
+                                        // Fall back to unfiltered and let native plate_id filter
+                                        // (or lack thereof) take over.
+                                        Log.w(TAG, "filterModelToPlate produced empty <build> for plate $plateId — falling back to unfiltered (native BBS plate_id will handle scope)")
+                                        cleaned
+                                    }
                                 } else {
                                     cleaned
                                 }

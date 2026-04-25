@@ -1091,45 +1091,60 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         selectPlateJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val workspaceDir = transientWorkspaceDir()
-                // Stable file-level info, set once on load and never overwritten by plate
-                // selections (B83). Now carries per-plate hasPaintData via the sub-plan #2c
-                // ThreeMfParser pass, so we can derive merge inputs without running
-                // BambuSanitizer.extractPlate + parseForPlateSelection on disk.
-                val preSelectInfo = _fileThreeMfInfo ?: _threeMfInfo.value
+                // Use the stable file-level info (set once on load, never mutated by plate
+                // selections) so that switching plates doesn't lose the original plates list.
+                // _threeMfInfo.value is overwritten to a per-plate merged result after each
+                // selectPlate(), so it may no longer have the correct objectIds for other plates.
+                val fileInfo = _fileThreeMfInfo ?: _threeMfInfo.value
+                val hasPlateJsons = fileInfo?.hasPlateJsons
+                val plateObjectIds = fileInfo?.plates
+                    ?.find { it.plateId == plateId }?.objectIds?.toSet()
+                val plateExtruderMap = fileInfo?.objectExtruderMap
+                    ?.filterKeys { key -> plateObjectIds?.contains(key) == true }
+                @Suppress("DEPRECATION")
+                val rawPlateFile = BambuSanitizer.extractPlate(file, plateId, workspaceDir,
+                    hasPlateJsons = hasPlateJsons,
+                    plateObjectIds = plateObjectIds,
+                    objectExtruderMap = plateExtruderMap)
                 ensureActive()
-
-                // Sub-plan #2c: synthesise a single-plate ThreeMfInfo view from the
-                // stable source info. This replaces the extractPlate → restructurePlateFile
-                // → parseForPlateSelection(plateFile) chain that the pre-#2c flow used to
-                // produce a per-plate metadata artefact. No disk rewrite; paint detection
-                // comes from sourceInfo.plates[N].hasPaintData (populated at file-load time).
-                val plateInfo = if (preSelectInfo != null) {
-                    buildSelectedPlateInfo(preSelectInfo, plateId)
-                } else {
-                    ThreeMfParser.parseForPlateSelection(file)
-                }
-                sourceModelFile = file
+                // Restructure per-plate: inline component meshes so OrcaSlicer
+                // can assign per-volume extruders (deferred from process()).
+                @Suppress("DEPRECATION")
+                val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, workspaceDir)
+                ensureActive()
+                // Lightweight parse: only reads model_settings.config (~1KB) for extruder
+                // indices, skips the 15MB+ main model XML entirely (~2s saved).
+                val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
+                sourceModelFile = plateFile
                 sourceModelInfo = plateInfo
-
+                // Merge plate structural info with the file-level info so that
+                // color/extruder metadata from the original file is preserved.
+                // plateInfo has 0 detected colors because extractPlate() works on the
+                // processed file which has had filament_sequence.json stripped by process().
+                // Always use _fileThreeMfInfo (set once on load, never mutated by plate
+                // selections) so that cross-plate selections don't lose file-level state
+                // like hasPaintData=true from other plates (B81).
+                val preSelectInfo = _fileThreeMfInfo ?: _threeMfInfo.value
                 val mergedPlateInfo = if (preSelectInfo != null)
                     mergeThreeMfInfoForPlate(plateInfo, preSelectInfo, plateId)
                 else
                     plateInfo
                 _threeMfInfo.value = mergedPlateInfo
                 resetToolRemapState()
-
-                // Phase 1 sub-plan #2b+c: embed profile on the ORIGINAL source file with
-                // plateId threaded through. Native loadModelForPlate filters objects to
-                // plate N at BBS import (bbs_3mf.cpp:1921-1940).
-                // ProfileEmbedder.embed(plateId = plateId) keeps custom_gcode_per_layer.xml
-                // but filters it to plate N so sub-plan #3's XML fallback sees only the
-                // target plate's layer-tool rows.
-                val embeddedPlateFile = embedProfile(file, mergedPlateInfo, workspaceDir, plateId = plateId)
+                // Sub-plan #2c reverted (E2E coverage): the ambitious "skip extractPlate +
+                // restructurePlateFile in production" flow couldn't safely handle
+                // BBS-compound-component files like Dragon Scale and Shashibo where
+                // shared component objectids require resource-stripping that wasn't
+                // ported into ProfileEmbedder. The pre-#2c flow above is the well-tested
+                // path; sub-plan #2d can revisit a fuller migration.
+                //
+                // Re-embed the selected plate so slice-time config preserves the
+                // original file's layer-change settings (SEMM/pause G-code), not just
+                // the preview metadata merged above.
+                val embeddedPlateFile = embedProfile(plateFile, mergedPlateInfo, workspaceDir)
                 ensureActive()
                 currentModelFile = embeddedPlateFile
-                // plateId is 1-based from the UI; loadNativeModel's plateIdx is 0-based
-                // Kotlin convention; the JNI wrapper converts to BBS plate_id = plateIdx + 1.
-                loadNativeModel(embeddedPlateFile, plateId - 1)
+                loadNativeModel(embeddedPlateFile)
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
@@ -2119,13 +2134,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         Log.i("SlicerVM", "Re-embedding 3MF ($reason) before slicing")
                         val isSingleExtruderRefresh = profileNeedsReEmbed && remap == null && _config.value.extruderCount <= 1
-                        // Sub-plan #2c blocker fix: post-#2c sourceModelFile is the full
-                        // multi-plate source, not a Kotlin-extracted single-plate file.
-                        // The re-embed path must thread currentPlateId through so the
-                        // embedded output and native load both scope to plate N.
-                        val activePlateId = _currentPlateId.value
-                        val reembedPlateId = activePlateId.takeIf { it > 0 }
-                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir(), plateId = reembedPlateId)
+                        // Post-#2c-revert: sourceModelFile is the plate-extracted single-plate
+                        // file (set in selectPlate after extractPlate + restructurePlateFile),
+                        // so embedProfile produces a single-plate embedded artefact and the
+                        // pre-slice re-embed path doesn't need plateId threading.
+                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir())
                         // Acquire previewMutex before touching native model — prevents SIGSEGV
                         // when getPreparePreviewMesh is concurrently iterating model volumes
                         // on the preview coroutine while we clear+reload here.
@@ -2138,11 +2151,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             // Single-extruder settings refresh: skip clearModel() — files are small
                             // (no OOM risk) and clearModel()+loadModel() can corrupt native statics,
                             // causing "Coordinate outside allowed range" Clipper errors (I2).
-                            if (reembedPlateId != null) {
-                                native.loadModelForPlate(reembedded.absolutePath, reembedPlateId - 1)
-                            } else {
-                                native.loadModel(reembedded.absolutePath)
-                            }
+                            //
+                            // Sub-plan #2c E2E finding: re-embed already pre-filters the
+                            // main model's <build> to reembedPlateId via ProfileEmbedder.
+                            // Native load-all (loadModel path) avoids the double-filter
+                            // mismatch that can fail BBS plate_id resolution for some files.
+                            native.loadModel(reembedded.absolutePath)
                         }
                         currentModelFile = reembedded
                         diagnostics.recordEvent(
