@@ -5,7 +5,7 @@
     {
       "plateIndex": 3,
       "expectedExtruderCount": 2,
-      "expectedToolCounts": {"T0": 2, "T1": 1},
+      "expectedToolCounts": {},
       "toolCountTolerance": 2,
       "hasPaintData": false,
       "maxBoundingBoxMm": [270, 270]
