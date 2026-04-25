@@ -2760,25 +2760,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val scaledSizeX = mi.sizeX * scale.x
         val scaledSizeY = mi.sizeY * scale.y
         if (scaledSizeX <= 0f || scaledSizeY <= 0f) return null
-
-        // Task 5 (native-first): prefer instance offsets read from native after
-        // setModelInstances has been applied — these are the ACTUAL positions the
-        // slicer used. Fixes the diagnostic-vs-G-code drift seen on calicube #4
-        // where the Kotlin pre-slice prediction disagreed with the slicer's
-        // applied positions. Falls back to Kotlin computation when native cannot
-        // be read (model not loaded, JNI failure).
-        val nativeOffsets = runCatching { native.getInstanceOffsets() }.getOrNull()
-        val positions: FloatArray = nativeOffsets?.takeIf { it.isNotEmpty() && it.size % 2 == 0 }
-            ?: custom
-            ?: CopyArrangeCalculator.calculate(scaledSizeX, scaledSizeY, copies)
+        // CopyArrangeCalculator returns lower-left world coords; setModelInstances
+        // also takes lower-left world coords (verified on-device for STL files
+        // via SetModelInstancesOffsetTest — gcodeMinX matches requested origin
+        // within ±2mm). Earlier this method tried to read native's
+        // `getInstanceOffsets()` instead, but that returns the raw stored
+        // offset = pos - sf*meshBB.min — equal to pos only when meshBB.min=0
+        // (STL); for Bambu files whose mesh vertices live at world coordinates
+        // the raw offset is shifted by half the scaled mesh size and doesn't
+        // represent the world lower-left.
+        val positions = custom ?: CopyArrangeCalculator.calculate(scaledSizeX, scaledSizeY, copies)
         if (positions.isEmpty()) return null
-
-        // setModelInstances places the mesh's lower-left at the position; native's
-        // instance offset = pos - scale * meshBB.min, which equals pos for STL
-        // (meshBB.min = 0). For Bambu source meshes whose vertices live at world
-        // coordinates, the offset alone under-reports the world lower-left, but
-        // the resulting footprint still bounds where the slicer placed the model
-        // and is the right value for the diagnostic comparison against G-code.
         var minX = Float.POSITIVE_INFINITY
         var maxX = Float.NEGATIVE_INFINITY
         var minY = Float.POSITIVE_INFINITY
