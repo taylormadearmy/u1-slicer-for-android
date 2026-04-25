@@ -3552,11 +3552,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             maxOf(enrichedExtruders.size, 1)
         }
 
+        // Keep detectedColors file-wide (don't narrow) for SEMM paint and compound-
+        // object plates. The slicer's multi_material_segmentation_by_painting() needs
+        // a filament_colour array sized to the file's full palette so paint states
+        // referencing higher indices aren't dropped — narrowing here was the root
+        // cause of H2C benchy collapsing to 3 tools and F1 calendar plate 1 missing
+        // its 4th colour through the embed pipeline. usedExtruderIndices stays
+        // plate-scoped (UI chip display + slot allocation); detectedColors stays
+        // file-wide (slicer palette).
+        val paletteColors = if (layerToolOnly) narrowedColors else fileInfo.detectedColors
+        val paletteCount = if (layerToolOnly) effectiveExtruderCount else fileInfo.detectedExtruderCount
         return fileInfo.copy(
             plates = listOfNotNull(sourcePlate),
-            detectedColors = narrowedColors,
+            detectedColors = paletteColors,
             usedExtruderIndices = enrichedExtruders,
-            detectedExtruderCount = effectiveExtruderCount,
+            detectedExtruderCount = paletteCount,
             hasPaintData = plateHasPaintData,
             objectExtruderMap = objExtruderMap,
             hasMultiExtruderAssignments = hasMultiExtAssign,
