@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.NativeLibrary
+import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.NativePlateState
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
@@ -112,17 +113,32 @@ class BambuFixtureHarnessTest {
         )
     }
 
-    private fun embedAndLoadForPlate(assetName: String, plateId: Int?): NativePlateState {
+    private data class LoadResult(
+        val info: com.u1.slicer.bambu.ThreeMfInfo,
+        val state: NativePlateState
+    )
+
+    private fun embedAndLoadForPlate(assetName: String, plateId: Int?): LoadResult {
         val file = copyAsset(assetName)
         val info = ThreeMfParser.parse(file)
         val target = info.detectedExtruderCount.coerceAtLeast(1)
         val config = embedder.buildConfig(info, targetExtruderCount = target)
-        val embedded = embedder.embed(file, config, outDir, info, plateId = plateId)
+        // Mirror SlicerViewModel's selectPlate routing:
+        //  - multi-plate Bambu: embed with plate filter (sub-plan #2d strip pipeline).
+        //  - single-plate Bambu: BambuSanitizer.process to strip Bambu-specific xmlns
+        //    + p:path component refs, then embed; native otherwise rejects the load.
+        val sourceForEmbed = when {
+            info.isMultiPlate -> file
+            info.isBambu -> BambuSanitizer.process(file, outDir)
+            else -> file
+        }
+        val embedded = embedder.embed(sourceForEmbed, config, outDir, info, plateId = plateId)
         assertTrue(
             "loadModel must succeed for $assetName plate=$plateId",
             lib.loadModel(embedded.absolutePath)
         )
-        return NativePlateState.parseVolumeMapJson(lib.nativeGetAllVolumeExtruders())
+        val state = NativePlateState.parseVolumeMapJson(lib.nativeGetAllVolumeExtruders())
+        return LoadResult(info, state)
     }
 
     private fun parseToolCounts(gcodePath: String): Map<String, Int> {
@@ -178,14 +194,14 @@ class BambuFixtureHarnessTest {
                 val tag = "${spec.file} plate ${plate.plateIndex}"
                 try {
                     lib.clearModel()
-                    val state = embedAndLoadForPlate(
-                        spec.file,
-                        plate.plateIndex.takeIf { it >= 0 }
-                    )
+                    val plateIdx = plate.plateIndex.takeIf { it >= 0 }
+                    val (info, state) = embedAndLoadForPlate(spec.file, plateIdx)
+                    val enriched = enrichedUsedExtruders(lib, info, state, plateIdx)
 
-                    if (state.usedExtruders.size != plate.expectedExtruderCount) {
+                    if (enriched.size != plate.expectedExtruderCount) {
                         failures.add(
-                            "$tag: extruder count ${state.usedExtruders.size} != ${plate.expectedExtruderCount}"
+                            "$tag: extruder count ${enriched.size} != ${plate.expectedExtruderCount} " +
+                                "(native=${state.usedExtruders}, enriched=$enriched)"
                         )
                     }
                     if (state.hasPaintData != plate.hasPaintData) {

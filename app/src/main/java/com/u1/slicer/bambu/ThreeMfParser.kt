@@ -324,21 +324,24 @@ object ThreeMfParser {
                 // extractPlate + parseForPlateSelection pass that derived hasPaintData by
                 // running the parse on a single-plate extracted file.
                 //
-                // Native-first plate state (2026-04-25): for multi-plate files, skip the
-                // expensive per-plate paint scan at cold load — native provides per-plate
-                // paint state via nativeGetAllVolumeExtruders after selectPlate. Cold-load
-                // plate-list UI uses the file-level hasPaintData as a safe over-approximation
-                // (paint indicator shows on every plate of a paint-containing file; native
-                // confirms or denies per-plate at selection time). This mirrors the existing
-                // B93 phase 2 guard at the paintStateCount loop above. On Buzz Lightyear
-                // (~50MB, 296K paint_color attributes) this scan was the dominant cold-load
-                // cost — same regression B93 phase 2 originally fixed.
+                // Native-first plate state (2026-04-25): skip the expensive per-plate paint
+                // scan only for the Buzz-class case — multi-plate files with large component
+                // models, where the scan dominates cold load (~50 MB, 296K paint_color
+                // attributes). For those files, native provides per-plate paint state via
+                // nativeGetAllVolumeExtruders after selectPlate; cold-load plate-list UI
+                // uses the file-level hasPaintData as a safe over-approximation.
                 //
-                // Single-plate files keep the legacy scan: cost is negligible and downstream
-                // SEMM consumers (e.g. SlicerViewModel.buildSelectedPlateInfo for non-multi-
-                // plate paths) still depend on accurate paintExtruderStates.
+                // Smaller multi-plate files (e.g. painted flippy: 4 plates, 2 objects, only
+                // some plates painted) keep the scan — without per-plate accuracy, BambuPipelineIntegrationTest's
+                // B82 chip-count assertions break (non-painted plates inherit the file-level
+                // paint flag and show an extra chip). The hasLargeComponents probe at the
+                // paintStateCount loop above is the same gate B93 phase 2 used.
+                //
+                // Single-plate files always keep the scan: cost is negligible and downstream
+                // SEMM consumers depend on accurate paintExtruderStates.
+                val skipPerPlatePaintScan = isMultiPlate && hasLargeComponents
                 val visualByPlate: Map<Int, PlateVisualInfo> =
-                    if (!isMultiPlate && hasPaintData && modelEntry != null && plateObjectMap.isNotEmpty()) {
+                    if (!skipPerPlatePaintScan && hasPaintData && modelEntry != null && plateObjectMap.isNotEmpty()) {
                         val componentPathsByObject = zip.getInputStream(modelEntry).use(::parseComponentPaths)
                         computeVisualColorCountByPlate(
                             zip = zip,
@@ -350,12 +353,12 @@ object ThreeMfParser {
                     } else {
                         emptyMap()
                     }
-                // For multi-plate files, fall back to the file-level hasPaintData flag for
-                // every plate (over-approximation; native corrects per-plate at selectPlate).
+                // For Buzz-class skipped scans, fall back to the file-level hasPaintData flag
+                // for every plate (over-approximation; native corrects per-plate at selectPlate).
                 val paintByPlate: Map<Int, Boolean> =
                     if (visualByPlate.isNotEmpty()) {
                         visualByPlate.mapValues { it.value.hasPaint }
-                    } else if (isMultiPlate && hasPaintData && plateObjectMap.isNotEmpty()) {
+                    } else if (skipPerPlatePaintScan && hasPaintData && plateObjectMap.isNotEmpty()) {
                         plateObjectMap.keys.associateWith { true }
                     } else {
                         emptyMap()
