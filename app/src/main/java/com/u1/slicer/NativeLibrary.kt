@@ -188,6 +188,18 @@ class NativeLibrary {
      */
     external fun nativeGetObjectExtruderMap(): String?
 
+    /**
+     * Returns JSON array of all objects with per-volume extruder + paint data:
+     *   [{"objectIndex": 0, "objectExtruder": 1, "volumes": [
+     *     {"volumeIndex": 0, "extruder": 1, "isMmPainted": true, "isSeamPainted": false}, ...
+     *   ]}, ...]
+     *
+     * `extruder` at volume level: -1 = inherit from object, 0 = unset, 1-4 = explicit.
+     * Returns null when no model is loaded.
+     * Callers MUST hold [previewMutex].
+     */
+    external fun nativeGetAllVolumeExtruders(): String?
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)
