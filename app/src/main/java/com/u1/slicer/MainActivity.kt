@@ -658,6 +658,17 @@ class MainActivity : ComponentActivity() {
                     val extruderPresets by viewModel.extruderPresets.collectAsState()
                     val currentMapping by viewModel.colorMapping.collectAsState()
                     if (canonical != null) {
+                        // Phase 2.5 — the slice-time `colorMapping` is what the
+                        // current G-code's T-indices already reflect (today's
+                        // pre-Phase-2.5 slice path bakes the slot mapping into
+                        // the G-code via GcodeToolRemapper.remap). The dialog's
+                        // `mapping` is what the user WANTS the final G-code to
+                        // reflect. The actual remap we need to apply is the
+                        // delta: for each file index i, rewrite T<sliceMapping[i]>
+                        // → T<userMapping[i]>. This makes the dialog correct
+                        // even when the user changes a slot away from the
+                        // auto-suggested value.
+                        val sliceMapping = currentMapping
                         com.u1.slicer.ui.FilamentMappingDialog(
                             canonicalList = canonical,
                             extruderPresets = extruderPresets,
@@ -668,10 +679,11 @@ class MainActivity : ComponentActivity() {
                                     source.parentFile,
                                     "${source.nameWithoutExtension}.remapped.${source.extension}"
                                 )
+                                val rewriteList = computeDialogRewrite(sliceMapping, mapping)
                                 com.u1.slicer.gcode.applyPrintTimeRemap(
                                     sourceGcodePath = source.absolutePath,
                                     outputPath = remapped.absolutePath,
-                                    colorMapping = mapping,
+                                    colorMapping = rewriteList,
                                 )
                                 when (pending.action) {
                                     PendingMappingSend.Action.PrintAndUpload ->
@@ -712,6 +724,54 @@ internal data class PendingMappingSend(
     val action: Action,
 ) {
     enum class Action { PrintAndUpload, UploadOnly }
+}
+
+/**
+ * Phase 2.5 — given the slice-time mapping that produced the current
+ * G-code's T-indices and the user's desired final mapping from the
+ * Filament mapping dialog, returns the list to feed to
+ * [com.u1.slicer.gcode.applyPrintTimeRemap] so the rewrite is correct.
+ *
+ * Why the delta is needed: the slice path today already bakes the
+ * pre-dialog `colorMapping` into the G-code via GcodeToolRemapper.remap,
+ * so the on-disk G-code's T<n> already represents physical-slot indices,
+ * not file-filament indices. The dialog's `mapping` is what the user
+ * wants — relative to the file's filaments. The applyPrintTimeRemap
+ * function rewrites T<n> → T<list[n]> verbatim, so the input list must
+ * be source-T-indexed, not file-indexed.
+ *
+ * Result list is sized to cover every distinct T-index that could appear
+ * in the source G-code; entries with no explicit rewrite default to
+ * identity (which applyPrintTimeRemap also handles via its `?: itself`
+ * fallback in the remap line logic).
+ *
+ * Behaviour notes:
+ *  - If [sliceMapping] is null (single-colour or no pre-slice mapping),
+ *    the user's mapping is interpreted as file-indexed directly — the
+ *    legacy contract.
+ *  - If [sliceMapping] has duplicates (overlap from a multi-colour file
+ *    sliced with two filaments collapsed onto one slot), the duplicate
+ *    source T-index gets the LAST file index's user choice as a tie-
+ *    break. The user can't un-collapse a previously-collapsed slice via
+ *    the dialog — that would require re-slicing.
+ */
+internal fun computeDialogRewrite(
+    sliceMapping: List<Int>?,
+    userMapping: List<Int>,
+): List<Int> {
+    if (sliceMapping == null || sliceMapping.size != userMapping.size) {
+        return userMapping
+    }
+    val maxSrc = sliceMapping.maxOrNull() ?: return userMapping
+    val maxDst = userMapping.maxOrNull() ?: return userMapping
+    val size = maxOf(maxSrc, maxDst, sliceMapping.size - 1, userMapping.size - 1) + 1
+    val rewrite = MutableList(size) { it }  // identity defaults
+    for (i in sliceMapping.indices) {
+        val src = sliceMapping[i]
+        val dst = userMapping[i]
+        if (src in rewrite.indices) rewrite[src] = dst
+    }
+    return rewrite
 }
 
 // =============================================================================
