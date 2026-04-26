@@ -72,4 +72,64 @@ class BambuCanonicalListInstrumentedTest {
         val nonExistent = File(cacheDir, "does-not-exist.3mf")
         assertNull(bambuFileColourList(nonExistent))
     }
+
+    // ─── bambuCanonicalList — full path including paint segmentation ──────
+
+    @Test
+    fun coloredBenchy_returnsFileColourPlusPaintDerivedEntries() {
+        // colored_3DBenchy declares 4 filaments in project_settings.config
+        // but paint_color triangle attributes use OrcaSlicer's extended-state
+        // encoding (B95 shape) — leaf states decode to higher numbers than
+        // the 4 declared. The canonical list must size to address every
+        // state the slicer will see.
+        val file = asset("colored_3DBenchy (1).3mf")
+
+        val list = bambuCanonicalList(file)
+        assertNotNull("bambuCanonicalList must succeed for colored Benchy", list)
+        assertTrue("size must be >= 4 (the declared filament_colour count)",
+            list!!.size >= 4)
+        assertTrue(list.isMultiColour)
+
+        // First 4 entries are FILE_COLOUR — the file's declared filaments.
+        for (i in 0..3) {
+            assertEquals("entry $i fileIndex", i, list.filaments[i].fileIndex)
+            assertEquals("entry $i source", FilamentSource.FILE_COLOUR,
+                list.filaments[i].source)
+        }
+
+        // Anything beyond the declared 4 is a PAINT_DERIVED placeholder
+        // sized so paint segmentation can address it.
+        for (i in 4 until list.size) {
+            assertEquals("entry $i source", FilamentSource.PAINT_DERIVED,
+                list.filaments[i].source)
+            assertEquals("entry $i fileIndex", i, list.filaments[i].fileIndex)
+        }
+
+        // Paint segmentation must produce a non-empty paintStateMap.
+        assertTrue("paintStateMap must be non-empty for SEMM file",
+            list.paintStateMap.isNotEmpty())
+
+        // Identity: state N → fileIndex N-1, all in bounds.
+        list.paintStateMap.forEach { (state, fileIdx) ->
+            assertEquals("state $state must map to fileIndex ${state - 1}",
+                state - 1, fileIdx)
+            assertTrue("fileIdx $fileIdx must be in bounds [0, ${list.size})",
+                fileIdx in 0 until list.size)
+        }
+    }
+
+    @Test
+    fun dieSingleColour_canonicalListMatchesFileColourOnly() {
+        // No paint segmentation in the Die file → bambuCanonicalList should
+        // return the same shape as bambuFileColourList plus an empty
+        // paintStateMap.
+        val file = asset("die-single-colour.3mf")
+
+        val list = bambuCanonicalList(file)
+        assertNotNull(list)
+        assertEquals(1, list!!.size)
+        assertTrue(list.paintStateMap.isEmpty())
+        assertEquals(FilamentSource.FILE_COLOUR, list.filaments[0].source)
+        assertEquals("#A6A9AA", list.filaments[0].color)
+    }
 }

@@ -28,7 +28,56 @@ import java.util.zip.ZipFile
  */
 private const val TAG = "BambuCanonicalList"
 private const val PROJECT_SETTINGS_PATH = "Metadata/project_settings.config"
+private val MODEL_ENTRY_REGEX = Regex(""".*\.model$""")
 
+/**
+ * Full canonical list — combines FILE_COLOUR entries from
+ * `Metadata/project_settings.config` with PAINT_DERIVED entries and
+ * `paintStateMap` from any `paint_color` / `mmu_segmentation` triangle
+ * attributes in the file's `.model` XML entries.
+ *
+ * Returns `null` for invalid / non-Bambu 3MF files. Callers should fall
+ * through to other format normalizers (PrusaSlicer, STL synthetic) when
+ * this returns `null`.
+ */
+fun bambuCanonicalList(file: File): CanonicalFilamentList? {
+    if (!file.exists() || !file.isFile) return null
+    return try {
+        ZipFile(file).use { zip ->
+            val settingsEntry = zip.getEntry(PROJECT_SETTINGS_PATH) ?: return null
+            val settingsText = zip.getInputStream(settingsEntry)
+                .bufferedReader().use { it.readText() }
+            val base = buildFromProjectSettings(settingsText) ?: return null
+
+            // Walk every .model entry, decode every paint_color / mmu_segmentation
+            // attribute via PaintColorDecoder, aggregate the set of leaf paint
+            // states the slicer will see.
+            val paintStates = mutableSetOf<Int>()
+            zip.entries().asSequence()
+                .filter { e -> !e.isDirectory && MODEL_ENTRY_REGEX.matches(e.name) }
+                .forEach { e ->
+                    zip.getInputStream(e).bufferedReader().useLines { lines ->
+                        lines.forEach { line ->
+                            extractPaintSpecs(line).forEach { spec ->
+                                paintStates += PaintColorDecoder.decodeStates(spec)
+                            }
+                        }
+                    }
+                }
+
+            mergePaintStates(base, paintStates)
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "Failed to build canonical list for ${file.name}: ${e.message}")
+        null
+    }
+}
+
+/**
+ * @deprecated since slice 4 — use [bambuCanonicalList] which also folds in
+ *   paint segmentation. Kept temporarily for the slice-2 instrumented test
+ *   which asserts the FILE_COLOUR-only contract on the Die fixture.
+ */
 fun bambuFileColourList(file: File): CanonicalFilamentList? {
     if (!file.exists() || !file.isFile) return null
     return try {
@@ -73,4 +122,59 @@ private fun JSONArray.optStringOrNull(i: Int): String? {
     if (i < 0 || i >= length()) return null
     val v = optString(i, "")
     return v.takeIf { it.isNotBlank() }
+}
+
+/**
+ * Visible for unit tests — extracts every `paint_color` / `mmu_segmentation` /
+ * `slic3rpe:mmu_segmentation` attribute value from a single line of XML.
+ *
+ * Multiple matches per line are supported (compact 3MFs sometimes pack many
+ * triangles onto one line). Empty values are filtered out.
+ */
+internal fun extractPaintSpecs(line: String): List<String> =
+    PAINT_SPEC_REGEX.findAll(line)
+        .mapNotNull { it.groupValues[1].takeIf { v -> v.isNotBlank() } }
+        .toList()
+
+private val PAINT_SPEC_REGEX =
+    Regex("""(?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)="([^"]+)"""")
+
+/**
+ * Visible for unit tests — given a base canonical list (typically from
+ * [buildFromProjectSettings]) and a set of decoded paint states, returns a
+ * new list that:
+ *   - Contains every base entry untouched.
+ *   - Adds [FilamentSource.PAINT_DERIVED] entries for any paint state index
+ *     that addresses beyond the base list's bounds (B95 high-index shape:
+ *     Buzz plate 9 paint state 11 against a 4-entry `filament_colour`).
+ *   - Builds [CanonicalFilamentList.paintStateMap] mapping each decoded
+ *     state → the `fileIndex` it addresses.
+ *
+ * Paint states are 1-based as emitted by [PaintColorDecoder]; state N
+ * addresses `fileIndex = N - 1`.
+ */
+internal fun mergePaintStates(
+    base: CanonicalFilamentList,
+    paintStates: Set<Int>,
+): CanonicalFilamentList {
+    if (paintStates.isEmpty()) return base
+    val maxAddressed = paintStates.maxOrNull() ?: return base
+    val targetSize = maxOf(base.size, maxAddressed)
+
+    val expanded = base.filaments.toMutableList()
+    while (expanded.size < targetSize) {
+        // Synthetic placeholder — colour and material come from the file's
+        // declared list when present; out-of-bounds addressed states get a
+        // neutral grey + null material so the UI can still render them.
+        expanded.add(
+            FilamentEntry(
+                fileIndex = expanded.size,
+                color = "#808080",
+                materialType = null,
+                source = FilamentSource.PAINT_DERIVED,
+            )
+        )
+    }
+    val paintStateMap = paintStates.associateWith { state -> state - 1 }
+    return CanonicalFilamentList(filaments = expanded, paintStateMap = paintStateMap)
 }

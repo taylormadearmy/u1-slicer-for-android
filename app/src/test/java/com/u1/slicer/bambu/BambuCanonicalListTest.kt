@@ -1,5 +1,7 @@
 package com.u1.slicer.bambu
 
+import com.u1.slicer.data.CanonicalFilamentList
+import com.u1.slicer.data.FilamentEntry
 import com.u1.slicer.data.FilamentSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -120,5 +122,121 @@ class BambuCanonicalListTest {
         val json = """{ "filament_colour": ["before#ABCDEFafter"] }"""
         val list = buildFromProjectSettings(json)
         assertEquals("#ABCDEF", list!!.filaments[0].color)
+    }
+
+    // ─── extractPaintSpecs ────────────────────────────────────────────────
+
+    @Test
+    fun `extractPaintSpecs returns empty for line without paint attributes`() {
+        assertEquals(0, extractPaintSpecs("<vertex x=\"1\" y=\"2\"/>").size)
+        assertEquals(0, extractPaintSpecs("").size)
+    }
+
+    @Test
+    fun `extractPaintSpecs finds single paint_color value`() {
+        val line = """<triangle v1="0" v2="1" v3="2" paint_color="4"/>"""
+        val specs = extractPaintSpecs(line)
+        assertEquals(1, specs.size)
+        assertEquals("4", specs[0])
+    }
+
+    @Test
+    fun `extractPaintSpecs finds mmu_segmentation value`() {
+        val line = """<triangle mmu_segmentation="8C"/>"""
+        val specs = extractPaintSpecs(line)
+        assertEquals(1, specs.size)
+        assertEquals("8C", specs[0])
+    }
+
+    @Test
+    fun `extractPaintSpecs finds slic3rpe namespaced attribute`() {
+        val line = """<triangle slic3rpe:mmu_segmentation="3C"/>"""
+        val specs = extractPaintSpecs(line)
+        assertEquals(1, specs.size)
+        assertEquals("3C", specs[0])
+    }
+
+    @Test
+    fun `extractPaintSpecs returns multiple values from single line`() {
+        // Compact 3MFs sometimes pack many triangles onto one line.
+        val line = """<t paint_color="4"/><t paint_color="8"/><t mmu_segmentation="C"/>"""
+        val specs = extractPaintSpecs(line)
+        assertEquals(3, specs.size)
+        assertEquals(listOf("4", "8", "C"), specs)
+    }
+
+    @Test
+    fun `extractPaintSpecs filters blank values`() {
+        val line = """<t paint_color=""/><t paint_color="4"/>"""
+        val specs = extractPaintSpecs(line)
+        assertEquals(1, specs.size)
+        assertEquals("4", specs[0])
+    }
+
+    // ─── mergePaintStates ─────────────────────────────────────────────────
+
+    @Test
+    fun `mergePaintStates with empty paintStates returns base unchanged`() {
+        val base = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PLA", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val merged = mergePaintStates(base, emptySet())
+        assertEquals(base, merged)
+        assertTrue(merged.paintStateMap.isEmpty())
+    }
+
+    @Test
+    fun `mergePaintStates with paint states within bounds builds identity paintStateMap`() {
+        // 4-colour SEMM (e.g. colored Benchy): filament_colour has 4 entries,
+        // paint_color triangles reference states 1..4. State N addresses
+        // fileIndex N-1; no PAINT_DERIVED entries needed.
+        val base = CanonicalFilamentList(
+            filaments = (0..3).map { i ->
+                FilamentEntry(i, "#%06X".format(i * 0x404040), "PLA", FilamentSource.FILE_COLOUR)
+            }
+        )
+        val merged = mergePaintStates(base, setOf(1, 2, 3, 4))
+        assertEquals(4, merged.size)  // unchanged size
+        assertEquals(0, merged.paintStateMap[1])
+        assertEquals(1, merged.paintStateMap[2])
+        assertEquals(2, merged.paintStateMap[3])
+        assertEquals(3, merged.paintStateMap[4])
+        // All entries are still FILE_COLOUR
+        merged.filaments.forEach { e ->
+            assertEquals(FilamentSource.FILE_COLOUR, e.source)
+        }
+    }
+
+    @Test
+    fun `mergePaintStates with high-index paint state expands list with PAINT_DERIVED`() {
+        // B95 Buzz plate 9 shape: filament_colour has 4 entries, but paint_color
+        // attribute "8C" decodes to state 11 (addressing fileIndex 10). The
+        // canonical list grows to size 11 with entries 4..10 marked
+        // PAINT_DERIVED, and paintStateMap[11] = 10.
+        val base = CanonicalFilamentList(
+            filaments = (0..3).map { i ->
+                FilamentEntry(i, "#%06X".format(i * 0x404040), "PLA", FilamentSource.FILE_COLOUR)
+            }
+        )
+        val merged = mergePaintStates(base, setOf(6, 11))
+
+        assertEquals(11, merged.size)
+        // Original 4 entries preserved
+        for (i in 0..3) {
+            assertEquals(FilamentSource.FILE_COLOUR, merged.filaments[i].source)
+        }
+        // Entries 4..10 are PAINT_DERIVED placeholders
+        for (i in 4..10) {
+            assertEquals(FilamentSource.PAINT_DERIVED, merged.filaments[i].source)
+            assertEquals("#808080", merged.filaments[i].color)
+            assertNull(merged.filaments[i].materialType)
+            assertEquals(i, merged.filaments[i].fileIndex)
+        }
+        // paintStateMap addresses each state to fileIndex = state - 1
+        assertEquals(5, merged.paintStateMap[6])
+        assertEquals(10, merged.paintStateMap[11])
     }
 }
