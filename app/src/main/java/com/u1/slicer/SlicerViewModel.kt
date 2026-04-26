@@ -553,6 +553,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        // Phase 2.7 — when the user edits a filament override on Prepare,
+        // refresh the 3D preview palette so the change is visible
+        // immediately. Also marks the slice stale so the user knows to
+        // re-slice (overrides drive nozzle temps and embed colour).
+        viewModelScope.launch {
+            _filamentOverrides.drop(1).collect {
+                refreshMappedPreviewColors(extruderPresets.value)
+                _sliceStale.value = true
+            }
+        }
+
         viewModelScope.launch {
             var prevState: SlicerState = SlicerState.Idle
             state.collect { newState ->
@@ -580,7 +591,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val mapping = _colorMapping.value
         if (mapping.isNullOrEmpty()) return
         val usedSlots = mapping.distinct().sorted()
-        val refreshed = buildPreviewSlotColors(presets, usedSlots)
+        // Phase 2.7 — apply per-filament colour overrides so the 3D preview
+        // and downstream UI surfaces show the user's chosen colours.
+        val withOverrides = applyFilamentOverridesToPresets(presets)
+        val refreshed = buildPreviewSlotColors(withOverrides, usedSlots)
         if (refreshed != _activeExtruderColors.value) {
             _activeExtruderColors.value = refreshed
             Log.i("SlicerVM", "Refreshed mapped preview slot colors from presets: used=$usedSlots colors=$refreshed")

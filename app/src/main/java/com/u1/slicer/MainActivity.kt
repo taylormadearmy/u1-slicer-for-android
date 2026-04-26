@@ -652,11 +652,22 @@ class MainActivity : ComponentActivity() {
                 // Send and the actual upload. Always shown when the user
                 // taps Send (PrintAndUpload) or Upload Only.
                 pendingMappingSend?.let { pending ->
-                    val canonical = remember(pending.gcodePath) {
+                    val rawCanonical = remember(pending.gcodePath) {
                         viewModel.getCanonicalFilamentList()
                     }
                     val extruderPresets by viewModel.extruderPresets.collectAsState()
                     val currentMapping by viewModel.colorMapping.collectAsState()
+                    val overrides by viewModel.filamentOverrides.collectAsState()
+                    val canonical = remember(rawCanonical, overrides) {
+                        rawCanonical?.let { raw ->
+                            com.u1.slicer.data.applyOverridesToCanonical(
+                                raw,
+                                overrides.mapValues { (_, ov) ->
+                                    ov.color to ov.materialType
+                                },
+                            )
+                        }
+                    }
                     if (canonical != null) {
                         // Phase 2.5 — the slice-time `colorMapping` is what the
                         // current G-code's T-indices already reflect (today's

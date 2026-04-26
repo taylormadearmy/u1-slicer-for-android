@@ -84,6 +84,35 @@ data class CanonicalFilamentList(
 }
 
 /**
+ * Phase 2.6/2.8 — applies per-file-index user overrides to a canonical
+ * list. For each entry whose [FilamentEntry.fileIndex] has an override
+ * with non-null `color` or `materialType`, those values replace the
+ * file's defaults.
+ *
+ * @param canonical The raw canonical list from the file.
+ * @param overrides Map of file-filament-index → (colorHex?, materialType?).
+ *   Caller-side type — the SlicerViewModel keeps it as
+ *   `Map<Int, FilamentOverride>` but this helper only needs the two hex
+ *   strings, so it stays in the data package without depending on UI types.
+ */
+fun applyOverridesToCanonical(
+    canonical: CanonicalFilamentList,
+    overrides: Map<Int, Pair<String?, String?>>,
+): CanonicalFilamentList {
+    if (overrides.isEmpty()) return canonical
+    val updated = canonical.filaments.map { entry ->
+        val ov = overrides[entry.fileIndex] ?: return@map entry
+        val (overrideColor, overrideMaterial) = ov
+        if (overrideColor == null && overrideMaterial == null) return@map entry
+        entry.copy(
+            color = overrideColor ?: entry.color,
+            materialType = overrideMaterial ?: entry.materialType,
+        )
+    }
+    return canonical.copy(filaments = updated)
+}
+
+/**
  * Phase 2.1 — synthesises a single-entry [CanonicalFilamentList] for an STL
  * file. STL geometry has no embedded filament data, so the canonical list
  * is built from the user's currently-selected extruder preset:
