@@ -1926,32 +1926,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         canonical: com.u1.slicer.data.CanonicalFilamentList,
         overrides: Map<Int, FilamentOverride>,
         presets: List<ExtruderPreset>,
-    ): Pair<List<String>, List<Int>> {
-        val mapping = _colorMapping.value
-        val library = filaments.value
-        val types = ArrayList<String>(canonical.size)
-        val temps = ArrayList<Int>(canonical.size)
-        for (i in 0 until canonical.size) {
-            val ov = overrides[i]
-            val slot = mapping?.getOrNull(i) ?: 0
-            val slotPreset = presets.firstOrNull { it.index == slot }
-            val material = ov?.materialType
-                ?: canonical.filaments[i].materialType
-                ?: slotPreset?.materialType
-                ?: "PLA"
-            types.add(material)
-            // Use the slot's linked filament profile temp if the override
-            // didn't change the material; otherwise fall back to the
-            // material default. This avoids using a PLA-tuned profile temp
-            // when the user has overridden to PETG.
-            val profileTemp = if (ov?.materialType == null) {
-                slotPreset?.filamentProfileId
-                    ?.let { id -> library.firstOrNull { it.id == id }?.nozzleTemp }
-            } else null
-            temps.add(profileTemp ?: nozzleTempDefaultForMaterial(material))
-        }
-        return types to temps
-    }
+    ): Pair<List<String>, List<Int>> = com.u1.slicer.data.resolvePerFilamentTypeAndTemp(
+        canonical = canonical,
+        overrides = overrides.mapValues { (_, ov) -> ov.color to ov.materialType },
+        colorMapping = _colorMapping.value,
+        presets = presets,
+        filamentLibrary = filaments.value,
+    )
 
     /**
      * Phase 2.7 — applies the user's per-filament overrides (Prepare screen)

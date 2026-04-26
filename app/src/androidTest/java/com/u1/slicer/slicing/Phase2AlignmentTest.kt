@@ -1,0 +1,236 @@
+package com.u1.slicer.slicing
+
+import android.util.Log
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.u1.slicer.NativeLibrary
+import com.u1.slicer.bambu.BambuSanitizer
+import com.u1.slicer.bambu.ProfileEmbedder
+import com.u1.slicer.bambu.ThreeMfParser
+import com.u1.slicer.bambu.bambuCanonicalList
+import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.data.applyOverridesToCanonical
+import com.u1.slicer.data.resolvePerFilamentTypeAndTemp
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+
+/**
+ * Phase 2 end-to-end alignment tests — the cascade detector at the
+ * G-code header level.
+ *
+ * The unit tests in `PerFilamentResolverTest` cover the resolution logic
+ * in isolation. These tests prove that the resolved per-filament arrays
+ * survive the embed → slice → G-code header round-trip without truncation
+ * or cascade.
+ *
+ * The contract being defended:
+ *
+ *   For a multi-filament file (H2C benchy: 7 file filaments) with a user
+ *   override at fileIndex N, the sliced G-code's `; filament_type = ...`
+ *   header line must contain the override material at position N AND ONLY
+ *   at position N.
+ *
+ * See `docs/superpowers/reviews/2026-04-26-phase2-architecture-review.md`
+ * §4 Step 1 for the test plan.
+ */
+@RunWith(AndroidJUnit4::class)
+class Phase2AlignmentTest {
+
+    private lateinit var lib: NativeLibrary
+    private lateinit var cacheDir: File
+    private lateinit var outDir: File
+    private lateinit var embedder: ProfileEmbedder
+
+    @Before
+    fun setup() {
+        assertTrue("Native library required", NativeLibrary.isLoaded)
+        lib = NativeLibrary()
+        lib.clearModel()
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        cacheDir = ctx.cacheDir
+        outDir = File(cacheDir, "phase2_alignment_out").also { it.mkdirs() }
+        embedder = ProfileEmbedder(ctx)
+    }
+
+    @After
+    fun teardown() {
+        lib.clearModel()
+        outDir.deleteRecursively()
+    }
+
+    private fun asset(name: String): File {
+        val file = File(cacheDir, name.replace("/", "_"))
+        InstrumentationRegistry.getInstrumentation().context
+            .assets.open(name).use { it.copyTo(file.outputStream()) }
+        return file
+    }
+
+    private fun makeConfig(extruderCount: Int) = SliceConfig(
+        layerHeight = 0.2f,
+        firstLayerHeight = 0.2f,
+        perimeters = 2,
+        topSolidLayers = 5,
+        bottomSolidLayers = 4,
+        fillDensity = 0.15f,
+        fillPattern = "gyroid",
+        printSpeed = 150f,
+        travelSpeed = 200f,
+        firstLayerSpeed = 50f,
+        nozzleTemp = 220,
+        bedTemp = 65,
+        nozzleDiameter = 0.4f,
+        filamentDiameter = 1.75f,
+        retractLength = 0.8f,
+        retractSpeed = 45f,
+        extruderCount = extruderCount,
+        extruderTemps = IntArray(extruderCount) { 220 },
+        wipeTowerEnabled = true,
+        wipeTowerX = 170f,
+        wipeTowerY = 140f,
+        wipeTowerWidth = 60f,
+    )
+
+    private fun fourPLAPresets(): List<ExtruderPreset> = (0..3).map { i ->
+        ExtruderPreset(index = i, color = "#FF0000", materialType = "PLA")
+    }
+
+    /**
+     * Reads the `; filament_type = ...` header line from the G-code and
+     * splits it into a list of materials. The header is written by the
+     * slicer once, near the top of the file. Returns `null` if absent.
+     */
+    private fun readFilamentTypeHeader(gcode: String): List<String>? {
+        val line = gcode.lines().firstOrNull { it.trimStart().startsWith("; filament_type = ") }
+            ?: return null
+        return line.substringAfter("= ").split(";").map { it.trim() }
+    }
+
+    /**
+     * Cascade detector: H2C benchy (7 file filaments) with PETG override at
+     * fileIndex 0 must produce a `filament_type` header where index 0 is
+     * PETG and ALL other indices are PLA. A failure on indices 4 (which
+     * shares slot 0 with index 0 in the auto-suggested mapping) indicates
+     * the slot-preset round-trip cascade is back.
+     *
+     * Red on `28137c5` if the cascade returns; green when the per-filament
+     * resolver is wired correctly through embed → slice.
+     */
+    @Test
+    fun h2cBenchy_overrideFileIndexZeroToPETG_appearsOnlyAtIndexZero() {
+        val input = asset("3DBenchy-H2C-Multi-Color.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        assertTrue("H2C benchy must have hasPaintData=true", origInfo.hasPaintData)
+
+        val canonical = bambuCanonicalList(input)
+            ?: error("bambuCanonicalList must produce a canonical list for H2C benchy")
+        assertEquals("H2C benchy must have 7 file filaments", 7, canonical.size)
+
+        // Apply user override: fileIndex 0 → PETG. Mirrors the Prepare
+        // screen tap ("Filament 1 → PETG") from the smoke-test scenario.
+        val overrides = mapOf(0 to (null to "PETG"))
+        val overridden = applyOverridesToCanonical(
+            canonical = canonical,
+            overrides = overrides,
+        )
+        // H2C auto-suggested 7→4 mapping (deterministic stand-in for the
+        // closest-extruder heuristic): collisions at slots 0/1/2.
+        val colorMapping = listOf(0, 1, 2, 3, 0, 1, 2)
+        val (filamentTypes, nozzleTemps) = resolvePerFilamentTypeAndTemp(
+            canonical = overridden,
+            overrides = overrides,
+            colorMapping = colorMapping,
+            presets = fourPLAPresets(),
+            filamentLibrary = emptyList(),
+        )
+
+        // Sanity-check the resolver's output before we even slice — these
+        // are the same assertions PerFilamentResolverTest makes. If they
+        // fail here, the resolver has regressed.
+        assertEquals(
+            "Resolver must produce PETG only at index 0 — cascade detector.",
+            listOf("PETG", "PLA", "PLA", "PLA", "PLA", "PLA", "PLA"),
+            filamentTypes,
+        )
+        assertEquals(
+            listOf(235, 220, 220, 220, 220, 220, 220),
+            nozzleTemps,
+        )
+
+        // Build embed config with the overrides flowing in via the
+        // `overrides` parameter. targetExtruderCount = canonical.size so
+        // normalizePerFilamentArrays does NOT truncate the 7-entry array.
+        val processed = BambuSanitizer.process(input, outDir)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val embedOverrides: Map<String, Any> = mapOf(
+            "filament_type" to filamentTypes.toMutableList(),
+            "nozzle_temperature" to nozzleTemps.map { it.toString() }.toMutableList(),
+            "nozzle_temperature_initial_layer" to nozzleTemps.map { it.toString() }.toMutableList(),
+        )
+        val config = embedder.buildConfig(
+            info = origInfo,
+            sourceConfig = sourceConfig,
+            overrides = embedOverrides,
+            targetExtruderCount = canonical.size,
+        )
+
+        // The embedded config must carry the full 7-entry override — if
+        // `normalizePerFilamentArrays` truncates here, the override is lost
+        // before the slicer even runs.
+        val embeddedTypes = config["filament_type"] as? List<*>
+            ?: error("filament_type must be a list in embedded config")
+        assertEquals(
+            "Embedded filament_type must have 7 entries (no truncation).",
+            7, embeddedTypes.size,
+        )
+        assertEquals(
+            "Embedded filament_type[0] must be PETG.",
+            "PETG", embeddedTypes[0].toString(),
+        )
+
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        // Slice with 4 physical extruders — the print-time mapping reduces
+        // the canonical 7 down to 4 slots, but the file-filament-space
+        // arrays we just embedded are 7-wide.
+        val result = lib.slice(makeConfig(4))
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
+
+        val gcode = File(result.gcodePath).readText()
+        val header = readFilamentTypeHeader(gcode)
+            ?: error("G-code must contain a `; filament_type = ...` header line")
+
+        Log.i("Phase2AlignmentTest", "H2C benchy filament_type header: $header")
+
+        assertEquals(
+            "G-code header must have 7 filament_type entries (one per file " +
+                "filament). Got ${header.size}: $header. If <7, " +
+                "normalizePerFilamentArrays truncated the override array " +
+                "(handoff §1 bug 13).",
+            7, header.size,
+        )
+        assertEquals(
+            "G-code header filament_type[0] must be PETG (the user's " +
+                "override). Got '${header[0]}'.",
+            "PETG", header[0],
+        )
+        for (i in 1 until 7) {
+            assertEquals(
+                "G-code header filament_type[$i] must be PLA (no cascade). " +
+                    "Got '${header[i]}'. If PETG appears at index 4 (shares " +
+                    "slot 0 with index 0), the cascade bug is back. Full " +
+                    "header: $header.",
+                "PLA", header[i],
+            )
+        }
+    }
+}
