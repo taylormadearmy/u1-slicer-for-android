@@ -212,14 +212,21 @@ class PreparePreviewViewModelTest {
                 distinctNativeIndices.size >= 4
             )
 
-            val colors = viewModel.activeExtruderColors.value
-            val palette = mapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
-            }
+            // Phase 2 §4 Step 6 — preview palette is now canonical-driven.
+            // Recolor with the file's per-filament colours (overlaid by user
+            // overrides). The mesh's extruderIndices are file-filament-indexed,
+            // so palette[i] applies directly without slot-mapping indirection.
+            val resolved = viewModel.resolvedFilamentColors.value
+            assertTrue(
+                "S-Buttons resolvedFilamentColors must have ≥4 entries, got ${resolved.size}",
+                resolved.size >= 4
+            )
+            val palette = resolved.map { SlicerViewModel.staticHexColorToFloatArray(it) }
             mesh.recolor(palette)
 
-            // Count distinct RGBA values in the vertex buffer — if pink (slot 3) is clamped
-            // to blue (slot 2), we'd see only 3 distinct colours even though the mesh has 4 indices.
+            // Count distinct RGBA values in the vertex buffer. Under the
+            // canonical contract, ≥4 distinct file colours means ≥4 distinct
+            // RGBAs in the recolored mesh — no slot palette to collapse them.
             val distinctRgba = mutableSetOf<Int>()
             val buf = mesh.vertices
             val triCount = mesh.vertexCount / 3
@@ -232,7 +239,8 @@ class PreparePreviewViewModelTest {
                 if (distinctRgba.size >= 4) break
             }
             assertTrue(
-                "S-Buttons plate 1 recolored mesh should have at least 4 distinct RGBA values (not 3 due to clamping), got ${distinctRgba.size}",
+                "S-Buttons plate 1 recolored mesh should have at least 4 distinct " +
+                    "RGBA values (file declares 4 colours), got ${distinctRgba.size}",
                 distinctRgba.size >= 4
             )
         } finally {
@@ -312,17 +320,27 @@ class PreparePreviewViewModelTest {
                 distinctColors.size >= 4
             )
 
-            // Also verify the palette produced for the Compose recolor has 4 distinct RGBA values
-            // when applied to the native mesh. This catches colorMapping-level remapping bugs where
-            // palette[3]=activeExtruderColors[mapping[3]]=white even though activeExtruderColors[3]=pink.
+            // Phase 2 §4 Step 6 — preview palette is canonical-driven. The
+            // mesh's recolor uses the file's declared filament colours, NOT
+            // the user's slot-preset palette. So the original B86 bug (E4
+            // collapsing to E2's white because slot 4 fell back to the
+            // default white preset) is structurally impossible: file colours
+            // are never touched by the slot presets.
+            //
+            // What this test now pins: with a file declaring ≥4 distinct
+            // filament colours, the recolored mesh has ≥4 distinct RGBAs,
+            // regardless of what the user's slot presets look like.
             val preview = NativeLibrary().getPreparePreviewMesh()
             assertNotNull("Native prepare preview mesh should be available", preview)
             preview!!
             val mesh = preview.toMeshData()!!
 
-            val palette = mapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
-            }
+            val resolved = viewModel.resolvedFilamentColors.value
+            assertTrue(
+                "B86: resolvedFilamentColors must have ≥4 entries from the file, got ${resolved.size}",
+                resolved.size >= 4
+            )
+            val palette = resolved.map { SlicerViewModel.staticHexColorToFloatArray(it) }
             mesh.recolor(palette)
 
             val distinctRgba = mutableSetOf<Int>()
@@ -337,9 +355,9 @@ class PreparePreviewViewModelTest {
                 if (distinctRgba.size >= 4) break
             }
             assertTrue(
-                "B86: recolored mesh must show 4 distinct RGBA values with [yellow,white,blue,pink] presets " +
-                    "(E4/pink must not collapse to E2/white). " +
-                    "mapping=$mapping colors=$colors distinctRgba=$distinctRgba",
+                "B86: recolored mesh must show 4 distinct RGBA values from the file's " +
+                    "canonical filament colours (independent of the user's slot presets). " +
+                    "resolved=$resolved distinctRgba=$distinctRgba",
                 distinctRgba.size >= 4
             )
         } finally {
@@ -907,10 +925,14 @@ class PreparePreviewViewModelTest {
             assertNotNull("MeshData conversion should succeed", mesh)
             mesh!!
 
-            // Build palette using the same logic as MainActivity's InlineModelPreview
-            val palette = mapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
-            }
+            // Phase 2 §4 Step 6 — preview palette is canonical-driven.
+            // palette[i] = file's filament_colour[i] (overlaid by override).
+            val resolved = viewModel.resolvedFilamentColors.value
+            assertTrue(
+                "H2C benchy resolvedFilamentColors must have 7 entries (one per file filament), got ${resolved.size}",
+                resolved.size >= 7
+            )
+            val palette = resolved.map { SlicerViewModel.staticHexColorToFloatArray(it) }
             assertTrue("Palette must have 7 entries (one per model colour)", palette.size >= 7)
 
             mesh.recolor(palette)
@@ -1334,12 +1356,12 @@ class PreparePreviewViewModelTest {
             val semmColorPermutation = viewModel.semmColorPermutationFlow.value
 
             // ---- Prepare: recolour the mesh and tally per-colour triangle counts ----
+            // Phase 2 §4 Step 6 — Prepare palette is canonical-driven.
             val preview = NativeLibrary().getPreparePreviewMesh()
             assertNotNull("plate 8 preview mesh required", preview)
             val mesh = preview!!.toMeshData()!!
-            val palette = colorMapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" })
-            }
+            val resolved = viewModel.resolvedFilamentColors.value
+            val palette = resolved.map { SlicerViewModel.staticHexColorToFloatArray(it) }
             mesh.recolor(palette)
             val prepareCounts = mutableMapOf<Int, Int>()
             val buf = mesh.vertices
