@@ -3041,9 +3041,25 @@ fun ModelInfoDialog(
 }
 
 /**
- * Inline section shown on the model-loaded screen for extruder/color assignment
- * and prime tower toggle. Replaces the popup MultiColorDialog for normal workflow.
- * Shows nothing for single-color models with only one extruder.
+ * Phase 2.6a — Prepare-screen filament list.
+ *
+ * Mirrors desktop OrcaSlicer / Bambu Studio's Filament panel: each row
+ * is one filament from the file's canonical list, showing colour and
+ * material type. Slot mapping happens at Send time via the Filament
+ * mapping dialog — no slot picker on Prepare.
+ *
+ * Currently read-only display. Phase 2.6b adds tappable rows that open
+ * an edit dialog (colour picker + material-type dropdown) so users can
+ * override per-filament before slicing — important when the loaded
+ * spool differs from what the file specifies (e.g. printing a 3MF that
+ * declares PLA in PETG → user overrides material so the slicer bakes
+ * the right nozzle temp).
+ *
+ * The prime tower toggle stays — it's a slicing setting, not a slot
+ * mapping concern.
+ *
+ * Hidden entirely for files with one filament and a single-extruder
+ * config (no point showing one row with no controls).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -3058,11 +3074,18 @@ fun PrintSetupSection(
     onToggleWipeTower: () -> Unit,
     onAutoMap: (() -> Unit)? = null
 ) {
+    // Note: onMappingChange / onAutoMap kept in the signature because callers
+    // still pass them (they wired the legacy slot-picker path). They're
+    // unused by Phase 2.6a — the slot picker has moved to the Filament
+    // mapping dialog at Send time. Will retire when callers update.
+    @Suppress("UNUSED_PARAMETER", "UNUSED_VALUE")
+    val _unused = onMappingChange to onAutoMap
+
     val isMultiColor = detectedColors.isNotEmpty() && colorMapping != null
     val showSection = isMultiColor || extruderCount > 1
     if (!showSection) return
 
-    val mapping = remember(colorMapping) { colorMapping?.toMutableStateList() ?: mutableStateListOf() }
+    val mapping = remember(colorMapping) { colorMapping ?: emptyList() }
     var expanded by remember { mutableStateOf(true) }
 
     Card(
@@ -3082,7 +3105,10 @@ fun PrintSetupSection(
                     Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Print Setup", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        if (isMultiColor) "Filaments (${detectedColors.size})" else "Print Setup",
+                        fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                    )
                 }
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -3093,123 +3119,93 @@ fun PrintSetupSection(
 
             AnimatedVisibility(visible = expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (isMultiColor) {
-                if (onAutoMap != null) {
-                    OutlinedButton(
-                        onClick = onAutoMap,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Icons.Default.AutoFixHigh, null,
-                            modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Auto Map to Extruders", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-                detectedColors.forEachIndexed { colorIdx, modelColor ->
-                    var expanded by remember { mutableStateOf(false) }
-                    val selectedSlot = mapping.getOrElse(colorIdx) { 0 }
-                    val selectedPreset = extruderPresets.firstOrNull { it.index == selectedSlot }
-                        ?: extruderPresets.firstOrNull()
-                    val profileId = selectedPreset?.filamentProfileId
-                    val profile = filaments.firstOrNull { it.id == profileId }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Model color swatch
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(androidx.compose.foundation.shape.CircleShape)
-                                .background(com.u1.slicer.ui.parseHexColor(modelColor))
-                                .border(1.dp, MaterialTheme.colorScheme.outline,
-                                    androidx.compose.foundation.shape.CircleShape)
+                    if (isMultiColor) {
+                        // Caption explaining where slot picking now lives.
+                        Text(
+                            "Slot mapping happens when you tap Map & Print →",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                         )
-                        Text("Color ${colorIdx + 1}", style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.width(54.dp))
+                        detectedColors.forEachIndexed { colorIdx, modelColor ->
+                            // Material type comes from the user's auto-suggested slot's
+                            // ExtruderPreset until Phase 2.6b adds explicit overrides.
+                            val suggestedSlot = mapping.getOrElse(colorIdx) { 0 }
+                            val suggestedPreset = extruderPresets.firstOrNull { it.index == suggestedSlot }
+                                ?: extruderPresets.firstOrNull()
+                            val materialType = suggestedPreset?.materialType ?: "PLA"
+                            val profileId = suggestedPreset?.filamentProfileId
+                            val profile = filaments.firstOrNull { it.id == profileId }
 
-                        // Extruder slot picker
-                        ExposedDropdownMenuBox(
-                            expanded = expanded,
-                            onExpandedChange = { expanded = it },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            OutlinedTextField(
-                                value = selectedPreset?.label ?: "E1",
-                                onValueChange = {},
-                                readOnly = true,
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                                leadingIcon = {
-                                    Box(modifier = Modifier.size(14.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                // Filament colour swatch
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
                                         .clip(androidx.compose.foundation.shape.CircleShape)
-                                        .background(selectedPreset?.let { com.u1.slicer.ui.parseHexColor(it.color) } ?: Color.White))
-                                },
-                                modifier = Modifier.menuAnchor().fillMaxWidth(),
-                                textStyle = MaterialTheme.typography.bodySmall,
-                                singleLine = true
-                            )
-                            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                                extruderPresets.forEach { preset ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                Box(modifier = Modifier.size(12.dp)
-                                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                                    .background(com.u1.slicer.ui.parseHexColor(preset.color)))
-                                                Text("${preset.label} · ${preset.materialType}",
-                                                    style = MaterialTheme.typography.bodySmall)
-                                            }
-                                        },
-                                        onClick = {
-                                            if (colorIdx < mapping.size) mapping[colorIdx] = preset.index
-                                            else while (mapping.size <= colorIdx) mapping.add(0)
-                                                .also { mapping[colorIdx] = preset.index }
-                                            onMappingChange(mapping.toList())
-                                            expanded = false
-                                        }
+                                        .background(com.u1.slicer.ui.parseHexColor(modelColor))
+                                        .border(1.dp, MaterialTheme.colorScheme.outline,
+                                            androidx.compose.foundation.shape.CircleShape)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "Filament ${colorIdx + 1}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        modelColor.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                                     )
                                 }
+                                // Material type chip (read-only Phase 2.6a; Phase 2.6b adds
+                                // tap-to-edit so the user can override file's declared material).
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = RoundedCornerShape(6.dp),
+                                ) {
+                                    Text(
+                                        materialType,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    )
+                                }
+                                Text(
+                                    "${profile?.nozzleTemp ?: 210}°C",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                )
                             }
                         }
+                    }
 
-                        // Temp from profile
-                        Text(
-                            "${profile?.nozzleTemp ?: 210}°C",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                            modifier = Modifier.width(44.dp)
-                        )
+                    // Prime tower toggle — slicing setting, kept on Prepare.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.FilterNone, null,
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Prime Tower", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Switch(checked = wipeTowerEnabled,
+                            onCheckedChange = { onToggleWipeTower() })
                     }
                 }
             }
-
-            // Prime tower toggle (always show when multi-extruder)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.FilterNone, null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Prime Tower", style = MaterialTheme.typography.bodyMedium)
-                }
-                Switch(checked = wipeTowerEnabled, onCheckedChange = { onToggleWipeTower() })
-            }
-                } // end AnimatedVisibility Column
-            } // end AnimatedVisibility
         }
     }
 }
