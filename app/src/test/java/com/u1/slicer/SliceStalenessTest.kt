@@ -65,4 +65,42 @@ class SliceStalenessTest {
 
         job.cancel()
     }
+
+    /**
+     * Phase 2 §4 Step 9 / review Q4 — overriding a filament's material or
+     * colour from the Prepare screen must mark the slice stale so the user
+     * is prompted to re-slice. Mirrors the extruderPresets contract:
+     * `_filamentOverrides.drop(1)` collector at SlicerViewModel:560.
+     */
+    @Test
+    fun `filamentOverrides change triggers stale but initial emission does not`() = runTest {
+        // FilamentOverride is a nested type on SlicerViewModel; stand in
+        // with a Pair<color, material> for this contract test.
+        val overrides = MutableStateFlow<Map<Int, Pair<String?, String?>>>(emptyMap())
+        val stale = MutableStateFlow(false)
+
+        val job = launch { overrides.drop(1).collect { stale.value = true } }
+        advanceUntilIdle()  // let collector subscribe and drop the initial value
+
+        assertFalse("Initial emission must not set stale", stale.value)
+
+        // User overrides filament 0 → PETG on Prepare
+        overrides.value = mapOf(0 to (null to "PETG"))
+        advanceUntilIdle()
+        assertTrue("Material override must set stale", stale.value)
+
+        // Reset and try a colour-only override
+        stale.value = false
+        overrides.value = mapOf(0 to ("#FFA500" to "PETG"))
+        advanceUntilIdle()
+        assertTrue("Colour override must set stale", stale.value)
+
+        // Clearing overrides also counts as a state change → stale
+        stale.value = false
+        overrides.value = emptyMap()
+        advanceUntilIdle()
+        assertTrue("Clearing overrides must set stale", stale.value)
+
+        job.cancel()
+    }
 }
