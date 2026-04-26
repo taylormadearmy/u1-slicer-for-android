@@ -1926,6 +1926,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // canonical list exists, otherwise it collapses to slot space.
         val filamentCount = finalTypes.size.coerceAtLeast(slotCount)
 
+        // Phase 2 §4 Step 7 — per-filament colour overrides (Prepare screen)
+        // reach the embedded filament_colour so the slicer's preview reflects
+        // the user's chosen colours. canonical[i].color carries the resolved
+        // colour (file → override per filament). For non-canonical files,
+        // omit — Bambu preserve path keeps source filament_colour, default
+        // profile stack supplies a single entry.
+        val finalColours: List<String>? = canonical?.let { c ->
+            val overridden = com.u1.slicer.data.applyOverridesToCanonical(
+                canonical = c,
+                overrides = _filamentOverrides.value
+                    .mapValues { (_, ov) -> ov.color to ov.materialType },
+            )
+            overridden.filaments.map { it.color }
+        }
+
         return buildProfileOverridesImpl(
             cfg = cfg,
             ov = slicingOverrides.value,
@@ -1934,6 +1949,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             hasSourceConfig = hasSourceConfig,
             filamentTypes = finalTypes,
             nozzleTemps = finalTemps,
+            filamentColours = finalColours,
         )
     }
 
@@ -4184,6 +4200,7 @@ internal fun buildProfileOverridesImpl(
     hasSourceConfig: Boolean = false,
     filamentTypes: List<String>? = null,
     nozzleTemps: List<Int>? = null,
+    filamentColours: List<String>? = null,
 ): Map<String, Any> {
     // Phase 2 §4 Step 2 — `slotCount` is the number of physical extruder
     // slots used (capped at 4 for U1); `filamentCount` is the file's
@@ -4302,6 +4319,17 @@ internal fun buildProfileOverridesImpl(
             filamentTypes?.getOrNull(i) ?: "PLA"
         }
     )
+
+    // Phase 2 §4 Step 7 — per-filament colour overrides reach the embedded
+    // filament_colour so the slicer's preview reflects the user's chosen
+    // colours. Only emit when the caller supplied a canonical-derived list;
+    // for non-canonical files the source config / default profile stack
+    // owns filament_colour.
+    if (filamentColours != null) {
+        result["filament_colour"] = MutableList(filamentCount) { i ->
+            filamentColours.getOrNull(i) ?: "#FFFFFF"
+        }
+    }
 
     // sparse_infill_speed: 0 means "auto" — only emit when the user has overridden to a
     // positive value; otherwise let applyConfigToPrusa / embedded profile decide.
