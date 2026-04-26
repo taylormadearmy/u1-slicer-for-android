@@ -1868,10 +1868,44 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
-        val presets = extruderPresets.value
+        val presets = applyFilamentOverridesToPresets(extruderPresets.value)
         val types = presets.sortedBy { it.index }.map { it.materialType }
         val temps = computeFreshExtruderTemps(extCount, usedSlots, presets, filaments.value).toList()
         return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, hasSourceConfig, filamentTypes = types, nozzleTemps = temps)
+    }
+
+    /**
+     * Phase 2.7 — applies the user's per-filament overrides (Prepare screen)
+     * to the extruder-preset list used for slicing. For each overridden file
+     * filament whose `colorMapping[fileIdx] = slot` is in range, the
+     * corresponding preset's `materialType` and `color` are replaced with
+     * the override.
+     *
+     * Why this couples to the slot mapping: the slice path today reads
+     * filament_type from per-slot extruder presets. Until the embed
+     * pipeline is restructured to read directly from the canonical list
+     * (a future cleanup), the slot-mapped path is the integration point.
+     *
+     * The override drives nozzle temp via the preset's material type +
+     * the linked filament profile's `nozzleTemp`, so the slicer bakes the
+     * right temperature into the G-code even when the loaded spool's
+     * material differs from what the file specifies.
+     */
+    private fun applyFilamentOverridesToPresets(
+        presets: List<ExtruderPreset>,
+    ): List<ExtruderPreset> {
+        val overrides = _filamentOverrides.value
+        val mapping = _colorMapping.value
+        if (overrides.isEmpty() || mapping.isNullOrEmpty()) return presets
+        return presets.map { preset ->
+            val fileIdx = mapping.indexOf(preset.index)
+            if (fileIdx < 0) return@map preset
+            val ov = overrides[fileIdx] ?: return@map preset
+            preset.copy(
+                materialType = ov.materialType ?: preset.materialType,
+                color = ov.color ?: preset.color,
+            )
+        }
     }
 
     private fun configureNativeDiagnosticsIfAvailable() {
