@@ -448,6 +448,29 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val currentModelPath: String? get() = currentModelFile?.absolutePath
 
     /**
+     * Phase 2 — produces the canonical filament list for the currently
+     * loaded file. Computed on demand from `currentModelFile` (and, for
+     * STL files, the user's selected extruder preset).
+     *
+     * Used by the Filament mapping dialog at Send time. Returns `null`
+     * when no model is loaded or the file is unrecognised.
+     */
+    fun getCanonicalFilamentList(): com.u1.slicer.data.CanonicalFilamentList? {
+        val file = currentModelFile ?: return null
+        com.u1.slicer.data.canonicalListAtLoad(file)?.let { return it }
+        // STL fallback: synthesise a single-entry list from the user's
+        // selected extruder preset.
+        val slot = _selectedExtruder.value
+        val preset = extruderPresets.value.firstOrNull { it.index == slot }
+            ?: extruderPresets.value.firstOrNull()
+            ?: return null
+        return com.u1.slicer.data.stlCanonicalList(
+            presetColor = preset.color,
+            presetMaterialType = preset.materialType,
+        )
+    }
+
+    /**
      * Path to use for the inline 3D preview. Uses the original source file when available
      * (before sanitization/embedding) because the sanitized file may have component files
      * stripped out, leaving no geometry for the preview parser.

@@ -474,6 +474,16 @@ class MainActivity : ComponentActivity() {
                 var sharedPreviewCameraState by remember {
                     mutableStateOf<com.u1.slicer.viewer.CameraViewState?>(null)
                 }
+
+                // Phase 2.4 — Filament mapping dialog state. When the user
+                // taps Send to Printer (or Upload Only), we capture the
+                // requested gcode path and the action ("print" vs
+                // "upload-only") here, then show the dialog. On confirm we
+                // applyPrintTimeRemap to a temp file and dispatch the action
+                // with the remapped path.
+                var pendingMappingSend by remember {
+                    mutableStateOf<PendingMappingSend?>(null)
+                }
                 val appSlicerState by viewModel.state.collectAsState()
                 val sharedPreviewModelKey = when (val s = appSlicerState) {
                     is SlicerViewModel.SlicerState.Loading -> "loading:${s.message}"
@@ -560,12 +570,16 @@ class MainActivity : ComponentActivity() {
                             onNavigateSettings = { navigateTab(Routes.SETTINGS) },
                             onNavigatePrinter = { navigateTab(Routes.PRINTER) },
                             onSendToPrinter = { gcodePath ->
-                                printerViewModel.sendAndPrint(gcodePath)
-                                navigateTab(Routes.PRINTER)
+                                pendingMappingSend = PendingMappingSend(
+                                    gcodePath = gcodePath,
+                                    action = PendingMappingSend.Action.PrintAndUpload,
+                                )
                             },
                             onUploadOnly = { gcodePath ->
-                                printerViewModel.sendUploadOnly(gcodePath)
-                                navigateTab(Routes.PRINTER)
+                                pendingMappingSend = PendingMappingSend(
+                                    gcodePath = gcodePath,
+                                    action = PendingMappingSend.Action.UploadOnly,
+                                )
                             },
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
@@ -633,9 +647,71 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 )
+
+                // Phase 2.4 — Filament mapping dialog interposed between
+                // Send and the actual upload. Always shown when the user
+                // taps Send (PrintAndUpload) or Upload Only.
+                pendingMappingSend?.let { pending ->
+                    val canonical = remember(pending.gcodePath) {
+                        viewModel.getCanonicalFilamentList()
+                    }
+                    val extruderPresets by viewModel.extruderPresets.collectAsState()
+                    val currentMapping by viewModel.colorMapping.collectAsState()
+                    if (canonical != null) {
+                        com.u1.slicer.ui.FilamentMappingDialog(
+                            canonicalList = canonical,
+                            extruderPresets = extruderPresets,
+                            initialMapping = currentMapping,
+                            onConfirm = { mapping ->
+                                val source = java.io.File(pending.gcodePath)
+                                val remapped = java.io.File(
+                                    source.parentFile,
+                                    "${source.nameWithoutExtension}.remapped.${source.extension}"
+                                )
+                                com.u1.slicer.gcode.applyPrintTimeRemap(
+                                    sourceGcodePath = source.absolutePath,
+                                    outputPath = remapped.absolutePath,
+                                    colorMapping = mapping,
+                                )
+                                when (pending.action) {
+                                    PendingMappingSend.Action.PrintAndUpload ->
+                                        printerViewModel.sendAndPrint(remapped.absolutePath)
+                                    PendingMappingSend.Action.UploadOnly ->
+                                        printerViewModel.sendUploadOnly(remapped.absolutePath)
+                                }
+                                pendingMappingSend = null
+                                navigateTab(Routes.PRINTER)
+                            },
+                            onDismiss = { pendingMappingSend = null }
+                        )
+                    } else {
+                        // Fallback: no canonical list available (no model
+                        // loaded, unrecognised file). Send unchanged.
+                        when (pending.action) {
+                            PendingMappingSend.Action.PrintAndUpload ->
+                                printerViewModel.sendAndPrint(pending.gcodePath)
+                            PendingMappingSend.Action.UploadOnly ->
+                                printerViewModel.sendUploadOnly(pending.gcodePath)
+                        }
+                        pendingMappingSend = null
+                        navigateTab(Routes.PRINTER)
+                    }
+                }
             }
         }
     }
+}
+
+/**
+ * Phase 2.4 — captures a deferred Send action while the Filament mapping
+ * dialog collects the user's slot picks. [action] is either
+ * `Action.PrintAndUpload` (Send to Printer) or `Action.UploadOnly`.
+ */
+internal data class PendingMappingSend(
+    val gcodePath: String,
+    val action: Action,
+) {
+    enum class Action { PrintAndUpload, UploadOnly }
 }
 
 // =============================================================================
