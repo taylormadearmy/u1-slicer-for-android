@@ -61,6 +61,62 @@ Run these after any change to the G-code viewer rendering, Jobs tab, or Room sch
 - **F61 — Old jobs (no Edit icon):** Jobs sliced before v1.5.32 (i.e. rows with `sourcePath = NULL` in the database) should show **only** the Layers icon — no Edit icon.
 - **F61 — Room migration smoke test:** On a device that had v1.5.31 installed with existing job history, upgrade to v1.5.32. Confirm the app launches without crash, the Jobs tab shows the existing job history intact, and old jobs have only the Layers icon (no Edit icon).
 
+### Manual regression checks (v1.7.0 — Phase 2 canonical filament list)
+
+Run after any change to per-filament overrides, the canonical filament
+list, the embed pipeline (filament_type / nozzle_temperature /
+filament_colour), the 3D preview recolor path, or the print-time
+mapping dialog.
+
+The Phase 2 architecture review (`docs/superpowers/reviews/2026-04-26-
+phase2-architecture-review.md`) made an entire bug class structurally
+impossible (cascade of slot-preset overrides into other filaments).
+The instrumented test `Phase2AlignmentTest` covers the slice-correctness
+side automatically; manual passes verify the **visual + UX** of the
+override flow — what an instrumented test can't catch.
+
+**Suggested fixture:** H2C benchy
+(`3DBenchy-H2C-Multi-Color-Test-Print.3mf`) — 7 file filaments mapped
+to 4 slots, with several slot collisions; the cascade detector's natural
+home. Substitute any multi-filament file with at least 3 distinct
+filaments if H2C isn't available.
+
+- **P2.1 — Per-filament material override (Prepare → slice):** Load
+  H2C benchy. On the Prepare screen, the filament list should show
+  **all 7 filament rows** (not 4 — the display caps were dropped in
+  §4 Step 6). Tap **Filament 1's material chip** → pick **PETG**.
+  Slice. After slice completes, open the output G-code (via
+  `G:/My Drive/logs/output (N).gcode` or the Jobs tab → Layers icon)
+  and locate the `; filament_type =` and `; nozzle_temperature =`
+  header lines. Expected:
+  - `filament_type = PETG;PLA;PLA;PLA;PLA;PLA;PLA`
+  - `nozzle_temperature = 235,220,220,220,220,220,220`
+  - **Cascade detector:** confirm PETG appears at index 0 AND ONLY
+    at index 0. If PETG also appears at index 4 (which auto-maps to
+    the same slot as 0 in default mapping), the cascade bug is back.
+- **P2.2 — Per-filament colour override visual:** Same file. Tap
+  **Filament 2's colour swatch** → pick a vivid distinct colour
+  (e.g. orange `#FFA500`). The 3D preview should **update
+  immediately** to show filament-2's regions in the new colour. The
+  Multi-Color summary card and the filament-list chip should both
+  reflect the override. Regression shape: preview keeps showing the
+  old colour, override only takes effect after slice.
+- **P2.3 — >4 filament Multi-Color summary visibility:** Confirm
+  the **"Colors:" inline preview** in the Multi-Color summary card
+  shows **all 7 swatches**, not just the first 4. Pre-Phase-2 the
+  display was capped at 4 (`colors.take(4)`).
+- **P2.4 — Override survives Send dialog:** With the PETG override
+  on Filament 1 still applied, slice and tap **Map & Print** (or
+  **Map & Upload**). The Filament mapping dialog should show
+  Filament 1 with the PETG material indicator and a
+  material-mismatch chip if the auto-suggested slot's preset
+  material differs from PETG. Slot picker behaviour should be
+  unchanged from v1.6.13.
+- **P2.5 — Override clear flow:** Tap **Clear** on Filament 1's
+  override (or use the dialog's reset). The 3D preview should
+  revert to the file's original colour for filament 1; a re-slice
+  should produce a header without PETG.
+
 ### Manual regression checks (v1.6.8 — B87/B88/B89/B90/B91)
 
 Run after any change to the Prepare-preview colour pipeline, plate-switch flow,
@@ -131,7 +187,7 @@ These are the files most likely to catch regressions quickly:
 | `calib-cube-10-dual-colour-merged.3mf` | Basic 2-colour baseline; post-update Clipper history | Prepare colours, move, slice |
 | `Dragon Scale infinity.3mf` plate 3 | Old-format multi-plate; tri-colour regression history | Plate 3 shows 3 colours, move, slice |
 | `Shashibo-h2s-textured.3mf` plate 5 | Old-format multi-plate textured case | Plate 5 preview colours, slice |
-| `3DBenchy-H2C-Multi-Color-Test-Print.3mf` | H2C sparse paint / 7-colour mapping | Prepare vs Preview colour parity |
+| `3DBenchy-H2C-Multi-Color-Test-Print.3mf` | H2C sparse paint / 7-colour mapping; **Phase 2 cascade-detector canary** | Prepare vs Preview colour parity; **all 7 filament rows visible**; per-filament material override (P2.1–P2.5) — tap Filament 1 → PETG, slice, verify `filament_type = PETG;PLA;PLA;PLA;PLA;PLA;PLA` (no cascade to filament 4) |
 | `colored_3DBenchy (1).3mf` | Non-H2C painted benchy baseline | Prepare colours, slice |
 | `Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf` | B67 canary: large SEMM file (295k paint attrs); catches ProfileEmbedder filament_colour corruption (B66), GcodeParser per-extruder mm swap (B67). **Slow — 3h+ slice.** | Prepare shows 4 colours; `filament_colour` in G-code has **4 distinct hex values** (not `#FFFFFF;#FFFFFF;…`); T0–T3 all non-trivial; `filament used [mm]` first value (T0) is the **largest** of the four |
 | `Buzz_Multipart_3MF_Bambu.3mf` — **plates 1 & 9** | B88/B90 canary: 10-plate Bambu with per-object extruder 10 + paint state 8 (filament indices above declared visual count). Catches plate-switch colour leak + high-index `detectedColors` synthesis. | Select plate 1 (4 colours), **Change plate** to plate 9 (2 colours: peach + white, **not** black + blue), slice plate 9, Preview matches Prepare's 2 colours |
