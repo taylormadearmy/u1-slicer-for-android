@@ -839,6 +839,37 @@ object ThreeMfParser {
         val paintExtruderStates: Set<Int>
     )
 
+    /** Per-component paint scan result, cached so Buzz-class multi-plate files don't
+     *  re-read the same component file once per plate (~9× speedup on the 50 MB / 296K
+     *  paint_color Buzz Lightyear fixture). */
+    private data class ComponentPaintInfo(
+        val paintSpecs: Set<String>,
+        val allPaintStates: Set<Int>,
+        val paintExtruderStates: Set<Int>
+    )
+
+    /** Stream a single component .model file once; collect paint specs (capped) and
+     *  decoded paint states. Honours the same simple/complex-encoding early-exit as
+     *  the previous per-plate scan, scoped to this single component. */
+    private fun scanComponentForPaintInfo(input: java.io.InputStream): ComponentPaintInfo {
+        val specs = linkedSetOf<String>()
+        val allStates = mutableSetOf<Int>()
+        val paintStates = mutableSetOf<Int>()
+        val cap = SPEC_CAP_FOR_COMPLEX_DETECTION
+        streamCollectPaintSpecs(input) { spec ->
+            if (specs.size < cap) specs.add(spec)
+            val decoded = PaintColorDecoder.decodeStates(spec)
+            if (decoded.isEmpty()) {
+                if (spec.isNotEmpty()) allStates.add(0)
+            } else {
+                allStates.addAll(decoded)
+                paintStates.addAll(decoded)
+            }
+            if (specs.size >= cap && allStates.size >= 2) throw EarlyExit
+        }
+        return ComponentPaintInfo(specs, allStates, paintStates)
+    }
+
     private fun computeVisualColorCountByPlate(
         zip: ZipFile,
         modelEntry: java.util.zip.ZipEntry?,
@@ -854,6 +885,25 @@ object ThreeMfParser {
             }.toMap()
         }
 
+        // Phase 1: scan each UNIQUE component file once and cache its paint info.
+        // Multi-plate files like Buzz Lightyear share many components across plates;
+        // the prior per-plate scan re-opened each component once per plate it was
+        // referenced from, multiplying I/O by the plate count. The shared cache below
+        // bounds the work to one read per component, then aggregates per plate from
+        // the cache in Phase 2.
+        val componentPaintCache = mutableMapOf<String, ComponentPaintInfo>()
+        val uniqueComponentPaths = fallbackPlateObjectMap.values
+            .asSequence()
+            .flatMap { it.asSequence() }
+            .flatMap { objectId -> componentPathsByObject[objectId].orEmpty().asSequence() }
+            .toSet()
+        for (path in uniqueComponentPaths) {
+            val entry = zip.getEntry(path) ?: continue
+            componentPaintCache[path] = scanComponentForPaintInfo(zip.getInputStream(entry))
+        }
+
+        // Phase 2: per-plate aggregation. Each plate's PlateVisualInfo is the union of
+        // its objects' component paint info, joined against the cache.
         return fallbackPlateObjectMap.mapValues { (_, objectIds) ->
             val objectExtruderSet = objectIds.mapNotNull { extruderAssignments[it] }.toSet()
             // paintSpecs: distinct spec strings — used to detect simple vs complex encoding.
@@ -865,47 +915,12 @@ object ThreeMfParser {
             val paintSpecs = linkedSetOf<String>()
             val paintExtruderStates = mutableSetOf<Int>()
             val allPaintStates = mutableSetOf<Int>()
-            // B91: once we confirm complex encoding (many unique specs for few states —
-            // e.g. Skywing: 162K specs, 3 states) we stop growing paintSpecs. The cap
-            // is well above the simple-encoding upper bound (max 16 states) so simple
-            // models still collect every spec and the `paintSpecs.size == allPaintStates.size`
-            // discriminator for simple encoding keeps firing correctly.
-            val specCollectionCap = SPEC_CAP_FOR_COMPLEX_DETECTION
-            outer@ for (objectId in objectIds) {
-                val paths = componentPathsByObject[objectId].orEmpty()
-                for (path in paths) {
-                    val entry = zip.getEntry(path) ?: continue
-                    streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
-                        if (paintSpecs.size < specCollectionCap) paintSpecs.add(spec)
-                        // B95: Use full bit-packed decoder instead of first-char heuristic.
-                        // Plate 9 of Buzz Lightyear has paint_color values like "8C" (state 11)
-                        // and "3C" (state 6) that the prior heuristic mis-decoded as states
-                        // 8 and 3 — too low for the slicer's segmentation pass to address
-                        // them once embedded against a 4-entry filament_colour array.
-                        val decoded = PaintColorDecoder.decodeStates(spec)
-                        if (decoded.isEmpty()) {
-                            if (spec.isNotEmpty()) {
-                                // Single-char "0" or similar simple no-paint spec — preserve
-                                // the prior behaviour where allPaintStates included state 0
-                                // so the simple-vs-complex encoding discriminator (paintSpecs.size
-                                // == allPaintStates.size) keeps firing on simple-encoded files.
-                                allPaintStates.add(0)
-                            }
-                        } else {
-                            allPaintStates.addAll(decoded)
-                            paintExtruderStates.addAll(decoded)
-                        }
-                        // B91: once we've saturated the spec cap and any new states would
-                        // only swell paintSpecs.size further past the simple/complex
-                        // threshold, stop reading. AllPaintStates is bounded by 16 states
-                        // (hex 0..F); we require at least 2 to differentiate encodings.
-                        if (paintSpecs.size >= specCollectionCap && allPaintStates.size >= 2) {
-                            throw EarlyExit
-                        }
-                    }
-                    if (paintSpecs.size >= specCollectionCap && allPaintStates.size >= 2) {
-                        break@outer
-                    }
+            for (objectId in objectIds) {
+                for (path in componentPathsByObject[objectId].orEmpty()) {
+                    val info = componentPaintCache[path] ?: continue
+                    paintSpecs.addAll(info.paintSpecs)
+                    allPaintStates.addAll(info.allPaintStates)
+                    paintExtruderStates.addAll(info.paintExtruderStates)
                 }
             }
             // Simple encoding (1 spec per state): include state 0 as a distinct region so
