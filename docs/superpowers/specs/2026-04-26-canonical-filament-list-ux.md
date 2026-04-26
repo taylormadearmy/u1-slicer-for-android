@@ -57,10 +57,14 @@ described:
   `computeSemmColorPermutation`, `slicerColorOrder`.** None needed —
   G-code post-processing happens at upload time in a single small
   `applyPrintTimeRemap(gcodePath, mapping)` step.
-- **Drop the four-overlapping-source synthesis** (`objectPartExtruders`,
-  `compoundPartParents`, `paintExtruderStates`, `objectExtruderMap`). The
-  load-time normalize produces one canonical `List<FilamentEntry>` per file;
-  the embed pipeline reads it verbatim.
+- **Collapse the four-overlapping-source synthesis** (`objectPartExtruders`,
+  `compoundPartParents`, `paintExtruderStates`, `objectExtruderMap`) into
+  the canonical list. Their *role as separate synthesis sources* goes away;
+  their underlying data moves into per-entry metadata on `FilamentEntry`,
+  where the load-time normalize and the future merge feature both consume
+  it. (The merge feature is pre-slice; it needs the per-object/per-volume
+  extruder data to rewrite the file. What it does NOT need is post-slice
+  T-index disambiguation — see §4 Step 2 sidebar.)
 
 What's left at slice time is straightforward: parse the file → produce a
 canonical filament list → embed it → slice → emit G-code. The print-time
@@ -418,10 +422,34 @@ synthesis tests with assertions on the canonical shape.
   no special H2C path.
 - `colorMapping` is no longer a slice-time concern. The native slicer
   emits `T0..T(N-1)` against the file's filament indices.
-- Drop `objectPartExtruders`, `compoundPartParents`, `paintExtruderStates`,
-  `objectExtruderMap` from `ThreeMfInfo` (already `@Deprecated`).
-- Drop `computeEmbedTargetCount`, `computeExpandedGcodeRemap`,
-  `composeSemmRemap`, `computeSemmColorPermutation`, `slicerColorOrder`.
+- **Move** `objectPartExtruders`, `compoundPartParents`,
+  `paintExtruderStates`, `objectExtruderMap` *off* `ThreeMfInfo` and
+  *into* the canonical list's per-entry metadata. The data itself stays;
+  it's load-bearing for the load-time normalize and for the future merge
+  feature's per-object rewrite. What goes away is its role as a separate
+  synthesis source.
+- **Drop entirely** the post-slice T-index synthesis:
+  `computeEmbedTargetCount`, `computeExpandedGcodeRemap`, `composeSemmRemap`,
+  `computeSemmColorPermutation`, `slicerColorOrder`. These solve "what
+  did the slicer emit and what does it mean for user slots?" — a problem
+  that doesn't exist once T-indices and file indices are identical.
+
+### Step 2 sidebar — what survives for the future merge feature
+
+The merge feature (Phase 2.6+) is a **pre-slice rewrite**, not a post-slice
+synthesis, so it needs different machinery:
+
+| Need | Where | Status |
+|---|---|---|
+| Decode paint_color triangle bit-packing | `PaintColorDecoder` | Exists (v1.6.13) |
+| Re-encode paint_color triangles after merge | `PaintColorEncoder` | New code (Phase 2.6) |
+| Rewrite per-object `extruder=N` in `model_settings.config` | New helper | Phase 2.6 |
+| Rewrite per-volume extruder | `BambuSanitizer`-style | Mostly exists |
+| Rebuild canonical list with N-1 entries | Load-time normalize | Phase 2.1 |
+
+What does NOT survive for the merge feature: the post-slice synthesis
+listed above. The slicer just emits `T0..T(N-2)` against the rewritten
+4-filament list; the print-time remap is verbatim.
 
 ### Step 3 — Print-time remap (Phase 2.3)
 - `applyPrintTimeRemap(gcodePath, colorMapping): Path` — single small
