@@ -210,6 +210,120 @@ class BambuCanonicalListTest {
         }
     }
 
+    // ─── parseLayerToolColourPairs + mergeLayerToolData ───────────────────
+
+    @Test
+    fun `parseLayerToolColourPairs returns first colour seen per extruder`() {
+        val xml = """
+            <layer top_z="0.4" type="1" extruder="2" color="#00FF00"/>
+            <layer top_z="1.2" type="1" extruder="3" color="#0000FF"/>
+            <layer top_z="2.4" type="1" extruder="2" color="#888888"/>
+            <layer top_z="3.0" type="0" extruder="1" color="#FF0000"/>
+        """.trimIndent()
+        val pairs = parseLayerToolColourPairs(xml)
+        assertEquals(2, pairs.size)
+        assertEquals("#00FF00", pairs[2])  // first occurrence kept
+        assertEquals("#0000FF", pairs[3])
+        assertNull("type=0 layers ignored", pairs[1])
+    }
+
+    @Test
+    fun `parseLayerToolColourPairs ignores layers without extruder or colour`() {
+        val xml = """
+            <layer top_z="0.4" type="1"/>
+            <layer top_z="1.2" type="1" extruder="2"/>
+            <layer top_z="2.4" type="1" color="#FFFFFF"/>
+            <layer top_z="3.0" type="2" extruder="3" color="#FF00FF"/>
+        """.trimIndent()
+        val pairs = parseLayerToolColourPairs(xml)
+        assertEquals(1, pairs.size)
+        assertEquals("#FF00FF", pairs[3])
+    }
+
+    @Test
+    fun `mergeLayerToolData with extruders within bounds is no-op`() {
+        // 4-entry FILE_COLOUR base; layer-tool references extruders 1..4
+        // (all already covered). No changes.
+        val base = CanonicalFilamentList(
+            filaments = (0..3).map { i ->
+                FilamentEntry(i, "#%06X".format(i * 0x404040), "PLA",
+                    FilamentSource.FILE_COLOUR)
+            }
+        )
+        val info = LayerToolCustomGcodeXmlInfo(
+            hasToolChanges = true,
+            colors = listOf("#FF0000", "#00FF00", "#0000FF"),
+            extruders = setOf(1, 2, 3, 4),
+        )
+        val merged = mergeLayerToolData(base, info, emptyMap())
+        assertEquals(base, merged)
+    }
+
+    @Test
+    fun `mergeLayerToolData expands list to cover high-index extruder`() {
+        // 1-entry FILE_COLOUR base (Hueforge-style declared filament_colour);
+        // layer-tool references extruders 1..4 with colours. Result has 4
+        // entries: 1 FILE_COLOUR + 3 LAYER_TOOL with the layer-tool colours.
+        val base = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#000000", "PLA", FilamentSource.FILE_COLOUR)
+            )
+        )
+        val info = LayerToolCustomGcodeXmlInfo(
+            hasToolChanges = true,
+            colors = listOf("#FF0000", "#00FF00", "#0000FF"),
+            extruders = setOf(1, 2, 3, 4),
+        )
+        val pairs = mapOf(2 to "#FF0000", 3 to "#00FF00", 4 to "#0000FF")
+        val merged = mergeLayerToolData(base, info, pairs)
+
+        assertEquals(4, merged.size)
+        assertEquals(FilamentSource.FILE_COLOUR, merged.filaments[0].source)
+        assertEquals("#000000", merged.filaments[0].color)
+        assertEquals(FilamentSource.LAYER_TOOL, merged.filaments[1].source)
+        assertEquals("#FF0000", merged.filaments[1].color)
+        assertEquals(FilamentSource.LAYER_TOOL, merged.filaments[2].source)
+        assertEquals("#00FF00", merged.filaments[2].color)
+        assertEquals(FilamentSource.LAYER_TOOL, merged.filaments[3].source)
+        assertEquals("#0000FF", merged.filaments[3].color)
+    }
+
+    @Test
+    fun `mergeLayerToolData uses grey placeholder when colour unknown`() {
+        val base = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#000000", "PLA", FilamentSource.FILE_COLOUR)
+            )
+        )
+        val info = LayerToolCustomGcodeXmlInfo(
+            hasToolChanges = true,
+            colors = emptyList(),
+            extruders = setOf(1, 2, 3),
+        )
+        val merged = mergeLayerToolData(base, info, emptyMap())
+        assertEquals(3, merged.size)
+        assertEquals("#808080", merged.filaments[1].color)
+        assertEquals("#808080", merged.filaments[2].color)
+        merged.filaments.drop(1).forEach { e ->
+            assertEquals(FilamentSource.LAYER_TOOL, e.source)
+            assertNull(e.materialType)
+        }
+    }
+
+    @Test
+    fun `mergeLayerToolData with empty extruders returns base`() {
+        val base = CanonicalFilamentList(
+            filaments = listOf(FilamentEntry(0, "#000000", "PLA",
+                FilamentSource.FILE_COLOUR))
+        )
+        val info = LayerToolCustomGcodeXmlInfo(
+            hasToolChanges = false,
+            colors = emptyList(),
+            extruders = emptySet(),
+        )
+        assertEquals(base, mergeLayerToolData(base, info, emptyMap()))
+    }
+
     @Test
     fun `mergePaintStates with high-index paint state expands list with PAINT_DERIVED`() {
         // B95 Buzz plate 9 shape: filament_colour has 4 entries, but paint_color

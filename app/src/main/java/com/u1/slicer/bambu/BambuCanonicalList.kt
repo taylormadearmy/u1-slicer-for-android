@@ -28,6 +28,7 @@ import java.util.zip.ZipFile
  */
 private const val TAG = "BambuCanonicalList"
 private const val PROJECT_SETTINGS_PATH = "Metadata/project_settings.config"
+private const val LAYER_TOOL_PATH = "Metadata/custom_gcode_per_layer.xml"
 private val MODEL_ENTRY_REGEX = Regex(""".*\.model$""")
 
 /**
@@ -64,8 +65,24 @@ fun bambuCanonicalList(file: File): CanonicalFilamentList? {
                         }
                     }
                 }
+            val withPaint = mergePaintStates(base, paintStates)
 
-            mergePaintStates(base, paintStates)
+            // Read custom_gcode_per_layer.xml if present (Hueforge / layer-tool
+            // files). Each `type=1` or `type=2` <layer> entry references a
+            // 1-based extruder index plus an optional colour. Synthesise
+            // LAYER_TOOL entries for any referenced extruder not already
+            // covered by FILE_COLOUR / PAINT_DERIVED.
+            val layerToolEntry = zip.getEntry(LAYER_TOOL_PATH)
+            if (layerToolEntry != null) {
+                val xml = zip.getInputStream(layerToolEntry)
+                    .bufferedReader().use { it.readText() }
+                val info = parseLayerToolCustomGcodeXml(xml)
+                if (info.hasToolChanges && info.extruders.isNotEmpty()) {
+                    val pairs = parseLayerToolColourPairs(xml)
+                    return@use mergeLayerToolData(withPaint, info, pairs)
+                }
+            }
+            withPaint
         }
     } catch (e: Exception) {
         Log.w(TAG, "Failed to build canonical list for ${file.name}: ${e.message}")
@@ -138,6 +155,70 @@ internal fun extractPaintSpecs(line: String): List<String> =
 
 private val PAINT_SPEC_REGEX =
     Regex("""(?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)="([^"]+)"""")
+
+/**
+ * Visible for unit tests — extracts extruder-index → colour pairs from the
+ * layer-tool XML, deduplicating by first-seen extruder. The existing
+ * [parseLayerToolCustomGcodeXml] returns extruders and colours as separate
+ * sets; this helper preserves the (extruder, colour) pairing the canonical
+ * list needs to fill LAYER_TOOL entries with the right colour.
+ */
+internal fun parseLayerToolColourPairs(xml: String): Map<Int, String> {
+    val layerRegex = Regex("""<layer\b([^>]*)>""")
+    val typeRegex = Regex("""\btype="([^"]+)"""")
+    val extruderRegex = Regex("""\bextruder="([^"]+)"""")
+    val colorRegex = Regex("""\bcolor="([^"]+)"""")
+    val pairs = linkedMapOf<Int, String>()
+    layerRegex.findAll(xml).forEach { match ->
+        val attrs = match.groupValues[1]
+        val type = typeRegex.find(attrs)?.groupValues?.getOrNull(1)
+        if (type != "1" && type != "2") return@forEach
+        val extruder = extruderRegex.find(attrs)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: return@forEach
+        val colour = colorRegex.find(attrs)?.groupValues?.getOrNull(1)
+            ?.takeIf { it.isNotBlank() }?.take(7)
+            ?: return@forEach
+        if (extruder !in pairs) pairs[extruder] = colour
+    }
+    return pairs
+}
+
+/**
+ * Visible for unit tests — folds layer-tool data into an existing canonical
+ * list. For every 1-based extruder index referenced by layer-tool entries,
+ * ensures a [FilamentEntry] exists at `fileIndex = extruder - 1`. Synthesised
+ * entries take their colour from the layer-tool XML when available.
+ *
+ * Layer-tool entries created here use [FilamentSource.LAYER_TOOL]. Existing
+ * entries (FILE_COLOUR / PAINT_DERIVED) are preserved untouched — the layer-
+ * tool data is only consulted to extend the list when it references higher
+ * indices.
+ */
+internal fun mergeLayerToolData(
+    base: CanonicalFilamentList,
+    info: LayerToolCustomGcodeXmlInfo,
+    colourPairs: Map<Int, String> = emptyMap(),
+): CanonicalFilamentList {
+    if (info.extruders.isEmpty()) return base
+    val maxExtruder = info.extruders.maxOrNull() ?: return base
+    if (maxExtruder <= base.size) return base  // every extruder already covered
+
+    val expanded = base.filaments.toMutableList()
+    while (expanded.size < maxExtruder) {
+        val nextIndex = expanded.size            // 0-based fileIndex about to be added
+        val extruder = nextIndex + 1             // 1-based extruder index
+        val colour = colourPairs[extruder] ?: "#808080"
+        expanded.add(
+            FilamentEntry(
+                fileIndex = nextIndex,
+                color = colour,
+                materialType = null,
+                source = FilamentSource.LAYER_TOOL,
+            )
+        )
+    }
+    return base.copy(filaments = expanded)
+}
 
 /**
  * Visible for unit tests — given a base canonical list (typically from
