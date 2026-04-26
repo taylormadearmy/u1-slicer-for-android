@@ -1,0 +1,4 @@
+{
+  "_doc": "Per-fixture allowlist of diff paths the Kotlin and native parsers disagree on. Each entry: { path: <diff path>, reason: <Kotlin bug|Kotlin gap|C++ bug|intentional|unknown>, recordedAt: <YYYY-MM-DD> }. Phase 1 will close most 'Kotlin gap' entries by deleting the redundant Kotlin parsers.",
+  "fixtures": {}
+}

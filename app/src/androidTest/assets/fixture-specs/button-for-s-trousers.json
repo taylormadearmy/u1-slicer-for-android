@@ -1,0 +1,14 @@
+{
+  "file": "Button-for-S-trousers.3mf",
+  "approved": true,
+  "plates": [
+    {
+      "plateIndex": 0,
+      "expectedExtruderCount": 4,
+      "expectedToolCounts": {},
+      "toolCountTolerance": 3,
+      "hasPaintData": false,
+      "maxBoundingBoxMm": [270, 270]
+    }
+  ]
+}

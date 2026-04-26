@@ -40,6 +40,20 @@ class NativeLibrary {
 
     // ---- Model ----
     external fun loadModel(path: String): Boolean
+
+    /**
+     * Load a Bambu multi-plate 3MF but restrict `g_model.objects` to the target plate.
+     *
+     * Forwards to `Model::read_from_file(..., plate_id = plateIdx + 1)` when `plateIdx >= 0`
+     * (the BBS importer convention is 1-based, 0 meaning "all plates"). `plateIdx = -1`
+     * is the Kotlin-side alias for "load all plates" — forwards with `plate_id = 0`.
+     *
+     * Callers MUST hold [previewMutex] for the load + any subsequent accessor sequence
+     * (same contract as [loadModel]). Phase 1 sub-plan #2b retires the Kotlin
+     * `BambuSanitizer.extractPlate` disk-rewrite pass in favour of this entry point.
+     */
+    external fun loadModelForPlate(path: String, plateIdx: Int): Boolean
+
     external fun clearModel()
     // Cancel an in-progress QEM preview decimation. Called from clearModel() before
     // acquiring previewMutex so QEM bails out immediately.
@@ -75,6 +89,116 @@ class NativeLibrary {
     // Returns flat [x0, y0, x1, y1, ...] world-space XY offsets for all instances.
     // Used by instrumented tests only.
     external fun getInstanceOffsets(): FloatArray
+
+    // ---- Diagnostics — Phase 0 differential harness ----
+    // Returns a JSON dump of g_model after Model::read_from_file.
+    // Path must be the same path passed to loadModel(); native re-loads to ensure
+    // a clean snapshot independent of any prior mutations (rotation/scale/instances).
+    // Returns null if the file fails to load.
+    external fun nativeDumpBambuModel(path: String): String?
+
+    // ---- Phase 1 sub-plan #1: g_model volume walkers ----
+    // Pure reads of g_model. Callers MUST hold NativeLibrary.previewMutex across a
+    // logical sequence of these calls (to prevent races with loadModel / setModelRotation).
+    // These five accessors back KotlinBambuSnapshot.volumes population.
+
+    /** Count of ModelObjects in g_model. Returns 0 when no model loaded. */
+    external fun nativeGetObjectCount(): Int
+
+    /** Count of ModelVolumes on g_model.objects[objectIndex]. Returns 0 for OOR. */
+    external fun nativeGetVolumeCount(objectIndex: Int): Int
+
+    /**
+     * Slic3r runtime ObjectID (ObjectBase::id().id, size_t → Long).
+     * Matches the VolumeSnapshot.objectId contract from sapil_bambu_snapshot.cpp
+     * append_volume(). Returns 0L for out-of-range objectIndex.
+     */
+    external fun nativeGetObjectModelId(objectIndex: Int): Long
+
+    /**
+     * Packed per-volume scalars: [extruder, isMmPaintedBool, isSeamPaintedBool].
+     *   - extruder: mv.config.opt_int("extruder") when mv.config.has("extruder"),
+     *     else -1 as the null sentinel (decoded into VolumeSnapshot.extruder: Int?).
+     *   - isMmPaintedBool / isSeamPaintedBool: 1 or 0.
+     * Returns null for out-of-range indices or when no model is loaded.
+     */
+    external fun nativeGetVolumeScalars(objectIndex: Int, volumeIndex: Int): IntArray?
+
+    /**
+     * Triangle counts per painted state on a single FacetsAnnotation.
+     *   - kind = 0 -> mv.mmu_segmentation_facets
+     *   - kind = 1 -> mv.supported_facets
+     * Returns a packed array [state1, count1, state2, count2, ...] sorted by
+     * state ascending. Empty array when the annotation has no painted triangles.
+     * Null for out-of-range indices, invalid kind, or when no model is loaded.
+     *
+     * Internally delegates to sapil::count_paint_states — the same helper used
+     * by bambu_snapshot_json, so counts are guaranteed to match Phase 0's output.
+     */
+    external fun nativeGetPaintStateCounts(
+        objectIndex: Int,
+        volumeIndex: Int,
+        kind: Int,
+    ): IntArray?
+
+    /**
+     * Returns a JSON object with five project-level fields read from g_model after
+     * a successful [loadModel]:
+     *   {
+     *     "isBbl":               bool,                  // g_is_bbl
+     *     "fileVersion":         "x.y.z" | "",          // g_file_version.to_string() when valid, else ""
+     *     "filamentColours":     ["#RRGGBB", ...],      // project config: filament_colour
+     *     "filamentSettingsIds": ["Preset name", ...],  // filament_settings_id > filament_ids (first non-null)
+     *     "filamentIds":         ["GFB98", ...]         // project config: filament_ids (raw)
+     *   }
+     *
+     * Returns null when no model is loaded (same contract as the sub-plan #1
+     * volume accessors). Callers MUST hold [previewMutex] for the duration of
+     * any loadModel + accessor sequence.
+     */
+    external fun nativeGetProjectConfig(): String?
+
+    /**
+     * Number of plates in g_plate_data_list. Returns 0 when no model is loaded.
+     * Callers MUST hold [previewMutex] for any loadModel + accessor sequence.
+     */
+    external fun nativeGetPlateCount(): Int
+
+    /**
+     * Returns the Phase 0 append_plate JSON for the plate at the given 0-based
+     * index — a JSON object with plateIndex, filamentColours,
+     * filamentSettingsIds, objectInstanceMap [{objectId,instanceId}],
+     * customGcode, and a stringified plateConfig key/value map.
+     *
+     * Returns null when no model is loaded, plateIndex is out of range, or the
+     * plate slot is null. Callers MUST hold [previewMutex].
+     */
+    external fun nativeGetPlateData(plateIndex: Int): String?
+
+    /**
+     * Returns a JSON array of every ModelObject in g_model:
+     *   [{"objectId": <runtime-size_t>, "name": "...", "extruder": <int>, "sourcePath": "..."}, ...]
+     *
+     * `objectId` is Slic3r's process-local runtime ObjectID — NOT the XML
+     * object id. `extruder` 0 means inherit/unset. Returns null when no
+     * model is loaded. Callers MUST hold [previewMutex].
+     *
+     * Production code that needs XML-id-keyed maps should continue to read
+     * `ThreeMfInfo.objectExtruderMap`; this accessor is snapshot-scoped.
+     */
+    external fun nativeGetObjectExtruderMap(): String?
+
+    /**
+     * Returns JSON array of all objects with per-volume extruder + paint data:
+     *   [{"objectIndex": 0, "objectExtruder": 1, "volumes": [
+     *     {"volumeIndex": 0, "extruder": 1, "isMmPainted": true, "isSeamPainted": false}, ...
+     *   ]}, ...]
+     *
+     * `extruder` at volume level: -1 = inherit from object, 0 = unset, 1-4 = explicit.
+     * Returns null when no model is loaded.
+     * Callers MUST hold [previewMutex].
+     */
+    external fun nativeGetAllVolumeExtruders(): String?
 
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {

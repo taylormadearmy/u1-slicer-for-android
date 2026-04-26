@@ -1,6 +1,10 @@
 package com.u1.slicer.gcode
 
+import androidx.annotation.VisibleForTesting
+import com.u1.slicer.BuildConfig
 import com.u1.slicer.bambu.parseLayerToolSegments
+import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
 import java.util.zip.ZipFile
@@ -20,17 +24,22 @@ object LayerToolPauseInjector {
      * [topZ] is the first layer whose Z is strictly above this (see inject loop).
      * [extruderBambu] is 1-based as in the file (1→T0, 2→T1, …). If missing, treated as 1.
      */
-    private data class PauseTarget(val topZ: Float, val extruderBambu: Int)
+    internal data class PauseTarget(val topZ: Float, val extruderBambu: Int)
 
-    fun injectFrom3mf(gcodePath: String, model3mf: File): Boolean {
+    fun injectFrom3mf(
+        gcodePath: String,
+        model3mf: File,
+        plateIdx: Int,
+        getPlateData: ((Int) -> String?)?
+    ): Boolean {
         if (!model3mf.exists() || !model3mf.name.endsWith(".3mf", ignoreCase = true)) return false
 
-        val pauseTargets = mutableListOf<PauseTarget>()
+        val xmlTargets = mutableListOf<PauseTarget>()
         var nozzleTemps: Map<Int, Int>? = null
         val pauseCommand = ZipFile(model3mf).use { zip ->
             zip.getEntry("Metadata/custom_gcode_per_layer.xml")?.let { entry ->
                 val xml = zip.getInputStream(entry).bufferedReader().readText()
-                pauseTargets += extractPauseTargets(xml)
+                xmlTargets += extractPauseTargets(xml)
             }
             zip.getEntry("Metadata/project_settings.config")?.let { entry ->
                 val json = zip.getInputStream(entry).bufferedReader().readText()
@@ -38,6 +47,43 @@ object LayerToolPauseInjector {
                 Regex(""""machine_pause_gcode"\s*:\s*"([^"]*)"""").find(json)?.groupValues?.getOrNull(1)
             }
         } ?: "M400 U1"
+
+        // Native path: read customGcode from g_model via JNI. Production passes a method
+        // reference to NativeLibrary.nativeGetPlateData. Returns null when no model is loaded,
+        // plateIdx is out of range, or the plate slot is null — including post-slice state
+        // where g_model may have been mutated and no longer contains the source customGcode.
+        // XML path is the permanent fallback for those cases.
+        val nativeJson = if (plateIdx >= 0 && getPlateData != null) {
+            try { getPlateData(plateIdx) } catch (_: Throwable) { null }
+        } else null
+        val nativeTargetsOrNull = nativeJson?.let { extractPauseTargetsFromNativeJson(it) }
+
+        // In debug builds, when BOTH paths produced data, assert they agree. Silent-G-code-
+        // corruption tripwire for future changes to either data source. If it fires, stop.
+        if (BuildConfig.DEBUG && nativeTargetsOrNull != null && nativeTargetsOrNull.isNotEmpty()) {
+            val xmlSorted = xmlTargets
+                .distinctBy { it.topZ to it.extruderBambu }
+                .sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
+            val nativeSorted = nativeTargetsOrNull
+                .distinctBy { it.topZ to it.extruderBambu }
+                .sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
+            if (xmlSorted.isNotEmpty()) {
+                check(xmlSorted == nativeSorted) {
+                    "LayerToolPauseInjector dual-path divergence: " +
+                        "xml=$xmlSorted native=$nativeSorted plateIdx=$plateIdx model=${model3mf.name}"
+                }
+            }
+        }
+
+        // Prefer native-derived targets when present and non-empty (reflects the live g_model
+        // customGcode at injection time — most accurate for per-plate selection). Fall through
+        // to XML when native is null (model cleared) or empty (post-slice state that drops
+        // plates_custom_gcodes, or embedded file with metadata stripped for native-slice
+        // fallback — see flippyFlappyMini_embedDropsLayerToolMetadataForNativeSliceFallback).
+        val pauseTargets: MutableList<PauseTarget> =
+            nativeTargetsOrNull?.takeIf { it.isNotEmpty() }
+                ?.toMutableList()
+                ?: xmlTargets.toMutableList()
 
         if (pauseTargets.isEmpty()) return false
 
@@ -134,6 +180,43 @@ object LayerToolPauseInjector {
 
     private fun extractPauseTargets(xml: String): List<PauseTarget> =
         parseLayerToolSegments(xml).map { PauseTarget(it.topZ, it.extruderBambu) }
+
+    /**
+     * Decode the `customGcode` array from [com.u1.slicer.NativeLibrary.nativeGetPlateData]'s JSON
+     * payload into [PauseTarget] rows. Accepts only canonical native type strings `"ColorChange"`
+     * and `"ToolChange"`. `printZ` (Double) narrows to [Float]; `extruder` stays 1-based.
+     * Returns an empty list on any parse error — never throws.
+     *
+     * Paired with the Kotlin-XML path [extractPauseTargets]: native wins when g_model has
+     * customGcode rows present; XML is the permanent fallback for post-slice / embedded-file
+     * cases where native returns null or empty. See
+     * `docs/superpowers/plans/2026-04-24-phase1-layer-tool-pause-injector.md`.
+     */
+    private fun extractPauseTargetsFromNativeJson(plateJson: String): List<PauseTarget> {
+        return try {
+            val obj = JSONObject(plateJson)
+            val arr: JSONArray = obj.optJSONArray("customGcode") ?: return emptyList()
+            val out = ArrayList<PauseTarget>(arr.length())
+            for (i in 0 until arr.length()) {
+                val row = arr.optJSONObject(i) ?: continue
+                val type = row.optString("type", "")
+                if (type != "ColorChange" && type != "ToolChange") continue
+                val topZ = row.optDouble("printZ", Double.NaN)
+                if (topZ.isNaN()) continue
+                val extruder = row.optInt("extruder", 1)
+                out.add(PauseTarget(topZ.toFloat(), extruder))
+            }
+            out.sortedWith(compareBy({ it.topZ }, { it.extruderBambu }))
+        } catch (_: JSONException) {
+            emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    @VisibleForTesting
+    internal fun extractPauseTargetsFromNativeJsonForTest(plateJson: String): List<PauseTarget> =
+        extractPauseTargetsFromNativeJson(plateJson)
 
     /** Bambu `project_settings.config` JSON: `nozzle_temperature` array index matches T index (0 = T0, …). */
     private fun parseNozzleTemperatures(projectSettingsJson: String): Map<Int, Int>? {

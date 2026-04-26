@@ -1,0 +1,14 @@
+{
+  "file": "Shashibo-h2s-textured.3mf",
+  "approved": true,
+  "plates": [
+    {
+      "plateIndex": 4,
+      "expectedExtruderCount": 3,
+      "expectedToolCounts": {},
+      "toolCountTolerance": 5,
+      "hasPaintData": false,
+      "maxBoundingBoxMm": [270, 270]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "file": "flippy+flappy+mini.3mf",
+  "approved": true,
+  "plates": [
+    {
+      "plateIndex": 3,
+      "expectedExtruderCount": 2,
+      "expectedToolCounts": {},
+      "toolCountTolerance": 2,
+      "hasPaintData": false,
+      "maxBoundingBoxMm": [270, 270]
+    }
+  ]
+}

@@ -11,6 +11,7 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.u1.slicer.bambu.BambuSanitizer
+import com.u1.slicer.bambu.NativePlateState
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
@@ -1090,57 +1091,74 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         selectPlateJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                val context = getApplication<Application>()
                 val workspaceDir = transientWorkspaceDir()
-                // Use the stable file-level info (set once on load, never mutated by plate
-                // selections) so that switching plates doesn't lose the original plates list.
-                // _threeMfInfo.value is overwritten to a per-plate merged result after each
-                // selectPlate(), so it may no longer have the correct objectIds for other plates.
+                // Phase 1 native-first: use _fileThreeMfInfo (file-level metadata) for
+                // the embed step. The embed needs plate-filtering (via plateId param) but
+                // does NOT need plate-scoped usedExtruderIndices — file-level is safe
+                // (over-estimates are harmless; under-estimates from buildSelectedPlateInfo
+                // were the source of bugs #2/#5).
+                //
+                // The authoritative per-plate state is read FROM native after load.
                 val fileInfo = _fileThreeMfInfo ?: _threeMfInfo.value
-                val hasPlateJsons = fileInfo?.hasPlateJsons
-                val plateObjectIds = fileInfo?.plates
-                    ?.find { it.plateId == plateId }?.objectIds?.toSet()
-                val plateExtruderMap = fileInfo?.objectExtruderMap
-                    ?.filterKeys { key -> plateObjectIds?.contains(key) == true }
-                val rawPlateFile = BambuSanitizer.extractPlate(file, plateId, workspaceDir,
-                    hasPlateJsons = hasPlateJsons,
-                    plateObjectIds = plateObjectIds,
-                    objectExtruderMap = plateExtruderMap)
                 ensureActive()
-                // Restructure per-plate: inline component meshes so OrcaSlicer
-                // can assign per-volume extruders (deferred from process()).
-                val plateFile = BambuSanitizer.restructurePlateFile(rawPlateFile, workspaceDir)
-                ensureActive()
-                // Lightweight parse: only reads model_settings.config (~1KB) for extruder
-                // indices, skips the 15MB+ main model XML entirely (~2s saved).
-                val plateInfo = ThreeMfParser.parseForPlateSelection(plateFile)
-                sourceModelFile = plateFile
-                sourceModelInfo = plateInfo
-                // Merge plate structural info with the file-level info so that
-                // color/extruder metadata from the original file is preserved.
-                // plateInfo has 0 detected colors because extractPlate() works on the
-                // processed file which has had filament_sequence.json stripped by process().
-                // Always use _fileThreeMfInfo (set once on load, never mutated by plate
-                // selections) so that cross-plate selections don't lose file-level state
-                // like hasPaintData=true from other plates (B81).
-                val preSelectInfo = _fileThreeMfInfo ?: _threeMfInfo.value
-                val mergedPlateInfo = if (preSelectInfo != null)
-                    mergeThreeMfInfoForPlate(plateInfo, preSelectInfo, plateId)
-                else
-                    plateInfo
-                _threeMfInfo.value = mergedPlateInfo
+
+                // Bucket-1 fix (F1 calendar #2 / H2C benchy #5 / Buttons race):
+                // pass file-level ThreeMfInfo to embedProfile, not the plate-scoped
+                // narrowed one. Plate-narrowing (buildSelectedPlateInfo) under-counts
+                // extruders for compound-object plates and SEMM-painted plates whose
+                // paint states include indices the per-part scan misses. The embedded
+                // filament_colour array sized to the narrowed count then drops paint
+                // states the slicer would otherwise emit — Buttons appears with the
+                // wrong colours on first load, F1 plate 1 misses its 4th colour, H2C
+                // benchy collapses to fewer tools post-slice. File-level over-sizes
+                // safely: extra filament entries past the active extruders are
+                // ignored by the slicer, but missing entries silently drop tool
+                // changes.
+                //
+                // Native plate scoping still happens at load time (plateId param to
+                // ProfileEmbedder.embed runs the strip pipeline + native plate_id
+                // filter). Geometry is plate-scoped; only the embedded filament
+                // palette is file-wide.
+                val embedInfo = fileInfo ?: ThreeMfParser.parseForPlateSelection(file)
+                sourceModelFile = file
+                sourceModelInfo = embedInfo
                 resetToolRemapState()
-                // Re-embed the selected plate so slice-time config preserves the
-                // original file's layer-change settings (SEMM/pause G-code), not just
-                // the preview metadata merged above.
-                val embeddedPlateFile = embedProfile(plateFile, mergedPlateInfo, workspaceDir)
+
+                // ProfileEmbedder.embed(plateId) does:
+                //   - filterModelToPlate on 3D/3dmodel.model <build>
+                //   - stripUnreferencedResources BFS over component refs
+                //   - stripAssembleSection on model_settings.config
+                //   - stripUnreferencedConfigObjects to match the kept resource set
+                //   - filterCustomGcodePerLayer on Metadata/custom_gcode_per_layer.xml
+                // Equivalent to extractPlate + restructurePlateFile + embedProfile.
+                val embeddedPlateFile = embedProfile(file, embedInfo, workspaceDir, plateId = plateId)
                 ensureActive()
                 currentModelFile = embeddedPlateFile
-                loadNativeModel(embeddedPlateFile)
+                // The embedded file is already plate-scoped — load all (plate_id=0).
+                // The postLoadStateProvider callback reads plate state FROM native
+                // and sets _threeMfInfo AFTER the native load (fixes race condition
+                // where _threeMfInfo was set BEFORE native load completed).
+                loadNativeModel(embeddedPlateFile) {
+                    // --- Native-first state reading ---
+                    // Read authoritative plate state from native's loaded model.
+                    val nativeState = readPlateStateFromNative()
+                    // Build the UI-facing ThreeMfInfo from native data + file metadata.
+                    val nativeInfo = if (fileInfo != null) {
+                        buildThreeMfInfoFromNative(fileInfo, nativeState, plateId)
+                    } else {
+                        // Non-Bambu fallback: use embedInfo as-is
+                        embedInfo
+                    }
+                    _threeMfInfo.value = nativeInfo
+                    Log.i("SlicerVM", "selectPlate: native-first _threeMfInfo set: " +
+                        "usedExtruders=${nativeInfo.usedExtruderIndices}, " +
+                        "detectedExtruderCount=${nativeInfo.detectedExtruderCount}, " +
+                        "hasPaint=${nativeInfo.hasPaintData}")
+                }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
-                _state.value = SlicerState.Error("Error extracting plate: ${e.message}")
+                _state.value = SlicerState.Error("Error loading plate: ${e.message}")
             }
         }
     }
@@ -1175,7 +1193,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (_multiPlatePlates.value.isNotEmpty()) _showPlateSelector.value = true
     }
 
-    private suspend fun loadNativeModel(file: File) {
+    /**
+     * Load a model file into the native slicer engine and transition UI state.
+     *
+     * @param file       The (embedded) 3MF or STL file to load.
+     * @param plateIdx   Plate index for plate-aware loading (-1 = all plates / legacy).
+     * @param preserveTransforms When true, skip the identity reset of [_modelScale]
+     *   and [_modelRotation]. Used by paths that reload the model AFTER the user has
+     *   already applied transforms (e.g. a pre-slice re-embed) so the user's edits
+     *   survive the reload. The pre-slice re-embed inside [startSlicing] currently
+     *   bypasses this function entirely (calls [native.loadModel] directly), but the
+     *   parameter exists so future consolidation does not silently regress #3 / #4.
+     * @param postLoadStateProvider Optional callback invoked after a successful native load
+     *   but BEFORE the B47 color-mapping block reads [_threeMfInfo]. Callers (e.g.
+     *   [selectPlate]) use this to read plate state FROM native and set [_threeMfInfo]
+     *   so downstream color-mapping sees the native-authoritative value.
+     */
+    private suspend fun loadNativeModel(
+        file: File,
+        plateIdx: Int = -1,
+        preserveTransforms: Boolean = false,
+        postLoadStateProvider: (suspend () -> Unit)? = null
+    ) {
         val firstModelLoadThisLaunch = diagnostics.markFirstModelLoad()
         // Stale cached mesh from a previous model/plate load would cause InlineModelPreview's
         // LaunchedEffect(modelRotation, modelFilePath) to hit the B49 early-return guard and
@@ -1185,8 +1224,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // getPreparePreviewMesh (on the preview coroutine) is iterating model volumes
         // while we clear+reload here.  Large model QEM decimation can hold the lock for
         // 30+ seconds; without this, loading a new model while QEM is running crashes.
+        // Phase 1 sub-plan #2b: plateIdx >= 0 routes through loadModelForPlate so the
+        // BBS importer filters objects to m_plater_data[plateIdx+1] at ingestion.
+        // plateIdx = -1 (the default) preserves the legacy loadModel(path) behaviour.
         val success = NativeLibrary.previewMutex.withLock {
-            native.loadModel(file.absolutePath)
+            if (plateIdx >= 0) {
+                native.loadModelForPlate(file.absolutePath, plateIdx)
+            } else {
+                native.loadModel(file.absolutePath)
+            }
         }
         diagnostics.recordEvent(
             "native_model_load",
@@ -1210,12 +1256,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 _loadTimeInstanceOffsets.value = floatArrayOf(135f, 135f)
             }
             _nativeSliceStateDirty.value = false
+
+            // Phase 1 native-first: invoke the callback so callers (selectPlate) can
+            // read plate state FROM native and set _threeMfInfo before the B47
+            // color-mapping block below reads it.
+            postLoadStateProvider?.invoke()
+
             val info = native.getModelInfo()
             if (info != null) {
                 lastModelInfo = info
                 _modelInfo.value = info
-                _modelScale.value = ModelScale()  // reset to 1× on each new load
-                _modelRotation.value = ModelRotation()
+                if (!preserveTransforms) {
+                    _modelScale.value = ModelScale()  // reset to 1× on each new load
+                    _modelRotation.value = ModelRotation()
+                }
                 if (isLargeTriangleCount(info.triangleCount)) {
                     _state.value = SlicerState.Loading("Large model — preview may take a moment…")
                     kotlinx.coroutines.delay(0)
@@ -1703,7 +1757,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Build Snapmaker profile config and embed it into the 3MF file.
      * Replaces BambuSanitizer.process() for the OrcaSlicer backend.
      */
-    private fun embedProfile(file: java.io.File, info: ThreeMfInfo, outputDir: java.io.File): java.io.File {
+    private fun embedProfile(file: java.io.File, info: ThreeMfInfo, outputDir: java.io.File, plateId: Int? = null): java.io.File {
         val cfg = _config.value
         val extCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
@@ -1750,7 +1804,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             overrides = buildProfileOverrides(cfg, targetCount, usedSlots, hasSourceConfig = sourceConfig != null),
             targetExtruderCount = targetCount
         )
-        return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap)
+        return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
     }
 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
@@ -2106,10 +2160,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val needsReEmbed = remap != null || _config.value.extruderCount > 1 || profileNeedsReEmbed
                 if (needsReEmbed) {
                     val src = sourceModelFile
-                    // Use merged ThreeMfInfo (colours + extruder count from original file) so the
-                    // re-embedded profile carries the correct extruder_count.  sourceModelInfo for
-                    // plate files is plateInfo (0 colours); _threeMfInfo.value is correctly merged.
-                    val srcInfo = _threeMfInfo.value ?: sourceModelInfo
+                    // Use file-level ThreeMfInfo for the re-embed so filament_colour stays
+                    // sized to the file's full palette. _threeMfInfo (per-plate, native-first)
+                    // can under-count for compound objects + SEMM paint plates, dropping the
+                    // 4th colour on F1 calendar / collapsing tools on H2C benchy. File-level
+                    // over-sizes safely (extra entries are ignored by the slicer); native's
+                    // plateId filter at load time keeps geometry plate-scoped.
+                    val srcInfo = _fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo
                     val context = getApplication<Application>()
                     if (src != null && srcInfo != null) {
                         val reason = when {
@@ -2119,7 +2176,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         Log.i("SlicerVM", "Re-embedding 3MF ($reason) before slicing")
                         val isSingleExtruderRefresh = profileNeedsReEmbed && remap == null && _config.value.extruderCount <= 1
-                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir())
+                        // Sub-plan #2d: sourceModelFile is the full multi-plate source file
+                        // (selectPlate sets it to `file`, not a Kotlin-extracted single-plate
+                        // file). The re-embed must thread currentPlateId through embedProfile
+                        // so the embedded output is properly plate-scoped via the strip
+                        // pipeline (filterModelToPlate + stripUnreferencedResources +
+                        // stripAssembleSection + stripUnreferencedConfigObjects).
+                        val activePlateId = _currentPlateId.value
+                        val reembedPlateId = activePlateId.takeIf { it > 0 }
+                        val reembedded = embedProfile(src, srcInfo, transientWorkspaceDir(), plateId = reembedPlateId)
                         // Acquire previewMutex before touching native model — prevents SIGSEGV
                         // when getPreparePreviewMesh is concurrently iterating model volumes
                         // on the preview coroutine while we clear+reload here.
@@ -2132,6 +2197,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             // Single-extruder settings refresh: skip clearModel() — files are small
                             // (no OOM risk) and clearModel()+loadModel() can corrupt native statics,
                             // causing "Coordinate outside allowed range" Clipper errors (I2).
+                            //
+                            // Sub-plan #2c E2E finding: re-embed already pre-filters the
+                            // main model's <build> to reembedPlateId via ProfileEmbedder.
+                            // Native load-all (loadModel path) avoids the double-filter
+                            // mismatch that can fail BBS plate_id resolution for some files.
                             native.loadModel(reembedded.absolutePath)
                         }
                         currentModelFile = reembedded
@@ -2344,13 +2414,34 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
                     Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
 
+                    // Sub-plan #2c P1 fix: when a plate is selected (currentPlateId > 0), the
+                    // plate-filtered custom_gcode_per_layer.xml lives in currentModelFile
+                    // (the embedded file produced with plateId threading via ProfileEmbedder).
+                    // sourceModelFile carries the FULL multi-plate source whose XML has all
+                    // plates' layer-tool entries — reading it as the fallback would inject
+                    // pauses for non-selected plates post-slice. Prefer currentModelFile
+                    // whenever a plate is selected; fall back to sourceModelFile only for
+                    // non-plate (STL / single-plate) flows.
+                    val activePlateIdUi = _currentPlateId.value
                     val layerToolMetadataFile = when {
                         _threeMfInfo.value?.hasLayerToolChanges != true -> null
+                        activePlateIdUi > 0 && currentModelFile?.exists() == true -> currentModelFile
                         sourceModelFile?.exists() == true -> sourceModelFile
                         else -> currentModelFile
                     }
+                    // Native nativeGetPlateData takes a 0-based plate index. _currentPlateId is
+                    // 1-based (or -1 when no plate selected — treat as plate 0 for the injector
+                    // fallback, matching the STL / single-plate default used elsewhere).
+                    val plateIdxForInjector = (activePlateIdUi - 1).coerceAtLeast(0)
                     val injectedLayerToolPause = layerToolMetadataFile
-                        ?.let { LayerToolPauseInjector.injectFrom3mf(result.gcodePath, it) }
+                        ?.let {
+                            LayerToolPauseInjector.injectFrom3mf(
+                                result.gcodePath,
+                                it,
+                                plateIdxForInjector,
+                                native::nativeGetPlateData
+                            )
+                        }
                         ?: false
                     if (injectedLayerToolPause) {
                         Log.i(
@@ -2669,9 +2760,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val scaledSizeX = mi.sizeX * scale.x
         val scaledSizeY = mi.sizeY * scale.y
         if (scaledSizeX <= 0f || scaledSizeY <= 0f) return null
+        // CopyArrangeCalculator returns lower-left world coords; setModelInstances
+        // also takes lower-left world coords (verified on-device for STL files
+        // via SetModelInstancesOffsetTest — gcodeMinX matches requested origin
+        // within ±2mm). Earlier this method tried to read native's
+        // `getInstanceOffsets()` instead, but that returns the raw stored
+        // offset = pos - sf*meshBB.min — equal to pos only when meshBB.min=0
+        // (STL); for Bambu files whose mesh vertices live at world coordinates
+        // the raw offset is shifted by half the scaled mesh size and doesn't
+        // represent the world lower-left.
         val positions = custom ?: CopyArrangeCalculator.calculate(scaledSizeX, scaledSizeY, copies)
         if (positions.isEmpty()) return null
-        // CopyArrangeCalculator returns min-corner (lower-left) coordinates, not centers.
         var minX = Float.POSITIVE_INFINITY
         var maxX = Float.NEGATIVE_INFINITY
         var minY = Float.POSITIVE_INFINITY
@@ -3291,6 +3390,183 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         return uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
     }
 
+    // ---- Phase 1: Native-first plate state reading ----
+
+    /**
+     * Read plate state FROM native after loadModel/loadModelForPlate.
+     * Single source of truth — replaces [buildSelectedPlateInfo] for Bambu multi-plate files.
+     * Caller MUST have already loaded the model into native.
+     *
+     * Acquires [NativeLibrary.previewMutex] for the JNI accessors.
+     */
+    private suspend fun readPlateStateFromNative(): NativePlateState {
+        val state = NativeLibrary.previewMutex.withLock {
+            val json = native.nativeGetAllVolumeExtruders()
+            val parsed = NativePlateState.parseVolumeMapJson(json)
+
+            // If volumes report paint data, also collect paint extruder states from native
+            if (parsed.hasPaintData) {
+                val paintExtruders = mutableSetOf<Int>()
+                for (obj in parsed.objects) {
+                    for (vol in obj.volumes) {
+                        if (vol.isMmPainted) {
+                            // kind=0 is MMU paint segmentation
+                            val counts = native.nativeGetPaintStateCounts(
+                                obj.objectIndex, vol.volumeIndex, 0
+                            )
+                            if (counts != null) {
+                                // counts is [state1, count1, state2, count2, ...]
+                                for (k in counts.indices step 2) {
+                                    val paintState = counts[k]
+                                    if (paintState > 0 && counts[k + 1] > 0) {
+                                        paintExtruders.add(paintState)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                parsed.copy(
+                    usedExtruders = (parsed.usedExtruders + paintExtruders).toSortedSet()
+                )
+            } else {
+                parsed
+            }
+        }
+        Log.i("SlicerVM", "readPlateStateFromNative: usedExtruders=${state.usedExtruders}, " +
+            "hasPaint=${state.hasPaintData}, objects=${state.objects.size}")
+        return state
+    }
+
+    /**
+     * Build a [ThreeMfInfo] for UI consumers from native-reported plate state.
+     * Combines file-level metadata from [fileInfo] with per-plate
+     * extruder/paint data from [nativeState].
+     *
+     * Narrows [ThreeMfInfo.detectedColors] to the plate's used extruders so the UI
+     * shows only the correct colour chips (matching the old [mergeThreeMfInfoForPlate] behaviour).
+     * For layer-tool-only plates (non-painted, non-multi-extruder), enriches the used
+     * set with per-plate layer-tool extruders from the source plate metadata.
+     */
+    private fun buildThreeMfInfoFromNative(
+        fileInfo: ThreeMfInfo,
+        nativeState: NativePlateState,
+        plateId: Int
+    ): ThreeMfInfo {
+        val usedExtruders = nativeState.usedExtruders
+        val objExtruderMap = nativeState.buildObjectExtruderMap()
+        val sourcePlate = fileInfo.plates.firstOrNull { it.plateId == plateId }
+
+        val plateHasPaintData = nativeState.hasPaintData
+        val plateHasLayerToolChanges = sourcePlate?.hasLayerToolChanges ?: fileInfo.hasLayerToolChanges
+
+        // Enrich native-reported extruders with layer-tool extruders from the source
+        // plate metadata. Native volumes don't carry layer-tool change data (it comes
+        // from custom_gcode_per_layer.xml), so the native state alone may under-count
+        // for layer-tool plates. Also include the plate's object extruders from the
+        // file-level objectExtruderMap — native may report empty usedExtruders for
+        // plates whose objects have a default extruder that matches the BBS default (1).
+        val sourcePlateObjectExtruders = sourcePlate?.objectIds
+            ?.flatMap { objectId ->
+                val perPart = fileInfo.objectPartExtruders[objectId]
+                if (!perPart.isNullOrEmpty()) perPart
+                else listOfNotNull(fileInfo.objectExtruderMap[objectId])
+            }
+            ?.filter { it > 0 }
+            ?.toSet()
+            ?: emptySet()
+
+        val enrichedExtruders = if (fileInfo.hasLayerToolChanges && sourcePlate != null) {
+            val ltExtruders = sourcePlate.layerToolExtruders.filter { it > 0 }
+            val filExtruders = sourcePlate.filamentIndices.filter { it > 0 }
+            (usedExtruders + sourcePlateObjectExtruders + ltExtruders + filExtruders).toSortedSet()
+        } else if (sourcePlateObjectExtruders.isNotEmpty()) {
+            (usedExtruders + sourcePlateObjectExtruders).toSortedSet()
+        } else {
+            usedExtruders.toSortedSet()
+        }
+        Log.i("SlicerVM", "buildThreeMfInfoFromNative: plate=$plateId native=$usedExtruders " +
+            "enriched=$enrichedExtruders hasPaint=$plateHasPaintData")
+
+        // hasMultiExtruderAssignments: based on native-reported per-object/volume
+        // extruder diversity (NOT layer-tool enriched set). Layer-tool changes produce
+        // temporal multi-extruder usage, not spatial per-object assignments.
+        val nativeExtruderDiversity = usedExtruders.size > 1 || objExtruderMap.values.toSet().size > 1
+        val hasMultiExtAssign = nativeExtruderDiversity
+        val layerToolOnly = fileInfo.hasLayerToolChanges && !plateHasPaintData && !hasMultiExtAssign
+
+        // Narrow detectedColors to the plate's enriched extruder indices.
+        // enrichedExtruders are 1-based; detectedColors is 0-indexed.
+        val narrowedColors = if (layerToolOnly) {
+            // Layer-tool-only plates: include the object extruder plus any real
+            // layer-tool secondaries from the source plate metadata.
+            val plateLtColors = sourcePlate?.layerToolColors.orEmpty()
+            val plateLtExtruders = sourcePlate?.layerToolExtruders.orEmpty()
+            val selectedExtruders = when {
+                plateLtColors.isNotEmpty() -> {
+                    val hasRealSecondaries = plateLtColors.any { color ->
+                        fileInfo.detectedColors.any { it.equals(color, ignoreCase = true) }
+                    }
+                    if (hasRealSecondaries) {
+                        (enrichedExtruders + plateLtExtruders).filter { it > 0 }.sorted()
+                    } else {
+                        enrichedExtruders.filter { it > 0 }.sorted()
+                    }
+                }
+                else -> enrichedExtruders.filter { it > 0 }.sorted()
+            }
+            val selected = linkedSetOf<String>()
+            selectedExtruders.forEach { idx ->
+                fileInfo.detectedColors.getOrNull(idx - 1)?.let { selected.add(it) }
+            }
+            selected.toList().ifEmpty { fileInfo.detectedColors }
+        } else if (enrichedExtruders.isNotEmpty() && fileInfo.detectedColors.size > 1) {
+            enrichedExtruders.sorted().mapNotNull { idx ->
+                fileInfo.detectedColors.getOrNull(idx - 1)
+            }.ifEmpty { fileInfo.detectedColors }
+        } else {
+            fileInfo.detectedColors
+        }
+
+        // Hueforge plate detection: single object, single filament, layer-tool changes,
+        // no paint, no per-object diversity.
+        val isHueforgePlate = fileInfo.hasLayerToolChanges && !plateHasPaintData &&
+            enrichedExtruders.size <= 1 &&
+            fileInfo.objectExtruderMap.values.toSet().size <= 1
+
+        val effectiveExtruderCount = if (layerToolOnly) {
+            maxOf(narrowedColors.size, enrichedExtruders.size)
+        } else if (isHueforgePlate) {
+            maxOf(narrowedColors.size, 2)
+        } else if (narrowedColors.isNotEmpty()) {
+            narrowedColors.size
+        } else {
+            maxOf(enrichedExtruders.size, 1)
+        }
+
+        // Keep detectedColors file-wide (don't narrow) for SEMM paint and compound-
+        // object plates. The slicer's multi_material_segmentation_by_painting() needs
+        // a filament_colour array sized to the file's full palette so paint states
+        // referencing higher indices aren't dropped — narrowing here was the root
+        // cause of H2C benchy collapsing to 3 tools and F1 calendar plate 1 missing
+        // its 4th colour through the embed pipeline. usedExtruderIndices stays
+        // plate-scoped (UI chip display + slot allocation); detectedColors stays
+        // file-wide (slicer palette).
+        val paletteColors = if (layerToolOnly) narrowedColors else fileInfo.detectedColors
+        val paletteCount = if (layerToolOnly) effectiveExtruderCount else fileInfo.detectedExtruderCount
+        return fileInfo.copy(
+            plates = listOfNotNull(sourcePlate),
+            detectedColors = paletteColors,
+            usedExtruderIndices = enrichedExtruders,
+            detectedExtruderCount = paletteCount,
+            hasPaintData = plateHasPaintData,
+            objectExtruderMap = objExtruderMap,
+            hasMultiExtruderAssignments = hasMultiExtAssign,
+            hasLayerToolChanges = plateHasLayerToolChanges,
+            hasPaintSupports = fileInfo.hasPaintSupports
+        )
+    }
+
     companion object {
         /**
          * Convert a hex color string (#RRGGBB or RRGGBB) to a FloatArray of [R, G, B, 1f].
@@ -3418,7 +3694,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // Use plate-level hasPaintData (not file-level sourceInfo.hasPaintData) so that
             // non-painted plates in a file where other plates have SEMM paint data still get
             // the layerToolOnly treatment — avoiding phantom extra colour chips (B81).
-            val plateHasPaintData = plateInfo.hasPaintData
+            //
+            // Sub-plan #2c: prefer ThreeMfPlate.hasPaintData from sourceInfo (populated by
+            // ThreeMfParser's per-plate visual-colour pass) so we don't rely on plateInfo
+            // being the result of extractPlate + parseForPlateSelection on a single-plate
+            // file. Fall back to plateInfo.hasPaintData for the legacy call-site shape.
+            val plateHasPaintData = sourcePlate?.hasPaintData ?: plateInfo.hasPaintData
             val layerToolOnly = sourceInfo.hasLayerToolChanges &&
                 !plateHasPaintData &&
                 !sourceInfo.hasMultiExtruderAssignments
@@ -3623,6 +3904,94 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[slotIndex]
             }
             return fullColors
+        }
+
+        /**
+         * Phase 1 sub-plan #2c: build a single-plate [ThreeMfInfo] view of [sourceInfo]
+         * without running `BambuSanitizer.extractPlate` + `parseForPlateSelection` on
+         * disk. Consumed by [selectPlate] and [mergeThreeMfInfoForPlate].
+         *
+         * The returned info has:
+         * - `plates` narrowed to the single selected plate (preserving its per-plate
+         *   fields including `hasPaintData` so merge's layerToolOnly / B81 decision
+         *   stays plate-local).
+         * - `usedExtruderIndices` derived from the target plate's `objectIds` resolved
+         *   against [sourceInfo].objectExtruderMap.
+         * - `hasPaintData` copied from the selected plate's per-plate flag.
+         * - All other fields inherited from [sourceInfo] (detectedColors, isBambu,
+         *   hasLayerToolChanges, etc.) — plate-local narrowing is best-effort.
+         *
+         * Falls back to returning [sourceInfo] unchanged when the plate is not found.
+         *
+         * @deprecated Production now uses [readPlateStateFromNative] + [buildThreeMfInfoFromNative]
+         * for the authoritative plate state. This method is retained for the embed-time
+         * plate-scoped ThreeMfInfo (needed by [embedProfile]) and for test compatibility.
+         */
+        @Deprecated("Use readPlateStateFromNative + buildThreeMfInfoFromNative for UI state")
+        internal fun buildSelectedPlateInfo(
+            sourceInfo: com.u1.slicer.bambu.ThreeMfInfo,
+            selectedPlateId: Int
+        ): com.u1.slicer.bambu.ThreeMfInfo {
+            val sourcePlate = sourceInfo.plates.firstOrNull { it.plateId == selectedPlateId }
+                ?: return sourceInfo
+            val platesNarrowed = listOf(sourcePlate)
+            // Sub-plan #2c fix (Dragon Scale plate 3 regression): prefer per-object
+            // all-extruders (captures per-part extruders from `<part>` children) over
+            // the object-level default. Pre-#2c `restructurePlateFile` inlined parts as
+            // separate objects, which made per-object-only lookups sufficient. Post-#2c
+            // we consume the source file directly where a compound object's parts live
+            // inside a single `<object>` and their extruders must be unioned explicitly.
+            val plateObjectExtruders = sourcePlate.objectIds
+                .flatMap { objectId ->
+                    val perPart = sourceInfo.objectPartExtruders[objectId]
+                    if (!perPart.isNullOrEmpty()) perPart
+                    else listOfNotNull(sourceInfo.objectExtruderMap[objectId])
+                }
+                .filter { it > 0 }
+                .toSet()
+            // Sub-plan #2d (slip slide regression fix): for painted plates, union the
+            // plate's paint extruder states (from ThreeMfPlate.paintExtruderStates,
+            // populated at parse time by computeVisualColorCountByPlate) with object-
+            // and filament-level extruders. This captures plates where extruders come
+            // from paint decode rather than object-level metadata (e.g. slip slide
+            // plate 3 = 1 object with 4 paint regions). Pre-#2d paint plates fell back
+            // to file-level usedExtruderIndices which collapsed to {1} for SEMM files.
+            // For non-painted plates, include sourcePlate.layerToolExtruders so
+            // layer-tool-only extruders aren't dropped from the merged palette.
+            val plateUsedExtruders = if (sourcePlate.hasPaintData) {
+                (plateObjectExtruders +
+                    sourcePlate.paintExtruderStates.filter { it > 0 } +
+                    sourcePlate.filamentIndices.filter { it > 0 } +
+                    sourcePlate.layerToolExtruders.filter { it > 0 }).toSortedSet()
+                    .ifEmpty { sourceInfo.usedExtruderIndices }
+            } else {
+                (plateObjectExtruders +
+                    sourcePlate.filamentIndices.filter { it > 0 } +
+                    sourcePlate.layerToolExtruders.filter { it > 0 }).toSortedSet()
+            }
+            // Sub-plan #2c blocker fix: narrow objectExtruderMap to the selected plate's
+            // objectIds only. Leaving the full-file map leaks other plates' extruders
+            // into downstream consumers like computeSlicerColorOrder (painted-plate
+            // dominance) and the preview palette, letting other plates influence the
+            // selected plate's palette order.
+            //
+            // Sub-plan #2c fix (Dragon Scale plate 3): compound-object part entries
+            // live in objectExtruderMap keyed by partId, not objectId — and partIds
+            // don't appear in any plate's objectIds (they're inside the parent
+            // object). Keep a part iff its parent object is in the selected plate.
+            val plateObjectIdSet = sourcePlate.objectIds.toSet()
+            val plateScopedObjectExtruderMap = sourceInfo.objectExtruderMap
+                .filterKeys { key ->
+                    key in plateObjectIdSet ||
+                        sourceInfo.compoundPartParents[key]?.let { it in plateObjectIdSet } == true
+                }
+            return sourceInfo.copy(
+                plates = platesNarrowed,
+                usedExtruderIndices = plateUsedExtruders,
+                hasPaintData = sourcePlate.hasPaintData,
+                hasLayerToolChanges = sourcePlate.hasLayerToolChanges || sourceInfo.hasLayerToolChanges,
+                objectExtruderMap = plateScopedObjectExtruderMap
+            )
         }
     }
 
@@ -4083,7 +4452,7 @@ internal fun computeSlicerColorOrder(
  * wrap-around to slot 3 by `GcodeParser`'s `coerceIn(0, 3)`.
  */
 internal fun computeExpandedGcodeRemap(
-    usedExtruderIndices: Iterable<Int>,
+    @Suppress("UNUSED_PARAMETER") usedExtruderIndices: Iterable<Int>,
     colorMapping: List<Int>?,
     embeddedFilamentCount: Int
 ): List<Int>? {
@@ -4094,15 +4463,26 @@ internal fun computeExpandedGcodeRemap(
     // keeps the same final mapping with less plumbing.
     val distinctSlots = colorMapping.distinct().size
     if (embeddedFilamentCount <= distinctSlots) return null
-    val sortedFilaments = usedExtruderIndices.toSortedSet().toList()
-    if (sortedFilaments.isEmpty()) return null
-    val out = MutableList(embeddedFilamentCount) { idx -> idx.coerceIn(0, 3) }
-    sortedFilaments.forEachIndexed { detectedIdx, filamentIdx ->
-        val tIndex = filamentIdx - 1
-        val userSlot = colorMapping.getOrNull(detectedIdx) ?: detectedIdx
-        if (tIndex in out.indices && userSlot in 0..3) out[tIndex] = userSlot
+    // The slicer emits T0..T(embeddedFilamentCount-1) for the N embedded
+    // filaments in order. Drive the per-filament remap directly off the
+    // colorMapping index — `out[i] = colorMapping[i]` puts each emitted tool
+    // on the user's chosen physical slot.
+    //
+    // If `colorMapping` is shorter than `embeddedFilamentCount` (a higher
+    // index was bumped only by maxSourceFilamentIndex / paint-state encoding),
+    // pad the tail with identity-coerced defaults so any stray out-of-band
+    // T-index lands on a valid 0..3 slot rather than being wrap-coerced to
+    // slot 3 by GcodeParser. The previous version of this function had a
+    // separate `usedExtruderIndices`-driven sparse path; that path had a
+    // structural bug (only out[0] received the user's mapping for SEMM-paint
+    // files with `usedExtruderIndices = {1}`, leaving other slots on identity
+    // defaults). The unified dense+identity-tail formulation is correct for
+    // both H2C-style "more model colours than embedded filaments" and B95-style
+    // "high paint state index bumped the embed" cases.
+    return List(embeddedFilamentCount) { i ->
+        val mapped = colorMapping.getOrNull(i)
+        if (mapped != null && mapped in 0..3) mapped else i.coerceIn(0, 3)
     }
-    return out
 }
 
 /**

@@ -127,6 +127,8 @@ object ThreeMfParser {
                 val plateFilamentMap = mutableMapOf<Int, Set<Int>>()
 
                 val allExtruderValuesMain = mutableSetOf<Int>()
+                val objectPartExtrudersMain = mutableMapOf<String, MutableSet<Int>>()
+                val compoundPartParentsMain = mutableMapOf<String, String>()
                 if (isBambu) {
                     val msEntry = zip.getEntry("Metadata/model_settings.config")
                     if (msEntry != null) {
@@ -135,7 +137,9 @@ object ThreeMfParser {
                             plateNames, objectNames, extruderAssignments,
                             plateObjectMap,
                             plateFilamentMap,
-                            allExtruderValues = allExtruderValuesMain
+                            allExtruderValues = allExtruderValuesMain,
+                            objectPartExtruders = objectPartExtrudersMain,
+                            compoundPartParents = compoundPartParentsMain
                         )
                         if (plateObjectMap.isNotEmpty()) {
                             Log.i(TAG, "Plate→object mapping: ${plateObjectMap.size} plates — $plateObjectMap")
@@ -314,6 +318,40 @@ object ThreeMfParser {
                     detectedColors.clear()
                     detectedColors.addAll(layerToolColors)
                 }
+                // Sub-plan #2c: compute per-plate paint state so ThreeMfPlate.hasPaintData
+                // carries plate-scoped information. mergeThreeMfInfoForPlate reads this to
+                // decide whether a selected plate is painted — replaces the pre-#2c Kotlin
+                // extractPlate + parseForPlateSelection pass that derived hasPaintData by
+                // running the parse on a single-plate extracted file.
+                //
+                // Review fix (cost): gate on file-level hasPaintData. On non-painted files
+                // (which is the common case for multi-plate fixtures like Dragon Scale and
+                // non-painted Buzz plates) the per-plate scan is a pure waste of IO — B93
+                // regression risk. When hasPaintData is false we know no plate can be
+                // painted, so every plate's hasPaintData is false by definition.
+                // Sub-plan #2d: also capture per-plate paint extruder states so
+                // ThreeMfPlate.paintExtruderStates can carry the full per-plate palette
+                // for SEMM-painted plates (where extruders come from paint_color decode,
+                // not object-level metadata). Used by buildSelectedPlateInfo to seed
+                // usedExtruderIndices for plates like slip slide plate 3 (1 object with
+                // 4 paint regions).
+                val visualByPlate: Map<Int, PlateVisualInfo> =
+                    if (hasPaintData && modelEntry != null && plateObjectMap.isNotEmpty()) {
+                        val componentPathsByObject = zip.getInputStream(modelEntry).use(::parseComponentPaths)
+                        computeVisualColorCountByPlate(
+                            zip = zip,
+                            modelEntry = modelEntry,
+                            plateObjectMap = plateObjectMap,
+                            componentPathsByObject = componentPathsByObject,
+                            extruderAssignments = extruderAssignments
+                        )
+                    } else {
+                        emptyMap()
+                    }
+                val paintByPlate: Map<Int, Boolean> = visualByPlate.mapValues { it.value.hasPaint }
+                val paintExtruderStatesByPlate: Map<Int, Set<Int>> =
+                    visualByPlate.mapValues { it.value.paintExtruderStates }
+
                 // Build plates: use model_settings.config plate→object mappings when
                 // available (groups multiple objects per plate correctly), otherwise
                 // fall back to 1 build item = 1 plate (old behavior for non-Bambu files).
@@ -340,7 +378,9 @@ object ThreeMfParser {
                             thumbnailBytes = thumbnailBytes,
                             layerToolColors = plateLtInfo?.colors.orEmpty(),
                             layerToolExtruders = plateLtInfo?.extruders.orEmpty(),
-                            hasLayerToolChanges = plateLtInfo?.hasToolChanges == true
+                            hasLayerToolChanges = plateLtInfo?.hasToolChanges == true,
+                            hasPaintData = paintByPlate[plateId] == true,
+                            paintExtruderStates = paintExtruderStatesByPlate[plateId] ?: emptySet()
                         )
                     }
                 } else {
@@ -406,6 +446,8 @@ object ThreeMfParser {
                     hasPlateJsons = plateJsonCount > 1,
                     usedExtruderIndices = uniqueExtruders,
                     objectExtruderMap = extruderAssignments.toMap(),
+                    objectPartExtruders = objectPartExtrudersMain.mapValues { it.value.toSet() },
+                    compoundPartParents = compoundPartParentsMain.toMap(),
                     layerToolSegments = layerToolSegments
                 )
             }
@@ -438,13 +480,17 @@ object ThreeMfParser {
                 val msEntry = zip.getEntry("Metadata/model_settings.config")
                     ?: zip.getEntry("Metadata/Slic3r_PE_model.config")
                 val allExtruderValues = mutableSetOf<Int>()
+                val objectPartExtrudersLite = mutableMapOf<String, MutableSet<Int>>()
+                val compoundPartParentsLite = mutableMapOf<String, String>()
                 if (msEntry != null) {
                     parseModelSettingsConfig(
                         zip.getInputStream(msEntry),
                         plateNames, objectNames, extruderAssignments,
                         plateObjectMap,
                         plateFilamentMap,
-                        allExtruderValues = allExtruderValues
+                        allExtruderValues = allExtruderValues,
+                        objectPartExtruders = objectPartExtrudersLite,
+                        compoundPartParents = compoundPartParentsLite
                     )
                 }
 
@@ -468,7 +514,11 @@ object ThreeMfParser {
                         plateId = plateId,
                         name = plateNames[plateId] ?: "Plate $plateId",
                         objectIds = plateObjectMap[plateId]?.toList() ?: emptyList(),
-                        filamentIndices = plateFilamentMap[plateId] ?: emptySet()
+                        filamentIndices = plateFilamentMap[plateId] ?: emptySet(),
+                        // Sub-plan #2c: per-plate paint state so mergeThreeMfInfoForPlate
+                        // can derive hasPaintData from sourceInfo directly instead of
+                        // re-running extractPlate + parseForPlateSelection on disk.
+                        hasPaintData = visualColorCountByPlate[plateId]?.hasPaint == true
                     )
                 }
                 val hasPaintDataForPlate = visualColorCountByPlate.values.any { it.hasPaint }
@@ -543,7 +593,9 @@ object ThreeMfParser {
                     detectedColors = detectedColors,
                     detectedExtruderCount = detectedExtruderCount,
                     usedExtruderIndices = if (filteredExtruders.isNotEmpty()) filteredExtruders else effectiveExtruders,
-                    objectExtruderMap = extruderAssignments.toMap()
+                    objectExtruderMap = extruderAssignments.toMap(),
+                    objectPartExtruders = objectPartExtrudersLite.mapValues { it.value.toSet() },
+                    compoundPartParents = compoundPartParentsLite.toMap()
                 )
             }
         } catch (e: Exception) {
@@ -787,6 +839,37 @@ object ThreeMfParser {
         val paintExtruderStates: Set<Int>
     )
 
+    /** Per-component paint scan result, cached so Buzz-class multi-plate files don't
+     *  re-read the same component file once per plate (~9× speedup on the 50 MB / 296K
+     *  paint_color Buzz Lightyear fixture). */
+    private data class ComponentPaintInfo(
+        val paintSpecs: Set<String>,
+        val allPaintStates: Set<Int>,
+        val paintExtruderStates: Set<Int>
+    )
+
+    /** Stream a single component .model file once; collect paint specs (capped) and
+     *  decoded paint states. Honours the same simple/complex-encoding early-exit as
+     *  the previous per-plate scan, scoped to this single component. */
+    private fun scanComponentForPaintInfo(input: java.io.InputStream): ComponentPaintInfo {
+        val specs = linkedSetOf<String>()
+        val allStates = mutableSetOf<Int>()
+        val paintStates = mutableSetOf<Int>()
+        val cap = SPEC_CAP_FOR_COMPLEX_DETECTION
+        streamCollectPaintSpecs(input) { spec ->
+            if (specs.size < cap) specs.add(spec)
+            val decoded = PaintColorDecoder.decodeStates(spec)
+            if (decoded.isEmpty()) {
+                if (spec.isNotEmpty()) allStates.add(0)
+            } else {
+                allStates.addAll(decoded)
+                paintStates.addAll(decoded)
+            }
+            if (specs.size >= cap && allStates.size >= 2) throw EarlyExit
+        }
+        return ComponentPaintInfo(specs, allStates, paintStates)
+    }
+
     private fun computeVisualColorCountByPlate(
         zip: ZipFile,
         modelEntry: java.util.zip.ZipEntry?,
@@ -802,6 +885,25 @@ object ThreeMfParser {
             }.toMap()
         }
 
+        // Phase 1: scan each UNIQUE component file once and cache its paint info.
+        // Multi-plate files like Buzz Lightyear share many components across plates;
+        // the prior per-plate scan re-opened each component once per plate it was
+        // referenced from, multiplying I/O by the plate count. The shared cache below
+        // bounds the work to one read per component, then aggregates per plate from
+        // the cache in Phase 2.
+        val componentPaintCache = mutableMapOf<String, ComponentPaintInfo>()
+        val uniqueComponentPaths = fallbackPlateObjectMap.values
+            .asSequence()
+            .flatMap { it.asSequence() }
+            .flatMap { objectId -> componentPathsByObject[objectId].orEmpty().asSequence() }
+            .toSet()
+        for (path in uniqueComponentPaths) {
+            val entry = zip.getEntry(path) ?: continue
+            componentPaintCache[path] = scanComponentForPaintInfo(zip.getInputStream(entry))
+        }
+
+        // Phase 2: per-plate aggregation. Each plate's PlateVisualInfo is the union of
+        // its objects' component paint info, joined against the cache.
         return fallbackPlateObjectMap.mapValues { (_, objectIds) ->
             val objectExtruderSet = objectIds.mapNotNull { extruderAssignments[it] }.toSet()
             // paintSpecs: distinct spec strings — used to detect simple vs complex encoding.
@@ -813,47 +915,12 @@ object ThreeMfParser {
             val paintSpecs = linkedSetOf<String>()
             val paintExtruderStates = mutableSetOf<Int>()
             val allPaintStates = mutableSetOf<Int>()
-            // B91: once we confirm complex encoding (many unique specs for few states —
-            // e.g. Skywing: 162K specs, 3 states) we stop growing paintSpecs. The cap
-            // is well above the simple-encoding upper bound (max 16 states) so simple
-            // models still collect every spec and the `paintSpecs.size == allPaintStates.size`
-            // discriminator for simple encoding keeps firing correctly.
-            val specCollectionCap = SPEC_CAP_FOR_COMPLEX_DETECTION
-            outer@ for (objectId in objectIds) {
-                val paths = componentPathsByObject[objectId].orEmpty()
-                for (path in paths) {
-                    val entry = zip.getEntry(path) ?: continue
-                    streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
-                        if (paintSpecs.size < specCollectionCap) paintSpecs.add(spec)
-                        // B95: Use full bit-packed decoder instead of first-char heuristic.
-                        // Plate 9 of Buzz Lightyear has paint_color values like "8C" (state 11)
-                        // and "3C" (state 6) that the prior heuristic mis-decoded as states
-                        // 8 and 3 — too low for the slicer's segmentation pass to address
-                        // them once embedded against a 4-entry filament_colour array.
-                        val decoded = PaintColorDecoder.decodeStates(spec)
-                        if (decoded.isEmpty()) {
-                            if (spec.isNotEmpty()) {
-                                // Single-char "0" or similar simple no-paint spec — preserve
-                                // the prior behaviour where allPaintStates included state 0
-                                // so the simple-vs-complex encoding discriminator (paintSpecs.size
-                                // == allPaintStates.size) keeps firing on simple-encoded files.
-                                allPaintStates.add(0)
-                            }
-                        } else {
-                            allPaintStates.addAll(decoded)
-                            paintExtruderStates.addAll(decoded)
-                        }
-                        // B91: once we've saturated the spec cap and any new states would
-                        // only swell paintSpecs.size further past the simple/complex
-                        // threshold, stop reading. AllPaintStates is bounded by 16 states
-                        // (hex 0..F); we require at least 2 to differentiate encodings.
-                        if (paintSpecs.size >= specCollectionCap && allPaintStates.size >= 2) {
-                            throw EarlyExit
-                        }
-                    }
-                    if (paintSpecs.size >= specCollectionCap && allPaintStates.size >= 2) {
-                        break@outer
-                    }
+            for (objectId in objectIds) {
+                for (path in componentPathsByObject[objectId].orEmpty()) {
+                    val info = componentPaintCache[path] ?: continue
+                    paintSpecs.addAll(info.paintSpecs)
+                    allPaintStates.addAll(info.allPaintStates)
+                    paintExtruderStates.addAll(info.paintExtruderStates)
                 }
             }
             // Simple encoding (1 spec per state): include state 0 as a distinct region so
@@ -1023,7 +1090,9 @@ object ThreeMfParser {
         extruderAssignments: MutableMap<String, Int>,
         plateObjectMap: MutableMap<Int, MutableList<String>> = mutableMapOf(),
         plateFilamentMap: MutableMap<Int, Set<Int>> = mutableMapOf(),
-        allExtruderValues: MutableSet<Int>? = null
+        allExtruderValues: MutableSet<Int>? = null,
+        objectPartExtruders: MutableMap<String, MutableSet<Int>>? = null,
+        compoundPartParents: MutableMap<String, String>? = null
     ) {
         try {
             val parser = createParser(inputStream)
@@ -1056,6 +1125,14 @@ object ThreeMfParser {
                                 // The part id matches the inlined mesh object ID in restructured
                                 // files, so we track it for per-part extruder assignment.
                                 currentPartId = parser.getAttributeValue(null, "id")
+                                // Sub-plan #2c fix: track part→parent mapping so plate-scoped
+                                // filters (buildSelectedPlateInfo) can identify parts as
+                                // belonging to their parent object's plate.
+                                val partId = currentPartId
+                                val objId = currentObjectId
+                                if (partId != null && objId != null) {
+                                    compoundPartParents?.put(partId, objId)
+                                }
                             }
                             "metadata" -> {
                                 val key = parser.getAttributeValue(null, "key") ?: ""
@@ -1098,7 +1175,7 @@ object ThreeMfParser {
                                                 // Per-part extruder: map part ID → extruder.
                                                 // Part IDs match component mesh object IDs in
                                                 // restructured files, enabling per-component
-                                                // coloring in ThreeMfMeshParser.
+                                                // coloring downstream.
                                                 extruderAssignments[currentPartId!!] = ext
                                             } else {
                                                 // Object-level extruder: track as default for
@@ -1108,6 +1185,17 @@ object ThreeMfParser {
                                                 if (ext > current) extruderAssignments[currentObjectId!!] = ext
                                             }
                                             allExtruderValues?.add(ext)
+                                            // Sub-plan #2c fix: track ALL extruders used by this
+                                            // object, including per-part extruders. Unlike
+                                            // extruderAssignments (max-per-object), this captures
+                                            // the full per-part palette — critical for compound
+                                            // objects like Dragon Scale plate 3 (one object, three
+                                            // parts each on a different extruder) where the
+                                            // object-level-only view would collapse to a single
+                                            // extruder in buildSelectedPlateInfo.
+                                            objectPartExtruders
+                                                ?.getOrPut(currentObjectId!!) { mutableSetOf() }
+                                                ?.add(ext)
                                         }
                                     }
                                 }

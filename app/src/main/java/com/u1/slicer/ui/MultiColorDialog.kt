@@ -69,10 +69,50 @@ fun ensureMultiSlotMapping(rawMapping: List<Int>, colorCount: Int): List<Int> =
         colorCount <= 1 -> rawMapping
         colorCount <= 4 && rawMapping.distinct().size < colorCount ->
             (0 until colorCount).toList()
+        // F1 calendar regression: a Bambu file with 5 model colours auto-mapped via
+        // findClosestExtruder against a device whose extruder presets only have two
+        // populated colours collapsed to mapping=[0,0,3,3,0] — distinct slot count 2,
+        // colorCount 5. The `colorCount <= 4` branch above doesn't catch this. Use a
+        // duplicate-only redistribution: keep every first-occurrence assignment (the
+        // user's match-by-color hits worth preserving) and reassign only the
+        // duplicates to the unused physical slots. F1 [0,0,3,3,0] becomes [0,1,3,2,0]
+        // — all 4 physical slots used, positions 0/2's hits preserved.
+        colorCount > 4 && rawMapping.distinct().filter { it in 0..3 }.size < 4 ->
+            redistributeDuplicateSlots(rawMapping)
         rawMapping.distinct().size < 2 ->
             (0 until colorCount).map { it % 2 }  // 0,1,0,1,… across compact slots
         else -> rawMapping
     }
+
+/**
+ * Reassign duplicate slot entries in [rawMapping] to the unused physical slots
+ * (0..3). The first occurrence of each existing slot is kept; subsequent
+ * occurrences become the next available unused slot in numeric order. When
+ * unused slots are exhausted, leftover duplicates stay as-is.
+ *
+ * Designed for files with more model colours than physical extruders (4) where
+ * the auto closest-color mapping has collapsed onto fewer than 4 distinct
+ * slots — so initial preview/slice uses the full physical palette without
+ * discarding any meaningful match-by-color hits the user's presets supplied.
+ */
+private fun redistributeDuplicateSlots(rawMapping: List<Int>): List<Int> {
+    val result = rawMapping.toMutableList()
+    val seen = mutableSetOf<Int>()
+    val unused = ArrayDeque(
+        (0..3).filter { slot -> rawMapping.none { it == slot } }
+    )
+    for (i in result.indices) {
+        val slot = result[i]
+        if (slot in 0..3 && slot !in seen) {
+            seen.add(slot)
+        } else {
+            val replacement = unused.removeFirstOrNull() ?: continue
+            result[i] = replacement
+            seen.add(replacement)
+        }
+    }
+    return result
+}
 
 /**
  * Dialog shown when a multi-color 3MF is loaded.

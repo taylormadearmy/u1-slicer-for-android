@@ -10,6 +10,16 @@ import java.util.zip.ZipOutputStream
 
 class LayerToolPauseInjectorTest {
 
+    /** Build a `getPlateData` lambda mirroring NativeLibrary.nativeGetPlateData(0). */
+    private fun plateDataOf(plateJson: String?): (Int) -> String? =
+        { plateIndex -> if (plateIndex == 0) plateJson else null }
+
+    private fun plateJsonForColorChange(topZ: Double, extruder: Int, color: String = "#F4D976"): String =
+        """{"customGcode":[{"printZ":$topZ,"type":"ColorChange","extruder":$extruder,"color":"$color"}]}"""
+
+    private fun plateJsonForToolChange(topZ: Double, extruder: Int, color: String = "#F4D976"): String =
+        """{"customGcode":[{"printZ":$topZ,"type":"ToolChange","extruder":$extruder,"color":"$color"}]}"""
+
     @Test
     fun `injectFrom3mf inserts pause before first layer above target top_z`() {
         val dir = createTempDir(prefix = "layer_tool_pause_")
@@ -45,7 +55,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJsonForColorChange(1.6, 2))))
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue("Bambu extruder 2 must map to T1 after pause", text.contains("T1"))
@@ -93,7 +103,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJsonForColorChange(1.6, 2))))
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(text.contains("T1"))
@@ -115,7 +125,7 @@ class LayerToolPauseInjectorTest {
             val gcode = File(dir, "sample.gcode")
             gcode.writeText(";LAYER_CHANGE\n;Z:0.2\n")
 
-            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(null)))
         } finally {
             dir.deleteRecursively()
         }
@@ -140,7 +150,7 @@ class LayerToolPauseInjectorTest {
             val gcode = File(dir, "sample.gcode")
             gcode.writeText("M109 S215 T1\n;LAYER_CHANGE\n;Z:0.6\nG1 X2 Y2\n")
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJsonForToolChange(0.4, 2))))
             val out = gcode.readText()
             assertTrue(out.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(out.contains("T1"))
@@ -178,7 +188,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJsonForColorChange(1.6, 3))))
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(text.contains("T2"))
@@ -216,7 +226,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJsonForColorChange(1.6, 3))))
             val text = gcode.readText()
             assertTrue(text.contains("; PAUSE_PRINT\nM400 U1\n"))
             assertTrue(text.contains("T2"))
@@ -260,7 +270,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJsonForColorChange(1.6, 3))))
             val text = gcode.readText()
             assertTrue(text.contains("T2"))
             assertTrue("SM target temp fallback should provide explicit wait-temp for switched tool", text.contains("M109 S220 T2"))
@@ -296,7 +306,7 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertTrue(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJsonForColorChange(1.6, 2))))
             val text = gcode.readText()
             assertTrue(text.contains("T1"))
             assertTrue("If tool-specific lookup fails, injector should still set switched tool temp", text.contains("M109 S220 T1"))
@@ -339,12 +349,60 @@ class LayerToolPauseInjectorTest {
                 """.trimIndent() + "\n"
             )
 
-            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model))
+            assertFalse(LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJsonForColorChange(1.6, 2))))
             val text = gcode.readText()
             assertFalse(text.contains("; PAUSE_PRINT"))
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun `extractPauseTargetsFromNativeJson accepts ColorChange and ToolChange and drops other types`() {
+        val json = """
+            {
+              "customGcode": [
+                {"printZ": 3.2, "type": "ColorChange", "extruder": 2, "color": "#AA0000"},
+                {"printZ": 1.6, "type": "ToolChange",  "extruder": 3, "color": "#00AA00"},
+                {"printZ": 2.0, "type": "PausePrint",  "extruder": 1, "color": "#000000"},
+                {"printZ": 2.5, "type": "Template",    "extruder": 1, "color": ""},
+                {"printZ": 4.0, "type": "Custom",      "extruder": 1, "color": ""},
+                {"printZ": 5.0, "type": "1",           "extruder": 1, "color": ""},
+                {"printZ": 6.0, "type": "2",           "extruder": 1, "color": ""}
+              ]
+            }
+        """.trimIndent()
+        val targets = LayerToolPauseInjector.extractPauseTargetsFromNativeJsonForTest(json)
+        assertEquals(
+            "only ColorChange and ToolChange rows become targets, sorted ascending by topZ",
+            listOf(1.6f to 3, 3.2f to 2),
+            targets.map { it.topZ to it.extruderBambu }
+        )
+    }
+
+    @Test
+    fun `extractPauseTargetsFromNativeJson tolerates empty, missing, and malformed input`() {
+        assertEquals(
+            "empty customGcode array → empty list",
+            emptyList<Pair<Float, Int>>(),
+            LayerToolPauseInjector.extractPauseTargetsFromNativeJsonForTest(
+                """{"customGcode": []}"""
+            ).map { it.topZ to it.extruderBambu }
+        )
+        assertEquals(
+            "missing customGcode key → empty list",
+            emptyList<Pair<Float, Int>>(),
+            LayerToolPauseInjector.extractPauseTargetsFromNativeJsonForTest(
+                """{"plateIndex": 0}"""
+            ).map { it.topZ to it.extruderBambu }
+        )
+        assertEquals(
+            "malformed JSON → empty list (never throws)",
+            emptyList<Pair<Float, Int>>(),
+            LayerToolPauseInjector.extractPauseTargetsFromNativeJsonForTest(
+                """not-a-json"""
+            ).map { it.topZ to it.extruderBambu }
+        )
     }
 
     private fun write(zip: ZipOutputStream, name: String, text: String) {

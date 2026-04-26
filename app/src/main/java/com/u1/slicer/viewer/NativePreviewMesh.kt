@@ -148,13 +148,11 @@ data class NativePreviewMesh(
         const val MAX_DECIMATED_TRIANGLES = 100_000
 
         /**
-         * Triangle cap for the Kotlin ThreeMfMeshParser path (painted/SEMM models).
-         * Higher than MAX_DECIMATED_TRIANGLES because Kotlin uses stride decimation (drops
-         * triangles randomly, breaking connectivity) rather than QEM. Set high enough that
-         * typical painted models pass through untouched. At 500K, GL buffer ≈ 60MB — safe
-         * on modern devices. Only fires for genuinely enormous painted models (>500K tris).
-         * TODO(F48-kotlin-qem): replace stride decimation with proper QEM or route painted
-         * models through the native path so this cap can be lowered to match MAX_DECIMATED_TRIANGLES.
+         * Absolute triangle cap for painted/SEMM preview meshes (used by
+         * SlicerViewModel.isLargeTriangleCount to gate the LargePreviewFallback UI).
+         * Higher than MAX_DECIMATED_TRIANGLES so typical painted models pass through
+         * untouched; only genuinely enormous painted models (>500K tris) fall back.
+         * At 500K, GL buffer ≈ 60MB — safe on modern devices.
          */
         const val MAX_KOTLIN_PREVIEW_TRIANGLES = 500_000
 

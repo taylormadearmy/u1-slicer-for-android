@@ -51,8 +51,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 873 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 200 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 851 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 223 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -61,14 +61,13 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 839 tests across 58 classes
+### Unit tests (`app/src/test/`) - 819 tests across 58 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
 - `viewer/StlParserTest.kt` (10) — Binary/ASCII STL parsing, bounding box, vertex data, 10-float vertex format
 - `viewer/MeshDataTest.kt` (11) — MeshData 10-float vertex format, extruderIndices, recolor(), RGBA values, multi-extruder recolor
-- `viewer/ThreeMfMeshParserTest.kt` (29) - 3MF mesh parsing, per-triangle color extraction, extruderMap, MeshWithContext, SEMM paint_color parsing, multi-object extruder map
 - `network/MakerWorldUtilsTest.kt` (36) — URL parsing, design→instance ID resolution, download response parsing, error classification, cookie sanitization
 - `network/MoonrakerClientTest.kt` (38) — PrinterStatus computed properties, URL normalization, LED state, remoteScreenUrl(), B33 virtual_sdcard progress parsing, sendGcode network path, queryWebcamSnapshotCandidates monitor.jpg appending
 - `data/SliceConfigTest.kt` (25) — Default values match Snapmaker U1 hardware specs, wipe tower bounds clamping
@@ -105,7 +104,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `WipeTowerClampTest.kt` (8) — wipeTowerClampBounds: pre-slice Y-clamp uses estimated depth not width; resolveWipeTowerWidth/resolveWipeTowerDepth: return active override or config default
 - `data/WipeTowerDepthEstimatorTest.kt` (8) — height-based depth lookup table; primeVolume override wins when larger than height-based minimum
 - `viewer/GcodeRendererGeometryTest.kt` (21) — segment packer: chain construction, shared vertices, travel breaks, turning angles (90°, straight, caps), z-offset, layer ranges, extruder/feature colors, brightness gradient, color encode/decode round-trip, texture dimensions, 400k stress test
-- `gcode/LayerToolPauseInjectorTest.kt` (9) — PAUSE_PRINT injection for layer-tool colour swaps
+- `gcode/LayerToolPauseInjectorTest.kt` (11) — PAUSE_PRINT injection for layer-tool colour swaps; includes 2 direct unit tests for extractPauseTargetsFromNativeJson (sub-plan #3 native-JSON path)
 - `LargeModelLoadingMessageTest.kt` (5) — large model loading state messages
 - `SliceResultFromJobTest.kt` (2) — SliceResult construction from SliceJob
 - `printer/PrintProgressNotifierTest.kt` (3) — print progress notification logic
@@ -122,22 +121,26 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `network/UpdateCheckerTest.kt` (12) — F70 GitHub release JSON parsing, semantic version comparison, download URL extraction
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
+- `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
 
-### Instrumented tests (`app/src/androidTest/`) - 193 tests across 18 classes
+### Instrumented tests (`app/src/androidTest/`) - 220 tests across 21 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
-- `native/NativeLibraryCorrectnessTest.kt` (4) — JNI correctness checks
+- `native/NativeLibraryCorrectnessTest.kt` (14) — JNI correctness checks + Phase 1 sub-plan #1 accessors (`nativeGetObjectCount`, `nativeGetVolumeCount`, `nativeGetObjectModelId`, `nativeGetVolumeScalars`, `nativeGetPaintStateCounts` for both mmu and supports kinds) + sub-plan #5 accessor (`nativeGetProjectConfig` populated JSON + null on no-model) + sub-plan #2b `loadModelForPlate` smoke (single-plate match + plateIdx=-1 all-plates alias)
+- `native/NativePlateDataTest.kt` (5) — Phase 1 sub-plan #2 per-plate JNI accessors (`nativeGetPlateCount`, `nativeGetPlateData`): no-model null/zero, colored_3DBenchy single-plate shape, Buzz multi-plate positional sanity + OOR guard, flippy painted fixture customGcode non-empty
+- `native/NativeObjectExtruderMapTest.kt` (3) — Phase 1 sub-plan #4 full-objects JNI accessor (`nativeGetObjectExtruderMap`): no-model null, colored_3DBenchy merged component-ref objects, Flarewing array length matches `nativeGetObjectCount`
 - `slicing/SlicingIntegrationTest.kt` (39) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation, B55 slice cancel, v1.5.63 nozzle temp JNI path (PLA=220, PETG=235), B73 scale-down placement correctness, B75 parked extruder cooldown, B79 tree support type + filament type for STL, brim_type no_brim guard, resolveInto→JNI chain
 - `slicing/BambuPipelineIntegrationTest.kt` (34) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing, B54 modifier volume subtype preservation, B82 per-plate layer-tool chip count (standard + painted flippy all plates)
 - `slicing/SemmSlicingTest.kt` (5) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard, B64 Flarewing Dragon colour permutation remap
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
-- `slicing/ProfileEmbedderIntegrationTest.kt` (14) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24)
+- `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
+- `slicing/BambuPlateStateRegressionTest.kt` (5) — Tier A regression tests for the 6 PM-reported plate state bugs: Dragon plate 3 / F1 calendar extruder counts (#1/#2), hanging file translate preserved through slice (#3), H2C benchy multi-tool G-code (#5), Buzz cold-load perf gate (#6)
+- `slicing/BambuFixtureHarnessTest.kt` (6) — Tier B data-driven harness: one `@Test` per fixture so Orchestrator gives each its own process (slicing accumulates native memory; combining all 6 in one method OOMs). Validates extruder count, paint flag, per-tool G-code counts, bounding box ceiling for: Dragon Scale plate 3, Button-for-S-trousers, colored Benchy, Shashibo plate 5, slip-slide-spin plate 3, flippy+flappy plate 4
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/NativePreparePreviewTest.kt` (16) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation, H2C benchy full/decimated 7-index preservation + green recolor + interleaving guard, layer-tool Z-band recolor, triangle count cap, B51 old.3mf bounding box + Korok orientation, B72 multi-instance post-slice bounds, B78 Shashibo plate 5 file-scale+centre preservation on fresh load + post-slice dirty-path reset
-- `viewer/ThreeMfMeshParserTest.kt` (4) - 3MF mesh parsing, transform resolution, per-triangle color extraction, calicube extruder indices
 - `PreparePreviewViewModelTest.kt` (14) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix, entry-point equivalence for `loadModel(uri)` vs `loadModelFromFile(file)`, B86 S-Buttons user-like presets (E2=white/E4=pink) 4-distinct-colour guard, B92 Buzz plate 8 Prepare/Preview colour agreement with explicit slicerColorOrder permutation, B93 Buzz multi-plate cold load skips full-file embedProfile, B94 Spiderman drag-to-right preserved through slice, B92.1 v1.6.12 parsedGcode StateFlow reflects post-remap T-indices (no orphan extruder=1 moves for colorMapping=[0,3])
 - `ui/MakerWorldBrowserUtilsInstrumentedTest.kt` (6) — resolveDownloadFilename with URLUtil, RFC 5987, path traversal sanitization
 
@@ -205,10 +208,13 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 - Android Test Orchestrator runs each instrumented test in its own process — prevents native memory OOM
 - `MeshData` vertex format: 10 floats per vertex (3 pos + 3 normal + 4 RGBA); `extruderIndices` ByteArray stores per-triangle extruder index; `recolor(extruderColors)` updates RGBA in-place from extruder index → color mapping
 - `ModelRenderer.pendingRecolor` — thread-safe recolor mechanism: UI thread sets `pendingRecolor = colors`, GL thread applies via `meshData.recolor()` + VBO re-upload in `onDrawFrame()`
-- `ThreeMfMeshParser.MeshWithContext` — data class holding parsed `MeshData` + `objectId`; `extruderMap: Map<String, Int>` parameter maps object IDs to extruder indices for per-triangle coloring; `parsePaintIndex()` extracts extruder index from `paint_color`/`mmu_segmentation` triangle attributes for SEMM models
 - `ExtruderPickerRow` composable — row of 4 extruder chips (E1-E4) with color circles for single-color model extruder selection on Prepare screen
 - `selectedExtruder` StateFlow on SlicerViewModel — tracks which extruder is selected for single-color models; triggers live recolor of 3D preview
-- `objectExtruderMap` on `ThreeMfInfo` — `Map<String, Int>` of per-object extruder assignments parsed from `model_settings.config`; used by `ThreeMfMeshParser` for per-triangle coloring of multi-extruder Bambu models
+- `objectExtruderMap` on `ThreeMfInfo` — `Map<String, Int>` of per-object extruder assignments parsed from `model_settings.config`; feeds the native per-triangle colouring path for multi-extruder Bambu models
+- `NativeLibrary.loadModelForPlate(path, plateIdx)` (Phase 1 sub-plan #2b) — plate-aware 3MF loader. `plateIdx = -1` → BBS `plate_id=0` (all plates, same as `loadModel`); `plateIdx >= 0` → BBS `plate_id = plateIdx + 1` (1-based). Used by `SlicerViewModel.selectPlate` so the BBS importer filters `m_plater_data[plate_id].obj_inst_map` at load time (`bbs_3mf.cpp:1921`), eliminating the need for Kotlin to feed a pre-extracted single-plate 3MF to the native slicer.
+- `ProfileEmbedder.embed(..., plateId: Int?)` — when `plateId` is supplied (from `SlicerViewModel.selectPlate`), `Metadata/custom_gcode_per_layer.xml` is filtered to the target plate via `BambuSanitizer.filterCustomGcodePerLayer` instead of being dropped. Keeps sub-plan #3's `LayerToolPauseInjector` XML fallback plate-scoped on painted multi-plate fixtures.
+- `ThreeMfPlate.hasPaintData` (Phase 1 sub-plan #2c) — per-plate paint flag populated by `ThreeMfParser.parse` / `parseForPlateSelection` from the `computeVisualColorCountByPlate` pass. Consumed by `SlicerViewModel.mergeThreeMfInfoForPlate` (B81 guard) and `SlicerViewModel.buildSelectedPlateInfo` — lets the plate-selection path derive plate-local paint state without running `BambuSanitizer.extractPlate` + `parseForPlateSelection` on disk.
+- `SlicerViewModel.buildSelectedPlateInfo(sourceInfo, plateId)` (Phase 1 sub-plan #2c) — synthesises a single-plate `ThreeMfInfo` view from the stable source parse. Replaces the pre-#2c `BambuSanitizer.extractPlate` → `restructurePlateFile` → `ThreeMfParser.parseForPlateSelection(plateFile)` chain in `selectPlate`. `extractPlate` + `restructurePlateFile` are `@Deprecated` — production no longer reaches them; only dedicated Kotlin-pipeline regression tests still exercise them.
 
 ## Profile Key Pipeline
 

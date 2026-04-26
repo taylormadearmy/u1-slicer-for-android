@@ -387,26 +387,6 @@ class ProfileEmbedderIntegrationTest {
     }
 
     @Test
-    fun flippyFlappyMini_previewMeshUsesLayerChangeColours() {
-        val input = asset("flippy+flappy+mini.3mf")
-        val info = ThreeMfParser.parse(input)
-        val mesh = com.u1.slicer.viewer.ThreeMfMeshParser.parse(
-            file = input,
-            detectedColorCount = info.detectedColors.size
-        )
-
-        assertNotNull("preview mesh should parse", mesh)
-        assertTrue(
-            "preview mesh should carry per-triangle color indices",
-            mesh!!.hasPerVertexColor
-        )
-        assertTrue(
-            "layer-change preview mesh should contain multiple color indices",
-            mesh.extruderIndices?.toSet()?.size ?: 0 > 1
-        )
-    }
-
-    @Test
     fun flippyFlappyMini_fullPipeline_emitsLayerChangePauseGcode() {
         val sourceAsset = asset("flippy+flappy+mini.3mf")
         val embedded = fullPipeline("flippy+flappy+mini.3mf")
@@ -416,10 +396,12 @@ class ProfileEmbedderIntegrationTest {
         assertNotNull("slice should return a result", result)
         assertTrue("layer-change sample should slice successfully: ${result?.errorMessage}", result!!.success)
 
-        // Same as app: native slice omits pause lines; LayerToolPauseInjector adds them from source 3MF metadata.
+        // Same as app: native slice omits pause lines; LayerToolPauseInjector adds them from
+        // nativeGetPlateData(0) — which reads from the currently-loaded g_model (the embedded
+        // file, which preserves the plate-level customGcode after sanitization).
         assertTrue(
             "pause injector should run using source asset metadata",
-            LayerToolPauseInjector.injectFrom3mf(result.gcodePath, sourceAsset)
+            LayerToolPauseInjector.injectFrom3mf(result.gcodePath, sourceAsset, 0, lib::nativeGetPlateData)
         )
         val gcode = File(result.gcodePath).readText()
         assertTrue(
@@ -775,6 +757,117 @@ class ProfileEmbedderIntegrationTest {
             "First 2000 chars of G-code:\n${gcode.take(2000)}",
             gcode.contains("SET_PRESSURE_ADVANCE ADVANCE=0.04")
         )
+    }
+
+    // ─── Sub-plan #2b: ProfileEmbedder.embed plateId + XML filter ──────────────
+
+    /**
+     * Sub-plan #2b: when embed() is called with plateId=null, the legacy behaviour
+     * is to drop Metadata/custom_gcode_per_layer.xml entirely for painted files
+     * (pre-sub-plan-#2b contract). Sub-plan #3's LayerToolPauseInjector XML
+     * fallback tolerates a missing file silently.
+     */
+    @Test
+    fun embed_withPlateIdNull_dropsCustomGcodePerLayerXml_whenHasLayerToolChanges() {
+        val source = buildSource3mfWithCustomGcodeXml(
+            """<?xml version="1.0"?>
+<custom_gcodes_per_layer>
+  <plate>
+    <plate_info id="1"/>
+    <layer top_z="1.6" type="2" extruder="2" color="#AA0000" extra="" gcode="tool_change"/>
+  </plate>
+</custom_gcodes_per_layer>"""
+        )
+        val info = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = false,
+            hasLayerToolChanges = true
+        )
+        val out = embedder.embed(source, emptyMap(), outDir, info)
+
+        val hasXml = ZipFile(out).use { zip ->
+            zip.getEntry("Metadata/custom_gcode_per_layer.xml") != null
+        }
+        assertFalse("plateId=null legacy path must drop the XML", hasXml)
+    }
+
+    /**
+     * Sub-plan #2b Risk 4 mitigation m1: when embed() is called with a specific
+     * plateId, it must keep Metadata/custom_gcode_per_layer.xml in the output
+     * and filter it to only the target plate's block (reusing
+     * BambuSanitizer.filterCustomGcodePerLayer). This preserves sub-plan #3's
+     * XML fallback for post-slice-null scenarios on painted multi-plate
+     * fixtures without leaking non-target plates' layers.
+     */
+    @Test
+    fun embed_withPlateId1_filtersCustomGcodePerLayerXml_toThatPlateOnly() {
+        val customGcodeXml = """<?xml version="1.0"?>
+<custom_gcodes_per_layer>
+  <plate>
+    <plate_info id="1"/>
+    <layer top_z="1.6" type="2" extruder="2" color="#AA0000" extra="" gcode="tool_change"/>
+  </plate>
+  <plate>
+    <plate_info id="2"/>
+    <layer top_z="3.2" type="2" extruder="3" color="#00AA00" extra="" gcode="tool_change"/>
+  </plate>
+</custom_gcodes_per_layer>"""
+        val source = buildSource3mfWithCustomGcodeXml(customGcodeXml)
+        val info = ThreeMfInfo(
+            objects = emptyList(),
+            plates = emptyList(),
+            isBambu = true,
+            isMultiPlate = true,
+            hasLayerToolChanges = true
+        )
+        val out = embedder.embed(source, emptyMap(), outDir, info, plateId = 1)
+
+        val body = ZipFile(out).use { zip ->
+            val entry = zip.getEntry("Metadata/custom_gcode_per_layer.xml")
+            assertNotNull("plateId=1 must keep the XML in the embedded file", entry)
+            zip.getInputStream(entry).bufferedReader().readText()
+        }
+        assertTrue(
+            "embedded XML must contain plate 1's layer (top_z=1.6)",
+            body.contains("""top_z="1.6"""")
+        )
+        assertFalse(
+            "embedded XML must NOT contain plate 2's layer (top_z=3.2)",
+            body.contains("""top_z="3.2"""")
+        )
+        // filterCustomGcodePerLayer renumbers the selected plate_info id to 1.
+        val plateOpenCount = Regex("""<plate>""").findAll(body).count()
+        assertEquals(
+            "filtered output must have exactly one <plate> block",
+            1,
+            plateOpenCount
+        )
+    }
+
+    /**
+     * Build a minimal Bambu-like 3MF source file containing just the
+     * custom_gcode_per_layer.xml entry under test. Shape matters, not content
+     * validity — embed() only reads individual entries when the name matches.
+     */
+    private fun buildSource3mfWithCustomGcodeXml(customGcodeXml: String): File {
+        val file = File(cacheDir, "sub_plan_2b_src_${System.nanoTime()}.3mf")
+        ZipOutputStream(FileOutputStream(file)).use { zip ->
+            val minimalModel = """<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices/><triangles/></mesh></object></resources><build><item objectid="1"/></build></model>"""
+            zip.putNextEntry(ZipEntry("3D/3dmodel.model"))
+            zip.write(minimalModel.toByteArray())
+            zip.closeEntry()
+
+            zip.putNextEntry(ZipEntry("Metadata/project_settings.config"))
+            zip.write("""{"filament_colour":["#FFFFFF"]}""".toByteArray())
+            zip.closeEntry()
+
+            zip.putNextEntry(ZipEntry("Metadata/custom_gcode_per_layer.xml"))
+            zip.write(customGcodeXml.toByteArray())
+            zip.closeEntry()
+        }
+        return file
     }
 
 }

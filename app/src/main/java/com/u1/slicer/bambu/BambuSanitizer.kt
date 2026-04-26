@@ -1511,11 +1511,25 @@ $componentRefs    </components>
     }
 
     /**
-     * @param hasPlateJsons  If provided, overrides auto-detection.  Pass the value from
-     *   [ThreeMfInfo.hasPlateJsons] (parsed from the *original* file) when calling on a
-     *   processed/sanitised file that has had its Metadata/plate_N.json entries stripped.
-     *   When null (default), the flag is auto-detected by inspecting the inputFile ZIP.
+     * Sub-plan #2d (2026-04-25): RETIRED FROM PRODUCTION. The strip pipeline this
+     * function performs (filterModelToPlate + stripUnreferencedResources +
+     * stripAssembleSection + stripUnreferencedConfigObjects) has been ported into
+     * `ProfileEmbedder.embed(plateId)` so per-plate scoping happens in one pass
+     * during embed, eliminating the intermediate plate-only file artefact.
+     *
+     * The smaller per-step regex helpers used here remain as `internal fun`s
+     * called from ProfileEmbedder. This public entry point is retained for
+     * test callers that exercise the disk-extraction artefact directly; sub-plan
+     * #2e may delete it after migrating those tests.
+     *
+     * @param hasPlateJsons  If provided, overrides auto-detection.
      */
+    @Deprecated(
+        message = "Retired from production in sub-plan #2d. ProfileEmbedder.embed(plateId) " +
+            "performs the equivalent strip pipeline in one pass. Test callers may still " +
+            "use this for disk-artefact-level assertions; new production code must not.",
+        level = DeprecationLevel.WARNING
+    )
     fun extractPlate(inputFile: File, targetPlateId: Int, outputDir: File,
                      hasPlateJsons: Boolean? = null,
                      plateObjectIds: Set<String>? = null,
@@ -1621,19 +1635,30 @@ $componentRefs    </components>
         return outputFile
     }
 
-    private fun filterCustomGcodePerLayer(xml: String, targetPlateId: Int): String {
+    internal fun filterCustomGcodePerLayer(xml: String, targetPlateId: Int): String {
         val header = """<?xml version="1.0" encoding="utf-8"?>"""
+        // Sub-plan #2c P2 fix: use a flexible plate_info id matcher matching
+        // ThreeMfParser.parseLayerToolCustomGcodeXmlPerPlate's regex — tolerates
+        // whitespace, attribute order, namespace prefixes, and trailing attrs.
+        // Fail-closed on miss (return blank) instead of the pre-#2b "return full
+        // unfiltered XML" behaviour — post-#2b this is on the production plate
+        // selection path, so returning unfiltered would silently route all plates'
+        // layer-tool entries into the embedded output and then into the pause
+        // injector on post-slice fallback.
         val plateRegex = Regex("""<plate>[\s\S]*?</plate>""")
+        val plateInfoIdRegex = Regex("""<plate_info\b[^>]*\bid="(\d+)"""")
         val selectedBlock = plateRegex.findAll(xml)
             .map { it.value }
             .firstOrNull { block ->
-                block.contains("""<plate_info id="$targetPlateId"/>""")
+                plateInfoIdRegex.find(block)?.groupValues?.getOrNull(1)?.toIntOrNull() == targetPlateId
             }
-            ?: return xml
-        val renumberedBlock = selectedBlock.replace(
-            Regex("""<plate_info id="$targetPlateId"\s*/>"""),
-            """<plate_info id="1"/>"""
-        )
+            ?: return ""
+        // Renumber the selected plate's plate_info id to 1 so downstream consumers
+        // see a normalised single-plate XML. Use the flexible regex so we rewrite
+        // any attribute-order / whitespace variant the match tolerated.
+        val renumberedBlock = selectedBlock.replace(plateInfoIdRegex) { match ->
+            match.value.replace(Regex("""id="\d+""""), """id="1"""")
+        }
         return buildString {
             appendLine(header)
             appendLine("<custom_gcodes_per_layer>")
@@ -1654,17 +1679,22 @@ $componentRefs    </components>
     }
 
     /**
-     * Restructure an extracted single-plate file: inline component meshes into
-     * the main model so OrcaSlicer can assign per-volume extruders.
+     * Sub-plan #2d (2026-04-25): RETIRED FROM PRODUCTION. After sub-plan #2d
+     * collapsed plate scoping into `ProfileEmbedder.embed(plateId)`, the per-plate
+     * compound-mesh inlining this function performed is no longer reached by
+     * production. Multi-color compound objects (Dragon Scale, Shashibo plate 5)
+     * are now handled by the native BBS importer's per-volume extruder assignment
+     * directly from the source file's `model_settings.config`.
      *
-     * This is needed for multi-plate files where [process] skips restructuring
-     * to avoid oversized XML.  After [extractPlate] produces a manageable
-     * single-plate file, this method inlines the component meshes and generates
-     * the correct Slic3r_PE_model.config for per-object extruder assignments.
-     *
-     * @return The restructured file, or [plateFile] unchanged if no
-     *   restructuring was needed.
+     * Retained for test callers that exercise the inlined disk artefact directly.
      */
+    @Deprecated(
+        message = "Retired from production in sub-plan #2d. Native BBS importer handles " +
+            "per-volume extruder assignment directly from model_settings.config. Test " +
+            "callers may still use this for disk-artefact-level assertions; new production " +
+            "code must not.",
+        level = DeprecationLevel.WARNING
+    )
     fun restructurePlateFile(plateFile: File, outDir: File): File {
         ZipFile(plateFile).use { srcZip ->
             // 1. Parse extruder assignments from model_settings.config
@@ -1764,7 +1794,7 @@ $componentRefs    </components>
      *
      * Returns the stripped XML and the set of referenced object IDs (null if no stripping needed).
      */
-    private fun stripUnreferencedResources(xml: String): Pair<String, Set<String>?> {
+    internal fun stripUnreferencedResources(xml: String): Pair<String, Set<String>?> {
         val buildRegex = Regex("""<build\b[^>]*>(.*?)</build>""", setOf(RegexOption.DOT_MATCHES_ALL))
         val buildMatch = buildRegex.find(xml) ?: return Pair(xml, null)
         val itemObjIdRegex = Regex("""objectid="(\d+)"""")
@@ -1806,7 +1836,7 @@ $componentRefs    </components>
      * Strip `<object>` entries from model_settings.config or Slic3r_PE_model.config
      * that don't match any of the [referencedIds].
      */
-    private fun stripUnreferencedConfigObjects(xml: String, referencedIds: Set<String>): String {
+    internal fun stripUnreferencedConfigObjects(xml: String, referencedIds: Set<String>): String {
         val objectBlockRegex = Regex("""[ \t]*<object\s+id="(\d+)"[^>]*>[\s\S]*?</object>[ \t]*\r?\n?""")
         return objectBlockRegex.replace(xml) { match ->
             if (match.groupValues[1] in referencedIds) match.value else ""
@@ -1824,7 +1854,7 @@ $componentRefs    </components>
      * The <assemble> section is used only by BBS plate manager for object placement and is
      * not required for slicing.  Stripping it lets OrcaSlicer use the <build> transforms.
      */
-    private fun stripAssembleSection(xml: String): String {
+    internal fun stripAssembleSection(xml: String): String {
         return xml.replace(Regex("""[ \t]*<assemble>.*?</assemble>[ \t]*\r?\n?""",
             setOf(RegexOption.DOT_MATCHES_ALL)), "")
     }
@@ -1890,7 +1920,7 @@ $componentRefs    </components>
      *   safe to filter to 1 item).  false = older format (Dragon Scale / Shashibo style)
      *   where build items share component file refs and OrcaSlicer needs all of them.
      */
-    private fun filterModelToPlate(xml: String, targetPlateId: Int,
+    internal fun filterModelToPlate(xml: String, targetPlateId: Int,
                                    hasPlateJsons: Boolean = true,
                                    plateObjectIds: Set<String>? = null): String {
         val targetPlateIndex = targetPlateId - 1  // p:object_id is 0-based

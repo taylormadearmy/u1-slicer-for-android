@@ -1,0 +1,14 @@
+{
+  "file": "slip slide spin fidget.3mf",
+  "approved": true,
+  "plates": [
+    {
+      "plateIndex": 2,
+      "expectedExtruderCount": 2,
+      "expectedToolCounts": {},
+      "toolCountTolerance": 5,
+      "hasPaintData": true,
+      "maxBoundingBoxMm": [270, 270]
+    }
+  ]
+}
