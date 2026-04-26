@@ -82,3 +82,29 @@ data class CanonicalFilamentList(
     /** True if more than one filament is in use — a quick UI predicate. */
     val isMultiColour: Boolean get() = filaments.size > 1
 }
+
+/**
+ * Phase 2.1 — synthesises a single-entry [CanonicalFilamentList] for an STL
+ * file. STL geometry has no embedded filament data, so the canonical list
+ * is built from the user's currently-selected extruder preset:
+ *
+ *   - [FilamentEntry.fileIndex] = 0 (slicer emits T0 only).
+ *   - [FilamentEntry.color]    = the preset's currently-loaded colour.
+ *   - [FilamentEntry.materialType] = the preset's material type.
+ *   - [FilamentEntry.source]   = [FilamentSource.STL_DEFAULT].
+ *
+ * Callers should re-call this on every render rather than caching, because
+ * the preset's colour can be edited by the user and the canonical list
+ * should reflect that without requiring a file reload.
+ */
+fun stlCanonicalList(presetColor: String, presetMaterialType: String?): CanonicalFilamentList =
+    CanonicalFilamentList(
+        filaments = listOf(
+            FilamentEntry(
+                fileIndex = 0,
+                color = presetColor,
+                materialType = presetMaterialType,
+                source = FilamentSource.STL_DEFAULT,
+            )
+        )
+    )

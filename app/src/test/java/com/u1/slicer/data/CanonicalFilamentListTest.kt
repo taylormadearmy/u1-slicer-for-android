@@ -110,4 +110,38 @@ class CanonicalFilamentListTest {
         val afterRecolor = before.copy(color = "#0000FF")
         assertEquals(before.fileIndex, afterRecolor.fileIndex)
     }
+
+    // ─── stlCanonicalList ─────────────────────────────────────────────────
+
+    @Test
+    fun `stlCanonicalList synthesises a single STL_DEFAULT entry`() {
+        val list = stlCanonicalList(presetColor = "#FF0000", presetMaterialType = "PLA")
+        assertEquals(1, list.size)
+        assertFalse(list.isMultiColour)
+        assertTrue(list.paintStateMap.isEmpty())
+
+        val only = list.filaments[0]
+        assertEquals(0, only.fileIndex)
+        assertEquals("#FF0000", only.color)
+        assertEquals("PLA", only.materialType)
+        assertEquals(FilamentSource.STL_DEFAULT, only.source)
+    }
+
+    @Test
+    fun `stlCanonicalList passes nullable materialType through`() {
+        val list = stlCanonicalList(presetColor = "#FFFFFF", presetMaterialType = null)
+        assertEquals(1, list.size)
+        assertNull(list.filaments[0].materialType)
+    }
+
+    @Test
+    fun `stlCanonicalList reflects different colours per call`() {
+        // The contract is "re-call rather than cache" — verify the call
+        // produces a fresh entry each time so callers can re-render after
+        // the user edits the extruder preset.
+        val red = stlCanonicalList("#FF0000", "PLA")
+        val orange = stlCanonicalList("#FFA500", "PLA")
+        assertEquals("#FF0000", red.filaments[0].color)
+        assertEquals("#FFA500", orange.filaments[0].color)
+    }
 }
