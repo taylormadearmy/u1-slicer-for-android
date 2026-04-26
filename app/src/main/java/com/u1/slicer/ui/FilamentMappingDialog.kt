@@ -91,6 +91,7 @@ fun FilamentMappingDialog(
                         FilamentMappingRow(
                             fileIndex = idx,
                             fileColor = entry.color,
+                            filamentMaterial = entry.materialType,
                             sourceLabel = sourceShortLabel(entry.source),
                             extruderPresets = extruderPresets,
                             selectedSlot = mapping.getOrElse(idx) { 0 },
@@ -173,6 +174,7 @@ fun FilamentMappingDialog(
 private fun FilamentMappingRow(
     fileIndex: Int,
     fileColor: String,
+    filamentMaterial: String?,
     sourceLabel: String?,
     extruderPresets: List<ExtruderPreset>,
     selectedSlot: Int,
@@ -182,7 +184,17 @@ private fun FilamentMappingRow(
     val selectedPreset = extruderPresets.firstOrNull { it.index == selectedSlot }
         ?: extruderPresets.firstOrNull()
 
-    Row(
+    // Phase 2.8 — material mismatch detection.
+    // The filament's expected material (from the file or the user's
+    // Prepare-screen override) may not match the slot's preset material
+    // (what the user has loaded). Surface a non-blocking chip so the
+    // user knows the temps may not match the loaded spool.
+    val slotMaterial = selectedPreset?.materialType
+    val mismatch = filamentMaterial != null
+        && slotMaterial != null
+        && !filamentMaterial.equals(slotMaterial, ignoreCase = true)
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(
@@ -190,6 +202,10 @@ private fun FilamentMappingRow(
                 RoundedCornerShape(8.dp)
             )
             .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -269,6 +285,21 @@ private fun FilamentMappingRow(
                         onClick = { onSlotPicked(preset.index); expanded = false }
                     )
                 }
+            }
+        }
+    }
+        if (mismatch) {
+            // Material-mismatch chip — non-blocking advisory.
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                shape = RoundedCornerShape(6.dp),
+            ) {
+                Text(
+                    "Slot loaded as $slotMaterial, filament needs $filamentMaterial",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
             }
         }
     }
