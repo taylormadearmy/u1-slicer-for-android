@@ -403,28 +403,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Phase 2 §4 Step 7 (visual side) — per-file-filament resolved colours
      * for the 3D preview. For each file filament i, the value is:
      *   1. user override colour (Prepare screen), if set, else
-     *   2. canonical entry's declared colour (file's filament_colour).
+     *   2. file's declared colour (`detectedColors[i]`).
      *
      * Drives the on-screen 3D model preview's recolor palette so the visual
-     * agrees with the slicer's embedded `filament_colour` (sized to the
-     * canonical list, override-applied per filament). Empty when no model
-     * is loaded.
+     * agrees with the file's declared filament colours (independent of the
+     * user's slot presets). Empty when no model is loaded.
      *
-     * Reactive over `_threeMfInfo` (file load), `_filamentOverrides` (user
-     * edits on Prepare), `extruderPresets` and `_selectedExtruder` (STL
-     * fallback path where the canonical list is synthesised from the
-     * selected slot's preset).
+     * Reactive over `_threeMfInfo` (file load) and `_filamentOverrides`
+     * (user edits on Prepare). Sourced from `info.detectedColors` (the
+     * same source the Prepare chip strip uses) for guaranteed agreement
+     * between chip swatches and the 3D model body. STL / non-canonical
+     * paths leave `detectedColors` empty; the recolor falls back to the
+     * slot palette in that case.
      */
     val resolvedFilamentColors: StateFlow<List<String>> = combine(
         _threeMfInfo,
         _filamentOverrides,
-        extruderPresets,
-        _selectedExtruder,
-    ) { _, overrides, _, _ ->
-        val canonical = getCanonicalFilamentList() ?: return@combine emptyList()
-        val ovPairs = overrides.mapValues { (_, ov) -> ov.color to ov.materialType }
-        com.u1.slicer.data.applyOverridesToCanonical(canonical, ovPairs)
-            .filaments.map { it.color }
+    ) { info, overrides ->
+        val base = info?.detectedColors.orEmpty()
+        if (base.isEmpty()) return@combine emptyList()
+        if (overrides.isEmpty()) return@combine base
+        base.mapIndexed { i, color -> overrides[i]?.color ?: color }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)
