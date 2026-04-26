@@ -52,8 +52,20 @@ object GcodeParser {
         var lastE = 0f
         var absoluteE = true
         var perExtruderMm = emptyList<Float>()
-        val computedPerExtruderMm = FloatArray(4)
+        // Phase 2 — multi-filament files (paint segmentation, MMU) can have
+        // more than 4 distinct T-indices in the G-code (H2C benchy: 7,
+        // Buzz plate 9: 11). FloatArray(4) silently truncated; we now grow
+        // the buffer on demand. Cap at 32 — well above any realistic file.
+        var computedPerExtruderMm = FloatArray(4)
         val computedExtruderOrder = mutableListOf<Int>()
+        fun ensureExtruderCapacity(idx: Int) {
+            if (idx < computedPerExtruderMm.size) return
+            val needed = (idx + 1).coerceAtMost(32)
+            val grown = FloatArray(needed)
+            System.arraycopy(computedPerExtruderMm, 0,
+                grown, 0, computedPerExtruderMm.size)
+            computedPerExtruderMm = grown
+        }
         var currentFeatureType: Byte = FeatureType.OTHER
         var currentFeatureLabel: String = "OTHER"
         var wipeTowerE = 0f      // total E extruded in prime/wipe tower regions
@@ -190,7 +202,8 @@ object GcodeParser {
                                 } else {
                                     newE.coerceAtLeast(0f)
                                 }
-                                if (moveExtruder in 0..3 && extrudedMm > 0f) {
+                                if (moveExtruder in 0..31 && extrudedMm > 0f) {
+                                    ensureExtruderCapacity(moveExtruder)
                                     if (computedPerExtruderMm[moveExtruder] <= 0f) {
                                         computedExtruderOrder += moveExtruder
                                     }
@@ -244,9 +257,13 @@ object GcodeParser {
                     continue
                 }
 
-                // T0–T9 — tool change
+                // T0–T9 — tool change. Phase 2 — no longer clamped to 0..3
+                // because multi-filament files (paint segmentation / MMU)
+                // legitimately use higher T-indices.
                 if (c0 == 'T' && cmdLen == 2 && l[start + 1] in '0'..'9') {
-                    currentExtruder = (l[start + 1] - '0').coerceIn(0, 3)
+                    val raw = l[start + 1] - '0'
+                    currentExtruder = raw.coerceIn(0, 31)  // safety cap
+                    ensureExtruderCapacity(currentExtruder)
                 }
             }
         }
@@ -261,8 +278,9 @@ object GcodeParser {
         }
 
         val hasComputedExtrusion = computedPerExtruderMm.any { it > 0f }
+        // Phase 2 — no longer cap to 4 entries; the file may have more
+        // filaments than physical extruders.
         val normalizedFooterPerExtruderMm = perExtruderMm
-            .take(4)
             .dropLastWhile { it <= 0f }
         // B67: use SORTED tool order (0,1,2,3) for compact array, not first-appearance
         // order. First-appearance reordering caused the per-extruder summary to swap
@@ -280,14 +298,15 @@ object GcodeParser {
             hasComputedExtrusion && compactComputedPerExtruderMm.size >= 2 -> compactComputedPerExtruderMm
             normalizedFooterPerExtruderMm.isNotEmpty() -> normalizedFooterPerExtruderMm
             hasComputedExtrusion -> compactComputedPerExtruderMm
-            perExtruderMm.isNotEmpty() -> perExtruderMm.take(4)
+            perExtruderMm.isNotEmpty() -> perExtruderMm
             else -> emptyList()
         }
-        val finalPerExtruderMm = if (resolvedPerExtruderMm.size <= 4) {
-            resolvedPerExtruderMm
-        } else {
-            resolvedPerExtruderMm.take(4)
-        }
+        // Phase 2 — pass the full per-extruder list through. Display layer
+        // (SliceCompleteSummaryCard / buildPerExtruderDisplaySlots) handles
+        // user-facing slot mapping; clamping at 4 here drops legitimate
+        // multi-filament data for files with > 4 distinct T-indices
+        // (H2C benchy, Buzz plate 9, etc.).
+        val finalPerExtruderMm = resolvedPerExtruderMm
 
         return ParsedGcode(
             layers = layers,

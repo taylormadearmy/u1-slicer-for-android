@@ -2582,7 +2582,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Needed for STL files (no embedded profile → native slicer uses OrcaSlicer
                     // default "PLA") and as a staleness guard for 3MF files (profile was embedded
                     // at model-load time; user may have changed presets since).
-                    val ftTypes = extruderPresets.value.sortedBy { it.index }.map { it.materialType }
+                    //
+                    // Phase 2.7: when the file has more filaments than the user's extruder count
+                    // (multi-filament file mapped to fewer slots), emit one filament_type per
+                    // canonical filament so per-filament overrides reach the G-code header.
+                    val canonicalForPatch = getCanonicalFilamentList()
+                    val basePresets = applyFilamentOverridesToPresets(extruderPresets.value)
+                    val ftTypes = if (canonicalForPatch != null
+                        && canonicalForPatch.size > basePresets.size) {
+                        val (perFilamentTypes, _) = buildPerFilamentTypeAndTemp(
+                            canonicalForPatch, _filamentOverrides.value, basePresets
+                        )
+                        perFilamentTypes
+                    } else {
+                        basePresets.sortedBy { it.index }.map { it.materialType }
+                    }
                     val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
                     Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
 
@@ -4197,7 +4211,14 @@ internal fun buildProfileOverridesImpl(
     // nozzleTemps (fresh from slice-time preset lookup) takes priority over the stale
     // cfg.extruderTemps stored at model-load time.  Falls back to cfg.extruderTemps if
     // size matches, otherwise to cfg.nozzleTemp (unit-test / legacy path).
+    //
+    // Phase 2.7 — when nozzleTemps is LARGER than extCount (multi-filament file
+    // sliced with N>extCount filament_colour entries — H2C benchy with 7 colours
+    // mapped to 4 slots), use the full size so per-file-filament temps reach the
+    // slicer. Truncating to extCount drops the override material temps.
     val temps: MutableList<String> = when {
+        nozzleTemps != null && nozzleTemps.size > extCount ->
+            nozzleTemps.map { it.toString() }.toMutableList()
         nozzleTemps != null && nozzleTemps.size >= extCount ->
             nozzleTemps.take(extCount).map { it.toString() }.toMutableList()
         cfg.extruderTemps.size >= extCount ->
@@ -4295,9 +4316,15 @@ internal fun buildProfileOverridesImpl(
         "prime_tower_brim_chamfer" to if (primeTowerBrimChamfer) "1" else "0",
         "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString(),
         "wipe_tower_rotation_angle" to wipeTowerRotationAngle.toString(),
-        // B63: filament_type per extruder — resolved from user's extruder presets
-        "filament_type" to MutableList(extCount) { i ->
-            filamentTypes?.getOrNull(i) ?: "PLA"
+        // B63: filament_type per extruder — resolved from user's extruder presets.
+        // Phase 2.7: when filamentTypes is larger than extCount (multi-filament
+        // file with per-filament overrides), emit the full N-entry list so the
+        // override material reaches the slicer for every filament.
+        "filament_type" to run {
+            val size = maxOf(extCount, filamentTypes?.size ?: 0)
+            MutableList(size) { i ->
+                filamentTypes?.getOrNull(i) ?: "PLA"
+            }
         }
     )
 
