@@ -67,6 +67,21 @@ data class ThreeMfInfo(
     val hasPaintData: Boolean = false,
     val hasPaintSupports: Boolean = false,
     val hasLayerToolChanges: Boolean = false,
+    /**
+     * Phase 2 §4 Step 8 — deprecated. New code should derive this from
+     * the canonical filament list combined with `objectExtruderMap`:
+     *   `objectExtruderMap.values.toSet().size > 1`
+     * indicates the file declares per-object extruder diversity. The
+     * flag is preserved during the Phase 2 transition so the existing
+     * 50+ callsites (layer-tool detection, embed routing, target-count
+     * sizing) continue to compile and behave; mechanical migration to
+     * the canonical-derived predicate is incremental and can land per
+     * callsite without blocking beta.
+     */
+    @Deprecated(
+        "Derive from objectExtruderMap.values.toSet().size > 1 instead; " +
+            "see ThreeMfInfo doc and architecture review §4 Step 8.",
+    )
     val hasMultiExtruderAssignments: Boolean = false,
     val detectedColors: List<String> = emptyList(),
     val detectedExtruderCount: Int = 1,
