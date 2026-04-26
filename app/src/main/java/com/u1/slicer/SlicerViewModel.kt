@@ -1885,7 +1885,71 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val presets = applyFilamentOverridesToPresets(extruderPresets.value)
         val types = presets.sortedBy { it.index }.map { it.materialType }
         val temps = computeFreshExtruderTemps(extCount, usedSlots, presets, filaments.value).toList()
-        return buildProfileOverridesImpl(cfg, slicingOverrides.value, extCount, hasSourceConfig, filamentTypes = types, nozzleTemps = temps)
+
+        // Phase 2.7 final: when the file has more filaments than the user's
+        // distinct slot count (e.g. H2C benchy: 7 filaments but mapped to 4
+        // physical slots), the slicer's filament_type / nozzle_temperature
+        // arrays must be size N (canonical count) — one entry per file
+        // filament — so per-filament material overrides reach the slicer.
+        // Today's per-slot arrays produce arrays of length 4 which the
+        // ProfileEmbedder pads with PLA defaults, masking PETG/ABS overrides
+        // for filaments beyond slot 3.
+        val canonical = getCanonicalFilamentList()
+        val perFilamentArrays = if (canonical != null && canonical.size > extCount) {
+            buildPerFilamentTypeAndTemp(canonical, _filamentOverrides.value, presets)
+        } else null
+
+        val finalTypes = perFilamentArrays?.first ?: types
+        val finalTemps = perFilamentArrays?.second ?: temps
+
+        return buildProfileOverridesImpl(
+            cfg, slicingOverrides.value, extCount, hasSourceConfig,
+            filamentTypes = finalTypes, nozzleTemps = finalTemps,
+        )
+    }
+
+    /**
+     * Phase 2.7 final — produces per-canonical-filament filament_type and
+     * nozzle_temperature lists. For each file filament i, the resolution
+     * order is:
+     *   1. User override on that fileIndex (Prepare screen).
+     *   2. Canonical entry's declared materialType (file's filament_type).
+     *   3. The mapped slot's preset materialType.
+     *   4. "PLA" / 220° as last resort.
+     *
+     * Nozzle temps are derived from the resolved material via
+     * [nozzleTempDefaultForMaterial], or pulled from the linked
+     * [FilamentProfile.nozzleTemp] when the user has explicitly chosen one.
+     */
+    private fun buildPerFilamentTypeAndTemp(
+        canonical: com.u1.slicer.data.CanonicalFilamentList,
+        overrides: Map<Int, FilamentOverride>,
+        presets: List<ExtruderPreset>,
+    ): Pair<List<String>, List<Int>> {
+        val mapping = _colorMapping.value
+        val library = filaments.value
+        val types = ArrayList<String>(canonical.size)
+        val temps = ArrayList<Int>(canonical.size)
+        for (i in 0 until canonical.size) {
+            val ov = overrides[i]
+            val slot = mapping?.getOrNull(i) ?: 0
+            val slotPreset = presets.firstOrNull { it.index == slot }
+            val material = ov?.materialType
+                ?: canonical.filaments[i].materialType
+                ?: slotPreset?.materialType
+                ?: "PLA"
+            types.add(material)
+            // Use the slot's linked filament profile temp if the override
+            // didn't change the material; otherwise fall back to the
+            // material default. This avoids using a PLA-tuned profile temp
+            // when the user has overridden to PETG.
+            val profileTemp = if (ov?.materialType == null) {
+                slotPreset?.filamentProfileId
+                    ?.let { id -> library.firstOrNull { it.id == id }?.nozzleTemp }
+            } else null
+            temps.add(profileTemp ?: nozzleTempDefaultForMaterial(material))
+        }
+        return types to temps
     }
 
     /**

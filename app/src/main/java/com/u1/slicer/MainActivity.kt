@@ -3157,6 +3157,16 @@ fun PrintSetupSection(
                             val profileId = suggestedPreset?.filamentProfileId
                             val profile = filaments.firstOrNull { it.id == profileId }
                             val isOverridden = override?.materialType != null
+                            // Temp display: when material is overridden, use the
+                            // material's default temp (nozzleTempDefaultForMaterial)
+                            // since the slot's linked profile is no longer the
+                            // source of truth for temp. Otherwise prefer the
+                            // linked filament profile's nozzleTemp.
+                            val displayTemp = if (isOverridden) {
+                                com.u1.slicer.nozzleTempDefaultForMaterial(materialType)
+                            } else {
+                                profile?.nozzleTemp ?: com.u1.slicer.nozzleTempDefaultForMaterial(materialType)
+                            }
 
                             Row(
                                 modifier = Modifier
@@ -3249,7 +3259,7 @@ fun PrintSetupSection(
                                     }
                                 }
                                 Text(
-                                    "${profile?.nozzleTemp ?: 210}°C",
+                                    "${displayTemp}°C",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                                 )
