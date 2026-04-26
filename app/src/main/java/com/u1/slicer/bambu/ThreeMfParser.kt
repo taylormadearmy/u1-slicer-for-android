@@ -842,7 +842,7 @@ object ThreeMfParser {
     /** Per-component paint scan result, cached so Buzz-class multi-plate files don't
      *  re-read the same component file once per plate (~9× speedup on the 50 MB / 296K
      *  paint_color Buzz Lightyear fixture). */
-    private data class ComponentPaintInfo(
+    internal data class ComponentPaintInfo(
         val paintSpecs: Set<String>,
         val allPaintStates: Set<Int>,
         val paintExtruderStates: Set<Int>
@@ -870,12 +870,19 @@ object ThreeMfParser {
         return ComponentPaintInfo(specs, allStates, paintStates)
     }
 
-    private fun computeVisualColorCountByPlate(
+    internal fun computeVisualColorCountByPlate(
         zip: ZipFile,
         modelEntry: java.util.zip.ZipEntry?,
         plateObjectMap: Map<Int, List<String>>,
         componentPathsByObject: Map<String, List<String>>,
-        extruderAssignments: Map<String, Int>
+        extruderAssignments: Map<String, Int>,
+        // Test seam (Review 3 pin tests): scanner receives both the component
+        // path and its InputStream, so tests can return canned scan results
+        // keyed by path without relying on Phase 1 iteration order. Production
+        // callers use the default which ignores the path and streams real
+        // paint specs from the InputStream.
+        componentScanner: (String, java.io.InputStream) -> ComponentPaintInfo =
+            { _, input -> scanComponentForPaintInfo(input) }
     ): Map<Int, PlateVisualInfo> {
         val fallbackPlateObjectMap = if (plateObjectMap.isNotEmpty() || modelEntry == null) {
             plateObjectMap
@@ -899,7 +906,7 @@ object ThreeMfParser {
             .toSet()
         for (path in uniqueComponentPaths) {
             val entry = zip.getEntry(path) ?: continue
-            componentPaintCache[path] = scanComponentForPaintInfo(zip.getInputStream(entry))
+            componentPaintCache[path] = componentScanner(path, zip.getInputStream(entry))
         }
 
         // Phase 2: per-plate aggregation. Each plate's PlateVisualInfo is the union of

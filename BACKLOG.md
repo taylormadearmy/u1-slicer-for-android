@@ -323,7 +323,7 @@ Surfaced by the post-Phase-1 independent code reviews (3 reviewers each across 3
 
 **Coverage pin tests (Review 1 + Review 3):**
 - `SetModelInstancesOffsetTest`: add multi-copy variant (currently single-position only — the `for (pos : positions)` loop is fully untested at len > 1) + non-uniform scale (e.g. `setModelScale(2.0, 1.0, 1.0)`) + a multi-object branch test exercising the `bounding_box_exact()` cache path.
-- `MergeThreeMfInfoTest` or new `ComputeVisualColorCountByPlateTest`: cap-divergence pin (3 components with disjoint singleton state sets `{1}, {2}, {3}` each ≥35 specs — locks the new "more-correct" union behaviour against future regression to the old per-plate truncation), B82 plate-1 invariant pin (synthetic 2-plate map: plate 1 unpainted → `hasPaint=false`, plate 5 painted → `hasPaint=true`), shared-component cross-plate pin (two plates referencing the same component path via different object IDs; instrument via stub-counting `scanComponentForPaintInfo` to assert it's called once).
+- ~~Review 3 pin tests~~ — **DONE**: `app/src/test/java/com/u1/slicer/bambu/ComputeVisualColorCountByPlateTest.kt` adds the three pin tests (cap-divergence, B82 plate-1 invariant, shared-component cross-plate). `ThreeMfParser.computeVisualColorCountByPlate` exposed as `internal` with an injectable `componentScanner: (path, InputStream) -> ComponentPaintInfo` test seam (default delegates to the existing private `scanComponentForPaintInfo`).
 
 ### C1: Remove dead warm-reload and upgrade-guard machinery — FIXED v1.5.13
 - Removed `sessionHasPostUpgradeGuard`, `firstSliceAfterUpgradeRecorded`, `markSliceSucceeded()`, and `post_upgrade_slice_settled` event from `DiagnosticsStore`

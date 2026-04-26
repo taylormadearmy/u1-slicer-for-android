@@ -54,7 +54,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 851 JVM unit tests
+./gradlew testDebugUnitTest                        # 854 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 223 instrumented tests — uses Orchestrator
 ```
 
@@ -64,7 +64,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 819 tests across 58 classes
+### Unit tests (`app/src/test/`) - 822 tests across 59 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -125,6 +125,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
+- `bambu/ComputeVisualColorCountByPlateTest.kt` (3) — Review 3 pin tests for `ThreeMfParser.computeVisualColorCountByPlate`: cap-divergence (3 disjoint singleton state sets union, NOT plate-level EarlyExit truncate), B82 plate-1 invariant (per-plate `hasPaint` doesn't bleed across plates), shared-component cross-plate (same path via different object IDs scans once)
 
 ### Instrumented tests (`app/src/androidTest/`) - 220 tests across 21 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
