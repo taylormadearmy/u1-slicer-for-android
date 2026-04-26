@@ -1504,6 +1504,10 @@ fun PreviewScreen(
                         )
                         }
                     }
+                    val filamentOverrides by viewModel.filamentOverrides.collectAsState()
+                    val canonicalForSummary = remember(viewModel.currentModelPath) {
+                        viewModel.getCanonicalFilamentList()
+                    }
                     SliceCompleteSummaryCard(
                         result = s.result,
                         perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
@@ -1511,7 +1515,9 @@ fun PreviewScreen(
                         bedTemp = config.bedTemp,
                         extruderColors = extruderColors,
                         colorMapping = colorMapping,
-                        extruderPresets = extruderPresets
+                        extruderPresets = extruderPresets,
+                        canonicalList = canonicalForSummary,
+                        filamentOverrides = filamentOverrides,
                     )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -1991,7 +1997,9 @@ fun SliceCompleteSummaryCard(
     bedTemp: Int = 0,
     extruderColors: List<String> = emptyList(),
     colorMapping: List<Int>? = null,
-    extruderPresets: List<com.u1.slicer.data.ExtruderPreset> = emptyList()
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset> = emptyList(),
+    canonicalList: com.u1.slicer.data.CanonicalFilamentList? = null,
+    filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
 ) {
     val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
         buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
@@ -2033,14 +2041,26 @@ fun SliceCompleteSummaryCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         rowItems.forEachIndexed { columnIndex, mm ->
-                            val i = rowIndex * 2 + columnIndex
-                            val slot = displaySlots.getOrElse(i) { i.coerceIn(0, 3) }
-                            val colorHex = extruderColors.getOrNull(slot)?.takeIf { it.isNotBlank() } ?: "#808080"
+                            val fileIdx = rowIndex * 2 + columnIndex
+                            val override = filamentOverrides[fileIdx]
+                            val slot = colorMapping?.getOrNull(fileIdx)
+                                ?: displaySlots.getOrElse(fileIdx) { fileIdx.coerceIn(0, 3) }
+                            // Colour priority: user override → canonical (file's
+                            // declared) → mapped slot's preset colour.
+                            val canonicalEntry = canonicalList?.filaments?.getOrNull(fileIdx)
+                            val colorHex = override?.color
+                                ?: canonicalEntry?.color
+                                ?: extruderColors.getOrNull(slot)?.takeIf { it.isNotBlank() }
+                                ?: "#808080"
                             val color = try {
                                 Color(android.graphics.Color.parseColor(colorHex))
                             } catch (_: Exception) {
                                 Color.Gray
                             }
+                            // Material priority: override → canonical → slot preset.
+                            val material = override?.materialType
+                                ?: canonicalEntry?.materialType
+                                ?: resolveExtruderMaterialType(slot, extruderPresets)
                             Row(
                                 modifier = Modifier
                                     .weight(1f)
@@ -2056,9 +2076,11 @@ fun SliceCompleteSummaryCard(
                                 }
                                 Spacer(Modifier.width(6.dp))
                                 Column {
-                                    val materialType = resolveExtruderMaterialType(slot, extruderPresets)
                                     Text(
-                                        if (materialType.isNotEmpty()) "E${slot + 1} · $materialType" else "E${slot + 1}",
+                                        if (material.isNotEmpty())
+                                            "Filament ${fileIdx + 1} · $material"
+                                        else
+                                            "Filament ${fileIdx + 1}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.White.copy(alpha = 0.7f)
                                     )

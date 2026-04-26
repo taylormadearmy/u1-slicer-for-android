@@ -1882,22 +1882,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
-        val presets = applyFilamentOverridesToPresets(extruderPresets.value)
+        val originalPresets = extruderPresets.value
+        val presets = applyFilamentOverridesToPresets(originalPresets)
         val types = presets.sortedBy { it.index }.map { it.materialType }
         val temps = computeFreshExtruderTemps(extCount, usedSlots, presets, filaments.value).toList()
 
-        // Phase 2.7 final: when the file has more filaments than the user's
-        // distinct slot count (e.g. H2C benchy: 7 filaments but mapped to 4
-        // physical slots), the slicer's filament_type / nozzle_temperature
-        // arrays must be size N (canonical count) — one entry per file
-        // filament — so per-filament material overrides reach the slicer.
-        // Today's per-slot arrays produce arrays of length 4 which the
-        // ProfileEmbedder pads with PLA defaults, masking PETG/ABS overrides
-        // for filaments beyond slot 3.
+        // Phase 2.7 final: always derive filament_type / nozzle_temperature
+        // from the canonical filament list when available, so per-file-
+        // filament overrides reach the slicer regardless of how many
+        // distinct slots the user mapped to. Pass the UNMODIFIED presets
+        // (originalPresets) as the slot-fallback source — the
+        // applyFilamentOverridesToPresets path cascades a single override
+        // onto every filament that shares a slot, which is wrong for the
+        // per-canonical-filament view.
         val canonical = getCanonicalFilamentList()
-        val perFilamentArrays = if (canonical != null && canonical.size > extCount) {
-            buildPerFilamentTypeAndTemp(canonical, _filamentOverrides.value, presets)
-        } else null
+        val perFilamentArrays = canonical?.let {
+            buildPerFilamentTypeAndTemp(it, _filamentOverrides.value, originalPresets)
+        }
 
         val finalTypes = perFilamentArrays?.first ?: types
         val finalTemps = perFilamentArrays?.second ?: temps
