@@ -3,10 +3,13 @@ package com.u1.slicer.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Layers
@@ -98,6 +101,16 @@ fun PlateSelectDialog(
                                             "${objectsOnPlate.sumOf { it.triangles }} triangles",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                                        )
+                                    }
+                                    // Per-plate filament indicator: chip strip showing
+                                    // which file filaments this plate uses (file-filament
+                                    // index, 1-based, matching the Prepare filament list).
+                                    if (plate.filamentIndices.isNotEmpty() && info != null) {
+                                        Spacer(Modifier.height(6.dp))
+                                        FilamentIndicatorChips(
+                                            filamentIndices = plate.filamentIndices.sorted(),
+                                            detectedColors = info.detectedColors,
                                         )
                                     }
                                 }
@@ -224,6 +237,61 @@ private fun PlateThumbnail(
             plate.translationX, plate.translationY,
             highlightColor, 0.8f
         )
+    }
+}
+
+/**
+ * Per-plate filament indicator — small chip strip that shows the file-
+ * filament indices (1-based, matching the Prepare filament list) used on
+ * a given plate, with the file's declared colour swatch and the index
+ * number. Mirrors the per-object view in desktop Bambu Studio /
+ * OrcaSlicer.
+ */
+@Composable
+private fun FilamentIndicatorChips(
+    filamentIndices: List<Int>,
+    detectedColors: List<String>,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            "Filaments:",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+        )
+        filamentIndices.forEach { idx1Based ->
+            // detectedColors is 0-indexed; filamentIndices are 1-based.
+            val hex = detectedColors.getOrNull(idx1Based - 1).orEmpty()
+            val swatchColor = parseHexColor(hex.ifBlank { "#808080" })
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                        RoundedCornerShape(8.dp),
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(swatchColor, CircleShape)
+                        .border(
+                            0.5.dp,
+                            MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                            CircleShape,
+                        ),
+                )
+                Text(
+                    idx1Based.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                )
+            }
+        }
     }
 }
 
