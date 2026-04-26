@@ -166,7 +166,7 @@ class MergeThreeMfInfoTest {
             detectedColors = listOf("#C1", "#C2", "#C3", "#C4", "#C5"),
             detectedExtruderCount = 5,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = true
+            volumeExtruders = setOf(1, 2)
         )
         val plateInfo = ThreeMfInfo(
             objects = emptyList(),
@@ -201,7 +201,7 @@ class MergeThreeMfInfoTest {
             detectedColors = listOf("#A", "#B", "#C", "#D"),
             detectedExtruderCount = 4,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = true
+            volumeExtruders = setOf(1, 2)
         )
         val plateInfo = ThreeMfInfo(
             objects = emptyList(),
@@ -237,7 +237,7 @@ class MergeThreeMfInfoTest {
             detectedColors = listOf("#F4D976", "#EC008C", "#F7D959", "#F4EE2A"),
             detectedExtruderCount = 4,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = true
+            volumeExtruders = setOf(1, 2)
         )
         val plateInfo = ThreeMfInfo(
             objects = emptyList(),
@@ -270,7 +270,7 @@ class MergeThreeMfInfoTest {
             detectedColors = listOf("#F4EE2A", "#F4D976", "#EC008C"),
             detectedExtruderCount = 3,
             hasLayerToolChanges = false,
-            hasMultiExtruderAssignments = true,
+            volumeExtruders = setOf(1, 2),
             objectExtruderMap = mapOf("58" to 1)
         )
         val plateInfo = ThreeMfInfo(
@@ -610,7 +610,7 @@ class MergeThreeMfInfoTest {
             plates = listOf(ThreeMfPlate(1, "Single Colour", listOf("obj1"))),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = false,
+            volumeExtruders = emptySet(),
             hasPaintData = false,
             objectExtruderMap = mapOf("obj1" to 1),
             detectedColors = listOf("#161616", "#F4D976"),
@@ -639,7 +639,7 @@ class MergeThreeMfInfoTest {
             plates = listOf(ThreeMfPlate(4, "Dual Colour", listOf())),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = false,
+            volumeExtruders = emptySet(),
             hasPaintData = false,
             objectExtruderMap = emptyMap(),
             detectedColors = listOf("#161616", "#F4D976"),
@@ -674,7 +674,7 @@ class MergeThreeMfInfoTest {
             plates = listOf(ThreeMfPlate(1, "Plate 1", listOf("obj1"))),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = false,
+            volumeExtruders = emptySet(),
             hasPaintData = true,   // file has other plates with paint
             objectExtruderMap = mapOf("obj1" to 1),
             detectedColors = listOf("#161616", "#F4D976"),
@@ -739,7 +739,7 @@ class MergeThreeMfInfoTest {
             )),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = false,
+            volumeExtruders = emptySet(),
             hasPaintData = false,
             objectExtruderMap = mapOf("obj2" to 1),
             detectedColors = listOf("#161616", "#F4D976"),
@@ -774,7 +774,7 @@ class MergeThreeMfInfoTest {
             )),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = false,
+            volumeExtruders = emptySet(),
             hasPaintData = false,
             objectExtruderMap = mapOf("obj1" to 1),
             detectedColors = listOf("#161616", "#F4D976"),
@@ -800,7 +800,7 @@ class MergeThreeMfInfoTest {
     fun `mergeThreeMfInfoForPlate is NOT Hueforge when objectExtruderMap has diverse extruders`() {
         // Shashibo scenario: file has layer-tool changes AND per-object extruder diversity.
         // objectExtruderMap maps objects to extruders 1 and 2 — NOT a pure Hueforge plate.
-        // Must produce hasMultiExtruderAssignments=true so the multi-extruder slice path runs.
+        // Must produce volumeExtruders = setOf(1, 2) so the multi-extruder slice path runs.
         val sourceInfo = ThreeMfInfo(
             objects = emptyList(),
             plates = listOf(
@@ -808,7 +808,7 @@ class MergeThreeMfInfoTest {
             ),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = true,
+            volumeExtruders = setOf(1, 2),
             objectExtruderMap = mapOf("5" to 1, "1" to 2, "2" to 1, "3" to 2, "4" to 1),
             detectedColors = listOf("#F4D976", "#EC008C", "#F7D959", "#F4EE2A"),
             detectedExtruderCount = 4,
@@ -825,7 +825,7 @@ class MergeThreeMfInfoTest {
         )
         val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 5)
         assertTrue(
-            "Shashibo-like file with per-object extruder diversity must keep hasMultiExtruderAssignments=true",
+            "Shashibo-like file with per-object extruder diversity must keep volumeExtruders = setOf(1, 2)",
             merged.hasMultiExtruderAssignments
         )
         assertTrue("Layer tool changes should be preserved", merged.hasLayerToolChanges)
@@ -836,7 +836,7 @@ class MergeThreeMfInfoTest {
     fun `mergeThreeMfInfoForPlate IS Hueforge when objectExtruderMap has uniform extruder`() {
         // Flippy plate 4 scenario: file has layer-tool changes, single object on the plate,
         // and all objectExtruderMap values are extruder 1. This IS a pure Hueforge plate.
-        // Must produce hasMultiExtruderAssignments=false so the layerToolOnly path runs.
+        // Must produce volumeExtruders = emptySet() so the layerToolOnly path runs.
         val sourceInfo = ThreeMfInfo(
             objects = emptyList(),
             plates = listOf(
@@ -844,7 +844,7 @@ class MergeThreeMfInfoTest {
             ),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = true,  // source-level flag may be true from other plates
+            volumeExtruders = setOf(1, 2),  // source-level flag may be true from other plates
             objectExtruderMap = mapOf("3" to 1, "4" to 1, "5" to 1),  // all extruder 1
             detectedColors = listOf("#161616", "#F4D976"),
             detectedExtruderCount = 2,
@@ -861,7 +861,7 @@ class MergeThreeMfInfoTest {
         )
         val merged = SlicerViewModel.mergeThreeMfInfoForPlate(plateInfo, sourceInfo, 4)
         assertFalse(
-            "Pure Hueforge plate (uniform objectExtruderMap) must have hasMultiExtruderAssignments=false",
+            "Pure Hueforge plate (uniform objectExtruderMap) must have volumeExtruders = emptySet()",
             merged.hasMultiExtruderAssignments
         )
         assertTrue("Layer tool changes should be preserved", merged.hasLayerToolChanges)
@@ -936,7 +936,7 @@ class MergeThreeMfInfoTest {
             merged.hasPaintData
         )
         assertFalse(
-            "Layer-tool plate without paint should have hasMultiExtruderAssignments=false (Hueforge path)",
+            "Layer-tool plate without paint should have volumeExtruders = emptySet() (Hueforge path)",
             merged.hasMultiExtruderAssignments
         )
         assertTrue(merged.hasLayerToolChanges)
@@ -945,7 +945,7 @@ class MergeThreeMfInfoTest {
 
     @Test
     fun `mergeThreeMfInfoForPlate clears hasMultiExtruderAssignments for single-object plate`() {
-        // Flippy: whole file has hasMultiExtruderAssignments=true (plates 1-3 have multi-extruder
+        // Flippy: whole file has volumeExtruders = setOf(1, 2) (plates 1-3 have multi-extruder
         // objects), but plate 4 has only one object assigned to one extruder.
         val sourceInfo = ThreeMfInfo(
             objects = emptyList(),
@@ -957,7 +957,7 @@ class MergeThreeMfInfoTest {
             ),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,
-            hasMultiExtruderAssignments = true,
+            volumeExtruders = setOf(1, 2),
             objectExtruderMap = mapOf("3" to 1, "4" to 1, "2" to 1, "5" to 1),
             detectedColors = listOf("#161616", "#F4D976"),
             detectedExtruderCount = 2,
@@ -1038,7 +1038,7 @@ class MergeThreeMfInfoTest {
     @Test
     fun `computeEmbedTargetCount B76 Goat hybrid paint+per-object uses full size`() {
         // Jon's Goat (Gray).3mf: paint data AND per-object extruder assignments.
-        // hasMultiExtruderAssignments=true → preserve all 4 paint states so parts
+        // hasMultiExtruderAssignments = true → preserve all 4 paint states so parts
         // with extruder="4" retain a valid slot; post-slice remap T3→T2 (E3).
         val colorMapping = listOf(0, 1, 2, 2)
         assertEquals(

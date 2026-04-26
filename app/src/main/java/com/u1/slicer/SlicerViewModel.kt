@@ -3770,14 +3770,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // file-wide (slicer palette).
         val paletteColors = if (layerToolOnly) narrowedColors else fileInfo.detectedColors
         val paletteCount = if (layerToolOnly) effectiveExtruderCount else fileInfo.detectedExtruderCount
+        // §4 Step 8 — volumeExtruders carries the spatial-only diversity
+        // (native-reported usedExtruders ∪ object-level map) so the derived
+        // hasMultiExtruderAssignments matches the previous hasMultiExtAssign
+        // semantic without relying on a stored boolean. enrichedExtruders
+        // (which includes layer-tool secondaries) stays in usedExtruderIndices
+        // for the chip-display path.
+        val volumeExtrudersForPlate = (usedExtruders + objExtruderMap.values).filter { it > 0 }.toSet()
         return fileInfo.copy(
             plates = listOfNotNull(sourcePlate),
             detectedColors = paletteColors,
             usedExtruderIndices = enrichedExtruders,
+            volumeExtruders = volumeExtrudersForPlate,
             detectedExtruderCount = paletteCount,
             hasPaintData = plateHasPaintData,
             objectExtruderMap = objExtruderMap,
-            hasMultiExtruderAssignments = hasMultiExtAssign,
             hasLayerToolChanges = plateHasLayerToolChanges,
             hasPaintSupports = fileInfo.hasPaintSupports
         )
@@ -3846,9 +3853,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             detectedColors = origInfo.detectedColors,
             detectedExtruderCount = origInfo.detectedExtruderCount,
             usedExtruderIndices = origInfo.usedExtruderIndices,
+            volumeExtruders = origInfo.volumeExtruders,  // §4 Step 8 (drives derived hasMultiExtruderAssignments)
             hasPaintData = origInfo.hasPaintData,
             hasLayerToolChanges = origInfo.hasLayerToolChanges,
-            hasMultiExtruderAssignments = origInfo.hasMultiExtruderAssignments,
             // Prefer the processed file's map when available: BambuSanitizer can inline
             // compound-object parts into concrete mesh object IDs, which is exactly what
             // the preview parser needs for per-part coloring (for example calicube).
@@ -4045,6 +4052,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceInfo.hasLayerToolChanges && !plateHasPaintData &&
                 sourcePlateObjectExtruders.size <= 1 && sourcePlateFilamentIndices.size <= 1 &&
                 sourceObjectExtruderDiversity <= 1
+            // §4 Step 8 — translate the previous hasMultiExtruderAssignments
+            // override semantic into volumeExtruders adjustment so the
+            // derived predicate matches intent:
+            //   sourcePlateObjectExtruders.size > 1   → force "true": ensure
+            //                                            ≥2 distinct values
+            //   isHueforgePlate                       → force "false": single
+            //                                            value (drops layer-
+            //                                            tool secondaries)
+            //   else                                  → inherit source's
+            //                                            volumeExtruders
+            val mergedVolumeExtruders: Set<Int> = when {
+                sourcePlateObjectExtruders.size > 1 ->
+                    sourcePlateObjectExtruders.filter { it > 0 }.toSet()
+                        .ifEmpty { setOf(1, 2) }  // synth ≥2 distinct so derived predicate is true
+                isHueforgePlate ->
+                    sourcePlateObjectExtruders.filter { it > 0 }.toSet().take(1).toSet()
+                        .ifEmpty { setOf(1) }
+                else -> sourceInfo.volumeExtruders
+            }
             return plateInfo.copy(
                 isBambu = sourceInfo.isBambu,
                 detectedColors = filteredColors,
@@ -4058,11 +4084,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     sourceInfo.detectedExtruderCount
                 },
                 usedExtruderIndices = mergedUsedExtruderIndices,
+                volumeExtruders = mergedVolumeExtruders,
                 hasPaintData = plateHasPaintData,
                 hasLayerToolChanges = sourceInfo.hasLayerToolChanges,
-                hasMultiExtruderAssignments = if (sourcePlateObjectExtruders.size > 1) true
-                    else if (isHueforgePlate) false
-                    else sourceInfo.hasMultiExtruderAssignments,
                 objectExtruderMap = plateInfo.objectExtruderMap.ifEmpty { sourceInfo.objectExtruderMap },
                 layerToolSegments = sourceInfo.layerToolSegments,
                 hasPaintSupports = sourceInfo.hasPaintSupports

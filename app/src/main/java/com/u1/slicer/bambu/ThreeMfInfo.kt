@@ -67,22 +67,6 @@ data class ThreeMfInfo(
     val hasPaintData: Boolean = false,
     val hasPaintSupports: Boolean = false,
     val hasLayerToolChanges: Boolean = false,
-    /**
-     * Phase 2 §4 Step 8 — deprecated. New code should derive this from
-     * the canonical filament list combined with `objectExtruderMap`:
-     *   `objectExtruderMap.values.toSet().size > 1`
-     * indicates the file declares per-object extruder diversity. The
-     * flag is preserved during the Phase 2 transition so the existing
-     * 50+ callsites (layer-tool detection, embed routing, target-count
-     * sizing) continue to compile and behave; mechanical migration to
-     * the canonical-derived predicate is incremental and can land per
-     * callsite without blocking beta.
-     */
-    @Deprecated(
-        "Derive from objectExtruderMap.values.toSet().size > 1 instead; " +
-            "see ThreeMfInfo doc and architecture review §4 Step 8.",
-    )
-    val hasMultiExtruderAssignments: Boolean = false,
     val detectedColors: List<String> = emptyList(),
     val detectedExtruderCount: Int = 1,
     /**
@@ -95,8 +79,31 @@ data class ThreeMfInfo(
      */
     val hasPlateJsons: Boolean = false,
     /** 1-based extruder indices actually assigned to objects/volumes in model config.
-     *  Empty when no assignments found. Used to filter colors per-plate. */
+     *  Empty when no assignments found. Used to filter colors per-plate.
+     *  May include layer-tool-enriched indices in synthesised plate-scoped
+     *  copies (see SlicerViewModel.buildThreeMfInfoFromNative). For pure
+     *  spatial-volume diversity (used by [hasMultiExtruderAssignments]),
+     *  consult [volumeExtruders] instead. */
     val usedExtruderIndices: Set<Int> = emptySet(),
+    /**
+     * Phase 2 §4 Step 8 — the spatial per-volume extruder set, derived
+     * from `model_settings.config` per-part assignments **before** any
+     * layer-tool enrichment. This is the source of truth for "does the
+     * file/plate have per-spatial-volume extruder diversity?" — the
+     * predicate that drives layerToolOnly detection, embed routing, and
+     * plate-merge override decisions.
+     *
+     * Distinct from [usedExtruderIndices] because the latter may include
+     * layer-tool-enriched indices in synthesised plate-scoped copies.
+     * Distinct from [objectExtruderMap] because compound Bambu objects
+     * (one `<object>` with many `<part>` children on different extruders)
+     * collapse to one object-level entry while their per-part palette is
+     * recorded here.
+     *
+     * Replaces the previously-stored `hasMultiExtruderAssignments` field
+     * (now a derived property: `volumeExtruders.size > 1`).
+     */
+    val volumeExtruders: Set<Int> = emptySet(),
     /** Per-object extruder assignments: objectId (String) → 1-based extruder index.
      *  Used by mesh preview to color per-volume. */
     val objectExtruderMap: Map<String, Int> = emptyMap(),
@@ -139,6 +146,16 @@ data class ThreeMfInfo(
     val compoundPartParents: Map<String, String> = emptyMap(),
     val layerToolSegments: List<LayerToolSegment>? = null
 ) {
+    /**
+     * Phase 2 §4 Step 8 — derived predicate. True when the file declares
+     * per-spatial-volume extruder diversity (more than one distinct
+     * extruder used by the file's parts). Was a stored field; retired
+     * as redundant once [volumeExtruders] became the single source of
+     * truth for spatial-volume diversity.
+     */
+    val hasMultiExtruderAssignments: Boolean
+        get() = volumeExtruders.size > 1
+
     /** Whether the original Bambu structure must be preserved (not rebuilt with trimesh) */
     val needsPreserve: Boolean get() = isBambu && (
         hasMultiExtruderAssignments ||
