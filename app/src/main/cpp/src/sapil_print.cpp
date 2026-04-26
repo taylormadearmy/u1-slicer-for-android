@@ -912,8 +912,17 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // (e.g. direct native API use, integration tests).  The ViewModel always
         // calls setModelInstances before slicing, so for normal app use this is
         // a no-op.
+        //
+        // Tolerance: ±2 mm. The previous ±0.5 mm was tight enough that a
+        // legitimate user drag to the bed edge could trip it (Review 1 nit) —
+        // setModelInstances applied a small wipe-tower or skirt clearance
+        // delta that took the world AABB just past 270.5 mm, which then
+        // triggered an unwanted full re-centre on top of the user's drag.
+        // 2 mm absorbs that without losing the safety property: a model
+        // that is genuinely off-bed will be off by tens of millimetres.
         {
             const double BED_X = 270.0, BED_Y = 270.0;
+            const double EDGE_TOL = 2.0;
             Slic3r::BoundingBoxf3 worldBB;
             for (auto* obj : model.objects) {
                 worldBB.merge(obj->bounding_box_exact());
@@ -921,8 +930,8 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             if (worldBB.defined) {
                 double xMin = worldBB.min.x(), xMax = worldBB.max.x();
                 double yMin = worldBB.min.y(), yMax = worldBB.max.y();
-                bool outOfBounds = xMin < -0.5 || xMax > BED_X + 0.5 ||
-                                   yMin < -0.5 || yMax > BED_Y + 0.5;
+                bool outOfBounds = xMin < -EDGE_TOL || xMax > BED_X + EDGE_TOL ||
+                                   yMin < -EDGE_TOL || yMax > BED_Y + EDGE_TOL;
                 if (outOfBounds) {
                     double sizeX = xMax - xMin, sizeY = yMax - yMin;
                     double deltaX = (BED_X - sizeX) / 2.0 - xMin;

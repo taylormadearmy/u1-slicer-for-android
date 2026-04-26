@@ -35,12 +35,38 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
     bool multiObject = model.objects.size() > 1 && positions.size() == 1;
 
     if (multiObject) {
-        // Compute current world bounding box across all objects (mesh + instance transform).
-        // bounding_box_exact() returns world-space BB, so delta = pos - world_min
-        // places the combined lower-left corner at the target position.
+        // Compute current world bounding box across all objects (mesh + instance
+        // transform). The previous formulation called `obj->bounding_box_exact()`
+        // which is cached behind `m_bounding_box_exact_valid`, and Slic3r does
+        // NOT invalidate that cache when an instance's scaling factor changes
+        // via `set_scaling_factor` (our setModelScale path). On a second
+        // `setModelInstances` after `setModelScale`, the cached unit-scale BB
+        // was used and the multi-object combined origin landed ~half-mesh-size
+        // off (Review 1 nit, same root cause as the offset bug fixed in ea420ea
+        // for the single-object branch).
+        //
+        // Inline-compute the world AABB by transforming each volume's mesh
+        // through (instance_full_matrix * volume_matrix) and unioning. This
+        // bypasses both `raw_bounding_box()` and `bounding_box_exact()`
+        // staleness; same shape as the lines 88-97 fix on the single-object
+        // branch.
         Slic3r::BoundingBoxf3 worldBB;
         for (auto* obj : model.objects) {
-            worldBB.merge(obj->bounding_box_exact());
+            for (auto* inst : obj->instances) {
+                const Slic3r::Transform3d inst_full =
+                    inst->get_transformation().get_matrix();
+                for (const auto* v : obj->volumes) {
+                    if (v->is_model_part()) {
+                        worldBB.merge(
+                            v->mesh().transformed_bounding_box(inst_full * v->get_matrix())
+                        );
+                    }
+                }
+            }
+        }
+        if (!worldBB.defined) {
+            SAPIL_LOGE("setModelInstances multi-object: no model parts found");
+            return false;
         }
         Slic3r::Vec3d worldMin = worldBB.min;
         Slic3r::Vec3d delta(
@@ -132,11 +158,38 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
     // For multi-object models, scale around the combined center so gaps between
     // objects scale proportionally (e.g. calicube cubes stay evenly spaced).
     // 1. Compute the combined bounding box center of all instances.
+    //
+    // The previous formulation called `obj->raw_bounding_box()` (cached
+    // behind `m_raw_bounding_box_valid`) and re-applied the full instance
+    // matrix on top via `transform_bounding_box`. On a second `setModelScale`
+    // call this double-applied scale: the cached unit-scale `raw_bounding_box`
+    // already reflected the prior scale via per-volume matrices in some code
+    // paths, and applying the new instance trafo on top placed the group
+    // centre off by `(currentScale - 1) * meshHalfSize`. Same cache-staleness
+    // shape as the offset bug fixed in ea420ea for `setModelInstances`
+    // (Review 1 nit).
+    //
+    // Inline-compute the world AABB across all (instance × volume) by
+    // applying `inst_full * volume_matrix` to each volume's mesh and
+    // unioning. Bypasses both `raw_bounding_box()` and
+    // `bounding_box_exact()` caches.
     Slic3r::BoundingBoxf3 worldBB;
     for (auto* obj : model.objects) {
         for (auto* inst : obj->instances) {
-            worldBB.merge(inst->transform_bounding_box(obj->raw_bounding_box()));
+            const Slic3r::Transform3d inst_full =
+                inst->get_transformation().get_matrix();
+            for (const auto* v : obj->volumes) {
+                if (v->is_model_part()) {
+                    worldBB.merge(
+                        v->mesh().transformed_bounding_box(inst_full * v->get_matrix())
+                    );
+                }
+            }
         }
+    }
+    if (!worldBB.defined) {
+        SAPIL_LOGE("setModelScale: no model parts found");
+        return false;
     }
     const Slic3r::Vec3d center = worldBB.center();
 

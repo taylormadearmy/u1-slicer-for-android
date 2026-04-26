@@ -287,4 +287,224 @@ class SetModelInstancesOffsetTest {
             abs(gcodeMinY - originY) <= tolerance
         )
     }
+
+    /**
+     * Review 1 multi-copy pin: the `for (pos : positions)` loop in
+     * [com.u1.slicer.NativeLibrary.setModelInstances] is fully untested at
+     * `len > 1`. The previous coverage stopped at single-position. Place
+     * three calicube copies at distinct (X, Y) and assert each appears in the
+     * final G-code at roughly the expected positions.
+     */
+    @Test
+    fun calicubeMultiCopy_eachCopyLandsAtItsRequestedPosition() {
+        val file = File(cacheDir, "calib-cube-10-dual-colour-merged.3mf")
+        assetContext.assets.open("calib-cube-10-dual-colour-merged.3mf").use {
+            it.copyTo(file.outputStream())
+        }
+        assertTrue("loadModel calicube", lib.loadModel(file.absolutePath))
+        val mi = lib.getModelInfo()
+        assertNotNull("getModelInfo", mi)
+        Log.i("OffsetDiag", "multi-copy calicube modelInfo: size=${mi!!.sizeX}x${mi.sizeY}x${mi.sizeZ}mm")
+
+        val scale = 1.5f
+        assertTrue("setModelScale", lib.setModelScale(scale, scale, scale))
+        val scaledX = mi.sizeX * scale
+        val scaledY = mi.sizeY * scale
+
+        // Three copies at distinct positions, all on-bed. Spacing must clear
+        // the scaled footprint so each is independently identifiable in the
+        // G-code (look for X moves grouped near each copy's left edge).
+        val originA = Pair(20f, 30f)
+        val originB = Pair(20f + scaledX + 30f, 30f)
+        val originC = Pair(20f, 30f + scaledY + 30f)
+        val positions = floatArrayOf(
+            originA.first, originA.second,
+            originB.first, originB.second,
+            originC.first, originC.second
+        )
+        Log.i("OffsetDiag", "multi-copy requested positions=${positions.toList()}")
+        assertTrue("setModelInstances multi-copy", lib.setModelInstances(positions))
+
+        val storedOffsets = lib.getInstanceOffsets()
+        Log.i("OffsetDiag", "multi-copy storedOffsets=${storedOffsets.toList()}")
+        assertTrue(
+            "multi-copy must store 3 (x, y) pairs = 6 floats; got ${storedOffsets.size}",
+            storedOffsets.size == 6
+        )
+
+        val result = lib.slice(SliceConfig().copy(extruderCount = 1))
+        assertNotNull("slice result", result)
+        assertTrue("slice success: ${result!!.errorMessage}", result.success)
+        val gcode = File(result.gcodePath).readText()
+
+        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
+        val yRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*Y(-?[\d.]+)""")
+        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
+            .filter { it > 0f }.toList()
+        val ys = yRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
+            .filter { it > 0f }.toList()
+        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
+        val gcodeMinY = if (ys.isNotEmpty()) ys.min() else Float.NaN
+        val gcodeMaxX = if (xs.isNotEmpty()) xs.max() else Float.NaN
+        val gcodeMaxY = if (ys.isNotEmpty()) ys.max() else Float.NaN
+        Log.i("OffsetDiag", "multi-copy gcodeBounds: x=[$gcodeMinX, $gcodeMaxX] y=[$gcodeMinY, $gcodeMaxY]")
+
+        val tol = 5f
+        // Footprint must span from the leftmost copy's origin to the rightmost
+        // copy's far edge (originB.x + scaledX). If multi-copy iteration mis-
+        // placed copies, the span will be wrong by approximately the per-copy
+        // pitch.
+        val expectedMinX = originA.first
+        val expectedMaxX = originB.first + scaledX
+        val expectedMinY = originA.second
+        val expectedMaxY = originC.second + scaledY
+        assertTrue(
+            "multi-copy gcodeMinX ($gcodeMinX) ≈ leftmost origin ($expectedMinX) ±${tol}mm",
+            abs(gcodeMinX - expectedMinX) <= tol
+        )
+        assertTrue(
+            "multi-copy gcodeMaxX ($gcodeMaxX) ≈ rightmost copy's far edge ($expectedMaxX) ±${tol}mm",
+            abs(gcodeMaxX - expectedMaxX) <= tol
+        )
+        assertTrue(
+            "multi-copy gcodeMinY ($gcodeMinY) ≈ bottommost origin ($expectedMinY) ±${tol}mm",
+            abs(gcodeMinY - expectedMinY) <= tol
+        )
+        assertTrue(
+            "multi-copy gcodeMaxY ($gcodeMaxY) ≈ topmost copy's far edge ($expectedMaxY) ±${tol}mm",
+            abs(gcodeMaxY - expectedMaxY) <= tol
+        )
+    }
+
+    /**
+     * Review 1 non-uniform scale pin: setModelScale historically only saw
+     * uniform scale. Non-uniform exercises the scale-axis-mismatch path in the
+     * group-centre + per-instance offset math. Most users will never hit this
+     * (UI exposes uniform scale only) but the JNI accepts independent X/Y/Z,
+     * so the path needs coverage.
+     */
+    @Test
+    fun calicubeNonUniformScale_offsetMatchesGcodeMinX() {
+        val file = File(cacheDir, "calib-cube-10-dual-colour-merged.3mf")
+        assetContext.assets.open("calib-cube-10-dual-colour-merged.3mf").use {
+            it.copyTo(file.outputStream())
+        }
+        assertTrue("loadModel calicube", lib.loadModel(file.absolutePath))
+        val mi = lib.getModelInfo()
+        assertNotNull("getModelInfo", mi)
+
+        val sx = 2.0f
+        val sy = 1.0f
+        val sz = 1.5f
+        assertTrue("setModelScale (non-uniform)", lib.setModelScale(sx, sy, sz))
+
+        val scaledSizeX = mi!!.sizeX * sx
+        val scaledSizeY = mi.sizeY * sy
+        Log.i("OffsetDiag", "nonUniform scaledSize: ${scaledSizeX}x${scaledSizeY}mm (sx=$sx, sy=$sy, sz=$sz)")
+
+        val originX = 30f
+        val originY = 40f
+        assertTrue("setModelInstances", lib.setModelInstances(floatArrayOf(originX, originY)))
+
+        val storedOffsets = lib.getInstanceOffsets()
+        Log.i("OffsetDiag", "nonUniform storedOffsets=${storedOffsets.toList()}")
+
+        val result = lib.slice(SliceConfig().copy(extruderCount = 1))
+        assertNotNull("nonUniform slice", result)
+        assertTrue("nonUniform slice success: ${result!!.errorMessage}", result.success)
+        val gcode = File(result.gcodePath).readText()
+
+        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
+        val yRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*Y(-?[\d.]+)""")
+        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
+            .filter { it > 0f }.toList()
+        val ys = yRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
+            .filter { it > 0f }.toList()
+        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
+        val gcodeMaxX = if (xs.isNotEmpty()) xs.max() else Float.NaN
+        val gcodeMinY = if (ys.isNotEmpty()) ys.min() else Float.NaN
+        val gcodeMaxY = if (ys.isNotEmpty()) ys.max() else Float.NaN
+        Log.i("OffsetDiag", "nonUniform gcodeBounds: x=[$gcodeMinX, $gcodeMaxX] y=[$gcodeMinY, $gcodeMaxY]")
+
+        val tol = 5f
+        assertTrue(
+            "nonUniform gcodeMinX ($gcodeMinX) should match originX ($originX) ±${tol}mm",
+            abs(gcodeMinX - originX) <= tol
+        )
+        assertTrue(
+            "nonUniform gcodeMinY ($gcodeMinY) should match originY ($originY) ±${tol}mm",
+            abs(gcodeMinY - originY) <= tol
+        )
+        // X span must reflect sx applied (model wider in X than Y after scaling).
+        val xSpan = gcodeMaxX - gcodeMinX
+        val ySpan = gcodeMaxY - gcodeMinY
+        assertTrue(
+            "nonUniform: X span ($xSpan) should exceed Y span ($ySpan) by roughly the sx/sy ratio",
+            xSpan > ySpan + 2f
+        )
+    }
+
+    /**
+     * Chunk 4 pin: bug3 (PM-reported hanging-file translate-then-slice).
+     * Loads the hanging file (rotation baked into instance trafo, ~19 MB,
+     * heavy mesh), translates via setModelInstances to a known position, slices,
+     * and asserts G-code minX/minY land at the requested origin within ±5 mm.
+     *
+     * NOTE: This is the largest fixture in the test suite and may take several
+     * minutes on a Pixel 8a. Marked long-running. If it OOMs, the rotation-
+     * baked-into-instance-trafo property can be exercised via a smaller
+     * synthetic fixture instead, but the hanging file is the original PM
+     * reproducer so we keep the asset here as canonical coverage.
+     */
+    @Test
+    fun bug3_hangingFile_translatePreservedThroughSlice() {
+        val file = File(cacheDir, "hanging_pre_cut_colour.3mf")
+        assetContext.assets.open("hanging+pre+cut+colour+3mf.3mf").use {
+            it.copyTo(file.outputStream())
+        }
+        assertTrue("loadModel hanging", lib.loadModel(file.absolutePath))
+
+        val mi = lib.getModelInfo()
+        assertNotNull("getModelInfo", mi)
+        Log.i("OffsetDiag", "bug3 hangingFile modelInfo: size=${mi!!.sizeX}x${mi.sizeY}x${mi.sizeZ}mm tris=${mi.triangleCount}")
+
+        // Translate to a clearly off-default position so a "stuck at origin"
+        // bug would be obvious. No setModelScale — keep the file's natural
+        // instance trafo (which already bakes rotation + scale).
+        val originX = 50f
+        val originY = 60f
+        assertTrue(
+            "setModelInstances",
+            lib.setModelInstances(floatArrayOf(originX, originY))
+        )
+        val storedOffsets = lib.getInstanceOffsets()
+        Log.i("OffsetDiag", "bug3 hangingFile storedOffsets=${storedOffsets.toList()}")
+
+        val result = lib.slice(SliceConfig().copy(extruderCount = 1))
+        assertNotNull("bug3 slice", result)
+        assertTrue("bug3 slice success: ${result!!.errorMessage}", result.success)
+        val gcode = File(result.gcodePath).readText()
+
+        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
+        val yRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*Y(-?[\d.]+)""")
+        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
+            .filter { it > 0f }.toList()
+        val ys = yRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
+            .filter { it > 0f }.toList()
+        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
+        val gcodeMinY = if (ys.isNotEmpty()) ys.min() else Float.NaN
+        Log.i("OffsetDiag", "bug3 hangingFile gcodeBounds: minX=$gcodeMinX minY=$gcodeMinY")
+
+        val tol = 5f
+        assertTrue(
+            "bug3 hangingFile gcodeMinX ($gcodeMinX) should match requested origin ($originX) ±${tol}mm. " +
+                "Stored offset.x=${storedOffsets.getOrNull(0)}.",
+            abs(gcodeMinX - originX) <= tol
+        )
+        assertTrue(
+            "bug3 hangingFile gcodeMinY ($gcodeMinY) should match requested origin ($originY) ±${tol}mm. " +
+                "Stored offset.y=${storedOffsets.getOrNull(1)}.",
+            abs(gcodeMinY - originY) <= tol
+        )
+    }
 }

@@ -55,7 +55,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 854 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 223 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 226 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -127,7 +127,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
 - `bambu/ComputeVisualColorCountByPlateTest.kt` (3) — Review 3 pin tests for `ThreeMfParser.computeVisualColorCountByPlate`: cap-divergence (3 disjoint singleton state sets union, NOT plate-level EarlyExit truncate), B82 plate-1 invariant (per-plate `hasPaint` doesn't bleed across plates), shared-component cross-plate (same path via different object IDs scans once)
 
-### Instrumented tests (`app/src/androidTest/`) - 220 tests across 21 classes
+### Instrumented tests (`app/src/androidTest/`) - 223 tests across 21 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
