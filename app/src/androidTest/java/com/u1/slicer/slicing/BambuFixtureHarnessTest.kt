@@ -103,11 +103,25 @@ class BambuFixtureHarnessTest {
         val state: NativePlateState
     )
 
-    private fun embedAndLoadForPlate(assetName: String, plateId: Int?): LoadResult {
+    private fun embedAndLoadForPlate(assetName: String, plateIndex0Based: Int?): LoadResult {
         val file = copyAsset(assetName)
         val info = ThreeMfParser.parse(file)
         val target = info.detectedExtruderCount.coerceAtLeast(1)
-        val config = embedder.buildConfig(info, targetExtruderCount = target)
+        // Multi-extruder Bambu files require sourceConfig to be passed to
+        // buildConfig so the embed uses the preserve path (source config +
+        // Snapmaker hardware overlay) instead of the standard profile stack.
+        // The standard stack is single-extruder; without sourceConfig the
+        // multi-color fixtures slice as single-tool (canary: Button-for-S-
+        // trousers came back T0=2, T1=T2=T3=0). Mirrors SemmSlicingTest's
+        // setup for SEMM models.
+        val sourceConfig = if (info.isBambu) {
+            java.util.zip.ZipFile(file).use { embedder.parseSourceConfig(it) }
+        } else null
+        val config = embedder.buildConfig(
+            info = info,
+            sourceConfig = sourceConfig,
+            targetExtruderCount = target
+        )
         // Mirror SlicerViewModel's selectPlate routing:
         //  - multi-plate Bambu: embed with plate filter (sub-plan #2d strip pipeline).
         //  - single-plate Bambu: BambuSanitizer.process to strip Bambu-specific xmlns
@@ -117,9 +131,12 @@ class BambuFixtureHarnessTest {
             info.isBambu -> BambuSanitizer.process(file, outDir)
             else -> file
         }
-        val embedded = embedder.embed(sourceForEmbed, config, outDir, info, plateId = plateId)
+        // ProfileEmbedder.embed expects a 1-based BBS plateId. The harness
+        // exposes 0-based plateIndex in the spec JSON; convert here.
+        val embedPlateId = plateIndex0Based?.let { it + 1 }
+        val embedded = embedder.embed(sourceForEmbed, config, outDir, info, plateId = embedPlateId)
         assertTrue(
-            "loadModel must succeed for $assetName plate=$plateId",
+            "loadModel must succeed for $assetName plate=$embedPlateId",
             lib.loadModel(embedded.absolutePath)
         )
         val state = NativePlateState.parseVolumeMapJson(lib.nativeGetAllVolumeExtruders())
@@ -205,10 +222,40 @@ class BambuFixtureHarnessTest {
                 }
 
                 if (plate.expectedToolCounts.isNotEmpty()) {
-                    val result = lib.slice(SliceConfig())
+                    // The default SliceConfig sets extruderCount=1 which forces
+                    // single-extruder slicing regardless of the embedded
+                    // profile. For multi-extruder fixtures that suppresses
+                    // T1..T3 in the G-code (canary: button-for-s-trousers
+                    // came back T0=2, T1=T2=T3=0). Mirror SemmSlicingTest's
+                    // pattern and parameterise extruderCount + per-extruder
+                    // arrays + wipe tower from the enriched extruder set.
+                    val nExt = enriched.size.coerceAtLeast(1)
+                    val sliceCfg = SliceConfig(
+                        extruderCount = nExt,
+                        extruderTemps = IntArray(nExt) { 220 },
+                        wipeTowerEnabled = nExt > 1,
+                        wipeTowerX = 170f,
+                        wipeTowerY = 140f,
+                        wipeTowerWidth = 60f
+                    )
+                    val result = lib.slice(sliceCfg)
                     assertNotNull("$tag: slice returned null", result)
                     assertTrue("$tag: slice failed: ${result!!.errorMessage}", result.success)
                     val toolCounts = parseToolCounts(result.gcodePath)
+                    val (width, height) = parseGcodeBounds(result.gcodePath)
+                    // Diagnostic: always log the actual T0..T3 counts and G-code
+                    // bounds for this slice so a logcat scrape can populate or
+                    // re-baseline `expectedToolCounts` in the fixture spec JSON
+                    // without weakening assertions. Read with:
+                    //   adb logcat -s FixtureHarness -d | grep "ACTUAL"
+                    Log.i(
+                        "FixtureHarness",
+                        "ACTUAL $tag: T0=${toolCounts["T0"] ?: 0} " +
+                            "T1=${toolCounts["T1"] ?: 0} " +
+                            "T2=${toolCounts["T2"] ?: 0} " +
+                            "T3=${toolCounts["T3"] ?: 0} " +
+                            "width=${"%.1f".format(width)}mm height=${"%.1f".format(height)}mm"
+                    )
                     for ((tool, expected) in plate.expectedToolCounts) {
                         val actual = toolCounts[tool] ?: 0
                         if (abs(actual - expected) > plate.toolCountTolerance) {
@@ -217,7 +264,6 @@ class BambuFixtureHarnessTest {
                             )
                         }
                     }
-                    val (width, height) = parseGcodeBounds(result.gcodePath)
                     if (width > plate.maxBoundingBoxMm[0]) {
                         failures.add(
                             "$tag: G-code width ${width}mm > ${plate.maxBoundingBoxMm[0]}mm"
