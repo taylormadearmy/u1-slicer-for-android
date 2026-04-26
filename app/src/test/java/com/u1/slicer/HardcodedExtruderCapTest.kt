@@ -86,7 +86,6 @@ class HardcodedExtruderCapTest {
      *
      * Fix scheduled for §4 Step 6 (display + preview palette N-indexed).
      */
-    @Ignore("Phase 2 refactor — §4 Step 6: display palette N-indexed")
     @Test
     fun mainActivity_displaySlots_doNotCoerceToThree() {
         val src = readSource("MainActivity.kt")
@@ -99,7 +98,6 @@ class HardcodedExtruderCapTest {
         )
     }
 
-    @Ignore("Phase 2 refactor — §4 Step 6: display palette N-indexed")
     @Test
     fun mainActivity_displayPaths_doNotTakeFour_onColorArrays() {
         val src = readSource("MainActivity.kt")

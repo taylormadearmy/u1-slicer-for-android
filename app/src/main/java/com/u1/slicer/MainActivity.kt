@@ -2044,7 +2044,7 @@ fun SliceCompleteSummaryCard(
                             val fileIdx = rowIndex * 2 + columnIndex
                             val override = filamentOverrides[fileIdx]
                             val slot = colorMapping?.getOrNull(fileIdx)
-                                ?: displaySlots.getOrElse(fileIdx) { fileIdx.coerceIn(0, 3) }
+                                ?: displaySlots.getOrElse(fileIdx) { fileIdx }
                             // Colour priority: user override → canonical (file's
                             // declared) → mapped slot's preset colour.
                             val canonicalEntry = canonicalList?.filaments?.getOrNull(fileIdx)
@@ -2126,7 +2126,12 @@ internal fun resolveExtruderMaterialType(slot: Int, presets: List<com.u1.slicer.
  */
 internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?): List<Int> {
     if (count <= 0) return emptyList()
-    if (colorMapping.isNullOrEmpty()) return (0 until count).map { it.coerceIn(0, 3) }
+    // Phase 2 §4 Step 6 — when colorMapping is missing for a multi-filament
+    // file, return identity. Filament indices >= 4 fall through to the grey
+    // fallback in the colour resolver downstream rather than being capped to
+    // slot 3 (which would misrepresent them as sharing slot 3's loaded
+    // colour).
+    if (colorMapping.isNullOrEmpty()) return (0 until count).toList()
 
     val ordered = mutableListOf<Int>()
     colorMapping.forEach { slot ->
@@ -2136,7 +2141,7 @@ internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?):
         if (slot !in ordered) ordered += slot
     }
     while (ordered.size < count) {
-        ordered += ordered.lastOrNull() ?: 0
+        ordered += ordered.lastOrNull() ?: 0  // slot-space; pad with last
     }
     return ordered.take(count)
 }
@@ -2248,7 +2253,10 @@ fun MultiColorInfoCard(
                 ) {
                     Text("Colors: ", style = MaterialTheme.typography.bodySmall,
                         color = Color.White.copy(alpha = 0.6f))
-                    colors.take(4).forEach { hex ->
+                    // Phase 2 §4 Step 6 — show every file filament's colour,
+                    // not just the first 4. Multi-filament files (H2C, MMU)
+                    // can have N > 4 colours all worth surfacing.
+                    colors.forEach { hex ->
                         Box(
                             modifier = Modifier
                                 .size(16.dp)
@@ -3896,7 +3904,10 @@ internal fun normalizeGcodePreviewColors(
         // SEMM post-slice remap was NOT active. If semmPerm was active (branch 2),
         // GcodeToolRemapper has already moved tool indices to physical slots and the
         // init loop above already produced the right colours.
-        colorMapping.take(4).forEachIndexed { compactIdx, slot ->
+        // slot-space: normalized is a 4-entry per-slot palette; iterate
+        // colorMapping up to the array bound so the assignment never goes
+        // out of range. Not a filament-count cap — see HardcodedExtruderCapTest.
+        colorMapping.take(normalized.size).forEachIndexed { compactIdx, slot ->
             if (slot in 0..3) {
                 val slotColor = extruderColors.getOrNull(slot).orEmpty()
                 if (slotColor.isNotBlank()) {
