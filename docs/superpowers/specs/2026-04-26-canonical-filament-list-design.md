@@ -112,7 +112,7 @@ Questions for this phase to answer:
 
 **Output of Phase 2.0:** a Figma / sketch / wireframe set covering each
 question, plus a short brief naming the chosen interaction. Reviewed by
-the user (Tormod / Kevin) before any code starts.
+the user before any code starts.
 
 **Why this gates everything:** the data model below is dictated by what
 the UX needs to support. Designing the data model first and then
