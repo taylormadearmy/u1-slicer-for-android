@@ -34,10 +34,10 @@ class NozzleTempDefaultTest {
 }
 
 /**
- * computeFreshExtruderTemps: regression tests for the stale-extruderTemps bug (v1.5.63).
+ * computeFreshSlotTemps: regression tests for the stale-extruderTemps bug (v1.5.63).
  *
  * extruderTemps is set at model-load time. If the user changes a preset after loading,
- * the stored value goes stale. computeFreshExtruderTemps() must be called at slice time
+ * the stored value goes stale. computeFreshSlotTemps() must be called at slice time
  * to recompute from current presets — this is the actual source of nozzle temperature
  * passed to the native slicer via JNI (applyConfigToPrusa reads extruder_temps directly;
  * the nozzle_temperature key in the embedded profile is not in profile_keys[] and is ignored).
@@ -53,21 +53,21 @@ class ComputeFreshExtruderTempsTest {
 
     @Test
     fun `single PLA slot returns 220`() {
-        val result = computeFreshExtruderTemps(1, null, listOf(preset(0, "PLA")), emptyList())
+        val result = computeFreshSlotTemps(1, null, listOf(preset(0, "PLA")), emptyList())
         assertArrayEquals(intArrayOf(220), result)
     }
 
     @Test
     fun `single PETG slot returns 235`() {
-        val result = computeFreshExtruderTemps(1, null, listOf(preset(0, "PETG")), emptyList())
+        val result = computeFreshSlotTemps(1, null, listOf(preset(0, "PETG")), emptyList())
         assertArrayEquals(intArrayOf(235), result)
     }
 
     @Test
     fun `linked filament profile nozzleTemp wins over materialType default`() {
         // Profile says 245 for PETG — custom profile should win over the 235 default
-        val result = computeFreshExtruderTemps(
-            extruderCount = 1,
+        val result = computeFreshSlotTemps(
+            slotCount = 1,
             usedSlots = null,
             presets = listOf(preset(0, "PETG", profileId = 7L)),
             filaments = listOf(filament(7L, "PETG", 245))
@@ -77,8 +77,8 @@ class ComputeFreshExtruderTempsTest {
 
     @Test
     fun `multi-colour four slots each get correct temp`() {
-        val result = computeFreshExtruderTemps(
-            extruderCount = 4,
+        val result = computeFreshSlotTemps(
+            slotCount = 4,
             usedSlots = null,
             presets = listOf(
                 preset(0, "PLA"),
@@ -94,8 +94,8 @@ class ComputeFreshExtruderTempsTest {
     @Test
     fun `usedSlots remapping resolves physical slot correctly`() {
         // 2-colour model using physical slots E1+E4 (indices 0 and 3)
-        val result = computeFreshExtruderTemps(
-            extruderCount = 2,
+        val result = computeFreshSlotTemps(
+            slotCount = 2,
             usedSlots = listOf(0, 3),
             presets = listOf(preset(0, "PLA"), preset(3, "PETG")),
             filaments = emptyList()
@@ -106,7 +106,7 @@ class ComputeFreshExtruderTempsTest {
     @Test
     fun `missing preset falls back to PLA default`() {
         // No preset configured for slot 0
-        val result = computeFreshExtruderTemps(1, null, emptyList(), emptyList())
+        val result = computeFreshSlotTemps(1, null, emptyList(), emptyList())
         assertArrayEquals(intArrayOf(220), result)
     }
 
@@ -117,8 +117,8 @@ class ComputeFreshExtruderTempsTest {
         val plaPreset = listOf(preset(0, "PLA"))
         val petgPreset = listOf(preset(0, "PETG"))
 
-        val atLoadTime = computeFreshExtruderTemps(1, null, plaPreset, emptyList())
-        val atSliceTime = computeFreshExtruderTemps(1, null, petgPreset, emptyList())
+        val atLoadTime = computeFreshSlotTemps(1, null, plaPreset, emptyList())
+        val atSliceTime = computeFreshSlotTemps(1, null, petgPreset, emptyList())
 
         assertArrayEquals(intArrayOf(220), atLoadTime)
         assertArrayEquals(intArrayOf(235), atSliceTime)  // must reflect the changed preset

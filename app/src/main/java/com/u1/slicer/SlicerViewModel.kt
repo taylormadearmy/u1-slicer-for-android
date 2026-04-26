@@ -1913,7 +1913,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // single-filament file has nothing to override against here.
         val originalPresets = extruderPresets.value
         val slotTypes = originalPresets.sortedBy { it.index }.map { it.materialType }
-        val slotTemps = computeFreshExtruderTemps(slotCount, usedSlots, originalPresets, filaments.value).toList()
+        val slotTemps = computeFreshSlotTemps(slotCount, usedSlots, originalPresets, filaments.value).toList()
 
         val canonical = getCanonicalFilamentList()
         val perFilamentArrays = canonical?.let {
@@ -2477,8 +2477,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // nozzle_temperature — NOT the nozzle_temperature key in the embedded profile
                 // (which is not in profile_keys[] and is therefore ignored by the native slicer).
                 val sliceConfig = resolvedSliceConfig.let { cfg ->
-                    cfg.copy(extruderTemps = computeFreshExtruderTemps(
-                        extruderCount = cfg.extruderCount,
+                    cfg.copy(extruderTemps = computeFreshSlotTemps(
+                        slotCount = cfg.extruderCount,
                         usedSlots = toolRemapSlots,
                         presets = extruderPresets.value,
                         filaments = filaments.value
@@ -4384,14 +4384,14 @@ internal fun nozzleTempDefaultForMaterial(material: String): Int = when (materia
  * the user can change presets or apply a library filament profile after the model is loaded,
  * which would otherwise leave extruderTemps stale.
  */
-internal fun computeFreshExtruderTemps(
-    extruderCount: Int,
+internal fun computeFreshSlotTemps(
+    slotCount: Int,
     usedSlots: List<Int>?,
     presets: List<com.u1.slicer.data.ExtruderPreset>,
     filaments: List<com.u1.slicer.data.FilamentProfile>
 ): IntArray {
-    val slots = usedSlots ?: (0 until extruderCount).toList()
-    return IntArray(extruderCount) { i ->
+    val slots = usedSlots ?: (0 until slotCount).toList()
+    return IntArray(slotCount) { i ->
         val slotIndex = slots.getOrElse(i) { i }
         val preset = presets.firstOrNull { it.index == slotIndex }
         val profileId = preset?.filamentProfileId
