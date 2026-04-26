@@ -36,18 +36,24 @@ internal fun enrichedUsedExtruders(
         if (!perPart.isNullOrEmpty()) perPart else listOfNotNull(info.objectExtruderMap[id])
     }.filter { it > 0 }.toSet()
 
+    // Probe nativeGetPaintStateCounts on EVERY volume of every object on the
+    // plate, not just those flagged `isMmPainted`. SEMM-painted plates whose
+    // paint data is encoded on individual triangles (rather than marked at
+    // the volume level) have volumes that come back with `isMmPainted=false`
+    // but still produce non-empty paint state counts when queried — slip-
+    // slide-spin plate 3 was the canary, reporting `usedExtruders={1}` and
+    // gating the paint probe on isMmPainted gave only 2 of 4 paint regions
+    // back. Querying unconditionally and ignoring nulls/empties gives the
+    // full set without false positives on non-painted volumes.
     val paintExtruders = mutableSetOf<Int>()
-    if (nativeState.hasPaintData) {
-        for (obj in nativeState.objects) {
-            for (vol in obj.volumes) {
-                if (vol.isMmPainted) {
-                    val counts = lib.nativeGetPaintStateCounts(obj.objectIndex, vol.volumeIndex, 0)
-                        ?: continue
-                    for (k in counts.indices step 2) {
-                        val state = counts[k]
-                        if (state > 0 && counts[k + 1] > 0) paintExtruders.add(state)
-                    }
-                }
+    for (obj in nativeState.objects) {
+        for (vol in obj.volumes) {
+            val counts = lib.nativeGetPaintStateCounts(obj.objectIndex, vol.volumeIndex, 0)
+                ?: continue
+            for (k in counts.indices step 2) {
+                if (k + 1 >= counts.size) break
+                val state = counts[k]
+                if (state > 0 && counts[k + 1] > 0) paintExtruders.add(state)
             }
         }
     }
@@ -55,6 +61,20 @@ internal fun enrichedUsedExtruders(
     val layerToolExtruders = sourcePlate?.layerToolExtruders.orEmpty()
         .filter { it > 0 }.toSet()
 
-    return (nativeState.usedExtruders + perPartExtruders + paintExtruders + layerToolExtruders)
+    // Fold extended paint states (AMS2 indices 5..8, B95 high indices 9..15)
+    // onto the four physical Snapmaker U1 extruder slots. The slicer's
+    // post-process G-code remap does the same fold via `((state-1) % 4) + 1`
+    // (see ThreeMfParser's paintStateCount loop). Without folding, painted
+    // files like colored_3DBenchy report 9 distinct paint states (1,2,3,5..10)
+    // even though the user-visible result is only 4 physical tools.
+    fun foldToPhysicalSlot(state: Int): Int =
+        if (state > 4) ((state - 1) % 4) + 1 else state
+
+    val foldedNativeUsed = nativeState.usedExtruders.map(::foldToPhysicalSlot).toSet()
+    val foldedPerPart = perPartExtruders.map(::foldToPhysicalSlot).toSet()
+    val foldedPaint = paintExtruders.map(::foldToPhysicalSlot).toSet()
+    val foldedLayerTool = layerToolExtruders.map(::foldToPhysicalSlot).toSet()
+
+    return (foldedNativeUsed + foldedPerPart + foldedPaint + foldedLayerTool)
         .filter { it > 0 }.toSortedSet()
 }

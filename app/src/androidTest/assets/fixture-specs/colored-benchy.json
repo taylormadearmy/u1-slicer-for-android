@@ -4,7 +4,7 @@
   "plates": [
     {
       "plateIndex": -1,
-      "expectedExtruderCount": 9,
+      "expectedExtruderCount": 4,
       "expectedToolCounts": {},
       "toolCountTolerance": 5,
       "hasPaintData": true,
