@@ -59,13 +59,92 @@ class SetModelInstancesOffsetTest {
     }
 
     /**
+     * Mirror the user's slice flow: load → setModelScale(1.5) → setModelInstances.
+     * Compare to no-scale probe to see if setModelScale changes what
+     * raw_mesh_bounding_box returns.
+     */
+    @Test
+    fun hangingFileWithScale_storedOffsetRevealsMeshMin() {
+        val file = File(cacheDir, "hanging_pre_cut_colour.3mf")
+        assetContext.assets.open("hanging+pre+cut+colour+3mf.3mf").use {
+            it.copyTo(file.outputStream())
+        }
+        assertTrue("loadModel hanging", lib.loadModel(file.absolutePath))
+
+        val mi = lib.getModelInfo()
+        assertNotNull("getModelInfo", mi)
+        Log.i("OffsetDiag", "hangingScale modelInfo (pre-scale): size=${mi!!.sizeX}x${mi.sizeY}x${mi.sizeZ}mm")
+
+        val scale = 1.5f
+        assertTrue("setModelScale", lib.setModelScale(scale, scale, scale))
+        val miAfter = lib.getModelInfo()
+        Log.i("OffsetDiag", "hangingScale modelInfo (post-scale): size=${miAfter!!.sizeX}x${miAfter.sizeY}x${miAfter.sizeZ}mm")
+
+        val originX = 153.3088f
+        val originY = 0.8317795f
+        assertTrue("setModelInstances", lib.setModelInstances(floatArrayOf(originX, originY)))
+
+        val storedOffsets = lib.getInstanceOffsets()
+        Log.i("OffsetDiag", "hangingScale requested pos=($originX, $originY)")
+        Log.i("OffsetDiag", "hangingScale storedOffsets=${storedOffsets.toList()}")
+        if (storedOffsets.size >= 2) {
+            val sx = storedOffsets[0]
+            val sy = storedOffsets[1]
+            val solvedMinX = (originX - sx) / scale
+            val solvedMinY = (originY - sy) / scale
+            Log.i("OffsetDiag", "hangingScale solved meshBB.min.x = $solvedMinX")
+            Log.i("OffsetDiag", "hangingScale solved meshBB.min.y = $solvedMinY")
+        }
+    }
+
+    /**
+     * Probe the hanging file's raw_mesh_bounding_box behaviour without slicing
+     * (slice would need 1m+ for the 100MB fixture). Loads the file fresh, sets a
+     * known position via setModelInstances, reads back the stored offset.
+     * From `offset = pos - sf * meshBB.min` we can solve for meshBB.min the
+     * native code actually used.
+     */
+    @Test
+    fun hangingFileNoSlice_storedOffsetRevealsMeshMin() {
+        val file = File(cacheDir, "hanging_pre_cut_colour.3mf")
+        assetContext.assets.open("hanging+pre+cut+colour+3mf.3mf").use {
+            it.copyTo(file.outputStream())
+        }
+        assertTrue("loadModel hanging", lib.loadModel(file.absolutePath))
+
+        val mi = lib.getModelInfo()
+        assertNotNull("getModelInfo", mi)
+        Log.i("OffsetDiag", "hanging modelInfo: size=${mi!!.sizeX}x${mi.sizeY}x${mi.sizeZ}mm tris=${mi.triangleCount}")
+
+        // No setModelScale — leave at file-natural scale.
+        val originX = 153.3088f
+        val originY = 0.8317795f
+        assertTrue("setModelInstances", lib.setModelInstances(floatArrayOf(originX, originY)))
+
+        val storedOffsets = lib.getInstanceOffsets()
+        Log.i("OffsetDiag", "hanging requested pos=($originX, $originY)")
+        Log.i("OffsetDiag", "hanging storedOffsets=${storedOffsets.toList()}")
+        if (storedOffsets.size >= 2) {
+            val sx = storedOffsets[0]
+            val sy = storedOffsets[1]
+            // Effective sf is whatever's baked into the file's instance trafo.
+            // For the hanging file with file-natural scale=1.5 (per prior diagnostic),
+            // sf=1.5. meshBB.min.x = (pos - offset) / sf
+            val solvedMinX15 = (originX - sx) / 1.5f
+            val solvedMinX10 = (originX - sx) / 1.0f
+            Log.i("OffsetDiag", "hanging solved meshBB.min.x assuming sf=1.5: $solvedMinX15")
+            Log.i("OffsetDiag", "hanging solved meshBB.min.x assuming sf=1.0: $solvedMinX10")
+            val solvedMinY15 = (originY - sy) / 1.5f
+            val solvedMinY10 = (originY - sy) / 1.0f
+            Log.i("OffsetDiag", "hanging solved meshBB.min.y assuming sf=1.5: $solvedMinY15")
+            Log.i("OffsetDiag", "hanging solved meshBB.min.y assuming sf=1.0: $solvedMinY10")
+        }
+    }
+
+    /**
      * Reproduce PM bug #4: calib-cube-10-dual-colour-merged.3mf at the user's
-     * settings (scale 2.5793, 7 copies). Captures positions sent to setModelInstances,
-     * native's stored offsets, and G-code bounds. Logs everything via OffsetDiag tag
-     * even on failure so the diagnostic is visible without re-running.
-     *
-     * Stays in 1-copy + 1.5x form first to avoid OOM; once we have a baseline shape
-     * we can scale up.
+     * settings. Captures positions sent to setModelInstances, native's stored
+     * offsets, and G-code bounds.
      */
     @Test
     fun calicubeScaleSingleCopy_offsetMatchesGcodeMinX() {

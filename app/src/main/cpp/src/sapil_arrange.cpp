@@ -70,38 +70,47 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
         for (auto* obj : model.objects) {
             if (obj->instances.empty()) continue;
 
-            // Mesh-space bounding box: union of all model volumes' meshes after each
-            // volume's local transform (`v->get_matrix()`) is applied. Multi-volume
-            // objects (dual-colour merged calicube, compound Bambu objects) place
-            // their volumes at distinct positions within the object via per-volume
-            // transforms, so a raw `vol->mesh().bounding_box()` union under-reports
-            // the true mesh-space AABB and the lower-left convention math below
-            // ends up off by the difference.
+            // Compute the AABB of the object's volumes after applying both per-
+            // volume local transforms AND the current instance's scale+rotation.
+            // This matches `ModelObject::raw_bounding_box()` semantically but
+            // bypasses its `m_raw_bounding_box_valid` cache, which Slic3r does
+            // not invalidate when an instance's scaling factor changes via
+            // `set_scaling_factor` (our setModelScale path). Without this, a
+            // stale unit-scale bbox is used for the offset math after
+            // setModelScale and the model lands ~half-mesh-size off.
             //
-            // Slic3r's `ModelObject::raw_mesh_bounding_box()` does the right merge
-            // (`v->mesh().transformed_bounding_box(v->get_matrix())`) and is what
-            // the slicer itself uses; reusing it here keeps the offset math in
-            // lockstep with where the slicer actually places the geometry.
-            const Slic3r::BoundingBoxf3& meshBB = obj->raw_mesh_bounding_box();
+            // Why include instance no-offset transform here: for files whose
+            // mesh is stored at non-canonical orientation (hanging file with a
+            // baked rotation in instance trafo), the post-rotation AABB differs
+            // from the mesh-space AABB. Using the instance-aware bbox keeps
+            // setModelInstances in lockstep with how the slicer renders the
+            // instance.
+            const Slic3r::Transform3d inst_no_offset =
+                obj->instances.front()->get_transformation().get_matrix_no_offset();
+            Slic3r::BoundingBoxf3 effectiveBB;
+            for (const auto* v : obj->volumes) {
+                if (v->is_model_part()) {
+                    effectiveBB.merge(
+                        v->mesh().transformed_bounding_box(inst_no_offset * v->get_matrix())
+                    );
+                }
+            }
+            if (!effectiveBB.defined) continue;
 
-            // Save the transformation before clearing.
-            // Also read the per-axis scale so the mesh-space min can be scaled correctly.
-            // Offset must be: pos - scale * meshBB.min
-            // (not pos - meshBB.min, which ignores the instance scale and misplaces the
-            //  model for any non-unity scale where meshBB.min ≠ 0).
             auto trafo = obj->instances[0]->get_transformation();
-            const Slic3r::Vec3d sf = trafo.get_scaling_factor();
             obj->clear_instances();
 
             for (const auto& pos : positions) {
                 auto* inst = obj->add_instance();
                 inst->set_transformation(trafo);
-                // Place mesh lower-left corner at pos:
-                //   world_min = scale * meshBB.min + offset  →  offset = pos - scale * meshBB.min
+                // Lower-left convention: world_min = inst.offset + effectiveBB.min,
+                // so setting offset = pos - effectiveBB.min places the mesh
+                // lower-left at pos. effectiveBB already incorporates the
+                // instance scale; no separate sf multiplication needed.
                 inst->set_offset(Slic3r::Vec3d(
-                    static_cast<double>(pos.first)  - sf.x() * meshBB.min.x(),
-                    static_cast<double>(pos.second) - sf.y() * meshBB.min.y(),
-                    -sf.z() * meshBB.min.z()
+                    static_cast<double>(pos.first)  - effectiveBB.min.x(),
+                    static_cast<double>(pos.second) - effectiveBB.min.y(),
+                    -effectiveBB.min.z()
                 ));
             }
         }
