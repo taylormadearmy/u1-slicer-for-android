@@ -1150,6 +1150,9 @@ fun PrepareScreen(
                             onMaterialOverride = { idx, material ->
                                 viewModel.setFilamentMaterialOverride(idx, material)
                             },
+                            onColorOverride = { idx, color ->
+                                viewModel.setFilamentColorOverride(idx, color)
+                            },
                         )
                         // Scale & copies controls
                         ScaleSection(
@@ -3080,6 +3083,7 @@ fun PrintSetupSection(
     onAutoMap: (() -> Unit)? = null,
     filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
     onMaterialOverride: (fileIndex: Int, materialType: String?) -> Unit = { _, _ -> },
+    onColorOverride: (fileIndex: Int, color: String?) -> Unit = { _, _ -> },
 ) {
     // Note: onMappingChange / onAutoMap kept in the signature because callers
     // still pass them (they wired the legacy slot-picker path). They're
@@ -3095,6 +3099,7 @@ fun PrintSetupSection(
     val mapping = remember(colorMapping) { colorMapping ?: emptyList() }
     var expanded by remember { mutableStateOf(true) }
     var editingMaterialFor by remember { mutableStateOf<Int?>(null) }
+    var editingColorFor by remember { mutableStateOf<Int?>(null) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3157,14 +3162,23 @@ fun PrintSetupSection(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                // Filament colour swatch (Phase 2.6c: tappable colour picker)
+                                // Filament colour swatch — tap to override.
+                                val effectiveColor = override?.color ?: modelColor
+                                val colorIsOverridden = override?.color != null
                                 Box(
                                     modifier = Modifier
                                         .size(28.dp)
                                         .clip(androidx.compose.foundation.shape.CircleShape)
-                                        .background(com.u1.slicer.ui.parseHexColor(modelColor))
-                                        .border(1.dp, MaterialTheme.colorScheme.outline,
-                                            androidx.compose.foundation.shape.CircleShape)
+                                        .background(com.u1.slicer.ui.parseHexColor(effectiveColor))
+                                        .border(
+                                            if (colorIsOverridden) 2.dp else 1.dp,
+                                            if (colorIsOverridden)
+                                                MaterialTheme.colorScheme.primary
+                                            else
+                                                MaterialTheme.colorScheme.outline,
+                                            androidx.compose.foundation.shape.CircleShape,
+                                        )
+                                        .clickable { editingColorFor = colorIdx }
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
@@ -3172,7 +3186,7 @@ fun PrintSetupSection(
                                         style = MaterialTheme.typography.bodyMedium,
                                     )
                                     Text(
-                                        modelColor.uppercase(),
+                                        effectiveColor.uppercase(),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                                     )
@@ -3255,6 +3269,21 @@ fun PrintSetupSection(
                 }
             }
         }
+    }
+
+    // Phase 2.6c — colour edit dialog for the row whose swatch was tapped.
+    editingColorFor?.let { idx ->
+        val current = filamentOverrides[idx]?.color
+            ?: detectedColors.getOrNull(idx)
+            ?: "#FFFFFF"
+        com.u1.slicer.ui.FilamentColorEditDialog(
+            initialHex = current,
+            onSave = { hex -> onColorOverride(idx, hex) },
+            onDismiss = { editingColorFor = null },
+            onReset = if (filamentOverrides[idx]?.color != null) {
+                { onColorOverride(idx, null) }
+            } else null,
+        )
     }
 }
 

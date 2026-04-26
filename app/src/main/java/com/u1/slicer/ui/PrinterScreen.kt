@@ -703,7 +703,7 @@ internal fun hexToHsv(hex: String): FloatArray {
  * Both are interactive via tap and drag. [onHsvChange] is called on every gesture event.
  */
 @Composable
-private fun HsvColorPicker(
+internal fun HsvColorPicker(
     hue: Float,
     saturation: Float,
     value: Float,
