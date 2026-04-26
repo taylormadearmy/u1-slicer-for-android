@@ -40,7 +40,13 @@ fun SlicingOverridesAccordion(
     onPlateTypeChange: ((PlateType) -> Unit)? = null,
     bedTemp: Int? = null,
     onBedTempChange: ((Int) -> Unit)? = null,
-    sourceConfig: Map<String, Any>? = null
+    sourceConfig: Map<String, Any>? = null,
+    // Phase 2 §4 Step 7 — file-filament count drives the support-filament
+    // dropdown's option range. OrcaSlicer's `support_filament` /
+    // `support_interface_filament` config keys are 1-based indices into the
+    // filament_colour array (file-filament space), not slot indices. When
+    // null, falls back to the default 4-slot range for backwards-compat.
+    filamentCount: Int? = null,
 ) {
     var expandedSection by remember { mutableStateOf<String?>(defaultExpandedSection) }
 
@@ -395,15 +401,23 @@ fun SlicingOverridesAccordion(
                 }
             )
 
+            // Phase 2 §4 Step 7 — `support_filament` and
+            // `support_interface_filament` are 1-based indices into the file's
+            // canonical filament list (NOT physical slot indices). The slicer
+            // reads them as "use file-filament N to print supports / interface".
+            // For multi-filament files, the dropdown shows up to filamentCount
+            // entries; falls back to 1..4 (slot count) when filamentCount is
+            // null (settings screen with no model loaded).
+            val filamentOptionsRange = (1..(filamentCount ?: 4))
             OverrideRow(
-                label = "  Support Extruder",
+                label = "  Support Filament",
                 override = overrides.supportFilament,
                 defaultHint = "Default",
                 onModeChange = { mode -> onOverridesChange(overrides.copy(supportFilament = overrides.supportFilament.copy(mode = mode))) },
                 fileKey = "support_filament",
                 sourceConfig = sourceConfig,
                 valueContent = {
-                    val options = listOf(0 to "Default") + (1..4).map { it to "Extruder $it" }
+                    val options = listOf(0 to "Default") + filamentOptionsRange.map { it to "Filament $it" }
                     OverrideDropdown(
                         value = (overrides.supportFilament.value ?: 0).toString(),
                         options = options.map { it.first.toString() },
@@ -414,14 +428,14 @@ fun SlicingOverridesAccordion(
             )
 
             OverrideRow(
-                label = "  Interface Extruder",
+                label = "  Interface Filament",
                 override = overrides.supportInterfaceFilament,
                 defaultHint = "Default",
                 onModeChange = { mode -> onOverridesChange(overrides.copy(supportInterfaceFilament = overrides.supportInterfaceFilament.copy(mode = mode))) },
                 fileKey = "support_interface_filament",
                 sourceConfig = sourceConfig,
                 valueContent = {
-                    val options = listOf(0 to "Default") + (1..4).map { it to "Extruder $it" }
+                    val options = listOf(0 to "Default") + filamentOptionsRange.map { it to "Filament $it" }
                     OverrideDropdown(
                         value = (overrides.supportInterfaceFilament.value ?: 0).toString(),
                         options = options.map { it.first.toString() },

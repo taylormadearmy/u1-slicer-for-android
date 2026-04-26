@@ -1201,7 +1201,8 @@ fun PrepareScreen(
                             onPlateTypeChange = { viewModel.setPlateType(it) },
                             bedTemp = config.bedTemp,
                             onBedTempChange = { viewModel.setBedTemp(it) },
-                            sourceConfig = sourceConfig
+                            sourceConfig = sourceConfig,
+                            filamentCount = threeMfInfo?.detectedColors?.size?.takeIf { it > 0 }
                         )
                     }
                 }
@@ -1711,7 +1712,12 @@ fun ConfigCard(
     onPlateTypeChange: ((com.u1.slicer.data.PlateType) -> Unit)? = null,
     bedTemp: Int? = null,
     onBedTempChange: ((Int) -> Unit)? = null,
-    sourceConfig: Map<String, Any>? = null
+    sourceConfig: Map<String, Any>? = null,
+    // Phase 2 §4 Step 7 — file-filament count (canonical list size).
+    // Drives the support-filament dropdown's option range so the user
+    // sees real filament numbers instead of slot indices. Null when no
+    // model is loaded (settings screen).
+    filamentCount: Int? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1748,7 +1754,8 @@ fun ConfigCard(
                     onPlateTypeChange = onPlateTypeChange,
                     bedTemp = bedTemp,
                     onBedTempChange = onBedTempChange,
-                    sourceConfig = sourceConfig
+                    sourceConfig = sourceConfig,
+                    filamentCount = filamentCount,
                 )
             }
 
