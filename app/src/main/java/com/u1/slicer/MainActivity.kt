@@ -1396,6 +1396,7 @@ fun PreviewScreen(
     val semmColorPermutation by viewModel.semmColorPermutationFlow.collectAsState()
     val slicerColorOrder by viewModel.slicerColorOrder.collectAsState()
     val gcodeUsesPhysicalSlots by viewModel.gcodeUsesPhysicalSlots.collectAsState()
+    val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
 
     Scaffold(
         topBar = {
@@ -1502,7 +1503,8 @@ fun PreviewScreen(
                             onExpand = onNavigateGcodeViewer3D,
                             cameraState = sharedPreviewCameraState,
                             onCameraStateChange = onSharedPreviewCameraStateChange,
-                            onResetView = onResetPreviewCamera
+                            onResetView = onResetPreviewCamera,
+                            resolvedFilamentColors = resolvedFilamentColors,
                         )
                         }
                     }
@@ -3698,7 +3700,12 @@ fun InlineGcodePreview(
     onExpand: () -> Unit,
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
     onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
-    onResetView: (() -> Unit)? = null
+    onResetView: (() -> Unit)? = null,
+    // Phase 2 §4 Step 7 (Preview side) — file's per-filament colours
+    // (override-applied). When non-empty, drives the slot palette so the
+    // G-code Preview shows the file's colours (matching the Prepare 3D
+    // preview).
+    resolvedFilamentColors: List<String> = emptyList(),
 ) {
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
     var viewerLoading by remember(parsedGcode) { mutableStateOf(true) }
@@ -3711,8 +3718,8 @@ fun InlineGcodePreview(
         ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
     else 1
 
-    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots)
+    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots, resolvedFilamentColors) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots, resolvedFilamentColors)
     }
 
     LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState) {
@@ -3894,11 +3901,34 @@ internal fun normalizeGcodePreviewColors(
     colorMapping: List<Int>?,
     semmColorPermutation: List<Int>? = null,
     slicerColorOrder: List<Int>? = null,
-    useDirectSlots: Boolean = false
+    useDirectSlots: Boolean = false,
+    resolvedFilamentColors: List<String> = emptyList(),
 ): List<String> {
     val normalized = MutableList(4) { "" }
     for (slot in 0..3) {
         normalized[slot] = extruderColors.getOrNull(slot).orEmpty()
+    }
+    // Phase 2 §4 Step 7 (Preview side) — when canonical-derived per-filament
+    // colours are available AND a colorMapping exists, drive the palette
+    // from the file's canonical filament colours instead of slot presets.
+    // For each physical slot s, find the first file filament whose
+    // colorMapping[i] == s, and use resolvedFilamentColors[i] as the slot's
+    // colour. Result: G-code Preview shows the file's filament colours
+    // (matching the Prepare 3D preview), not the user's slot presets.
+    //
+    // Slots with no mapped filament keep their slot-preset fallback.
+    // Filament-collisions on the same slot resolve to the first filament's
+    // colour (the slot is committed to that one colour anyway).
+    if (resolvedFilamentColors.isNotEmpty() && !colorMapping.isNullOrEmpty()) {
+        for (slot in 0..3) {
+            val firstFileIdx = colorMapping.indexOfFirst { it == slot }
+            if (firstFileIdx >= 0) {
+                resolvedFilamentColors.getOrNull(firstFileIdx)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { normalized[slot] = it }
+            }
+        }
+        return normalized
     }
     // B95: when the post-slice GcodeToolRemapper applies an expanded filament-index
     // remap (because the embedded filament_colour was bumped to fit a high-index
