@@ -4476,7 +4476,16 @@ internal fun computeExpandedGcodeRemap(
     // Only useful when the embed was bumped beyond the distinct-slot count;
     // otherwise the existing semmColorPermutation / toolRemapSlots logic
     // keeps the same final mapping with less plumbing.
-    val distinctSlots = colorMapping.distinct().size
+    //
+    // Count only valid 0..3 entries: out-of-range values (>3) can't represent
+    // a physical Snapmaker U1 slot, so they don't contribute to "distinct slots
+    // covered by the user's mapping" — they fall through to the identity-coerced
+    // tail at output time. Counting them anyway tripped the
+    // `ignoresOutOfRangeColorMappingEntries` regression test where a 5-entry
+    // mapping with one out-of-range value (`[7, 1, 2, 3, 0]`,
+    // `embeddedFilamentCount=5`) was reporting `distinctSlots=5` and short-
+    // circuiting the expanded-remap path that was supposed to apply.
+    val distinctSlots = colorMapping.filter { it in 0..3 }.distinct().size
     if (embeddedFilamentCount <= distinctSlots) return null
     // The slicer emits T0..T(embeddedFilamentCount-1) for the N embedded
     // filaments in order. Drive the per-filament remap directly off the
