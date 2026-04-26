@@ -2590,8 +2590,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                     val composedRemap = expandedRemap
                         ?: composeSemmRemap(toolRemapSlots, semmColorPermutation)
-                    _gcodeUsesPhysicalSlots.value = expandedRemap != null
-                    if (composedRemap != null) {
+                    // Phase 2.5 final fix: do NOT bake the slot mapping into
+                    // the G-code at slice time. The G-code keeps the slicer's
+                    // canonical T-indices (file filament indices), and the
+                    // user's slot mapping is applied as a print-time post-
+                    // process when the Filament mapping dialog confirms.
+                    // This is what makes "how many filaments?" answerable
+                    // before the user has picked slots — the slice summary
+                    // can show the file's actual filament count.
+                    _gcodeUsesPhysicalSlots.value = false
+                    val skipSliceTimeRemap = true
+                    if (!skipSliceTimeRemap && composedRemap != null) {
                         GcodeToolRemapper.remap(result.gcodePath, composedRemap)
                         Log.i(
                             "SlicerVM",

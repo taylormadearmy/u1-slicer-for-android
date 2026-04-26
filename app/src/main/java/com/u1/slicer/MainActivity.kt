@@ -669,17 +669,14 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     if (canonical != null) {
-                        // Phase 2.5 — the slice-time `colorMapping` is what the
-                        // current G-code's T-indices already reflect (today's
-                        // pre-Phase-2.5 slice path bakes the slot mapping into
-                        // the G-code via GcodeToolRemapper.remap). The dialog's
-                        // `mapping` is what the user WANTS the final G-code to
-                        // reflect. The actual remap we need to apply is the
-                        // delta: for each file index i, rewrite T<sliceMapping[i]>
-                        // → T<userMapping[i]>. This makes the dialog correct
-                        // even when the user changes a slot away from the
-                        // auto-suggested value.
-                        val sliceMapping = currentMapping
+                        // Phase 2.5 final: slices now produce canonical
+                        // (file-filament-relative) T-indices — the slice-time
+                        // GcodeToolRemapper.remap call is skipped. So the
+                        // dialog's user mapping is applied directly: for each
+                        // file index i, T<i> in the source G-code is rewritten
+                        // to T<userMapping[i]> in the output. The legacy delta
+                        // path (computeDialogRewrite) is preserved for
+                        // safety but degenerates to identity-source here.
                         com.u1.slicer.ui.FilamentMappingDialog(
                             canonicalList = canonical,
                             extruderPresets = extruderPresets,
@@ -690,11 +687,10 @@ class MainActivity : ComponentActivity() {
                                     source.parentFile,
                                     "${source.nameWithoutExtension}.remapped.${source.extension}"
                                 )
-                                val rewriteList = computeDialogRewrite(sliceMapping, mapping)
                                 com.u1.slicer.gcode.applyPrintTimeRemap(
                                     sourceGcodePath = source.absolutePath,
                                     outputPath = remapped.absolutePath,
-                                    colorMapping = rewriteList,
+                                    colorMapping = mapping,
                                 )
                                 when (pending.action) {
                                     PendingMappingSend.Action.PrintAndUpload ->

@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.u1.slicer.data.CanonicalFilamentList
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentSource
@@ -60,11 +61,19 @@ fun FilamentMappingDialog(
         seed.toMutableStateList()
     }
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        // Don't let Compose constrain us to the platform-default narrow
+        // dialog width — the slot picker needs the full screen width to
+        // show "E1 · PLA" without truncating.
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
@@ -238,10 +247,10 @@ private fun FilamentMappingRow(
             }
         }
 
-        // Slot picker
+        // Slot picker — wider so the "E1 · PLA" label fits without truncation.
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
             OutlinedTextField(
-                value = selectedPreset?.label ?: "E1",
+                value = "${selectedPreset?.label ?: "E1"} · ${selectedPreset?.materialType ?: "PLA"}",
                 onValueChange = {},
                 readOnly = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
@@ -255,7 +264,7 @@ private fun FilamentMappingRow(
                             )
                     )
                 },
-                modifier = Modifier.menuAnchor().width(110.dp),
+                modifier = Modifier.menuAnchor().width(150.dp),
                 textStyle = MaterialTheme.typography.bodySmall,
                 singleLine = true
             )
