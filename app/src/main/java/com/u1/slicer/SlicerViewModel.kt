@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.u1.slicer.bambu.BambuPlateStateEnrichment
 import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.NativePlateState
 import com.u1.slicer.bambu.ProfileEmbedder
@@ -3404,28 +3405,33 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val json = native.nativeGetAllVolumeExtruders()
             val parsed = NativePlateState.parseVolumeMapJson(json)
 
-            // If volumes report paint data, also collect paint extruder states from native
-            if (parsed.hasPaintData) {
-                val paintExtruders = mutableSetOf<Int>()
-                for (obj in parsed.objects) {
-                    for (vol in obj.volumes) {
-                        if (vol.isMmPainted) {
-                            // kind=0 is MMU paint segmentation
-                            val counts = native.nativeGetPaintStateCounts(
-                                obj.objectIndex, vol.volumeIndex, 0
-                            )
-                            if (counts != null) {
-                                // counts is [state1, count1, state2, count2, ...]
-                                for (k in counts.indices step 2) {
-                                    val paintState = counts[k]
-                                    if (paintState > 0 && counts[k + 1] > 0) {
-                                        paintExtruders.add(paintState)
-                                    }
-                                }
-                            }
+            // Probe paint extruder states unconditionally on every volume —
+            // SEMM-painted plates whose paint data is encoded on individual
+            // triangles (rather than at the volume level) leave
+            // `vol.isMmPainted=false` but still produce non-empty paint state
+            // counts when queried (slip-slide-spin plate 3 was the canary,
+            // reporting native `usedExtruders={1}` and the prior
+            // `if (vol.isMmPainted)` gate gave only 2 of 4 paint regions
+            // back). `nativeGetPaintStateCounts` returns null fast for
+            // volumes with no paint data, so the unconditional probe is
+            // cheap on non-painted models.
+            val paintExtruders = mutableSetOf<Int>()
+            for (obj in parsed.objects) {
+                for (vol in obj.volumes) {
+                    val counts = native.nativeGetPaintStateCounts(
+                        obj.objectIndex, vol.volumeIndex, 0
+                    ) ?: continue
+                    // counts is [state1, count1, state2, count2, ...]
+                    for (k in counts.indices step 2) {
+                        if (k + 1 >= counts.size) break
+                        val paintState = counts[k]
+                        if (paintState > 0 && counts[k + 1] > 0) {
+                            paintExtruders.add(paintState)
                         }
                     }
                 }
+            }
+            if (paintExtruders.isNotEmpty()) {
                 parsed.copy(
                     usedExtruders = (parsed.usedExtruders + paintExtruders).toSortedSet()
                 )
@@ -3460,12 +3466,31 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val plateHasPaintData = nativeState.hasPaintData
         val plateHasLayerToolChanges = sourcePlate?.hasLayerToolChanges ?: fileInfo.hasLayerToolChanges
 
-        // Enrich native-reported extruders with layer-tool extruders from the source
-        // plate metadata. Native volumes don't carry layer-tool change data (it comes
-        // from custom_gcode_per_layer.xml), so the native state alone may under-count
-        // for layer-tool plates. Also include the plate's object extruders from the
-        // file-level objectExtruderMap — native may report empty usedExtruders for
-        // plates whose objects have a default extruder that matches the BBS default (1).
+        // Enrich native-reported extruders via the shared `BambuPlateStateEnrichment`
+        // helper. The helper unions:
+        //  - native usedExtruders (per-volume from g_model)
+        //  - per-part / objectExtruderMap entries from sourcePlate
+        //  - paint extruder states from `nativeGetPaintStateCounts` probed on
+        //    EVERY volume (not just `isMmPainted` ones) — fixes the slip-slide-
+        //    spin canary where paint encoded on individual triangles left
+        //    isMmPainted=false at the volume level but paint regions still
+        //    needed surfacing
+        //  - layer-tool extruders + filamentIndices from sourcePlate
+        // …and folds AMS2 (states 5..8) and B95 high (states 9..15) onto the
+        // four physical Snapmaker U1 slots via `((state-1) % 4) + 1`. The
+        // androidTest fixture harness calls the same helper via the
+        // `enrichedUsedExtruders` adapter so production and tests can never
+        // drift apart again (chunk 3 of the C2 BACKLOG entry).
+        val enrichedExtruders = BambuPlateStateEnrichment.enrich(
+            state = nativeState,
+            sourcePlate = sourcePlate,
+            fileInfo = fileInfo,
+            lib = native
+        )
+        // Object-extruder set kept for the `nativeExtruderDiversity` check
+        // below — that check is intentionally NOT layer-tool aware (layer-tool
+        // changes are temporal not spatial), so it stays separate from the
+        // unified enrichment above.
         val sourcePlateObjectExtruders = sourcePlate?.objectIds
             ?.flatMap { objectId ->
                 val perPart = fileInfo.objectPartExtruders[objectId]
@@ -3475,16 +3500,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             ?.filter { it > 0 }
             ?.toSet()
             ?: emptySet()
-
-        val enrichedExtruders = if (fileInfo.hasLayerToolChanges && sourcePlate != null) {
-            val ltExtruders = sourcePlate.layerToolExtruders.filter { it > 0 }
-            val filExtruders = sourcePlate.filamentIndices.filter { it > 0 }
-            (usedExtruders + sourcePlateObjectExtruders + ltExtruders + filExtruders).toSortedSet()
-        } else if (sourcePlateObjectExtruders.isNotEmpty()) {
-            (usedExtruders + sourcePlateObjectExtruders).toSortedSet()
-        } else {
-            usedExtruders.toSortedSet()
-        }
         Log.i("SlicerVM", "buildThreeMfInfoFromNative: plate=$plateId native=$usedExtruders " +
             "enriched=$enrichedExtruders hasPaint=$plateHasPaintData")
 
