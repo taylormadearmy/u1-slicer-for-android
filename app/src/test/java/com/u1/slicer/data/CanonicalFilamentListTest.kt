@@ -144,4 +144,53 @@ class CanonicalFilamentListTest {
         assertEquals("#FF0000", red.filaments[0].color)
         assertEquals("#FFA500", orange.filaments[0].color)
     }
+
+    // ─── §4 Step 10: layerToolMode ────────────────────────────────────────
+
+    @Test
+    fun `layerToolMode defaults to MULTI_FILAMENT`() {
+        val list = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+            )
+        )
+        assertEquals(LayerToolMode.MULTI_FILAMENT, list.layerToolMode)
+    }
+
+    @Test
+    fun `layerToolMode is preserved through copy`() {
+        val original = CanonicalFilamentList(
+            filaments = (0..2).map { i ->
+                FilamentEntry(i, "#%06X".format(i * 0x111111), "PLA", FilamentSource.LAYER_TOOL)
+            },
+            layerToolMode = LayerToolMode.SINGLE_PAUSE,
+        )
+        val updated = original.copy(filaments = original.filaments + listOf(
+            FilamentEntry(3, "#FFFFFF", "PLA", FilamentSource.LAYER_TOOL)
+        ))
+        assertEquals(LayerToolMode.SINGLE_PAUSE, updated.layerToolMode)
+        assertEquals(4, updated.size)
+    }
+
+    @Test
+    fun `isLayerTool is true when any entry is LAYER_TOOL source`() {
+        val list = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PLA", FilamentSource.LAYER_TOOL),
+            )
+        )
+        assertTrue(list.isLayerTool)
+    }
+
+    @Test
+    fun `isLayerTool is false when no entry is LAYER_TOOL source`() {
+        val list = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PLA", FilamentSource.PAINT_DERIVED),
+            )
+        )
+        assertFalse(list.isLayerTool)
+    }
 }

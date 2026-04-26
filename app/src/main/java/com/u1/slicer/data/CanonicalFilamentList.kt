@@ -52,6 +52,34 @@ data class FilamentEntry(
 )
 
 /**
+ * Phase 2 §4 Step 10 / review Q5 — how the user wants a layer-tool /
+ * Hueforge file treated at slice time.
+ *
+ * Layer-tool files (`Metadata/custom_gcode_per_layer.xml` with type=1/2
+ * entries) declare per-layer tool changes against a single underlying
+ * filament. Two valid interpretations:
+ *
+ * - [MULTI_FILAMENT]  — synthesise one `FilamentEntry` per Z-band, slice
+ *                       as N-extruder, emit T-changes that the print-time
+ *                       remap routes to physical slots. Visually multi-
+ *                       colour; pauses only at slot boundaries.
+ * - [SINGLE_PAUSE]    — keep the file as 1-filament; emit `PAUSE_PRINT`
+ *                       at each Z-band so the user manually swaps spools.
+ *                       Mirrors classic Hueforge / single-filament-per-
+ *                       layer printing.
+ *
+ * Defaults to [MULTI_FILAMENT] at load time (matches the existing
+ * synthetic-expansion behaviour). User-facing toggle is a Phase 3+ UI
+ * surface; the field stores the choice when it lands, and the load-time
+ * normalize / embed pipeline already reads it from
+ * [CanonicalFilamentList.layerToolMode].
+ */
+enum class LayerToolMode {
+    MULTI_FILAMENT,
+    SINGLE_PAUSE,
+}
+
+/**
  * The single source of truth for "what filaments does this file contain?",
  * produced once at load time by the format-specific normalize step.
  *
@@ -71,16 +99,25 @@ data class FilamentEntry(
  *                        addresses. Absorbs B95 high-index, AMS2 fold, and
  *                        bit-packed encoding edge cases at one place.
  *                        Empty for non-paint files.
+ * @param layerToolMode   How layer-tool files should be sliced. Defaults
+ *                        to [LayerToolMode.MULTI_FILAMENT]; ignored
+ *                        entirely for non-layer-tool files (no
+ *                        [FilamentEntry] of source
+ *                        [FilamentSource.LAYER_TOOL]).
  */
 data class CanonicalFilamentList(
     val filaments: List<FilamentEntry>,
     val paintStateMap: Map<Int, Int> = emptyMap(),
+    val layerToolMode: LayerToolMode = LayerToolMode.MULTI_FILAMENT,
 ) {
     /** Number of filaments declared by the file. Matches G-code `T0..T(size-1)`. */
     val size: Int get() = filaments.size
 
     /** True if more than one filament is in use — a quick UI predicate. */
     val isMultiColour: Boolean get() = filaments.size > 1
+
+    /** True when at least one [FilamentEntry.source] is [FilamentSource.LAYER_TOOL]. */
+    val isLayerTool: Boolean get() = filaments.any { it.source == FilamentSource.LAYER_TOOL }
 }
 
 /**
