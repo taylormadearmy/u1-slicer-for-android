@@ -47,7 +47,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -398,34 +397,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Extruder slot config (from printer page, used for color mapping dialog)
     val extruderPresets: StateFlow<List<ExtruderPreset>> = settingsRepo.extruderPresets
         .stateIn(viewModelScope, SharingStarted.Eagerly, com.u1.slicer.data.defaultExtruderPresets())
-
-    /**
-     * Phase 2 §4 Step 7 (visual side) — per-file-filament resolved colours
-     * for the 3D preview. For each file filament i, the value is:
-     *   1. user override colour (Prepare screen), if set, else
-     *   2. canonical entry's declared colour (file's filament_colour).
-     *
-     * Drives the on-screen 3D model preview's recolor palette so the visual
-     * agrees with the slicer's embedded `filament_colour` (sized to the
-     * canonical list, override-applied per filament). Empty when no model
-     * is loaded.
-     *
-     * Reactive over `_threeMfInfo` (file load), `_filamentOverrides` (user
-     * edits on Prepare), `extruderPresets` and `_selectedExtruder` (STL
-     * fallback path where the canonical list is synthesised from the
-     * selected slot's preset).
-     */
-    val resolvedFilamentColors: StateFlow<List<String>> = combine(
-        _threeMfInfo,
-        _filamentOverrides,
-        extruderPresets,
-        _selectedExtruder,
-    ) { _, overrides, _, _ ->
-        val canonical = getCanonicalFilamentList() ?: return@combine emptyList()
-        val ovPairs = overrides.mapValues { (_, ov) -> ov.color to ov.materialType }
-        com.u1.slicer.data.applyOverridesToCanonical(canonical, ovPairs)
-            .filaments.map { it.color }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)
     val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides

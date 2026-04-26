@@ -915,7 +915,6 @@ fun PrepareScreen(
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
-    val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
 
     // Plate selector dialog
@@ -1083,7 +1082,6 @@ fun PrepareScreen(
                                 onResetView = { captureViewer?.resetView(); onResetPreviewCamera?.invoke() },
                                 layerToolOnly = layerToolOnly,
                                 layerToolSegments = threeMfInfo?.layerToolSegments,
-                                resolvedFilamentColors = resolvedFilamentColors,
                                 cachedMesh = if (viewModel.cachedPrepareMeshPath == modelPath) viewModel.cachedPrepareMesh else null,
                                 onMeshCached = { viewModel.cachedPrepareMeshPath = modelPath; viewModel.cachedPrepareMesh = it },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
@@ -2395,12 +2393,6 @@ fun InlineModelPreview(
     // F46: layer-tool (Hueforge) Z-band recolour
     layerToolOnly: Boolean = false,
     layerToolSegments: List<com.u1.slicer.bambu.LayerToolSegment>? = null,
-    // Phase 2 §4 Step 7 (visual side) — per-file-filament resolved colours
-    // (file colour overlaid by Prepare-screen overrides). When non-empty,
-    // drives the 3D preview's recolor palette directly so the visual
-    // agrees with the slicer's embedded filament_colour. Empty for non-
-    // canonical / pre-load states; the slot-mapped fallback path runs.
-    resolvedFilamentColors: List<String> = emptyList(),
     // B78: snapshot of native instance offsets captured at loadModel time.
     // Used to restore the file's original plate position after prepareSlicer() has
     // clobbered native state; skipped when nativeSliceStateDirty is false so the
@@ -2496,7 +2488,7 @@ fun InlineModelPreview(
     // Fixes B22 race: previously mesh loaded on IO (slow) while colors arrived via StateFlow
     // (fast). Separate LaunchedEffects had timing gaps — colors effect fired before mesh was
     // ready (skip), then mesh effect read stale empty colors from closure (skip).
-    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState, layerToolOnly, layerToolSegments, resolvedFilamentColors) {
+    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState, layerToolOnly, layerToolSegments) {
         val m = mesh; val v = viewerView
         if (m != null && v != null) {
             // Only call setMesh when the mesh instance actually changed
@@ -2508,28 +2500,15 @@ fun InlineModelPreview(
             if (extruderColors.isNotEmpty()) {
                 v.setExtruderColors(extruderColors)
             }
-            // Phase 2 §4 Step 7 (visual) — when the canonical-derived
-            // per-filament palette is available, drive the recolor from it
-            // so user overrides on Prepare are visible immediately and the
-            // on-screen colour matches what the slicer embeds. The mesh's
-            // extruderIndices are file-filament-indexed (canonical
-            // fileIndex), so palette[i] applies directly without going
-            // through the slot mapping.
-            val canonicalPalette: List<FloatArray>? = resolvedFilamentColors
-                .takeIf { it.isNotEmpty() }
-                ?.map { hex -> SlicerViewModel.staticHexColorToFloatArray(hex) }
-
             // F46: Z-band recolour for layer-tool (Hueforge) models
             if (layerToolOnly && layerToolSegments != null && extruderColors.isNotEmpty() && colorMapping != null) {
-                val palette = canonicalPalette
-                    ?: colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
-                Log.i("InlineModelPreview", "recolorByZBands segments=${layerToolSegments.size} paletteSize=${palette.size} canonical=${canonicalPalette != null}")
+                val palette = colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
+                Log.i("InlineModelPreview", "recolorByZBands segments=${layerToolSegments.size} paletteSize=${palette.size}")
                 m.recolorByZBands(layerToolSegments, palette)
                 v.refreshColors()  // upload recolorByZBands result to GPU without overwriting with recolor()
-            } else if (m.hasPerVertexColor && (canonicalPalette != null || extruderColors.isNotEmpty())) {
-                // Apply recolor when we have either a canonical-derived
-                // palette OR a slot palette + (paint-data) mesh.
-                val palette = canonicalPalette ?: if (colorMapping != null) {
+            } else if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
+                // Apply recolor when we have both mesh and colors (paint-data models)
+                val palette = if (colorMapping != null) {
                     // Multi-color: remap mesh indices → slot colors
                     colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
                 } else {
@@ -2540,7 +2519,6 @@ fun InlineModelPreview(
                     "InlineModelPreview",
                     "recolor mapping=$colorMapping " +
                         "extruderColors=$extruderColors paletteSize=${palette.size} " +
-                        "canonical=${canonicalPalette != null} " +
                         "hasMeshColors=${m.hasPerVertexColor}"
                 )
                 v.recolorMesh(palette)
