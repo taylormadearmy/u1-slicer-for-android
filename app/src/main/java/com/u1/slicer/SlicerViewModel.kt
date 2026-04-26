@@ -4033,13 +4033,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             //                                            tool secondaries)
             //   else                                  → inherit source's
             //                                            volumeExtruders
+            // Force the synthetic shape: original code used a List `.size > 1`
+            // check, NOT a distinct-set check — so a plate with 2 objects both
+            // on extruder 1 would also force "true". Synthetic {1, 2} preserves
+            // that exact (potentially over-permissive) semantic.
             val mergedVolumeExtruders: Set<Int> = when {
-                sourcePlateObjectExtruders.size > 1 ->
-                    sourcePlateObjectExtruders.filter { it > 0 }.toSet()
-                        .ifEmpty { setOf(1, 2) }  // synth ≥2 distinct so derived predicate is true
-                isHueforgePlate ->
-                    sourcePlateObjectExtruders.filter { it > 0 }.toSet().take(1).toSet()
-                        .ifEmpty { setOf(1) }
+                sourcePlateObjectExtruders.size > 1 -> setOf(1, 2)
+                isHueforgePlate -> setOf(1)
                 else -> sourceInfo.volumeExtruders
             }
             return plateInfo.copy(
