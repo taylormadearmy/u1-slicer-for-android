@@ -4650,8 +4650,10 @@ internal fun computeExpandedGcodeRemap(
     if (embeddedFilamentCount <= 0) return null
     // Only useful when the embed was bumped beyond the distinct-slot count;
     // otherwise the existing semmColorPermutation / toolRemapSlots logic
-    // keeps the same final mapping with less plumbing.
-    val distinctSlots = colorMapping.distinct().size
+    // keeps the same final mapping with less plumbing. Out-of-range entries
+    // (anything outside 0..3) are not real slots — exclude from the count
+    // so a stray invalid index does not suppress the expansion.
+    val distinctSlots = colorMapping.filter { it in 0..3 }.distinct().size
     if (embeddedFilamentCount <= distinctSlots) return null
     // The slicer emits T0..T(embeddedFilamentCount-1) for the N embedded
     // filaments in order. Drive the per-filament remap directly off the
