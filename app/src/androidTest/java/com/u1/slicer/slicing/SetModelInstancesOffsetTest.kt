@@ -59,8 +59,88 @@ class SetModelInstancesOffsetTest {
     }
 
     /**
-     * Reproduce the calicube #4 path: load STL, scale up, place multiple copies in a
-     * known grid, slice, parse G-code minX. Compare to expected = position[leftmost].
+     * Reproduce PM bug #4: calib-cube-10-dual-colour-merged.3mf at the user's
+     * settings (scale 2.5793, 7 copies). Captures positions sent to setModelInstances,
+     * native's stored offsets, and G-code bounds. Logs everything via OffsetDiag tag
+     * even on failure so the diagnostic is visible without re-running.
+     *
+     * Stays in 1-copy + 1.5x form first to avoid OOM; once we have a baseline shape
+     * we can scale up.
+     */
+    @Test
+    fun calicubeScaleSingleCopy_offsetMatchesGcodeMinX() {
+        val file = File(cacheDir, "calib-cube-10-dual-colour-merged.3mf")
+        assetContext.assets.open("calib-cube-10-dual-colour-merged.3mf").use {
+            it.copyTo(file.outputStream())
+        }
+        // The 3MF embeds a Bambu profile but for the offset diagnostic we just want
+        // the raw mesh + setModelScale + setModelInstances → slice path. Loading the
+        // 3MF directly via NativeLibrary.loadModel exercises the same arrange code.
+        assertTrue("loadModel calicube", lib.loadModel(file.absolutePath))
+
+        val mi = lib.getModelInfo()
+        assertNotNull("getModelInfo", mi)
+        Log.i("OffsetDiag", "calicube modelInfo: size=${mi!!.sizeX}x${mi.sizeY}x${mi.sizeZ}mm")
+
+        val scale = 1.5f
+        assertTrue("setModelScale", lib.setModelScale(scale, scale, scale))
+
+        val scaledSizeX = mi.sizeX * scale
+        val scaledSizeY = mi.sizeY * scale
+        Log.i("OffsetDiag", "calicube scaledSize: ${scaledSizeX}x${scaledSizeY}mm")
+
+        val originX = 30f
+        val originY = 40f
+        val positions = floatArrayOf(originX, originY)
+        Log.i("OffsetDiag", "calicube requested positions=${positions.toList()}")
+        assertTrue("setModelInstances", lib.setModelInstances(positions))
+
+        val storedOffsets = lib.getInstanceOffsets()
+        Log.i("OffsetDiag", "calicube storedOffsets=${storedOffsets.toList()}")
+        Log.i("OffsetDiag", "calicube expected stored.x = pos - sf*meshBB.min.x — sf=${scale} ; if mesh is centered with min.x=-${mi.sizeX / 2}, expect ${originX + scale * mi.sizeX / 2}")
+
+        val result = lib.slice(SliceConfig().copy(extruderCount = 1))
+        assertNotNull("slice", result)
+        assertTrue("slice success: ${result!!.errorMessage}", result.success)
+        val gcode = File(result.gcodePath).readText()
+        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
+        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
+            .filter { it > 0f }.toList()
+        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
+        val gcodeMaxX = if (xs.isNotEmpty()) xs.max() else Float.NaN
+        Log.i("OffsetDiag", "calicube gcodeBounds: x=[$gcodeMinX, $gcodeMaxX]")
+        Log.i("OffsetDiag", "calicube expected: minX=$originX")
+        // Copy G-code to a stable, persistent path so we can inspect it post-teardown.
+        val keepPath = File(targetContext.cacheDir, "calicube_diag.gcode")
+        File(result.gcodePath).copyTo(keepPath, overwrite = true)
+        Log.i("OffsetDiag", "calicube gcode persisted to ${keepPath.absolutePath}")
+        // Also log the first 30 G1 X moves so we can read them straight out of logcat.
+        val firstMoves = Regex("""^G[01]\s+(?:[^\n;]*?\b)X(-?[\d.]+)[^\n;]*?\bY(-?[\d.]+)""")
+            .findAll(gcode)
+            .take(30)
+            .map { it.value.trim() }
+            .toList()
+        firstMoves.forEachIndexed { i, line -> Log.i("OffsetDiag", "calicube g1[$i]: $line") }
+
+        // Soft assertion — log diagnostic on either branch so we capture the data.
+        if (abs(gcodeMinX - originX) > 5f) {
+            Log.e("OffsetDiag", "calicube REGRESSION: gcodeMinX=$gcodeMinX vs requested=$originX (diff=${gcodeMinX - originX}mm)")
+        }
+        assertTrue(
+            "calicube gcodeMinX ($gcodeMinX) should match requested origin ($originX) ±5mm. " +
+                "stored offset.x=${storedOffsets.getOrNull(0)} (storedOffset - pos = ${storedOffsets.getOrNull(0)?.minus(originX)}mm).",
+            abs(gcodeMinX - originX) <= 5f
+        )
+    }
+
+    /**
+     * Reproduce PM bug #4: calib-cube-10-dual-colour-merged.3mf at the user's
+     * settings (scale 2.5793, 7 copies). Captures positions sent to setModelInstances,
+     * native's stored offsets, and G-code bounds. Logs everything via OffsetDiag tag
+     * even on failure so the diagnostic is visible without re-running.
+     *
+     * Stays in 1-copy + 1.5x form first to avoid OOM; once we have a baseline shape
+     * we can scale up.
      */
     @Test
     fun stlScaleMultiCopy_offsetMatchesGcodeMinX() {

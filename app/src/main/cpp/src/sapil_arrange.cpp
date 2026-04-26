@@ -70,11 +70,19 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
         for (auto* obj : model.objects) {
             if (obj->instances.empty()) continue;
 
-            // Compute mesh-space bounding box (union of all volumes, before instance transform)
-            Slic3r::BoundingBoxf3 meshBB;
-            for (const auto* vol : obj->volumes) {
-                meshBB.merge(vol->mesh().bounding_box());
-            }
+            // Mesh-space bounding box: union of all model volumes' meshes after each
+            // volume's local transform (`v->get_matrix()`) is applied. Multi-volume
+            // objects (dual-colour merged calicube, compound Bambu objects) place
+            // their volumes at distinct positions within the object via per-volume
+            // transforms, so a raw `vol->mesh().bounding_box()` union under-reports
+            // the true mesh-space AABB and the lower-left convention math below
+            // ends up off by the difference.
+            //
+            // Slic3r's `ModelObject::raw_mesh_bounding_box()` does the right merge
+            // (`v->mesh().transformed_bounding_box(v->get_matrix())`) and is what
+            // the slicer itself uses; reusing it here keeps the offset math in
+            // lockstep with where the slicer actually places the geometry.
+            const Slic3r::BoundingBoxf3& meshBB = obj->raw_mesh_bounding_box();
 
             // Save the transformation before clearing.
             // Also read the per-axis scale so the mesh-space min can be scaled correctly.
