@@ -136,21 +136,28 @@ class HardcodedExtruderCapTest {
         )
     }
 
-    @Ignore("Phase 2 refactor — §4 Step 2: extCount parameter retirement")
     @Test
     fun slicerViewModel_doesNotPassExtCount_toFileFilamentSpaceFunctions() {
         val src = readSource("SlicerViewModel.kt")
-        // After §4 Step 2 retires `extCount` as a parameter name (split into
-        // `filamentCount` and `slotCount`), the symbol should not appear
-        // outside the SliceConfig field name. Permit the SliceConfig field
-        // (cfg.extruderCount → val extCount = ...) but flag passes as
-        // function args.
-        val violations = Regex("""\bextCount\s*[,)]""").findAll(src).toList()
+        // §4 Step 2 retired `extCount` as a parameter name (split into
+        // `slotCount` and `filamentCount`). The diagnostics map key
+        // `"extCount" to slotCount` survives as a string literal for log
+        // backwards-compatibility — it is not a function argument and the
+        // regex below excludes string-literal contexts.
+        val violations = src.lines()
+            .withIndex()
+            .filter { (_, line) ->
+                val match = Regex("""\bextCount\s*[,)=]""").find(line) ?: return@filter false
+                // Exclude `"extCount"` string-literal context (the diagnostics key).
+                val pre = line.substring(0, match.range.first)
+                !pre.endsWith("\"")
+            }
         assertTrue(
             "SlicerViewModel must not pass `extCount` as a function argument — " +
                 "the parameter conflates file-filament-space and slot-space, " +
                 "which is the root smell behind the §1 bug class. Architecture " +
-                "review §4 Step 2. Found ${violations.size} occurrences.",
+                "review §4 Step 2. Found ${violations.size} occurrences: " +
+                "${violations.take(3).map { (i, _) -> "line ${i + 1}" }}",
             violations.isEmpty()
         )
     }

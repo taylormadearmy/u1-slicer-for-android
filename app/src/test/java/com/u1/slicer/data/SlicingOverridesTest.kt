@@ -311,14 +311,14 @@ class SlicingOverridesTest {
      * Regression: buildProfileOverrides() used plain resolve() which returns false for
      * ORCA_DEFAULT — so the embedded profile got enable_prime_tower=0, overriding the JNI
      * wipeTowerEnabled=true → 0 T1 commands even for multi-extruder slices.
-     * MUST FAIL on the original code path; passes once resolvePrimeTower() guards extCount.
+     * MUST FAIL on the original code path; passes once resolvePrimeTower() guards slotCount.
      */
     @Test
     fun `resolvePrimeTower ORCA_DEFAULT preserves prime tower for multi-extruder`() {
         val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.ORCA_DEFAULT))
         assertTrue(
             "Multi-extruder embed must have prime tower enabled regardless of ORCA_DEFAULT mode",
-            overrides.resolvePrimeTower(extCount = 2, cfgWipeTower = true)
+            overrides.resolvePrimeTower(slotCount = 2, cfgWipeTower = true)
         )
     }
 
@@ -327,7 +327,7 @@ class SlicingOverridesTest {
         val overrides = SlicingOverrides() // all USE_FILE
         assertTrue(
             "Multi-extruder embed with USE_FILE must keep prime tower enabled",
-            overrides.resolvePrimeTower(extCount = 2, cfgWipeTower = true)
+            overrides.resolvePrimeTower(slotCount = 2, cfgWipeTower = true)
         )
     }
 
@@ -336,7 +336,7 @@ class SlicingOverridesTest {
         val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.ORCA_DEFAULT))
         assertFalse(
             "Single-extruder embed with ORCA_DEFAULT should disable prime tower",
-            overrides.resolvePrimeTower(extCount = 1, cfgWipeTower = false)
+            overrides.resolvePrimeTower(slotCount = 1, cfgWipeTower = false)
         )
     }
 
@@ -345,7 +345,7 @@ class SlicingOverridesTest {
         val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.OVERRIDE, false))
         assertFalse(
             "Explicit OVERRIDE false must be respected even for multi-extruder",
-            overrides.resolvePrimeTower(extCount = 2, cfgWipeTower = true)
+            overrides.resolvePrimeTower(slotCount = 2, cfgWipeTower = true)
         )
     }
 
@@ -354,7 +354,7 @@ class SlicingOverridesTest {
         val overrides = SlicingOverrides(primeTower = OverrideValue(OverrideMode.OVERRIDE, true))
         assertTrue(
             "OVERRIDE true should return true for single-extruder too",
-            overrides.resolvePrimeTower(extCount = 1, cfgWipeTower = false)
+            overrides.resolvePrimeTower(slotCount = 1, cfgWipeTower = false)
         )
     }
 
@@ -426,7 +426,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides omits support keys for Bambu file with USE_FILE mode`() {
         val cfg = SliceConfig(supportEnabled = false)
         val ov = SlicingOverrides() // defaults to USE_FILE for supports
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = true)
         assertFalse("enable_support should be omitted for Bambu USE_FILE", result.containsKey("enable_support"))
         assertFalse("support_threshold_angle should be omitted for Bambu USE_FILE", result.containsKey("support_threshold_angle"))
     }
@@ -435,7 +435,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides includes support keys for STL file with USE_FILE mode`() {
         val cfg = SliceConfig(supportEnabled = true, supportAngle = 45f)
         val ov = SlicingOverrides() // USE_FILE
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("1", result["enable_support"])
         assertEquals("45", result["support_threshold_angle"])
     }
@@ -444,7 +444,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides includes support keys when user sets OVERRIDE mode on Bambu file`() {
         val cfg = SliceConfig(supportEnabled = false)
         val ov = SlicingOverrides(supports = OverrideValue(OverrideMode.OVERRIDE, true))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = true)
         assertEquals("1", result["enable_support"])
     }
 
@@ -452,7 +452,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides includes support keys when user sets ORCA_DEFAULT mode on Bambu file`() {
         val cfg = SliceConfig(supportEnabled = true)
         val ov = SlicingOverrides(supports = OverrideValue(OverrideMode.ORCA_DEFAULT, null))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = true)
         assertTrue("enable_support should be present for ORCA_DEFAULT", result.containsKey("enable_support"))
     }
 
@@ -460,7 +460,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides STL with support disabled emits 0`() {
         val cfg = SliceConfig(supportEnabled = false, supportAngle = 30f)
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("0", result["enable_support"])
         assertEquals("30", result["support_threshold_angle"])
     }
@@ -503,7 +503,7 @@ class SlicingOverridesTest {
             supportFilament = OverrideValue(OverrideMode.OVERRIDE, 2),
             supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, 3)
         )
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 4, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 4, hasSourceConfig = false)
         assertEquals("2", result["support_filament"])
         assertEquals("3", result["support_interface_filament"])
     }
@@ -515,7 +515,7 @@ class SlicingOverridesTest {
             supports = OverrideValue(OverrideMode.OVERRIDE, true),
             supportFilament = OverrideValue(OverrideMode.OVERRIDE, 0)
         )
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertFalse("support_filament should be omitted when 0 (default)", result.containsKey("support_filament"))
     }
 
@@ -540,7 +540,7 @@ class SlicingOverridesTest {
         // After B24 Fix 1 resets wipeTowerEnabled=false, the embedded profile must get 0.
         val cfg = SliceConfig(extruderCount = 1, wipeTowerEnabled = false)
         val ov = SlicingOverrides() // all USE_FILE
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals(
             "Single-extruder with wipeTowerEnabled=false should have enable_prime_tower=0",
             "0", result["enable_prime_tower"]
@@ -554,7 +554,7 @@ class SlicingOverridesTest {
         // This documents the passthrough behavior — the ViewModel fix prevents this state.
         val cfg = SliceConfig(extruderCount = 1, wipeTowerEnabled = true)
         val ov = SlicingOverrides() // all USE_FILE
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals(
             "USE_FILE passes through cfgWipeTower value",
             "1", result["enable_prime_tower"]
@@ -567,7 +567,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides sets skirt_height 0 when skirt_loops is 0`() {
         val cfg = SliceConfig(skirtLoops = 0)
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("0", result["skirt_loops"])
         assertEquals("0", result["skirt_height"])
     }
@@ -576,7 +576,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides sets skirt_height 1 when skirt_loops greater than 0`() {
         val cfg = SliceConfig(skirtLoops = 0)
         val ov = SlicingOverrides(skirtLoops = OverrideValue(OverrideMode.OVERRIDE, 3))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("3", result["skirt_loops"])
         assertEquals("1", result["skirt_height"])
     }
@@ -585,7 +585,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides skirt_height 0 when ORCA_DEFAULT skirt_loops resolves to 0`() {
         val cfg = SliceConfig(skirtLoops = 2)
         val ov = SlicingOverrides(skirtLoops = OverrideValue(OverrideMode.ORCA_DEFAULT))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("0", result["skirt_loops"])
         assertEquals("0", result["skirt_height"])
     }
@@ -598,7 +598,7 @@ class SlicingOverridesTest {
         // explicitly set so OrcaSlicer does not add geometry-based brims to small objects.
         val cfg = SliceConfig(brimWidth = 0f)
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = true)
         assertEquals("no_brim", result["brim_type"])
         assertEquals("0.0", result["brim_width"])
     }
@@ -607,7 +607,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides emits manual_brim when brim_width is positive`() {
         val cfg = SliceConfig(brimWidth = 0f)
         val ov = SlicingOverrides(brimWidth = OverrideValue(OverrideMode.OVERRIDE, 5f))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = true)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = true)
         assertEquals("manual_brim", result["brim_type"])
         assertEquals("5.0", result["brim_width"])
     }
@@ -672,7 +672,7 @@ class SlicingOverridesTest {
             topShellLayers = OverrideValue(OverrideMode.OVERRIDE, 5),
             bottomShellLayers = OverrideValue(OverrideMode.OVERRIDE, 4)
         )
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("5", result["top_shell_layers"])
         assertEquals("4", result["bottom_shell_layers"])
     }
@@ -684,7 +684,7 @@ class SlicingOverridesTest {
             topSurfacePattern = OverrideValue(OverrideMode.OVERRIDE, "concentric"),
             bottomSurfacePattern = OverrideValue(OverrideMode.OVERRIDE, "monotonic")
         )
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("concentric", result["top_surface_pattern"])
         assertEquals("monotonic", result["bottom_surface_pattern"])
     }
@@ -693,7 +693,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides emits sparse infill speed when overridden and nonzero`() {
         val cfg = SliceConfig()
         val ov = SlicingOverrides(sparseInfillSpeed = OverrideValue(OverrideMode.OVERRIDE, 200))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("200", result["sparse_infill_speed"])
     }
 
@@ -701,7 +701,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides omits sparse infill speed when zero (auto)`() {
         val cfg = SliceConfig()
         val ov = SlicingOverrides(sparseInfillSpeed = OverrideValue(OverrideMode.OVERRIDE, 0))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertFalse("sparse_infill_speed=0 means auto — must not be emitted", result.containsKey("sparse_infill_speed"))
     }
 
@@ -714,7 +714,7 @@ class SlicingOverridesTest {
             supportInterfaceSpacing = OverrideValue(OverrideMode.OVERRIDE, 0.2f),
             supportSpeed = OverrideValue(OverrideMode.OVERRIDE, 60)
         )
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("0.35", result["support_object_xy_distance"])
         assertEquals("rectilinear", result["support_interface_pattern"])
         assertEquals("0.2", result["support_interface_spacing"])
@@ -725,7 +725,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides omits support speed when zero (auto)`() {
         val cfg = SliceConfig()
         val ov = SlicingOverrides(supportSpeed = OverrideValue(OverrideMode.OVERRIDE, 0))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertFalse("support_speed=0 means auto — must not be emitted", result.containsKey("support_speed"))
     }
 
@@ -739,7 +739,7 @@ class SlicingOverridesTest {
             treeSupportBranchDistance = OverrideValue(OverrideMode.OVERRIDE, 6.0f),
             treeSupportBranchDiameter = OverrideValue(OverrideMode.OVERRIDE, 2.5f)
         )
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertEquals("45", result["tree_support_branch_angle"])
         assertEquals("6.0", result["tree_support_branch_distance"])
         assertEquals("2.5", result["tree_support_branch_diameter"])
@@ -753,7 +753,7 @@ class SlicingOverridesTest {
             supportType = OverrideValue(OverrideMode.OVERRIDE, "normal(auto)"),
             treeSupportBranchAngle = OverrideValue(OverrideMode.OVERRIDE, 45)
         )
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
         assertFalse("tree params must not appear for normal support", result.containsKey("tree_support_branch_angle"))
     }
 
@@ -876,7 +876,7 @@ class SlicingOverridesTest {
         // but passing usedSlots.distinct().size (3) correctly configures a 3-extruder job.
         val cfg = SliceConfig(nozzleTemp = 220)
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 3, hasSourceConfig = false)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 3, hasSourceConfig = false)
         @Suppress("UNCHECKED_CAST")
         val temps = result["nozzle_temperature"] as? List<*>
         assertEquals("nozzle_temperature should have 3 entries for 3-extruder SEMM job", 3, temps?.size)
@@ -930,7 +930,7 @@ class SlicingOverridesTest {
     fun `wipeTowerRotationAngle OVERRIDE emitted in buildProfileOverrides`() {
         val cfg = SliceConfig(wipeTowerEnabled = true, extruderCount = 2)
         val ov = SlicingOverrides(wipeTowerRotationAngle = OverrideValue(OverrideMode.OVERRIDE, 45f))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 2)
         assertEquals("45.0", result["wipe_tower_rotation_angle"])
     }
 
@@ -938,7 +938,7 @@ class SlicingOverridesTest {
     fun `primeTowerWidth OVERRIDE emitted in buildProfileOverrides`() {
         val cfg = SliceConfig(wipeTowerEnabled = true, wipeTowerWidth = 60f, extruderCount = 2)
         val ov = SlicingOverrides(primeTowerWidth = OverrideValue(OverrideMode.OVERRIDE, 20f))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 2)
         assertEquals("20.0", result["prime_tower_width"])
     }
 
@@ -981,7 +981,7 @@ class SlicingOverridesTest {
         // After fix, toggling off sets OVERRIDE false — resolvePrimeTower guard is bypassed
         val cfg = SliceConfig(wipeTowerEnabled = true)
         val ov = SlicingOverrides(primeTower = OverrideValue(OverrideMode.OVERRIDE, false))
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 2)
         assertEquals("enable_prime_tower must be 0 for explicit OVERRIDE false", "0", result["enable_prime_tower"])
     }
 
@@ -992,7 +992,7 @@ class SlicingOverridesTest {
         val cfg = SliceConfig()
         val ov = SlicingOverrides()
         val types = listOf("PETG", "ABS", "TPU", "PLA")
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 4, filamentTypes = types)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 4, filamentTypes = types)
         @Suppress("UNCHECKED_CAST")
         val ft = result["filament_type"] as List<String>
         assertEquals(listOf("PETG", "ABS", "TPU", "PLA"), ft)
@@ -1002,7 +1002,7 @@ class SlicingOverridesTest {
     fun `buildProfileOverrides filament_type defaults to PLA when no types given`() {
         val cfg = SliceConfig()
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 2)
         @Suppress("UNCHECKED_CAST")
         val ft = result["filament_type"] as List<String>
         assertEquals(listOf("PLA", "PLA"), ft)
@@ -1013,7 +1013,7 @@ class SlicingOverridesTest {
         val cfg = SliceConfig()
         val ov = SlicingOverrides()
         val types = listOf("PETG")
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 4, filamentTypes = types)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 4, filamentTypes = types)
         @Suppress("UNCHECKED_CAST")
         val ft = result["filament_type"] as List<String>
         assertEquals(listOf("PETG", "PLA", "PLA", "PLA"), ft)
@@ -1022,11 +1022,11 @@ class SlicingOverridesTest {
     // --- Nozzle temp: extruderTemps populated by applyMultiColorAssignments ---
 
     @Test
-    fun `nozzle_temperature uses extruderTemps when size matches extCount`() {
+    fun `nozzle_temperature uses extruderTemps when size matches slotCount`() {
         // PETG E1 (235°C) + PLA E2 (210°C) — the normal 2-colour case
         val cfg = SliceConfig(extruderTemps = intArrayOf(235, 210))
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 2)
         @Suppress("UNCHECKED_CAST")
         val temps = result["nozzle_temperature"] as List<String>
         assertEquals(listOf("235", "210"), temps)
@@ -1037,7 +1037,7 @@ class SlicingOverridesTest {
         // extruderTemps not yet set (e.g. stale config) → falls back to cfg.nozzleTemp
         val cfg = SliceConfig(nozzleTemp = 210, extruderTemps = intArrayOf())
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 2)
         @Suppress("UNCHECKED_CAST")
         val temps = result["nozzle_temperature"] as List<String>
         assertEquals(listOf("210", "210"), temps)
@@ -1047,7 +1047,7 @@ class SlicingOverridesTest {
     fun `nozzle_temperature single-color PETG uses 235 when extruderTemps set`() {
         val cfg = SliceConfig(extruderTemps = intArrayOf(235))
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1)
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1)
         @Suppress("UNCHECKED_CAST")
         val temps = result["nozzle_temperature"] as List<String>
         assertEquals(listOf("235"), temps)
@@ -1059,7 +1059,7 @@ class SlicingOverridesTest {
         // slice fires with fresh nozzleTemps=[235] from buildProfileOverrides at slice time.
         val cfg = SliceConfig(extruderTemps = intArrayOf(210))  // stale load-time value
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 1, nozzleTemps = listOf(235))
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, nozzleTemps = listOf(235))
         @Suppress("UNCHECKED_CAST")
         val temps = result["nozzle_temperature"] as List<String>
         assertEquals(listOf("235"), temps)
@@ -1069,7 +1069,7 @@ class SlicingOverridesTest {
     fun `nozzleTemps param overrides stale extruderTemps — multi-colour case`() {
         val cfg = SliceConfig(extruderTemps = intArrayOf(210, 210))  // stale
         val ov = SlicingOverrides()
-        val result = buildProfileOverridesImpl(cfg, ov, extCount = 2, nozzleTemps = listOf(235, 270))
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 2, nozzleTemps = listOf(235, 270))
         @Suppress("UNCHECKED_CAST")
         val temps = result["nozzle_temperature"] as List<String>
         assertEquals(listOf("235", "270"), temps)

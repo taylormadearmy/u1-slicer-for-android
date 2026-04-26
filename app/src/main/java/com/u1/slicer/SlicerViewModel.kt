@@ -1400,7 +1400,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // Compact extruder count: use the smaller of detected colors and
                         // physical extruders (Snapmaker U1 has 4).  Compact mode slices as
                         // N-extruder and G-code post-processing remaps T-commands to physical slots.
-                        val extCount = mfInfo.detectedExtruderCount.coerceIn(1, 4)
+                        val slotCount = mfInfo.detectedExtruderCount.coerceIn(1, 4)
                         // Compute tower position that avoids the model
                         val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
                         val estimatedTowerDepth = WipeTowerDepthEstimator.estimateDepth(info.sizeZ)
@@ -1410,7 +1410,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             towerDepth = estimatedTowerDepth
                         )
                         _config.value = _config.value.copy(
-                            extruderCount = extCount,
+                            extruderCount = slotCount,
                             wipeTowerEnabled = true,
                             wipeTowerX = towerPos.first,
                             wipeTowerY = towerPos.second
@@ -1420,7 +1420,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         _colorMapping.value = initialMapping
                         _layerToolOnly.value = false
                         applyMultiColorAssignments(initialMapping, presets, filaments.value)
-                        Log.i("SlicerVM", "Auto-applied color mapping: $extCount extruders, mapping=$initialMapping")
+                        Log.i("SlicerVM", "Auto-applied color mapping: $slotCount extruders, mapping=$initialMapping")
                     }
                 } else {
                     _colorMapping.value = null
@@ -1472,7 +1472,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val usedSlots = modelColorToExtruder.distinct().sorted()
         // Compact extruder count: number of unique slots used, capped at 4 (U1 max).
         // G-code post-processing remaps T-commands to physical slots when non-identity.
-        val extCount = usedSlots.size.coerceIn(1, 4)
+        val slotCount = usedSlots.size.coerceIn(1, 4)
         // SEMM (paint-based) models: extruderRemap in model_settings.config only affects
         // B48 fix: SEMM models must NOT remap G-code tool indices.  The slicer maps
         // model colours → physical extruders internally via multi_material_segmentation.
@@ -1490,13 +1490,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             null  // H2C: slicer already produces physical tool indices
         } else if (hasPaintData) {
             // Normal SEMM: may need compaction of sparse slots
-            val compactSlots = usedSlots.take(extCount)
-            val isIdentity = compactSlots == (0 until extCount).toList()
+            val compactSlots = usedSlots.take(slotCount)
+            val isIdentity = compactSlots == (0 until slotCount).toList()
             if (isIdentity) null else compactSlots
         } else {
             // Per-object: extruderRemap in 3MF handles non-contiguous / non-identity slot order
-            val compactSlots = usedSlots.take(extCount)
-            val isIdentity = compactSlots == (0 until extCount).toList()
+            val compactSlots = usedSlots.take(slotCount)
+            val isIdentity = compactSlots == (0 until slotCount).toList()
             if (isIdentity) null else compactSlots
         }
         // B64: compute SEMM colour permutation for post-slice G-code remapping.
@@ -1517,7 +1517,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             hasPaintData = hasPaintData,
             isH2cStyle = isH2cStyle
         )
-        val temps = IntArray(extCount) { i ->
+        val temps = IntArray(slotCount) { i ->
             val slotIndex = usedSlots.getOrElse(i) { i }
             val preset = extruderPresets.firstOrNull { it.index == slotIndex }
             val profileId = preset?.filamentProfileId
@@ -1526,17 +1526,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         // Recompute wipe tower position if multi-extruder (unless user already placed it)
         val mi = lastModelInfo
-        if (extCount > 1 && mi != null && mi.sizeX > 0f && customWipeTowerPos == null) {
+        if (slotCount > 1 && mi != null && mi.sizeX > 0f && customWipeTowerPos == null) {
             val objPos = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, _copyCount.value)
             val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
                 objPos, mi.sizeX, mi.sizeY, _config.value.wipeTowerWidth
             )
             val filamentLabel = resolveFilamentTypeLabelFromMapping(modelColorToExtruder, extruderPresets)
             _config.value = _config.value.copy(
-                extruderCount = extCount,
+                extruderCount = slotCount,
                 extruderTemps = temps,
-                extruderRetractLength = FloatArray(extCount) { _config.value.retractLength },
-                extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
+                extruderRetractLength = FloatArray(slotCount) { _config.value.retractLength },
+                extruderRetractSpeed = FloatArray(slotCount) { _config.value.retractSpeed },
                 wipeTowerEnabled = true,
                 wipeTowerX = towerPos.first,
                 wipeTowerY = towerPos.second,
@@ -1547,11 +1547,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             val filamentLabel = resolveFilamentTypeLabelFromMapping(modelColorToExtruder, extruderPresets)
             _config.value = _config.value.copy(
-                extruderCount = extCount,
+                extruderCount = slotCount,
                 extruderTemps = temps,
-                extruderRetractLength = FloatArray(extCount) { _config.value.retractLength },
-                extruderRetractSpeed = FloatArray(extCount) { _config.value.retractSpeed },
-                wipeTowerEnabled = extCount > 1,
+                extruderRetractLength = FloatArray(slotCount) { _config.value.retractLength },
+                extruderRetractSpeed = FloatArray(slotCount) { _config.value.retractSpeed },
+                wipeTowerEnabled = slotCount > 1,
                 filamentType = filamentLabel
             )
         }
@@ -1563,13 +1563,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // model colors.
         val fullColors = buildPreviewSlotColors(extruderPresets, usedSlots)
         _activeExtruderColors.value = fullColors
-        Log.i("SlicerVM", "Applied color mapping: $extCount extruders used=${usedSlots}, remap=${toolRemapSlots}, temps=${temps.toList()}, colors=$fullColors")
+        Log.i("SlicerVM", "Applied color mapping: $slotCount extruders used=${usedSlots}, remap=${toolRemapSlots}, temps=${temps.toList()}, colors=$fullColors")
         diagnostics.recordEvent(
             "color_mapping_applied",
             mapOf(
                 "colorMapping" to modelColorToExtruder,
                 "usedSlots" to usedSlots,
-                "extCount" to extCount,
+                "extCount" to slotCount,
                 "toolRemapSlots" to toolRemapSlots,
                 "isIdentity" to (toolRemapSlots == null),
                 "semmColorPermutation" to semmColorPermutation,
@@ -1833,7 +1833,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     private fun embedProfile(file: java.io.File, info: ThreeMfInfo, outputDir: java.io.File, plateId: Int? = null): java.io.File {
         val cfg = _config.value
-        val extCount = cfg.extruderCount.coerceAtLeast(1)
+        val slotCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
         val colorMapping = _colorMapping.value
         // B95: pass max source filament index so plates with paint_color attributes
@@ -1843,7 +1843,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // dropped and the resulting G-code contains only the object-default tool.
         val maxSourceFilamentIndex = info.usedExtruderIndices.maxOrNull() ?: 0
         val targetCount = computeEmbedTargetCount(
-            colorMapping, info.hasPaintData, usedSlots, extCount,
+            colorMapping, info.hasPaintData, usedSlots, slotCount,
             hasMultiExtruderAssignments = info.hasMultiExtruderAssignments,
             maxSourceFilamentIndex = maxSourceFilamentIndex
         )
@@ -1881,11 +1881,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
     }
 
-    private fun buildProfileOverrides(cfg: SliceConfig, extCount: Int, usedSlots: List<Int>? = null, hasSourceConfig: Boolean = false): Map<String, Any> {
+    private fun buildProfileOverrides(
+        cfg: SliceConfig,
+        slotCount: Int,
+        usedSlots: List<Int>? = null,
+        hasSourceConfig: Boolean = false,
+    ): Map<String, Any> {
         val originalPresets = extruderPresets.value
         val presets = applyFilamentOverridesToPresets(originalPresets)
-        val types = presets.sortedBy { it.index }.map { it.materialType }
-        val temps = computeFreshExtruderTemps(extCount, usedSlots, presets, filaments.value).toList()
+        val slotTypes = presets.sortedBy { it.index }.map { it.materialType }
+        val slotTemps = computeFreshExtruderTemps(slotCount, usedSlots, presets, filaments.value).toList()
 
         // Phase 2.7 final: always derive filament_type / nozzle_temperature
         // from the canonical filament list when available, so per-file-
@@ -1900,12 +1905,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             buildPerFilamentTypeAndTemp(it, _filamentOverrides.value, originalPresets)
         }
 
-        val finalTypes = perFilamentArrays?.first ?: types
-        val finalTemps = perFilamentArrays?.second ?: temps
+        val finalTypes = perFilamentArrays?.first ?: slotTypes
+        val finalTemps = perFilamentArrays?.second ?: slotTemps
+        // Phase 2 §4 Step 2 — file-filament space is canonical.size when a
+        // canonical list exists, otherwise it collapses to slot space.
+        val filamentCount = finalTypes.size.coerceAtLeast(slotCount)
 
         return buildProfileOverridesImpl(
-            cfg, slicingOverrides.value, extCount, hasSourceConfig,
-            filamentTypes = finalTypes, nozzleTemps = finalTemps,
+            cfg = cfg,
+            ov = slicingOverrides.value,
+            slotCount = slotCount,
+            filamentCount = filamentCount,
+            hasSourceConfig = hasSourceConfig,
+            filamentTypes = finalTypes,
+            nozzleTemps = finalTemps,
         )
     }
 
@@ -4185,28 +4198,31 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 internal fun buildProfileOverridesImpl(
     cfg: SliceConfig,
     ov: SlicingOverrides,
-    extCount: Int,
+    slotCount: Int,
+    filamentCount: Int = slotCount,
     hasSourceConfig: Boolean = false,
     filamentTypes: List<String>? = null,
-    nozzleTemps: List<Int>? = null
+    nozzleTemps: List<Int>? = null,
 ): Map<String, Any> {
-    // nozzleTemps (fresh from slice-time preset lookup) takes priority over the stale
-    // cfg.extruderTemps stored at model-load time.  Falls back to cfg.extruderTemps if
-    // size matches, otherwise to cfg.nozzleTemp (unit-test / legacy path).
+    // Phase 2 §4 Step 2 — `slotCount` is the number of physical extruder
+    // slots used (capped at 4 for U1); `filamentCount` is the file's
+    // filament-list size (uncapped). Per-filament arrays
+    // (nozzle_temperature, filament_type) are sized to `filamentCount`.
+    // Per-slot arrays (wipe_tower_x/y, prime_tower) are sized to
+    // `slotCount`. Mixing the two is the root smell behind the §1 bug
+    // class — keep them separate at every site below.
     //
-    // Phase 2.7 — when nozzleTemps is LARGER than extCount (multi-filament file
-    // sliced with N>extCount filament_colour entries — H2C benchy with 7 colours
-    // mapped to 4 slots), use the full size so per-file-filament temps reach the
-    // slicer. Truncating to extCount drops the override material temps.
+    // nozzleTemps (fresh from slice-time preset lookup) takes priority
+    // over the stale cfg.extruderTemps stored at model-load time. Sized
+    // to the canonical filament list when supplied; the slot-cap fallback
+    // chain only fires when no per-filament array reached us.
     val temps: MutableList<String> = when {
-        nozzleTemps != null && nozzleTemps.size > extCount ->
+        nozzleTemps != null ->
             nozzleTemps.map { it.toString() }.toMutableList()
-        nozzleTemps != null && nozzleTemps.size >= extCount ->
-            nozzleTemps.take(extCount).map { it.toString() }.toMutableList()
-        cfg.extruderTemps.size >= extCount ->
-            cfg.extruderTemps.take(extCount).map { it.toString() }.toMutableList()
+        cfg.extruderTemps.size >= filamentCount ->
+            cfg.extruderTemps.take(filamentCount).map { it.toString() }.toMutableList()
         else ->
-            MutableList(extCount) { cfg.nozzleTemp.toString() }
+            MutableList(filamentCount) { cfg.nozzleTemp.toString() }
     }
 
     val defaults = SlicingOverrides.ORCA_DEFAULTS
@@ -4254,7 +4270,7 @@ internal fun buildProfileOverridesImpl(
     val brimWidth = resolve(ov.brimWidth, cfg.brimWidth, "brimWidth")
     val skirtLoops = resolve(ov.skirtLoops, cfg.skirtLoops, "skirtLoops")
     val bedTemp = resolve(ov.bedTemp, cfg.bedTemp, "bedTemp")
-    val primeTower = ov.resolvePrimeTower(extCount, cfg.wipeTowerEnabled)
+    val primeTower = ov.resolvePrimeTower(slotCount, cfg.wipeTowerEnabled)
 
     val primeVolume = resolve(ov.primeVolume, 45, "primeVolume")
     val primeTowerBrimWidth = resolve(ov.primeTowerBrimWidth, 3f, "primeTowerBrimWidth")
@@ -4291,22 +4307,18 @@ internal fun buildProfileOverridesImpl(
         "skirt_height" to if (skirtLoops > 0) "1" else "0",
         "enable_prime_tower" to if (primeTower) "1" else "0",
         "prime_tower_width" to primeTowerWidth.toString(),
-        "wipe_tower_x" to MutableList(extCount) { cfg.wipeTowerX.toString() },
-        "wipe_tower_y" to MutableList(extCount) { cfg.wipeTowerY.toString() },
+        "wipe_tower_x" to MutableList(slotCount) { cfg.wipeTowerX.toString() },
+        "wipe_tower_y" to MutableList(slotCount) { cfg.wipeTowerY.toString() },
         "prime_volume" to primeVolume.toString(),
         "prime_tower_brim_width" to primeTowerBrimWidth.toString(),
         "prime_tower_brim_chamfer" to if (primeTowerBrimChamfer) "1" else "0",
         "prime_tower_brim_chamfer_max_width" to primeTowerChamferMaxWidth.toString(),
         "wipe_tower_rotation_angle" to wipeTowerRotationAngle.toString(),
-        // B63: filament_type per extruder — resolved from user's extruder presets.
-        // Phase 2.7: when filamentTypes is larger than extCount (multi-filament
-        // file with per-filament overrides), emit the full N-entry list so the
-        // override material reaches the slicer for every filament.
-        "filament_type" to run {
-            val size = maxOf(extCount, filamentTypes?.size ?: 0)
-            MutableList(size) { i ->
-                filamentTypes?.getOrNull(i) ?: "PLA"
-            }
+        // B63: filament_type per file filament. Sized to filamentCount so
+        // per-canonical-filament overrides survive even when slotCount is
+        // smaller (H2C benchy: filamentCount=7, slotCount=4).
+        "filament_type" to MutableList(filamentCount) { i ->
+            filamentTypes?.getOrNull(i) ?: "PLA"
         }
     )
 

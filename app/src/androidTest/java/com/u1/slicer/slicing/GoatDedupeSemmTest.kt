@@ -41,17 +41,17 @@ class GoatDedupeSemmTest {
         return file
     }
 
-    private fun makeConfig(extCount: Int) = SliceConfig(
+    private fun makeConfig(slotCount: Int) = SliceConfig(
         layerHeight = 0.2f,
         firstLayerHeight = 0.2f,
         fillDensity = 0.15f,
         perimeters = 2,
         supportEnabled = false,
-        extruderCount = extCount,
-        extruderTemps = IntArray(extCount) { 220 },
+        extruderCount = slotCount,
+        extruderTemps = IntArray(slotCount) { 220 },
         nozzleTemp = 220,
         bedTemp = 55,
-        wipeTowerEnabled = extCount > 1,
+        wipeTowerEnabled = slotCount > 1,
         wipeTowerX = 170f,
         wipeTowerY = 140f,
         wipeTowerWidth = 60f
@@ -82,7 +82,7 @@ class GoatDedupeSemmTest {
         assertEquals("Goat must have 4 detected colors", 4, info.detectedColors.size)
 
         // User dedupes: colour 4 onto same slot as colour 3 → [0,1,2,2].
-        // extCount = distinct (3), but targetCount must be 4 after the B76 fix.
+        // slotCount = distinct (3), but targetCount must be 4 after the B76 fix.
         val colorMapping = listOf(0, 1, 2, 2)
         val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
         val sanitized = BambuSanitizer.process(input, outDir, isBambu = info.isBambu)
@@ -94,7 +94,7 @@ class GoatDedupeSemmTest {
         val embedded = embedder.embed(sanitized, config, outDir, info)
 
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
-        val result = lib.slice(makeConfig(extCount = 3))
+        val result = lib.slice(makeConfig(slotCount = 3))
         assertNotNull("slice() must not return null", result)
         result!!
         assertTrue("Goat must slice successfully: ${result.errorMessage}", result.success)

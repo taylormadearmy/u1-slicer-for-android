@@ -998,7 +998,7 @@ class MergeThreeMfInfoTest {
     }
 
     @Test
-    fun `computeEmbedTargetCount falls back to extCount when no remap slots`() {
+    fun `computeEmbedTargetCount falls back to slotCount when no remap slots`() {
         assertEquals(4, computeEmbedTargetCount(colorMapping = null, hasPaintData = false, toolRemapSlots = null, fallbackExtCount = 4))
         assertEquals(1, computeEmbedTargetCount(colorMapping = null, hasPaintData = true, toolRemapSlots = null, fallbackExtCount = 1))
     }
