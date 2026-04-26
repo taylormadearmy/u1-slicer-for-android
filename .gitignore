@@ -25,6 +25,10 @@ CLAUDE.local.md
 E2E_TESTING.local.md
 AGENTS.local.md
 
+# Local-only Claude skills (Kevin's machine-specific device IDs / paths)
+.claude/skills/
+.claude/scheduled_tasks.lock
+
 # Native build artifacts
 app/src/main/cpp/extern/*/build/
 app/src/main/cpp/extern/*/lib/
@@ -56,6 +60,7 @@ app/src/main/cpp/prusaslicer/
 # Investigation artifacts (device screenshots, UI dumps, diagnostics pulls)
 _device_artifacts/
 diagnostics_pulls/
+temp_e2e/
 
 # Repo-root scratch (device pulls, unzip experiments)
 /_*.3mf

@@ -3,7 +3,10 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v1.6.13` (`versionCode 258`)
+
+- **Public release:** `v1.6.13` (`versionCode 258`) — maintained on `release/v1.6.x` branch + `v1.6.13` tag.
+- **`main` baseline:** `v1.7.0-dev` (`versionCode 259`) — Phase 1 of the Bambu via-native-loader refactor merged 2026-04-26. NOT for public consumption; do not publish a GitHub release from `main` until Phase 2 lands.
+- **Phase 2 work:** `feature/phase2-canonical-filaments` branch; design at `docs/superpowers/specs/2026-04-26-canonical-filament-list-design.md`. Phase 2.0 (UX exploration) is the gating first step before any code.
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
