@@ -32,8 +32,8 @@ slice-time mapping makes the whole class impossible by construction.
 |---|---|
 | Slice contract | File's filaments emitted verbatim. No colour remapping at slice time. |
 | User mapping point | At Send to Printer, via a dialog called **"Filament mapping"**. |
-| Prepare screen | Read-only chip strip showing auto-suggested slots + caption *"Final slot mapping on Send →"*. |
-| Send button | Two-stage label: *"Send → Assign Slots → Print"*. |
+| Prepare screen | Editable filament list (matches desktop OrcaSlicer / Bambu Studio Filament panel). Defaults from the file (3MF) or printer-loaded data (STL via `syncFilaments`). Each row: colour swatch + material-type dropdown. **Overrides drive slicing** — the slicer uses the user's chosen material/colour, not the file's defaults. Overrides persist per file. **No slot picker on Prepare** — slots are picked at Send time. |
+| Send button | Two-stage label: *"Map & Print"* / *"Map & Upload"* (telegraphs the upcoming dialog). |
 | Dialog scope | Appears for every file. 1 row for STL/single-colour, N rows for multi-colour. |
 | Auto-suggest source | User's saved extruder presets, via colour-distance match. Same logic as today's `findClosestExtruder`, just at the new moment. |
 | Persistence | Per-file mapping remembered across reopens. Always-visible "Auto-suggest" button to reset. |
@@ -590,6 +590,78 @@ flow.
 User-facing copy uses **"Filament" / "Slot"** consistently; never
 **"colour" / "extruder"** as the identity term, because filament 3 stays
 filament 3 even when its colour is edited.
+
+---
+
+## §7 Prepare-screen reshape (added 2026-04-26)
+
+Captured during the Phase 2.4 smoke-test session — the original brief
+under-described what should happen on Prepare once the slot picker
+moves to Send. The directive crystallised: **mirror desktop
+OrcaSlicer / Bambu Studio's Filament panel.**
+
+### What Prepare shows
+
+A vertical list of filament rows, one per filament in the file's
+canonical list. Each row:
+
+```
+[colour swatch ●]  Filament 1   [PLA ▾]   [edit colour]
+[colour swatch ●]  Filament 2   [PETG ▾]  [edit colour]
+…
+```
+
+- **Colour swatch** — tappable; opens a colour picker. Defaults from
+  the file's `filament_colour` (3MF) or the printer's currently-loaded
+  filament data (STL via `PrinterViewModel.syncFilaments`).
+- **Material-type dropdown** — PLA / PETG / ABS / TPU / etc.
+  Defaults from the file's `filament_type` (3MF) or printer-loaded
+  material (STL).
+- **No slot picker** — slot mapping happens at Send time only.
+- **Read-only count** — N rows match the file's filament count.
+  Adding/removing is deferred (Phase 3+ if requested).
+
+### Where overrides go
+
+**Per-file, persisted.** When the user reopens a file, their previous
+overrides are restored. Storage key is the file hash (matches the
+mapping persistence in §1 Q3).
+
+If a 3MF declares "Filament 1 = yellow PLA" but the user is loading
+green PETG, they override on Prepare → green PETG colour and PETG
+material. The slicer then bakes 240° (PETG temp) into the G-code
+instead of 220° (PLA), and the overridden colour is what the
+Filament mapping dialog shows when picking slots.
+
+### Why this matches desktop precedent
+
+OrcaSlicer and Bambu Studio's Filament panel works exactly this way —
+the file declares filaments; the user can swap any of them out for a
+different material/colour before slicing; the slicer uses the user's
+choices. The U1 just reuses that mental model on a phone form factor.
+
+### Mismatched material handling
+
+When the user maps a filament to a slot in the Send dialog, and the
+slot's `ExtruderPreset.materialType` differs from the filament's
+(possibly overridden) material, surface a small chip on the dialog
+row: *"Slot loaded as PLA, but this filament is PETG"*. Doesn't block
+Send — the user owns the loaded-spool truth.
+
+Going further (a material override in the Send dialog) is Phase 3 if
+beta surfaces a real need.
+
+### Implementation queue
+
+1. Reshape `PrintSetupSection` Compose card to editable rows
+   (colour picker + material-type dropdown). Replaces today's
+   colour-to-slot dropdown.
+2. Wire overrides into `CanonicalFilamentList` — overrides override
+   `FilamentEntry.color` / `materialType` for slicing.
+3. Per-file override persistence (file hash → `Map<Int, Override>`).
+4. STL flow: pull printer-loaded filament data into the canonical
+   list as defaults via the existing `syncFilaments` pipeline.
+5. Material-mismatch chip in Filament mapping dialog rows.
 
 ---
 
