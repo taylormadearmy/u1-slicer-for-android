@@ -1173,13 +1173,24 @@ fun PrepareScreen(
                             rotation = modelRotation,
                             onRotationChange = { viewModel.setModelRotation(it) }
                         )
-                        // Single-color extruder picker (hidden for multi-color models)
+                        // Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour models
+                        // (STL, single-filament 3MF) get a one-row Filament list,
+                        // mirroring the multi-colour PrintSetupSection chip strip.
+                        // Slot picking happens at Send time via the Filament mapping
+                        // dialog (no slot picker on Prepare).
                         if (colorMapping == null && state is SlicerViewModel.SlicerState.ModelLoaded) {
                             val selectedExtruder by viewModel.selectedExtruder.collectAsState()
-                            ExtruderPickerRow(
-                                selectedExtruder = selectedExtruder,
+                            SingleColorFilamentRow(
+                                resolvedFilamentColors = resolvedFilamentColors,
                                 extruderPresets = extruderPresets,
-                                onSelect = { viewModel.setSelectedExtruder(it) }
+                                selectedSlot = selectedExtruder,
+                                onMaterialOverride = { material ->
+                                    viewModel.setFilamentMaterialOverride(0, material)
+                                },
+                                onColorOverride = { color ->
+                                    viewModel.setFilamentColorOverride(0, color)
+                                },
+                                filamentOverrides = filamentOverrides,
                             )
                         }
                         ConfigCard(
@@ -3649,42 +3660,153 @@ fun ScaleSection(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour filament row for STL
+ * and single-filament 3MF on the Prepare screen. Mirrors the multi-colour
+ * PrintSetupSection chip pattern but for one filament. Slot mapping is
+ * NOT picked here; the Filament mapping dialog at Send time owns slot
+ * selection.
+ *
+ * Replaces the legacy `ExtruderPickerRow` (slot-picker FilterChip row)
+ * which was at odds with the Phase 2 vision of slot-pick-at-Send.
+ *
+ * The row exposes:
+ * - Tap-to-edit colour swatch (override the slot's preset colour for
+ *   this print)
+ * - Tap-to-edit material chip (override the slot's preset material for
+ *   this print)
+ * - A caption pointing at the Send dialog for slot mapping
+ */
 @Composable
-fun ExtruderPickerRow(
-    selectedExtruder: Int,
+fun SingleColorFilamentRow(
+    resolvedFilamentColors: List<String>,
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
-    onSelect: (Int) -> Unit
+    selectedSlot: Int,
+    onMaterialOverride: (String?) -> Unit,
+    onColorOverride: (String?) -> Unit,
+    filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride>,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("Extruder:", style = MaterialTheme.typography.bodyMedium)
-        for (i in 0 until 4) {
-            val preset = extruderPresets.firstOrNull { it.index == i }
-            val color = preset?.color?.takeIf { it.isNotBlank() && it != "#FFFFFF" }
-                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
-            val parsedColor = try {
-                Color(android.graphics.Color.parseColor(color))
-            } catch (_: Exception) { Color.Gray }
+    val override = filamentOverrides[0]
+    // Display colour priority: user override → file's resolved → slot's preset.
+    val slotPreset = extruderPresets.firstOrNull { it.index == selectedSlot }
+        ?: extruderPresets.firstOrNull()
+    val effectiveColor = override?.color
+        ?: resolvedFilamentColors.firstOrNull()?.takeIf { it.isNotBlank() }
+        ?: slotPreset?.color
+        ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[0]
+    val materialType = override?.materialType
+        ?: slotPreset?.materialType
+        ?: "PLA"
+    val isColorOverridden = override?.color != null
+    val isMaterialOverridden = override?.materialType != null
 
-            FilterChip(
-                selected = selectedExtruder == i,
-                onClick = { onSelect(i) },
-                label = { Text("E${i + 1}") },
-                leadingIcon = {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .background(parsedColor, androidx.compose.foundation.shape.CircleShape)
+    var editingMaterial by remember { mutableStateOf(false) }
+    var editingColor by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Palette, null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Filament", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+            Text(
+                "Slot mapping happens when you tap Send →",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                        RoundedCornerShape(8.dp),
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(com.u1.slicer.ui.parseHexColor(effectiveColor))
+                        .border(
+                            if (isColorOverridden) 2.dp else 1.dp,
+                            if (isColorOverridden) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline,
+                            androidx.compose.foundation.shape.CircleShape,
+                        )
+                        .clickable { editingColor = true },
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Filament 1",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
-            )
+                Box {
+                    AssistChip(
+                        onClick = { editingMaterial = true },
+                        label = { Text(materialType) },
+                        leadingIcon = if (isMaterialOverridden) {
+                            { Icon(Icons.Default.Edit, null, modifier = Modifier.size(14.dp)) }
+                        } else null,
+                    )
+                    DropdownMenu(
+                        expanded = editingMaterial,
+                        onDismissRequest = { editingMaterial = false },
+                    ) {
+                        listOf("PLA", "PETG", "ABS", "TPU", "PA", "PC").forEach { m ->
+                            DropdownMenuItem(
+                                text = { Text(m) },
+                                onClick = {
+                                    onMaterialOverride(m)
+                                    editingMaterial = false
+                                },
+                            )
+                        }
+                        if (isMaterialOverridden) {
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Reset to default", style = MaterialTheme.typography.labelMedium) },
+                                onClick = {
+                                    onMaterialOverride(null)
+                                    editingMaterial = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    if (editingColor) {
+        val current = override?.color
+            ?: resolvedFilamentColors.firstOrNull()?.takeIf { it.isNotBlank() }
+            ?: slotPreset?.color
+            ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[0]
+        com.u1.slicer.ui.FilamentColorEditDialog(
+            initialHex = current,
+            onSave = { hex -> onColorOverride(hex); editingColor = false },
+            onDismiss = { editingColor = false },
+            onReset = if (override?.color != null) {
+                { onColorOverride(null); editingColor = false }
+            } else null,
+        )
     }
 }
 
