@@ -364,6 +364,14 @@ class ProfileEmbedder(private val context: Context) {
     }
 
     private fun normalizePerFilamentArrays(config: MutableMap<String, Any>, targetCount: Int) {
+        // Phase 2 §4 Step 3 — pad-only. Per-filament arrays larger than
+        // targetCount represent the file's true filament list (e.g. H2C
+        // benchy: 7 entries on a 4-slot printer); truncating them drops
+        // user override material at high indices (handoff §1 bug 13).
+        // Callers (SlicerViewModel.embedProfile) are responsible for
+        // passing targetCount >= canonical.size; if a per-filament array
+        // is still larger, leave it alone — the slicer treats the array
+        // size as authoritative.
         for ((key, value) in config.entries.toList()) {
             if (key in NON_FILAMENT_KEYS || key in SPECIAL_LIST_KEYS) continue
             if (value !is MutableList<*>) continue
@@ -372,14 +380,9 @@ class ProfileEmbedder(private val context: Context) {
             if (list.isEmpty()) continue
 
             val defaultVal = LIST_DEFAULTS[key]
-            when {
-                list.size < targetCount -> {
-                    val pad = defaultVal ?: list.last().toString()
-                    while (list.size < targetCount) list.add(pad)
-                }
-                list.size > targetCount -> {
-                    while (list.size > targetCount) list.removeAt(list.lastIndex)
-                }
+            if (list.size < targetCount) {
+                val pad = defaultVal ?: list.last().toString()
+                while (list.size < targetCount) list.add(pad)
             }
         }
 

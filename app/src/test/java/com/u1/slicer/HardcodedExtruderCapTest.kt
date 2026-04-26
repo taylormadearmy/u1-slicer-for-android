@@ -122,16 +122,36 @@ class HardcodedExtruderCapTest {
         )
     }
 
-    @Ignore("Phase 2 refactor — §4 Step 3: ProfileEmbedder.normalizePerFilamentArrays no truncation")
     @Test
     fun profileEmbedder_normalizePerFilamentArrays_doesNotTruncate() {
         val src = readSource("bambu/ProfileEmbedder.kt")
-        val truncates = src.contains("while (list.size > targetCount)") ||
-            src.contains("list.removeAt(list.lastIndex)")
+        // Locate the function body and search only that scope, so the
+        // adjacent `normalizeMatrix` (which legitimately truncates the
+        // flush_volumes matrix to its NxN size) does not register.
+        val header = "private fun normalizePerFilamentArrays("
+        val start = src.indexOf(header)
+        require(start >= 0) { "normalizePerFilamentArrays not found" }
+        val bodyStart = src.indexOf('{', src.indexOf(')', start))
+        var depth = 0
+        var i = bodyStart
+        var bodyEnd = -1
+        while (i < src.length) {
+            when (src[i]) {
+                '{' -> depth++
+                '}' -> { depth--; if (depth == 0) { bodyEnd = i + 1; break } }
+            }
+            i++
+        }
+        require(bodyEnd > 0) { "normalizePerFilamentArrays body not terminated" }
+        val body = src.substring(bodyStart, bodyEnd)
+        val truncates = body.contains("list.size > targetCount") ||
+            body.contains("list.removeAt(list.lastIndex)")
         assertTrue(
             "ProfileEmbedder.normalizePerFilamentArrays must NOT truncate per-" +
-                "filament arrays when source > target. Drops override material " +
-                "for files with N > 4. Handoff §1 table site 13.",
+                "filament arrays when source > target — drops override material " +
+                "for files with N > 4 (handoff §1 table site 13). Caller-side " +
+                "guarantee in SlicerViewModel.embedProfile bumps targetCount " +
+                "to >= canonical.size.",
             !truncates
         )
     }

@@ -1842,11 +1842,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // pass to address them. Without this, the high-index paint state is silently
         // dropped and the resulting G-code contains only the object-default tool.
         val maxSourceFilamentIndex = info.usedExtruderIndices.maxOrNull() ?: 0
-        val targetCount = computeEmbedTargetCount(
+        val computedTarget = computeEmbedTargetCount(
             colorMapping, info.hasPaintData, usedSlots, slotCount,
             hasMultiExtruderAssignments = info.hasMultiExtruderAssignments,
             maxSourceFilamentIndex = maxSourceFilamentIndex
         )
+        // Phase 2 §4 Step 3 — ensure targetExtruderCount covers the
+        // canonical filament list, so per-canonical overrides reach the
+        // slicer without normalizePerFilamentArrays needing to truncate
+        // them. Caller-side guarantee for the contract that the embedder
+        // no longer enforces.
+        val canonicalSize = getCanonicalFilamentList()?.size ?: 0
+        val targetCount = maxOf(computedTarget, canonicalSize)
         // No extruder remap in the 3MF — keep compact numbering (1,2,…).
         // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.
         val extruderRemap = buildCompactExtruderRemap(info, colorMapping)
