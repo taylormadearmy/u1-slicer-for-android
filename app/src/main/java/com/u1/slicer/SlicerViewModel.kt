@@ -591,10 +591,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val mapping = _colorMapping.value
         if (mapping.isNullOrEmpty()) return
         val usedSlots = mapping.distinct().sorted()
-        // Phase 2.7 — apply per-filament colour overrides so the 3D preview
-        // and downstream UI surfaces show the user's chosen colours.
-        val withOverrides = applyFilamentOverridesToPresets(presets)
-        val refreshed = buildPreviewSlotColors(withOverrides, usedSlots)
+        // Phase 2 §4 Step 4 — overlay per-filament colour overrides onto
+        // the slot palette without round-tripping through the slot
+        // presets. For each slot, find the first file filament that maps
+        // to it; if that filament has a colour override, the slot's
+        // preview colour reflects it. This preserves today's preview
+        // semantics; Step 6 (display palette N-indexed) will replace
+        // this slot-level palette with a canonical-list-driven one.
+        val overrides = _filamentOverrides.value
+        val effectivePresets = if (overrides.isEmpty()) presets else presets.map { preset ->
+            val firstFileIdx = mapping.indexOf(preset.index)
+            val ov = if (firstFileIdx >= 0) overrides[firstFileIdx] else null
+            if (ov?.color == null) preset else preset.copy(color = ov.color)
+        }
+        val refreshed = buildPreviewSlotColors(effectivePresets, usedSlots)
         if (refreshed != _activeExtruderColors.value) {
             _activeExtruderColors.value = refreshed
             Log.i("SlicerVM", "Refreshed mapped preview slot colors from presets: used=$usedSlots colors=$refreshed")
@@ -1894,19 +1904,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         usedSlots: List<Int>? = null,
         hasSourceConfig: Boolean = false,
     ): Map<String, Any> {
+        // Phase 2 §4 Step 4 — slice config reads the canonical list (when
+        // present) for per-filament types/temps, falling back to the
+        // user's slot presets for non-canonical files (single-extruder
+        // STL, layer-tool). The preset-cascade indirection retired
+        // alongside `applyFilamentOverridesToPresets` — overrides only
+        // apply per file filament, not per slot, so a non-canonical
+        // single-filament file has nothing to override against here.
         val originalPresets = extruderPresets.value
-        val presets = applyFilamentOverridesToPresets(originalPresets)
-        val slotTypes = presets.sortedBy { it.index }.map { it.materialType }
-        val slotTemps = computeFreshExtruderTemps(slotCount, usedSlots, presets, filaments.value).toList()
+        val slotTypes = originalPresets.sortedBy { it.index }.map { it.materialType }
+        val slotTemps = computeFreshExtruderTemps(slotCount, usedSlots, originalPresets, filaments.value).toList()
 
-        // Phase 2.7 final: always derive filament_type / nozzle_temperature
-        // from the canonical filament list when available, so per-file-
-        // filament overrides reach the slicer regardless of how many
-        // distinct slots the user mapped to. Pass the UNMODIFIED presets
-        // (originalPresets) as the slot-fallback source — the
-        // applyFilamentOverridesToPresets path cascades a single override
-        // onto every filament that shares a slot, which is wrong for the
-        // per-canonical-filament view.
         val canonical = getCanonicalFilamentList()
         val perFilamentArrays = canonical?.let {
             buildPerFilamentTypeAndTemp(it, _filamentOverrides.value, originalPresets)
@@ -1953,40 +1961,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         presets = presets,
         filamentLibrary = filaments.value,
     )
-
-    /**
-     * Phase 2.7 — applies the user's per-filament overrides (Prepare screen)
-     * to the extruder-preset list used for slicing. For each overridden file
-     * filament whose `colorMapping[fileIdx] = slot` is in range, the
-     * corresponding preset's `materialType` and `color` are replaced with
-     * the override.
-     *
-     * Why this couples to the slot mapping: the slice path today reads
-     * filament_type from per-slot extruder presets. Until the embed
-     * pipeline is restructured to read directly from the canonical list
-     * (a future cleanup), the slot-mapped path is the integration point.
-     *
-     * The override drives nozzle temp via the preset's material type +
-     * the linked filament profile's `nozzleTemp`, so the slicer bakes the
-     * right temperature into the G-code even when the loaded spool's
-     * material differs from what the file specifies.
-     */
-    private fun applyFilamentOverridesToPresets(
-        presets: List<ExtruderPreset>,
-    ): List<ExtruderPreset> {
-        val overrides = _filamentOverrides.value
-        val mapping = _colorMapping.value
-        if (overrides.isEmpty() || mapping.isNullOrEmpty()) return presets
-        return presets.map { preset ->
-            val fileIdx = mapping.indexOf(preset.index)
-            if (fileIdx < 0) return@map preset
-            val ov = overrides[fileIdx] ?: return@map preset
-            preset.copy(
-                materialType = ov.materialType ?: preset.materialType,
-                color = ov.color ?: preset.color,
-            )
-        }
-    }
 
     private fun configureNativeDiagnosticsIfAvailable() {
         if (!NativeLibrary.isLoaded) return
@@ -2589,7 +2563,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // (multi-filament file mapped to fewer slots), emit one filament_type per
                     // canonical filament so per-filament overrides reach the G-code header.
                     val canonicalForPatch = getCanonicalFilamentList()
-                    val basePresets = applyFilamentOverridesToPresets(extruderPresets.value)
+                    val basePresets = extruderPresets.value
                     val ftTypes = if (canonicalForPatch != null
                         && canonicalForPatch.size > basePresets.size) {
                         val (perFilamentTypes, _) = buildPerFilamentTypeAndTemp(

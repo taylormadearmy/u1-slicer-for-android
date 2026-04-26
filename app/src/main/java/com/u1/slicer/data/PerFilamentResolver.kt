@@ -23,8 +23,9 @@ import com.u1.slicer.nozzleTempDefaultForMaterial
  *
  * **Cascade-free**: an override at fileIndex N affects only the entry at
  * index N. Other filaments mapped to the same physical slot are untouched.
- * This is the explicit contract that retired the slot-preset round-trip in
- * `applyFilamentOverridesToPresets` — see the architecture review at
+ * This is the explicit contract that retired the slot-preset round-trip
+ * (`applyFilamentOverridesToPresets`, deleted in §4 Step 4) — see the
+ * architecture review at
  * `docs/superpowers/reviews/2026-04-26-phase2-architecture-review.md` §1.
  *
  * @param canonical The (possibly override-applied) canonical filament list.
