@@ -1892,7 +1892,7 @@ fun SliceCompleteActionBar(
                 ) {
                     Icon(Icons.Default.Print, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Print", fontWeight = FontWeight.Bold)
+                    Text("Map & Print", fontWeight = FontWeight.Bold)
                 }
                 OutlinedButton(
                     onClick = onUploadOnly,
@@ -1901,7 +1901,7 @@ fun SliceCompleteActionBar(
                 ) {
                     Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Upload")
+                    Text("Map & Upload")
                 }
             }
         }
