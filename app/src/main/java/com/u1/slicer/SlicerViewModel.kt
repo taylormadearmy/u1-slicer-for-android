@@ -224,6 +224,43 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _selectedExtruder = MutableStateFlow(0)
     val selectedExtruder: StateFlow<Int> = _selectedExtruder.asStateFlow()
 
+    // Phase 2.6b — per-filament user overrides from the Prepare screen.
+    // Map key = file filament index (0-based, matches CanonicalFilamentList
+    // ordering and slicer T-emission). Values:
+    //   - color = hex "#RRGGBB" override; null when user hasn't overridden
+    //   - materialType = "PLA"/"PETG"/etc.; null when user hasn't overridden
+    // Defaults fall back to the file's canonical list (3MF) or printer-loaded
+    // data (STL). Overrides will drive slicing in Phase 2.6c.
+    data class FilamentOverride(val color: String? = null, val materialType: String? = null)
+    private val _filamentOverrides = MutableStateFlow<Map<Int, FilamentOverride>>(emptyMap())
+    val filamentOverrides: StateFlow<Map<Int, FilamentOverride>> = _filamentOverrides.asStateFlow()
+
+    fun setFilamentMaterialOverride(fileIndex: Int, materialType: String?) {
+        val current = _filamentOverrides.value
+        val existing = current[fileIndex] ?: FilamentOverride()
+        val next = existing.copy(materialType = materialType)
+        _filamentOverrides.value = if (next.color == null && next.materialType == null) {
+            current - fileIndex
+        } else {
+            current + (fileIndex to next)
+        }
+    }
+
+    fun setFilamentColorOverride(fileIndex: Int, color: String?) {
+        val current = _filamentOverrides.value
+        val existing = current[fileIndex] ?: FilamentOverride()
+        val next = existing.copy(color = color)
+        _filamentOverrides.value = if (next.color == null && next.materialType == null) {
+            current - fileIndex
+        } else {
+            current + (fileIndex to next)
+        }
+    }
+
+    fun clearFilamentOverrides() {
+        _filamentOverrides.value = emptyMap()
+    }
+
     /**
      * True when the loaded model uses only layer-tool (Hueforge-style) colour changes —
      * no paint data and no per-object extruder assignments. In this mode the Prepare

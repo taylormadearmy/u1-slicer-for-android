@@ -1130,7 +1130,8 @@ fun PrepareScreen(
                                 )
                             }
                         }
-                        // Inline extruder/color assignment + prime tower toggle
+                        // Inline filament list + prime tower toggle
+                        val filamentOverrides by viewModel.filamentOverrides.collectAsState()
                         PrintSetupSection(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
                             colorMapping = colorMapping,
@@ -1144,7 +1145,11 @@ fun PrepareScreen(
                             onToggleWipeTower = { viewModel.togglePrimeTower() },
                             onAutoMap = {
                                 viewModel.reAutoMapColors(extruderPresets, filaments)
-                            }
+                            },
+                            filamentOverrides = filamentOverrides,
+                            onMaterialOverride = { idx, material ->
+                                viewModel.setFilamentMaterialOverride(idx, material)
+                            },
                         )
                         // Scale & copies controls
                         ScaleSection(
@@ -3072,7 +3077,9 @@ fun PrintSetupSection(
     extruderCount: Int,
     onMappingChange: (List<Int>) -> Unit,
     onToggleWipeTower: () -> Unit,
-    onAutoMap: (() -> Unit)? = null
+    onAutoMap: (() -> Unit)? = null,
+    filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
+    onMaterialOverride: (fileIndex: Int, materialType: String?) -> Unit = { _, _ -> },
 ) {
     // Note: onMappingChange / onAutoMap kept in the signature because callers
     // still pass them (they wired the legacy slot-picker path). They're
@@ -3087,6 +3094,7 @@ fun PrintSetupSection(
 
     val mapping = remember(colorMapping) { colorMapping ?: emptyList() }
     var expanded by remember { mutableStateOf(true) }
+    var editingMaterialFor by remember { mutableStateOf<Int?>(null) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3127,14 +3135,16 @@ fun PrintSetupSection(
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                         )
                         detectedColors.forEachIndexed { colorIdx, modelColor ->
-                            // Material type comes from the user's auto-suggested slot's
-                            // ExtruderPreset until Phase 2.6b adds explicit overrides.
+                            // Material type: prefer user override, fall back to the
+                            // auto-suggested slot's ExtruderPreset material.
+                            val override = filamentOverrides[colorIdx]
                             val suggestedSlot = mapping.getOrElse(colorIdx) { 0 }
                             val suggestedPreset = extruderPresets.firstOrNull { it.index == suggestedSlot }
                                 ?: extruderPresets.firstOrNull()
-                            val materialType = suggestedPreset?.materialType ?: "PLA"
+                            val materialType = override?.materialType ?: suggestedPreset?.materialType ?: "PLA"
                             val profileId = suggestedPreset?.filamentProfileId
                             val profile = filaments.firstOrNull { it.id == profileId }
+                            val isOverridden = override?.materialType != null
 
                             Row(
                                 modifier = Modifier
@@ -3147,7 +3157,7 @@ fun PrintSetupSection(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                // Filament colour swatch
+                                // Filament colour swatch (Phase 2.6c: tappable colour picker)
                                 Box(
                                     modifier = Modifier
                                         .size(28.dp)
@@ -3167,17 +3177,55 @@ fun PrintSetupSection(
                                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                                     )
                                 }
-                                // Material type chip (read-only Phase 2.6a; Phase 2.6b adds
-                                // tap-to-edit so the user can override file's declared material).
-                                Surface(
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = RoundedCornerShape(6.dp),
-                                ) {
-                                    Text(
-                                        materialType,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    )
+                                // Material type chip — tap to override.
+                                Box {
+                                    Surface(
+                                        color = if (isOverridden)
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        else
+                                            MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.clickable { editingMaterialFor = colorIdx },
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        ) {
+                                            Text(
+                                                materialType,
+                                                style = MaterialTheme.typography.labelMedium,
+                                            )
+                                            Spacer(Modifier.width(2.dp))
+                                            Icon(
+                                                Icons.Default.ArrowDropDown, null,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    }
+                                    DropdownMenu(
+                                        expanded = editingMaterialFor == colorIdx,
+                                        onDismissRequest = { editingMaterialFor = null },
+                                    ) {
+                                        listOf("PLA", "PETG", "ABS", "TPU", "PA", "PC").forEach { m ->
+                                            DropdownMenuItem(
+                                                text = { Text(m) },
+                                                onClick = {
+                                                    onMaterialOverride(colorIdx, m)
+                                                    editingMaterialFor = null
+                                                },
+                                            )
+                                        }
+                                        if (isOverridden) {
+                                            HorizontalDivider()
+                                            DropdownMenuItem(
+                                                text = { Text("Reset to default", style = MaterialTheme.typography.labelMedium) },
+                                                onClick = {
+                                                    onMaterialOverride(colorIdx, null)
+                                                    editingMaterialFor = null
+                                                },
+                                            )
+                                        }
+                                    }
                                 }
                                 Text(
                                     "${profile?.nozzleTemp ?: 210}°C",
