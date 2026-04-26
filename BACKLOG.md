@@ -307,6 +307,24 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Cleanup
 
+### C2: Phase 1 review action items — test-suite hardening before Phase 2 code
+Surfaced by the post-Phase-1 independent code reviews (3 reviewers each across 3 areas; verdicts: GO-WITH-NITS for production code in `sapil_arrange.cpp` + `ThreeMfParser` paint cache; **NO-GO** for the Tier A/B test suite). v1.7.0-dev is internal-only so none of these are release-blocking, but the test suite needs to be a reliable regression net before Phase 2 lands code-heavy changes. Quick wins (`bug2` `==` tightening, `bug3` honest @Ignore comment) landed in the same commit as this entry; the rest are sized as a small dedicated session.
+
+**Test-suite (highest-value):**
+- **Tier B `expectedToolCounts: {}`** — every fixture spec under `app/src/androidTest/assets/fixture-specs/` has an empty `expectedToolCounts` map, so the Tier B harness validates extruder count + paint flag but never slices. Populate from PM-batch numbers: Dragon plate 3 (T0~50, T2~53, T3~90), Shashibo plate 5 (T0~71, T3~69), Button-for-S-trousers (T0~8, T1~10, T2~6, T3~9), colored Benchy (all four T0..T3 > 0), flippy plate 4 (PAUSE_PRINT≥1, CP TOOLCHANGE=0), slip-slide plate 3 (T0~28, T1~49, T2~50, T3~26). On-device run required to verify exact counts before pinning.
+- **slip-slide-spin-plate3.json `expectedExtruderCount=2`** — known-wrong baseline (production slices all 4 paint regions); ratcheted to the harness's previous under-report. Replace with G-code tool counts grounded in an actual slice (depends on the previous bullet).
+- **`bug3_translate_preserved_through_slice` rewrite** — currently dropped (the old assertion shape was structurally wrong for the new offset convention). Active coverage of the same flow lives in `SetModelInstancesOffsetTest.calicubeScaleSingleCopy_offsetMatchesGcodeMinX`; a hanging-file-specific slice-and-assert variant is still desirable for a true PM-bug-shape regression test (needs process-isolated long-running test marker since the fixture is 19 MB / 8 M tris).
+- **`PlateStateEnrichment.kt` drift hazard** — the test helper duplicates `SlicerViewModel.buildThreeMfInfoFromNative`'s enrichment but additionally probes `nativeGetPaintStateCounts` unconditionally and folds AMS2/B95 indices, neither of which production does. Lightest-touch fix: extract a `BambuPlateStateEnrichment.enrich(...)` helper in `app/src/main/java/com/u1/slicer/bambu/` and have both production and tests call it.
+
+**Production-side nits (no observed bugs, follow-ups):**
+- **`sapil_arrange.cpp:138` setModelScale center computation** — same root cause as the offset bug fixed in ea420ea: `worldBB.merge(inst->transform_bounding_box(obj->raw_bounding_box()))` reads the cached `raw_bounding_box()` then applies the full instance matrix again, double-applying scale+rotation on second `setModelScale` calls. Apply the same cache-bypass formulation. Manifests as wrong group-center on rotated multi-object models after a second scale.
+- **`sapil_arrange.cpp` multi-object branch (lines ~37-61)** — uses `bounding_box_exact()`, also cached (`m_bounding_box_exact_valid`); same cache-staleness bug shape. Likely mis-places by half-mesh-size on second scale of multi-color 4-object Bambu files.
+- **Auto-center safety net (`sapil_print.cpp:910-944`)** — +0.5 mm tolerance is tight; consider widening to 1-2 mm to avoid false-fire on legitimate edge drags.
+
+**Coverage pin tests (Review 1 + Review 3):**
+- `SetModelInstancesOffsetTest`: add multi-copy variant (currently single-position only — the `for (pos : positions)` loop is fully untested at len > 1) + non-uniform scale (e.g. `setModelScale(2.0, 1.0, 1.0)`) + a multi-object branch test exercising the `bounding_box_exact()` cache path.
+- `MergeThreeMfInfoTest` or new `ComputeVisualColorCountByPlateTest`: cap-divergence pin (3 components with disjoint singleton state sets `{1}, {2}, {3}` each ≥35 specs — locks the new "more-correct" union behaviour against future regression to the old per-plate truncation), B82 plate-1 invariant pin (synthetic 2-plate map: plate 1 unpainted → `hasPaint=false`, plate 5 painted → `hasPaint=true`), shared-component cross-plate pin (two plates referencing the same component path via different object IDs; instrument via stub-counting `scanComponentForPaintInfo` to assert it's called once).
+
 ### C1: Remove dead warm-reload and upgrade-guard machinery — FIXED v1.5.13
 - Removed `sessionHasPostUpgradeGuard`, `firstSliceAfterUpgradeRecorded`, `markSliceSucceeded()`, and `post_upgrade_slice_settled` event from `DiagnosticsStore`
 - `clipperRetryAttempted` left untouched — still active for non-upgrade Clipper errors

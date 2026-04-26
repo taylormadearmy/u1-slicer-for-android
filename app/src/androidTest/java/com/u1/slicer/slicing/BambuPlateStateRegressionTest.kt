@@ -10,11 +10,11 @@ import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.SliceConfig
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -116,65 +116,52 @@ class BambuPlateStateRegressionTest {
     //
     // The PM-reported bug was "preview missing colour 4; sliced base colour
     // wrong". On the post-refactor branch native + enrichment reports
-    // [1, 2, 3] for plate 1 — three distinct object extruders. We assert >= 3
-    // here as the regression baseline; the PM's "missing 4th colour" claim
-    // could not be reproduced as an extruder-count gap (the file's plate 1
-    // genuinely has 3 distinct object extruders post-embed). If a future
-    // investigation shows the 4th extruder should be present on this plate,
-    // bump the assertion back to >= 4 and treat the regression as live.
+    // [1, 2, 3] for plate 1 — three distinct object extruders. The PM's
+    // "missing 4th colour" claim could not be reproduced as an extruder-count
+    // gap (the file's plate 1 genuinely has 3 distinct object extruders
+    // post-embed); if a future investigation surfaces a 4th, bump to == 4 and
+    // treat the regression as live.
+    //
+    // Asserted as `== 3` (not `>= 3`) per Review 4 follow-up: with `>=` a
+    // future regression that drops one of the three extruders would still
+    // pass at the boundary. `==` catches drift in either direction.
     @Test
-    fun bug2_f1_calendar_plate1_at_least_three_extruders() {
+    fun bug2_f1_calendar_plate1_exactly_three_extruders() {
         val (info, state) = embedAndLoad(
             "2026+F1+CALENDAR+-+DATES+&+TRACK+NAMES+(P_X+SERIES).3mf",
             plateId = 0
         )
         val enriched = enrichedUsedExtruders(lib, info, state, plateIndex0Based = 0)
-        assertTrue(
-            "F1 calendar plate 1 must enrich to >= 3 extruders. " +
+        assertEquals(
+            "F1 calendar plate 1 must enrich to exactly 3 extruders. " +
                 "native=${state.usedExtruders}, enriched=$enriched",
-            enriched.size >= 3
+            3,
+            enriched.size
         )
     }
 
     // --- Bug #3: Hanging file — translate preserved through slice ---
     //
-    // KNOWN BUG (refactor/bambu-via-native-loader): native setModelInstances
-    // applies an offset that diverges from the requested position by
-    // ~half-mesh-width consistently — see calicube #4 in the PM-reported list
-    // and the diagnostic mismatch documented in MORNING_STATUS.md. This test
-    // is left @Ignore'd until the convention mismatch in sapil_arrange.cpp's
-    // single-object path is reconciled with the Kotlin caller's expectation
-    // (lower-left vs. centre at meshBB.min != 0). Filed as a follow-up; the
-    // refactor itself doesn't introduce or worsen the bug.
-    @Test
-    @Ignore("Known offset divergence in setModelInstances; tracked separately as Bug #4 calicube position")
-    fun bug3_translate_preserved_through_slice() {
-        val file = copyAsset("hanging+pre+cut+colour+3mf.3mf")
-        val info = ThreeMfParser.parse(file)
-        val config = embedder.buildConfig(
-            info = info,
-            targetExtruderCount = info.detectedExtruderCount.coerceAtLeast(1)
-        )
-        val sanitized = if (info.isBambu && !info.isMultiPlate)
-            BambuSanitizer.process(file, outDir) else file
-        val embedded = embedder.embed(sanitized, config, outDir, info)
-        assertTrue(lib.loadModel(embedded.absolutePath))
-
-        val targetX = 135f + 50f
-        val targetY = 135f
-        assertTrue(lib.setModelInstances(floatArrayOf(targetX, targetY)))
-
-        val offsets = lib.getInstanceOffsets()
-        assertTrue("Instance offsets must be non-empty", offsets.size >= 2)
-        assertTrue(
-            "Native offset X (${offsets[0]}) must be near requested $targetX (±5mm)",
-            kotlin.math.abs(offsets[0] - targetX) < 5f
-        )
-
-        val result = lib.slice(SliceConfig())
-        assertNotNull("Slice must succeed", result)
-        assertTrue(result!!.success)
-    }
+    // PM bug #3 was "drag the hanging file to the right, slice it, the model
+    // is sliced at its file-baked position rather than the dragged target".
+    // FIXED by ea420ea (bypass raw_bounding_box cache for setModelInstances
+    // offset math) and verified manually by the user post-merge.
+    //
+    // The earlier in-place test was structurally broken: it asserted
+    // `getInstanceOffsets()[0] ~= targetX`, but per ea420ea's convention
+    //   inst.offset = targetX - effectiveBB.min.x()
+    // — for a centred mesh `effectiveBB.min.x ≈ -size·sf/2`, so the stored
+    // offset diverges from `targetX` by half-mesh-width by design. The right
+    // shape is to slice and assert sliced G-code minX/Y matches the dragged
+    // target, mirroring
+    // [SetModelInstancesOffsetTest.calicubeScaleSingleCopy_offsetMatchesGcodeMinX].
+    //
+    // Active coverage of the same code path lives in
+    // [SetModelInstancesOffsetTest] (calicube + STL multi-copy variants); a
+    // hanging-file-specific slice-and-assert variant is filed as a follow-up
+    // (slicing the 19MB / 8M-tri fixture in CI needs a process-isolated
+    // long-running test). Until then, `@Ignore` remains accurate but no
+    // longer hides an unfixed bug — only an unwritten assertion shape.
 
     // --- Bug #5: H2C benchy — multi-tool G-code post-slice ---
 
