@@ -2016,9 +2016,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // no longer enforces.
         val canonicalSize = getCanonicalFilamentList()?.size ?: 0
         val targetCount = maxOf(computedTarget, canonicalSize)
-        // No extruder remap in the 3MF — keep compact numbering (1,2,…).
-        // G-code post-processing handles T0→T2, T1→T3, SM EXTRUDER/INDEX remapping.
-        val extruderRemap = buildCompactExtruderRemap(info, colorMapping)
+        // Phase 2 (S-Buttons mesh-diversity fix): the embed-time extruder remap is
+        // disabled because the post-slice tool remap is also disabled
+        // (`skipSliceTimeRemap = true` below) and the print-time slot mapping is
+        // applied by [PrintTimeRemap] when sending to the printer. Applying the
+        // embed-time remap with a non-identity colorMapping (e.g. a user whose
+        // slot presets collapse multiple file colours onto fewer slots) would
+        // collapse model_settings.config extruder values, producing a mesh with
+        // fewer distinct extruder indices than the file's per-object layout —
+        // S-Buttons plate 1's 4 buttons would render in only 2 colours instead
+        // of the file's 4. The slicer continues to emit canonical T0..T(N-1)
+        // values from the unmodified extruder layout; the user's slot mapping
+        // is applied at print time, preserving the per-object diversity in the
+        // 3D Prepare body.
+        val extruderRemap: Map<Int, Int>? = null
         // Use the original file's config (parsed before process() strips it) when available.
         // Falls back to parsing from the current file for non-Bambu or when original is unavailable.
         val sourceConfig = _sourceConfig.value ?: if (info.isBambu) {
