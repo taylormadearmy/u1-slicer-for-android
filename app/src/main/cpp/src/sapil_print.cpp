@@ -397,8 +397,15 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
 
     // Deretraction speed — OrcaSlicer defaults to 0 (= same as retraction speed).
     // Snapmaker profile uses 35 mm/s for smoother prime-after-retract.
-    dpc.set_key_value("deretraction_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 35.0)));
-    dpc.set_key_value("retraction_minimum_travel", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.0)));
+    // Phase 2 (2026-04-28) — same gate as the per-filament tuning block above:
+    // these are per-extruder arrays. profile_keys[] already lists them (lines
+    // 627-628), so without this gate applyConfigToPrusa unconditionally
+    // clobbers embed values with slot-space defaults. Same cascade pattern
+    // as nozzle_temperature pre-`1e95c7d`.
+    if (!has_embedded_profile) {
+        dpc.set_key_value("deretraction_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 35.0)));
+        dpc.set_key_value("retraction_minimum_travel", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.0)));
+    }
 
     // Line widths — must be set explicitly.
     // When left at 0 (absolute), MultiMaterialSegmentation calls
@@ -788,8 +795,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
                     "nozzle_temperature",
                     "nozzle_temperature_initial_layer",
-                    "hot_plate_temp",
-                    "hot_plate_temp_initial_layer",
+                    // (hot_plate_temp + hot_plate_temp_initial_layer already
+                    // declared above at lines 576-577; intentionally not
+                    // duplicated here.)
                     "retraction_length",
                     "retraction_speed",
                     "retract_length_toolchange",

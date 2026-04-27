@@ -56,7 +56,9 @@ import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
 import com.u1.slicer.viewer.MeshData
 import com.u1.slicer.viewer.NativePreviewMesh
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val diagnostics by lazy { DiagnosticsStore(this) }
@@ -652,8 +654,19 @@ class MainActivity : ComponentActivity() {
                 // Send and the actual upload. Always shown when the user
                 // taps Send (PrintAndUpload) or Upload Only.
                 pendingMappingSend?.let { pending ->
-                    val rawCanonical = remember(pending.gcodePath) {
-                        viewModel.getCanonicalFilamentList()
+                    // Phase 2 (2026-04-28) — canonical list lookup hoisted to
+                    // Dispatchers.IO via produceState. On Buzz Lightyear (73 MB
+                    // ZIP, 11 filaments, paint walk) the synchronous variant
+                    // froze the main thread for several seconds when this
+                    // dialog opened. Compose redraws the dialog as `null` while
+                    // the lookup runs and switches to the loaded canonical
+                    // when ready.
+                    val rawCanonical by produceState<com.u1.slicer.data.CanonicalFilamentList?>(
+                        initialValue = null, key1 = pending.gcodePath
+                    ) {
+                        value = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            viewModel.getCanonicalFilamentList()
+                        }
                     }
                     val extruderPresets by viewModel.extruderPresets.collectAsState()
                     val currentMapping by viewModel.colorMapping.collectAsState()
@@ -668,6 +681,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     }
+                    val scope = rememberCoroutineScope()
                     if (canonical != null) {
                         // Phase 2.5 final: slices now produce canonical
                         // (file-filament-relative) T-indices — the slice-time
@@ -687,19 +701,29 @@ class MainActivity : ComponentActivity() {
                                     source.parentFile,
                                     "${source.nameWithoutExtension}.remapped.${source.extension}"
                                 )
-                                com.u1.slicer.gcode.applyPrintTimeRemap(
-                                    sourceGcodePath = source.absolutePath,
-                                    outputPath = remapped.absolutePath,
-                                    colorMapping = mapping,
-                                )
-                                when (pending.action) {
-                                    PendingMappingSend.Action.PrintAndUpload ->
-                                        printerViewModel.sendAndPrint(remapped.absolutePath)
-                                    PendingMappingSend.Action.UploadOnly ->
-                                        printerViewModel.sendUploadOnly(remapped.absolutePath)
-                                }
+                                // Phase 2 (2026-04-28) — applyPrintTimeRemap
+                                // moved to Dispatchers.IO. For multi-MB
+                                // G-code (50+ MB on big multi-colour prints)
+                                // the previous synchronous call froze the
+                                // dialog for 1-3s before the Send action
+                                // fired.
                                 pendingMappingSend = null
                                 navigateTab(Routes.PRINTER)
+                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    com.u1.slicer.gcode.applyPrintTimeRemap(
+                                        sourceGcodePath = source.absolutePath,
+                                        outputPath = remapped.absolutePath,
+                                        colorMapping = mapping,
+                                    )
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        when (pending.action) {
+                                            PendingMappingSend.Action.PrintAndUpload ->
+                                                printerViewModel.sendAndPrint(remapped.absolutePath)
+                                            PendingMappingSend.Action.UploadOnly ->
+                                                printerViewModel.sendUploadOnly(remapped.absolutePath)
+                                        }
+                                    }
+                                }
                             },
                             onDismiss = { pendingMappingSend = null }
                         )
@@ -1523,8 +1547,17 @@ fun PreviewScreen(
                         }
                     }
                     val filamentOverrides by viewModel.filamentOverrides.collectAsState()
-                    val canonicalForSummary = remember(viewModel.currentModelPath) {
-                        viewModel.getCanonicalFilamentList()
+                    // Phase 2 (2026-04-28) — hoist canonical lookup off main
+                    // thread. The synchronous variant froze on Buzz-class
+                    // files. produceState shows a loading state (null) until
+                    // the IO walk completes; SliceCompleteSummaryCard tolerates
+                    // a null canonical (renders without override badges).
+                    val canonicalForSummary by produceState<com.u1.slicer.data.CanonicalFilamentList?>(
+                        initialValue = null, key1 = viewModel.currentModelPath
+                    ) {
+                        value = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            viewModel.getCanonicalFilamentList()
+                        }
                     }
                     SliceCompleteSummaryCard(
                         result = s.result,

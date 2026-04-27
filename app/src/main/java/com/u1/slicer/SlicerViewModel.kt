@@ -755,10 +755,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // refresh the 3D preview palette so the change is visible
         // immediately. Also marks the slice stale so the user knows to
         // re-slice (overrides drive nozzle temps and embed colour).
+        //
+        // Phase 2 (2026-04-28) cross-cutting agent finding: also flip
+        // `profileNeedsReEmbed` so the next slice re-embeds the profile
+        // with current overrides. Without this, single-colour STL/3MF
+        // files (extruderCount=1, toolRemapSlots=null) skip the re-embed
+        // gate at line ~2566 entirely and slice with the stale embedded
+        // profile from initial load — the user's PETG override is silently
+        // dropped at slice time. Same cascade family as the
+        // nozzle_temperature bug fixed in c31ca49/1e95c7d.
         viewModelScope.launch {
             _filamentOverrides.drop(1).collect {
                 refreshMappedPreviewColors(extruderPresets.value)
                 _sliceStale.value = true
+                if (lastModelInfo != null) {
+                    profileNeedsReEmbed = true
+                }
             }
         }
 
@@ -1231,6 +1243,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         invalidatePrepareMeshCache()
+        // Phase 2 (2026-04-28) — clear per-filament overrides at the start of
+        // every load so file A's filament 0 override doesn't silently apply
+        // to file B's filament 0 (different material, different colour).
+        _filamentOverrides.value = emptyMap()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -3644,6 +3660,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _multiPlateSourceFile = null
         _showPlateSelector.value = false
         _showMultiColorDialog.value = false
+        // Phase 2 (2026-04-28) cross-cutting agent finding: clear per-filament
+        // overrides on model close. Without this, an override on file A's
+        // filament 0 silently leaks into file B when the user opens a new
+        // file (the StateFlow value persists across model loads).
+        _filamentOverrides.value = emptyMap()
         currentModelFile = null
         lastModelInfo = null
         _modelInfo.value = null
