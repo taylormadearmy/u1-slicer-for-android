@@ -4051,35 +4051,69 @@ internal fun normalizeGcodePreviewColors(
     for (slot in 0..3) {
         normalized[slot] = extruderColors.getOrNull(slot).orEmpty()
     }
+    // B95 / direct-slot pipeline: when the on-disk G-code already uses physical
+    // slot indices, the init loop's `extruderColors[slot]` mapping is what the
+    // renderer needs. Take the early exit BEFORE the canonical-driven branch so
+    // SEMM remap branches stay reachable when callers explicitly opt in.
+    if (useDirectSlots) return normalized
     // Phase 2 §4 Step 7 (Preview side) — when canonical-derived per-filament
-    // colours are available AND a colorMapping exists, drive the palette
-    // from the file's canonical filament colours instead of slot presets.
-    // For each physical slot s, find the first file filament whose
-    // colorMapping[i] == s, and use resolvedFilamentColors[i] as the slot's
-    // colour. Result: G-code Preview shows the file's filament colours
-    // (matching the Prepare 3D preview), not the user's slot presets.
+    // colours are available AND a colorMapping exists, build the palette so it
+    // agrees with what the printer will actually deposit.
     //
-    // Slots with no mapped filament keep their slot-preset fallback.
-    // Filament-collisions on the same slot resolve to the first filament's
-    // colour (the slot is committed to that one colour anyway).
+    // Indexing contract: with Phase 2.5's print-time-remap design
+    // (skipSliceTimeRemap=true), the slicer emits T<compact> for each embedded
+    // filament — the renderer reads `extruderColors[move.extruder]` and
+    // `move.extruder` is the COMPACT slicer index, not the physical slot.
+    // Therefore `normalized[c]` here represents compact slicer index c, not
+    // slot c. The two coincide only when colorMapping uses all four slots
+    // contiguously {0,1,2,3}; for any other distribution (collisions →
+    // distinctSlots<4, or non-contiguous slot picks) the prior slot-keyed
+    // approach mis-rendered the gap slot with whatever the init loop seeded.
+    //
+    // Algorithm:
+    //   1. compactSlotOrder = colorMapping.distinct().sorted() (capped to
+    //      the 4 physical slots) — the mapping the embed step's
+    //      `buildCompactExtruderRemap` uses to
+    //      reorder file filaments into compact slots (1-based) in the
+    //      embedded model_settings.config. Compact c ↔ physical slot
+    //      compactSlotOrder[c].
+    //   2. For each compact c, prefer the slot's loaded preset colour
+    //      `extruderColors[compactSlotOrder[c]]`. This matches Phase 2 UX
+    //      §3 "Same colour" overlap semantics — when N file filaments
+    //      collapse onto one slot, the slot prints whatever is loaded in
+    //      that slot.
+    //   3. Fall back to a representative file-filament colour
+    //      (`resolvedFilamentColors[fileIdx]` for the first file filament
+    //      assigned to that slot) only when the slot preset is blank.
+    //
+    // This collapses the historical bug where compact 1 (= slot 2 for a
+    // {0,2,3} mapping) rendered with extruderColors[1]'s init value
+    // (slot 1 = E2 preset) instead of slot 2's content. Reported on
+    // Button-for-S-trousers plate 1 as "G-code Preview shows 3 colours not 4
+    // (missing red)" — multiple file filaments with closest-match collapsing
+    // to slot 0 caused the first-mapped filament's hex to win over the
+    // slot's preset; later slots inherited gap-filling init values.
     if (resolvedFilamentColors.isNotEmpty() && !colorMapping.isNullOrEmpty()) {
-        for (slot in 0..3) {
-            val firstFileIdx = colorMapping.indexOfFirst { it == slot }
-            if (firstFileIdx >= 0) {
-                resolvedFilamentColors.getOrNull(firstFileIdx)
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { normalized[slot] = it }
+        // compactSlotOrder is the embed step's distinct-slot list capped at
+        // the 4 physical slots — not a filament-count cap.
+        val compactSlotOrder = colorMapping.distinct().sorted().filter { it in 0..3 }.take(4)  // slot-space
+        compactSlotOrder.forEachIndexed { compactIdx, slot ->
+            val slotPreset = extruderColors.getOrNull(slot).orEmpty()
+            val resolved = if (slotPreset.isNotBlank()) {
+                slotPreset
+            } else {
+                val firstFileIdx = colorMapping.indexOfFirst { it == slot }
+                resolvedFilamentColors.getOrNull(firstFileIdx).orEmpty()
+            }
+            if (resolved.isNotBlank()) {
+                normalized[compactIdx] = resolved
             }
         }
+        // Compact slots beyond compactSlotOrder.size are not addressed by any
+        // T<n> the slicer will emit, but blank entries can break callers that
+        // expect 4 entries — leave the init-loop slot presets in place there.
         return normalized
     }
-    // B95: when the post-slice GcodeToolRemapper applies an expanded filament-index
-    // remap (because the embedded filament_colour was bumped to fit a high-index
-    // source filament), parsedGcode's `move.extruder` values are already physical
-    // slot indices — the renderer just needs `extruderColors[slot]` directly. The
-    // legacy branch 3 / branch 4 swaps are designed for the OLD compact-T-index
-    // pipeline and produce incorrect palettes for the new direct-slot world.
-    if (useDirectSlots) return normalized
     if (slicerColorOrder != null && semmColorPermutation != null && !colorMapping.isNullOrEmpty()) {
         // Branch 3: align Preview palette with Prepare's compact → slot mapping.
         semmColorPermutation.forEachIndexed { slicerCompactIdx, physicalSlot ->

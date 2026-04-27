@@ -204,4 +204,169 @@ class PreviewColorNormalizationTest {
         assertEquals("#0000FF", result[2])
         assertEquals("#FFFFFF", result[3])
     }
+
+    // ── Phase 2 §4 Step 7 — G-code Preview slot-collision fix ───────────────
+
+    /**
+     * S-Buttons plate 1 user repro: 12 file filaments collapse onto 4 slots
+     * via findClosestExtruder + redistributeDuplicateSlots. The auto mapping
+     * uses all four slots {0,1,2,3} but multiple file filaments map to the
+     * same slot. Pre-fix behaviour: `normalized[slot] = resolvedFilamentColors[firstIdx]`
+     * — the first-occurrence file filament's hex (often a brownish near-red
+     * for the slot 0 closest match) drowned out the slot's actual loaded
+     * preset colour. The user perceived "missing red" because slot 0's E1
+     * preset (red) never reached the renderer.
+     *
+     * Fix: drive the palette by `compactSlotOrder = colorMapping.distinct().sorted()`,
+     * indexing by COMPACT slicer T-index (which is what the renderer reads
+     * via `extruderColors[move.extruder]` under Phase 2.5's
+     * skipSliceTimeRemap=true regime). For each compact c, prefer the slot's
+     * loaded preset colour (`extruderColors[compactSlotOrder[c]]`).
+     */
+    @Test
+    fun `normalizeGcodePreviewColors collision case prefers slot preset over first-file-filament`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")  // E1=red, E2=green, E3=blue, E4=white
+        // 12 file filaments mapping to all 4 slots, with collisions.
+        // The first file filament mapped to slot 0 is brown (#6F5034) —
+        // closest-by-RGB-distance to red but visually distinct.
+        val resolvedFilamentColors = listOf(
+            "#6F5034", "#FFD700", "#0066CC", "#F5F5F5",     // closest matches
+            "#A52A2A", "#9ACD32", "#1E90FF", "#FFFAFA",     // duplicates
+            "#8B4513", "#7FFF00", "#4169E1", "#FFE4E1",     // duplicates
+        )
+        val colorMapping = listOf(0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            semmColorPermutation = null,
+            slicerColorOrder = null,
+            useDirectSlots = false,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // compactSlotOrder = [0,1,2,3], so compact c = slot c. Each compact
+        // index renders with the slot's preset colour, NOT the first
+        // file filament's hex. User's "missing red" symptom resolves
+        // because compact 0 = E1 preset = #FF0000.
+        assertEquals("compact 0 must render in E1 preset (red), not file filament's brown",
+            "#FF0000", result[0])
+        assertEquals("compact 1 must render in E2 preset (green)",
+            "#00FF00", result[1])
+        assertEquals("compact 2 must render in E3 preset (blue)",
+            "#0000FF", result[2])
+        assertEquals("compact 3 must render in E4 preset (white)",
+            "#FFFFFF", result[3])
+    }
+
+    /**
+     * Non-contiguous slot mapping (e.g. user picks E1, E3, E4 only — slot 1
+     * unused). `compactSlotOrder = [0, 2, 3]`. Renderer T0/T1/T2 must map to
+     * slots 0/2/3 respectively — NOT to slots 0/1/2 as the pre-fix code
+     * implied (the slot-keyed normalize indexed by physical slot left
+     * `normalized[1]` blank or stuck on extruderColors[1]'s init value).
+     */
+    @Test
+    fun `normalizeGcodePreviewColors non-contiguous slots maps compact c to compactSlotOrder slot`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        val resolvedFilamentColors = listOf("#FF1010", "#1010FF", "#F0F0F0")
+        // Three file filaments → slots 0, 2, 3 (slot 1 unused).
+        val colorMapping = listOf(0, 2, 3)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            semmColorPermutation = null,
+            slicerColorOrder = null,
+            useDirectSlots = false,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // compactSlotOrder = [0, 2, 3]. Compact 0 → slot 0 (red), compact 1
+        // → slot 2 (blue), compact 2 → slot 3 (white). Compact 3 unused; the
+        // init-loop preset for slot 3 stays.
+        assertEquals("compact 0 → slot 0 = red", "#FF0000", result[0])
+        assertEquals("compact 1 → slot 2 = blue (NOT slot 1 = green)",
+            "#0000FF", result[1])
+        assertEquals("compact 2 → slot 3 = white", "#FFFFFF", result[2])
+    }
+
+    /**
+     * Dragon plate 3 regression guard: 4 distinct file filaments → 4
+     * distinct slots, contiguous {0,1,2,3}. Before-and-after of the fix
+     * must yield the same Preview palette so the canonical-Prepare-Preview
+     * agreement contract from commit 7fca77b survives.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors Dragon-style 4-distinct-slots renders preset colours`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        val resolvedFilamentColors = listOf("#A00000", "#00A000", "#0000A0", "#F0F0F0")
+        // file filament i → slot per Dragon plate 3 shape (4 distinct slots).
+        val colorMapping = listOf(2, 0, 3, 1)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            semmColorPermutation = null,
+            slicerColorOrder = null,
+            useDirectSlots = false,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // compactSlotOrder = [0,1,2,3]. Each compact c renders with slot c's
+        // preset colour. The renderer's T<c> matches what the user sees in
+        // the Send dialog row (slot c's preset swatch).
+        assertEquals("#FF0000", result[0])
+        assertEquals("#00FF00", result[1])
+        assertEquals("#0000FF", result[2])
+        assertEquals("#FFFFFF", result[3])
+    }
+
+    /**
+     * Slot preset blank → file filament fallback path. Some test/debug
+     * configurations leave a slot preset empty; the canonical-driven path
+     * must still surface the file's own colour rather than rendering with
+     * the renderer's default-palette stripe (the historical sky-blue bug).
+     */
+    @Test
+    fun `normalizeGcodePreviewColors falls back to file filament when slot preset blank`() {
+        val extruderColors = listOf("#FF0000", "", "#0000FF", "#FFFFFF")  // E2 missing
+        val resolvedFilamentColors = listOf("#A0A000", "#00A0A0", "#0000A0", "#F0F0F0")
+        // file filament 1 maps to slot 1 (which has a blank preset).
+        val colorMapping = listOf(0, 1, 2, 3)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            semmColorPermutation = null,
+            slicerColorOrder = null,
+            useDirectSlots = false,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // compact 1 → slot 1 (blank preset) → fallback to resolvedFilamentColors[1].
+        assertEquals("compact 0 → slot 0 preset", "#FF0000", result[0])
+        assertEquals("compact 1 falls back to file filament 1's colour",
+            "#00A0A0", result[1])
+        assertEquals("compact 2 → slot 2 preset", "#0000FF", result[2])
+        assertEquals("compact 3 → slot 3 preset", "#FFFFFF", result[3])
+    }
+
+    /**
+     * useDirectSlots=true short-circuits the canonical-driven branch so
+     * downstream callers that have already baked physical slot indices into
+     * the G-code (B95 expanded-remap path) get direct slot colours.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors with useDirectSlots returns direct slot palette`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        val resolvedFilamentColors = listOf("#A0A000", "#00A0A0", "#A000A0")
+        val colorMapping = listOf(0, 2, 3)  // would have permuted via compactSlotOrder
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            semmColorPermutation = null,
+            slicerColorOrder = null,
+            useDirectSlots = true,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // useDirectSlots short-circuits BEFORE the canonical-driven branch;
+        // T0..T3 in the on-disk G-code are already physical slot indices.
+        assertEquals("#FF0000", result[0])
+        assertEquals("#00FF00", result[1])
+        assertEquals("#0000FF", result[2])
+        assertEquals("#FFFFFF", result[3])
+    }
 }
