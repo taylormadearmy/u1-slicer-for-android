@@ -916,6 +916,7 @@ fun PrepareScreen(
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
+    val meshAlignedFilamentColors by viewModel.meshAlignedFilamentColors.collectAsState()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
 
     // Plate selector dialog
@@ -1084,6 +1085,7 @@ fun PrepareScreen(
                                 layerToolOnly = layerToolOnly,
                                 layerToolSegments = threeMfInfo?.layerToolSegments,
                                 resolvedFilamentColors = resolvedFilamentColors,
+                                meshAlignedFilamentColors = meshAlignedFilamentColors,
                                 cachedMesh = if (viewModel.cachedPrepareMeshPath == modelPath) viewModel.cachedPrepareMesh else null,
                                 onMeshCached = { viewModel.cachedPrepareMeshPath = modelPath; viewModel.cachedPrepareMesh = it },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
@@ -2421,6 +2423,14 @@ fun InlineModelPreview(
     // agrees with the slicer's embedded filament_colour. Empty for non-
     // canonical / pre-load states; the slot-mapped fallback path runs.
     resolvedFilamentColors: List<String> = emptyList(),
+    // Phase 2 (Approach C) — palette aligned to the mesh's extruder-index
+    // space (sorted plate-used file-filament order for the per-vertex
+    // recolor path; full canonical palette for the layer-tool Z-band
+    // recolor path). When non-empty, takes priority over
+    // `resolvedFilamentColors` for the recolor; chip strip / dialog still
+    // read `resolvedFilamentColors` (file-fileIndex aligned). Empty for
+    // STL / non-canonical paths; the slot-mapped fallback runs.
+    meshAlignedFilamentColors: List<String> = emptyList(),
     // B78: snapshot of native instance offsets captured at loadModel time.
     // Used to restore the file's original plate position after prepareSlicer() has
     // clobbered native state; skipped when nativeSliceStateDirty is false so the
@@ -2516,7 +2526,7 @@ fun InlineModelPreview(
     // Fixes B22 race: previously mesh loaded on IO (slow) while colors arrived via StateFlow
     // (fast). Separate LaunchedEffects had timing gaps — colors effect fired before mesh was
     // ready (skip), then mesh effect read stale empty colors from closure (skip).
-    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState, layerToolOnly, layerToolSegments, resolvedFilamentColors) {
+    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState, layerToolOnly, layerToolSegments, resolvedFilamentColors, meshAlignedFilamentColors) {
         val m = mesh; val v = viewerView
         if (m != null && v != null) {
             // Only call setMesh when the mesh instance actually changed
@@ -2528,14 +2538,17 @@ fun InlineModelPreview(
             if (extruderColors.isNotEmpty()) {
                 v.setExtruderColors(extruderColors)
             }
-            // Phase 2 §4 Step 7 (visual) — when the canonical-derived
-            // per-filament palette is available, drive the recolor from it
-            // so user overrides on Prepare are visible immediately and the
-            // on-screen colour matches what the slicer embeds. The mesh's
-            // extruderIndices are file-filament-indexed (canonical
-            // fileIndex), so palette[i] applies directly without going
-            // through the slot mapping.
-            val canonicalPalette: List<FloatArray>? = resolvedFilamentColors
+            // Phase 2 (Approach C) — prefer the mesh-aligned palette when the
+            // ViewModel produces one. The mesh's extruder-index space depends
+            // on the file shape (per-object vs paint-compacted vs layer-tool);
+            // see [SlicerViewModel.meshAlignedFilamentColors] for the contract.
+            // Fall back to `resolvedFilamentColors` (file-fileIndex aligned)
+            // for the rare pre-canonical render — keeps tests asserting the
+            // legacy alignment from breaking and is harmless when the two
+            // happen to match.
+            val canonicalSource = meshAlignedFilamentColors.takeIf { it.isNotEmpty() }
+                ?: resolvedFilamentColors
+            val canonicalPalette: List<FloatArray>? = canonicalSource
                 .takeIf { it.isNotEmpty() }
                 ?.map { hex -> SlicerViewModel.staticHexColorToFloatArray(hex) }
 
@@ -2543,7 +2556,7 @@ fun InlineModelPreview(
             if (layerToolOnly && layerToolSegments != null && extruderColors.isNotEmpty() && colorMapping != null) {
                 val palette = canonicalPalette
                     ?: colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
-                Log.i("InlineModelPreview", "recolorByZBands segments=${layerToolSegments.size} paletteSize=${palette.size} canonical=${canonicalPalette != null}")
+                Log.i("InlineModelPreview", "recolorByZBands segments=${layerToolSegments.size} paletteSize=${palette.size} canonical=${canonicalPalette != null} meshAligned=${meshAlignedFilamentColors.size}")
                 m.recolorByZBands(layerToolSegments, palette)
                 v.refreshColors()  // upload recolorByZBands result to GPU without overwriting with recolor()
             } else if (m.hasPerVertexColor && (canonicalPalette != null || extruderColors.isNotEmpty())) {
@@ -2561,6 +2574,7 @@ fun InlineModelPreview(
                     "recolor mapping=$colorMapping " +
                         "extruderColors=$extruderColors paletteSize=${palette.size} " +
                         "canonical=${canonicalPalette != null} " +
+                        "meshAligned=${meshAlignedFilamentColors.size} " +
                         "hasMeshColors=${m.hasPerVertexColor}"
                 )
                 v.recolorMesh(palette)

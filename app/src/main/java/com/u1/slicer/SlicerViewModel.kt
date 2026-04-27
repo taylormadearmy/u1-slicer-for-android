@@ -202,6 +202,56 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // some plates have paint data).
     private var _fileThreeMfInfo: ThreeMfInfo? = null
 
+    /**
+     * Phase 2 — cached canonical filament list (full file palette, file-fileIndex
+     * indexed). Refreshed on every model load so `meshAlignedFilamentColors` does
+     * not re-read the source ZIP on every override edit. Holds the **full** file
+     * filament list from `bambuCanonicalList(file)`; plate narrowing happens in
+     * the `meshAlignedFilamentColors` flow (Approach C: synthesise mesh-aligned
+     * palettes by reordering canonical to match each mesh's compaction).
+     *
+     * `null` for STL / non-canonical files (the recolor falls back to the slot
+     * palette in that case, same as `resolvedFilamentColors`).
+     */
+    private val _canonicalFilamentList =
+        MutableStateFlow<com.u1.slicer.data.CanonicalFilamentList?>(null)
+    val canonicalFilamentList: StateFlow<com.u1.slicer.data.CanonicalFilamentList?> =
+        _canonicalFilamentList.asStateFlow()
+
+    /**
+     * Reloads [_canonicalFilamentList] from the current model file. The paint-
+     * walk in `bambuCanonicalList` walks every `.model` entry, which can be
+     * a few seconds on Buzz-Lightyear-sized files (73 MB), so the load runs
+     * on the IO dispatcher. The StateFlow updates when the read completes;
+     * the recolor effect re-fires automatically when the palette flips
+     * non-empty, so a brief paint of slot-fallback colours during the gap
+     * resolves to canonical colours seamlessly.
+     *
+     * Synchronous null clears (e.g. `clearModel()`) take the immediate path
+     * so the flow doesn't briefly expose a stale canonical for a freshly-
+     * cleared file.
+     */
+    private fun refreshCanonicalFilamentList() {
+        val file = _currentModelFile
+        if (file == null) {
+            _canonicalFilamentList.value = null
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = try {
+                com.u1.slicer.data.canonicalListAtLoad(file)
+            } catch (e: Exception) {
+                android.util.Log.w("SlicerVM", "canonicalListAtLoad failed for ${file.name}: ${e.message}")
+                null
+            }
+            // Guard: another file load may have raced ahead while we walked the
+            // ZIP. Only publish if the file still matches.
+            if (_currentModelFile === file) {
+                _canonicalFilamentList.value = list
+            }
+        }
+    }
+
     private val _multiPlatePlates = MutableStateFlow<List<ThreeMfPlate>>(emptyList())
     val multiPlatePlates: StateFlow<List<ThreeMfPlate>> = _multiPlatePlates.asStateFlow()
 
@@ -426,6 +476,81 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         base.mapIndexed { i, color -> overrides[i]?.color ?: color }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /**
+     * Phase 2 (Approach C) — palette aligned to the **mesh's** extruder-index
+     * space, NOT the file's. Used by the 3D Prepare preview's recolor path so
+     * the displayed colours always agree with what the mesh's `extruderIndices`
+     * (or layer-tool `extruderBambu`) actually addresses.
+     *
+     * Three regressions this flow resolves:
+     *
+     *   1. **Multi-plate Bambu paint** (e.g. Buzz plate 9, file filaments 8 + 10).
+     *      Native skips compaction when MMU paint data is present; Kotlin's
+     *      [com.u1.slicer.viewer.NativePreviewMesh.compactExtruderIndices]
+     *      compacts to 0..N-1 in sorted-unique order. The `info.detectedColors`
+     *      list for paint plates is **file-wide** (the slicer's
+     *      multi_material_segmentation_by_painting needs the full palette), so
+     *      indexing into it with the mesh's compact 0,1 returns the wrong
+     *      filaments (file's #1 + #2 instead of #8 + #10).
+     *      Fix: derive mesh-aligned palette from
+     *      `info.usedExtruderIndices.sorted()` over the full canonical list.
+     *
+     *   2. **Layer-tool / Hueforge** (e.g. flippy plate 4). The mesh has no
+     *      per-vertex colour; the recolor goes via
+     *      [com.u1.slicer.viewer.MeshData.recolorByZBands] indexed by
+     *      `extruderBambu - 1` (1-based file filament index). `detectedColors`
+     *      gets narrowed by `mergeThreeMfInfoForPlate` for layer-tool plates,
+     *      which collapses the palette and forces every Z-band to the same
+     *      colour.
+     *      Fix: use the **full** canonical filament list so palette[0..N-1]
+     *      matches `extruderBambu - 1` exactly.
+     *
+     *   3. **Per-object multi-extruder** (e.g. Calicube, S-Buttons plate 1).
+     *      Native compacts mesh extruderIndices to 0..N-1 in sorted order of
+     *      the file-filament indices used. When the file uses filaments
+     *      1..N consecutively (which is the common case), the compact
+     *      identity matches a full-canonical palette anyway. The flow handles
+     *      this case via the same sorted-used-index path, falling back to the
+     *      full canonical list when `usedExtruderIndices` is unavailable.
+     *
+     * Indexing contract:
+     *   - When [layerToolOnly] is `true` → `palette[i]` corresponds to file
+     *     filament `(i+1)` (1-based extruderBambu indexing).
+     *   - When [layerToolOnly] is `false` → `palette[i]` corresponds to the
+     *     i-th distinct file-filament-index used on the current plate, in
+     *     sorted-ascending order (matches `compactExtruderIndices`).
+     *
+     * Empty when no canonical list is available (STL / non-canonical paths);
+     * callers fall back to the slot palette in that case.
+     */
+    val meshAlignedFilamentColors: StateFlow<List<String>> = combine(
+        _threeMfInfo,
+        _filamentOverrides,
+        _layerToolOnly,
+        _canonicalFilamentList,
+    ) { info, overrides, layerToolOnly, canonical ->
+        val canonicalEntries = canonical?.filaments
+        if (canonicalEntries.isNullOrEmpty()) return@combine emptyList()
+        // Apply per-file-filament overrides on top of the canonical colours.
+        val withOverrides = canonicalEntries.map { entry ->
+            overrides[entry.fileIndex]?.color ?: entry.color
+        }
+        if (layerToolOnly) {
+            // Layer-tool: palette indexed by extruderBambu - 1 (file fileIndex).
+            // Return the full canonical palette so every Z-band finds its
+            // colour, even when `info.detectedColors` was narrowed.
+            return@combine withOverrides
+        }
+        // Per-vertex case: derive plate-narrowed palette in sorted-ascending
+        // order so it lines up with `compactExtruderIndices`. Fall back to the
+        // full canonical list when the plate's used set is unknown — covers
+        // pre-load states, single-colour STL synthetics, and the rare
+        // already-compact mesh shape (Calicube uses filaments 1..N anyway).
+        val used = info?.usedExtruderIndices?.filter { it > 0 }?.sorted().orEmpty()
+        if (used.isEmpty()) return@combine withOverrides
+        used.mapNotNull { idx -> withOverrides.getOrNull(idx - 1) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)
     val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides
         .stateIn(viewModelScope, SharingStarted.Eagerly, SlicingOverrides())
@@ -448,7 +573,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Track the current working file (may be sanitized copy)
-    private var currentModelFile: File? = null
+    private var _currentModelFile: File? = null
+    private var currentModelFile: File?
+        get() = _currentModelFile
+        set(value) {
+            _currentModelFile = value
+            // Phase 2 — refresh the cached canonical list so the mesh-aligned
+            // palette flow can react without re-reading the file on every
+            // override edit. Cheap (one ZIP read per file change).
+            refreshCanonicalFilamentList()
+        }
     private val _modelFileName = MutableStateFlow("")
     val modelFileName: StateFlow<String> = _modelFileName.asStateFlow()
     private var currentModelName: String = ""
@@ -521,7 +655,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * when no model is loaded or the file is unrecognised.
      */
     fun getCanonicalFilamentList(): com.u1.slicer.data.CanonicalFilamentList? {
-        val file = currentModelFile ?: return null
+        // Prefer the cached canonical list (refreshed on every model load) so
+        // we don't re-read the source ZIP. Falls back to synchronous file I/O
+        // for callers reached before the canonical cache populated (rare:
+        // tests, recovery paths).
+        _canonicalFilamentList.value?.let { return it }
+        val file = _currentModelFile ?: return null
         com.u1.slicer.data.canonicalListAtLoad(file)?.let { return it }
         // STL fallback: synthesise a single-entry list from the user's
         // selected extruder preset.
