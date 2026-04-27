@@ -106,12 +106,22 @@ fun PlateSelectDialog(
                                     // Per-plate filament indicator: chip strip showing
                                     // which file filaments this plate uses (file-filament
                                     // index, 1-based, matching the Prepare filament list).
-                                    if (plate.filamentIndices.isNotEmpty() && info != null) {
-                                        Spacer(Modifier.height(6.dp))
-                                        FilamentIndicatorChips(
-                                            filamentIndices = plate.filamentIndices.sorted(),
-                                            detectedColors = info.detectedColors,
-                                        )
+                                    // For older Bambu plates that don't carry plateFilamentMap,
+                                    // derive on demand from the plate's objects' per-volume
+                                    // extruder data so the chip strip shows up regardless.
+                                    if (info != null) {
+                                        val effectiveFilaments = if (plate.filamentIndices.isNotEmpty()) {
+                                            plate.filamentIndices
+                                        } else {
+                                            derivePlateFilamentIndices(plate, info)
+                                        }
+                                        if (effectiveFilaments.isNotEmpty()) {
+                                            Spacer(Modifier.height(6.dp))
+                                            FilamentIndicatorChips(
+                                                filamentIndices = effectiveFilaments.sorted(),
+                                                detectedColors = info.detectedColors,
+                                            )
+                                        }
                                     }
                                 }
                                 Text(
@@ -238,6 +248,39 @@ private fun PlateThumbnail(
             highlightColor, 0.8f
         )
     }
+}
+
+/**
+ * Derive the file-filament-index set used on a plate from the plate's
+ * object-level data, for older Bambu file formats that don't carry the
+ * `plateFilamentMap` JSON entry that populates [ThreeMfPlate.filamentIndices]
+ * directly.
+ *
+ * Walks each object on the plate and unions:
+ * - `objectPartExtruders[objectId]` — the per-volume extruder set for
+ *   compound objects (one `<object>` with many `<part>` children, each on
+ *   a different extruder).
+ * - `objectExtruderMap[objectId]` — the object-level default extruder.
+ *
+ * Returns 1-based extruder indices, matching the contract of
+ * [ThreeMfPlate.filamentIndices]. Empty when the plate's objects lack
+ * extruder metadata entirely (single-colour or unrecognised layout).
+ */
+@Suppress("DEPRECATION")
+internal fun derivePlateFilamentIndices(
+    plate: ThreeMfPlate,
+    info: ThreeMfInfo,
+): Set<Int> {
+    val result = mutableSetOf<Int>()
+    for (objectId in plate.objectIds) {
+        val perPart = info.objectPartExtruders[objectId]
+        if (!perPart.isNullOrEmpty()) {
+            result += perPart.filter { it > 0 }
+        } else {
+            info.objectExtruderMap[objectId]?.takeIf { it > 0 }?.let { result += it }
+        }
+    }
+    return result
 }
 
 /**
