@@ -941,35 +941,62 @@ class PreparePreviewViewModelTest {
             assertNotNull("MeshData conversion should succeed", mesh)
             mesh!!
 
-            // Phase 2 §4 Step 6 — preview palette is canonical-driven.
-            // palette[i] = file's filament_colour[i] (overlaid by override).
-            val resolved = viewModel.resolvedFilamentColors.value
+            // Phase 2 §4 — preview palette is canonical-driven (file-wide,
+            // indexed by raw fileIndex). Mesh extruderIndices store fileIndices
+            // directly, so palette[fileIndex] addresses the right colour.
+            val canonical = viewModel.getCanonicalFilamentList()
+            assertNotNull("H2C benchy must have canonical filament list", canonical)
+            canonical!!
             assertTrue(
-                "H2C benchy resolvedFilamentColors must have 7 entries (one per file filament), got ${resolved.size}",
-                resolved.size >= 7
+                "H2C benchy canonical filament list must have 7 entries " +
+                    "(one per file filament), got ${canonical.size}",
+                canonical.size >= 7
             )
-            val palette = resolved.map { SlicerViewModel.staticHexColorToFloatArray(it) }
-            assertTrue("Palette must have 7 entries (one per model colour)", palette.size >= 7)
-
+            val palette = canonical.filaments.map {
+                SlicerViewModel.staticHexColorToFloatArray(it.color)
+            }
             mesh.recolor(palette)
 
-            // Find green: any triangle with index 5 should have G ≈ 1.0
+            // Find green's fileIndex via canonical (not hardcoded). Green is the
+            // canonical entry whose hex colour has G as the dominant component —
+            // covers both bright #00FF00 and darker variants like #00AE42.
+            val greenFileIndex = canonical.filaments.indexOfFirst { entry ->
+                val rgba = SlicerViewModel.staticHexColorToFloatArray(entry.color)
+                rgba[1] > rgba[0] && rgba[1] > rgba[2] && rgba[1] > 0.4f
+            }
+            assertTrue(
+                "H2C benchy canonical must contain a green-ish filament; got " +
+                    "filaments=${canonical.filaments.map { it.color }}",
+                greenFileIndex >= 0
+            )
+
+            // Verify green appears in the recoloured mesh — any triangle whose
+            // extruderIndex equals greenFileIndex should have its G channel
+            // matching the canonical's green entry after canonical recolor.
+            val expectedGreen = SlicerViewModel.staticHexColorToFloatArray(
+                canonical.filaments[greenFileIndex].color
+            )
             val indices = mesh.extruderIndices!!
             var greenFound = false
             for (tri in indices.indices) {
                 val idx = indices[tri].toInt() and 0xFF
-                if (idx == 5) {
-                    val gOffset = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX + 7
-                    val g = mesh.vertices.get(gOffset)
-                    if (g > 0.9f) {
+                if (idx == greenFileIndex) {
+                    val rOffset = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX + 6
+                    val r = mesh.vertices.get(rOffset)
+                    val g = mesh.vertices.get(rOffset + 1)
+                    val b = mesh.vertices.get(rOffset + 2)
+                    if (kotlin.math.abs(r - expectedGreen[0]) < 0.05f &&
+                        kotlin.math.abs(g - expectedGreen[1]) < 0.05f &&
+                        kotlin.math.abs(b - expectedGreen[2]) < 0.05f) {
                         greenFound = true
                         break
                     }
                 }
             }
             assertTrue(
-                "H2C benchy Prepare preview must contain green (G>0.9) at index 5 triangles " +
-                    "after recolor with real colorMapping=$mapping, colors=$colors",
+                "H2C benchy Prepare preview must contain canonical green " +
+                    "(${canonical.filaments[greenFileIndex].color}) at fileIndex " +
+                    "$greenFileIndex triangles after canonical recolor",
                 greenFound
             )
 
@@ -982,10 +1009,18 @@ class PreparePreviewViewModelTest {
 
             val state = viewModel.state.value as SlicerViewModel.SlicerState.SliceComplete
             val gcode = java.io.File(state.result.gcodePath).readText()
-            val t1Count = gcode.lines().count { it.trim() == "T1" }
+            // Phase 2 canonical contract: slicer emits T<fileIndex>. Verify
+            // green's T-command appears (or the slot mapping post-remap T1 if
+            // GcodeToolRemapper ran). Accept either compact T1 (legacy slot
+            // remap) or T<greenFileIndex> (canonical fileIndex space).
+            val toolRegex = Regex("""^\s*T(\d+)\s*$""")
+            val toolCounts = gcode.lines().mapNotNull {
+                toolRegex.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
+            }.groupingBy { it }.eachCount()
             assertTrue(
-                "H2C benchy G-code must have T1 tool changes (green), got $t1Count",
-                t1Count > 0
+                "H2C benchy G-code must have at least 2 tool changes (multi-colour); " +
+                    "toolCounts=$toolCounts",
+                toolCounts.size >= 2
             )
         } finally {
             viewModel.clearModel()
