@@ -541,11 +541,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // colour, even when `info.detectedColors` was narrowed.
             return@combine withOverrides
         }
-        // Per-vertex case: derive plate-narrowed palette in sorted-ascending
-        // order so it lines up with `compactExtruderIndices`. Fall back to the
-        // full canonical list when the plate's used set is unknown — covers
-        // pre-load states, single-colour STL synthetics, and the rare
-        // already-compact mesh shape (Calicube uses filaments 1..N anyway).
+        // Per-vertex case: only narrow to a plate-aligned subset when a plate
+        // has actually been selected from a multi-plate file (currentPlateId
+        // > 0). For single-plate per-object files (S-Buttons, Calicube,
+        // colored Benchy etc.) the mesh's extruderIndices are already file-
+        // fileIndex aligned and `info.usedExtruderIndices` only carries
+        // object-level data — narrowing collapses the per-volume diversity
+        // and shrinks the palette to a single colour. Multi-plate after
+        // plate-switch (Buzz plate 9) DO need narrowing because native
+        // compacts mesh indices to plate-local 0..N-1 in sorted order.
+        //
+        // `_currentPlateId.value` read directly (not via combine) — plate
+        // switches always emit a fresh `_threeMfInfo` which triggers this
+        // combine, and `_currentPlateId` is set before `_threeMfInfo` in
+        // the selectPlate flow.
+        val plateId = _currentPlateId.value
+        if (plateId <= 0) return@combine withOverrides
         val used = info?.usedExtruderIndices?.filter { it > 0 }?.sorted().orEmpty()
         if (used.isEmpty()) return@combine withOverrides
         used.mapNotNull { idx -> withOverrides.getOrNull(idx - 1) }
