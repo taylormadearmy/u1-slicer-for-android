@@ -209,28 +209,15 @@ class Phase2AlignmentTest {
         val embedded = embedder.embed(processed, config, outDir, origInfo)
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
 
-        // Slice with 4 physical extruders. cfg.extruderTemps must carry the
-        // canonical-aware slot temps so the override survives the C++
-        // applyConfigToPrusa→nozzle_temperature path (sapil_print.cpp:285).
-        // For colorMapping=[0,1,2,3,0,1,2] with PETG override at fileIndex 0,
-        // slot 0 holds the max temp across file filaments mapped to it
-        // (max(235 PETG, 220 PLA) = 235). Slots 1..3 stay 220.
-        val canonicalSlotTemps = com.u1.slicer.computeCanonicalAwareSlotTemps(
-            slotCount = 4,
-            usedSlots = null,
-            canonical = overridden,
-            perFilamentTemps = nozzleTemps,
-            colorMapping = colorMapping,
-            presets = fourPLAPresets(),
-            filaments = emptyList(),
-        )
-        assertEquals(
-            "Canonical-aware slot temps: slot 0 must hold PETG's 235°C " +
-                "(file filament 0 with PETG override maps there).",
-            235, canonicalSlotTemps[0]
-        )
-        val sliceConfig = makeConfig(4).copy(extruderTemps = canonicalSlotTemps)
-        val result = lib.slice(sliceConfig)
+        // Slice with 4 physical extruders. Phase 2 (2026-04-28) structural
+        // fix: applyConfigToPrusa is now gated on !has_embedded_profile for
+        // nozzle_temperature et al., AND profile_keys[] now whitelists those
+        // keys. The embed's canonical-sized nozzle_temperature array
+        // (=[235,220,220,220,220,220,220]) reaches the slicer via
+        // profile_keys[] and is no longer overwritten — cfg.extruderTemps
+        // (the slot-space JNI default of [220,220,220,220]) is consulted
+        // only for STL / non-Snapmaker fallbacks.
+        val result = lib.slice(makeConfig(4))
         assertNotNull("slice() must not return null", result)
         result!!
         assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
@@ -264,13 +251,15 @@ class Phase2AlignmentTest {
         }
 
         // Phase 2 §4 — nozzle_temperature cascade detector. The PETG override
-        // at fileIndex 0 must reach the slicer's nozzle_temperature. Without
-        // computeCanonicalAwareSlotTemps wiring, the C++ applyConfigToPrusa
-        // copy at sapil_print.cpp:285 overwrites the embedded canonical
-        // array with cfg.extruder_temps (slot-space, 4 entries), then B48
-        // padding at line 858 grows the array using the LAST value. Result:
-        // PETG (235°C) gets clobbered to PLA (220°C) at every position. The
-        // E2E result on baf136e showed the legacy behaviour
+        // at fileIndex 0 must reach the slicer's nozzle_temperature. Phase 2
+        // (2026-04-28) structural fix: nozzle_temperature is now in
+        // profile_keys[] AND applyConfigToPrusa is gated on
+        // !has_embedded_profile for it. Pre-fix the C++ side at
+        // sapil_print.cpp:285 unconditionally overwrote the embedded
+        // canonical array with cfg.extruder_temps (slot-space, 4 entries),
+        // then B48 padding at line 858 grew the array using the LAST value
+        // → PETG (235°C) clobbered to 220°C at every position. The E2E
+        // result on baf136e captured the legacy behaviour
         // ("nozzle_temperature = 220,220,...,220").
         val tempHeader = readNozzleTemperatureHeader(gcode)
             ?: error("G-code must contain a `; nozzle_temperature = ...` header line")

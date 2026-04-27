@@ -281,23 +281,37 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         }
     }
 
-    // Temperature (OrcaSlicer per-extruder keys)
-    dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(temps));
-    dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(first_temps));
-    // Bed temperature — OrcaSlicer resolves bed temp from the active plate type (curr_bed_type).
-    // We set btPEI (textured PEI plate), so hot_plate_temp is the one that matters.
-    // Also set the initial layer variant (+5°C for better first layer adhesion, matching pla.json).
-    dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(bed_temps));
-    std::vector<int> bed_temps_initial(n_ext, config.bed_temp + 5);
-    dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(bed_temps_initial));
+    // Phase 2 (2026-04-28) — per-filament tuning gate. When an embedded
+    // Snapmaker profile is loaded, the canonical-aware embed pipeline writes
+    // these arrays sized to the canonical filament count with per-file-
+    // filament overrides applied. The embed values reach `dpc` via the
+    // `profile_keys[]` loop above. Skipping the writes here lets those
+    // canonical-aware values survive — without this gate, applyConfigToPrusa
+    // unconditionally overwrites them with slot-space defaults (4 entries
+    // sized to physical slots), then B48 padding repeats the last value
+    // through the canonical extent, clobbering per-filament overrides.
+    // For STL / no-embedded-profile files the writes still run as the
+    // single source of truth.
+    // See docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
+    if (!has_embedded_profile) {
+        // Temperature (OrcaSlicer per-extruder keys)
+        dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(temps));
+        dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(first_temps));
+        // Bed temperature — OrcaSlicer resolves bed temp from the active plate type (curr_bed_type).
+        // We set btPEI (textured PEI plate), so hot_plate_temp is the one that matters.
+        // Also set the initial layer variant (+5°C for better first layer adhesion, matching pla.json).
+        dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(bed_temps));
+        std::vector<int> bed_temps_initial(n_ext, config.bed_temp + 5);
+        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(bed_temps_initial));
 
-    // Retraction (OrcaSlicer keys)
-    dpc.set_key_value("retraction_length", new Slic3r::ConfigOptionFloats(retract_len));
-    dpc.set_key_value("retraction_speed", new Slic3r::ConfigOptionFloats(retract_spd));
-    // Toolchange retraction — OrcaSlicer defaults to 10mm (bowden).  For the Snapmaker U1's
-    // direct-drive extruders this pulls filament past the heat break, causing heat-creep clogs
-    // during the standby period between tool changes.  Use the same length as normal retraction.
-    dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
+        // Retraction (OrcaSlicer keys)
+        dpc.set_key_value("retraction_length", new Slic3r::ConfigOptionFloats(retract_len));
+        dpc.set_key_value("retraction_speed", new Slic3r::ConfigOptionFloats(retract_spd));
+        // Toolchange retraction — OrcaSlicer defaults to 10mm (bowden).  For the Snapmaker U1's
+        // direct-drive extruders this pulls filament past the heat break, causing heat-creep clogs
+        // during the standby period between tool changes.  Use the same length as normal retraction.
+        dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
+    }
 
     // Multi-extruder machine type — the Snapmaker U1 has 4 independent extruders, NOT a
     // single-extruder multi-material (SEMM) setup like Bambu/Prusa MMU.  Embedded Snapmaker
@@ -351,23 +365,29 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // access produces corrupt wipe tower coordinates (2^116 / -inf X values).
     dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
 
-    // Filament max volumetric speed — OrcaSlicer defaults to 2 mm³/s which throttles all
-    // print speeds to ~22 mm/s.  Set to 21 mm³/s (matching Snapmaker PLA profile) as fallback;
-    // the embedded config can override via the profile_keys[] list.
-    dpc.set_key_value("filament_max_volumetric_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 21.0)));
-    // Filament density for weight estimation (PLA = 1.24 g/cm³)
-    dpc.set_key_value("filament_density", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.24)));
+    // Phase 2 (2026-04-28) — per-filament tuning gate (continued). Same
+    // rationale as the temperature/retraction gate above: when an embed
+    // is present the canonical-aware values from profile_keys[] win; when
+    // there isn't one (STL / non-Snapmaker file) these defaults fill in.
+    if (!has_embedded_profile) {
+        // Filament max volumetric speed — OrcaSlicer defaults to 2 mm³/s which throttles all
+        // print speeds to ~22 mm/s.  Set to 21 mm³/s (matching Snapmaker PLA profile) as fallback;
+        // the embedded config can override via the profile_keys[] list.
+        dpc.set_key_value("filament_max_volumetric_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 21.0)));
+        // Filament density for weight estimation (PLA = 1.24 g/cm³)
+        dpc.set_key_value("filament_density", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.24)));
 
-    // Fan / cooling — OrcaSlicer defaults fan_min_speed to 20%, but PLA needs 100%.
-    // These fallbacks match pla.json; embedded config overrides via profile_keys[].
-    // fan_min_speed and fan_max_speed are coFloats in OrcaSlicer (per-extruder arrays).
-    dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
-    dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
-    // overhang_fan_speed is coInts (per-extruder)
-    dpc.set_key_value("overhang_fan_speed", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 100)));
-    // Slow-down cooling — OrcaSlicer default is 5s, Snapmaker profile uses 4s
-    dpc.set_key_value("slow_down_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 4.0)));
-    dpc.set_key_value("slow_down_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 20.0)));
+        // Fan / cooling — OrcaSlicer defaults fan_min_speed to 20%, but PLA needs 100%.
+        // These fallbacks match pla.json; embedded config overrides via profile_keys[].
+        // fan_min_speed and fan_max_speed are coFloats in OrcaSlicer (per-extruder arrays).
+        dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+        dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+        // overhang_fan_speed is coInts (per-extruder)
+        dpc.set_key_value("overhang_fan_speed", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 100)));
+        // Slow-down cooling — OrcaSlicer default is 5s, Snapmaker profile uses 4s
+        dpc.set_key_value("slow_down_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 4.0)));
+        dpc.set_key_value("slow_down_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 20.0)));
+    }
 
     // G-code dialect — NOT set as a fallback here because gcode_flavor=klipper suppresses
     // M104/M109 temp commands from the slicer body, relying on the start G-code template.
@@ -757,6 +777,29 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "initial_layer_jerk",
                     "top_surface_jerk",
                     "travel_jerk",
+                    // Phase 2 (2026-04-28) — per-filament tuning. The
+                    // canonical-aware embed pipeline writes these arrays sized
+                    // to the canonical filament count with per-file-filament
+                    // overrides applied (e.g. PETG override on Filament 1
+                    // produces nozzle_temperature=[235,220,...] and PETG-tuned
+                    // retraction/cooling). Without these in profile_keys[] the
+                    // applyConfigToPrusa fallback below clobbers them with
+                    // slot-space uniform defaults — see
+                    // docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
+                    "nozzle_temperature",
+                    "nozzle_temperature_initial_layer",
+                    "hot_plate_temp",
+                    "hot_plate_temp_initial_layer",
+                    "retraction_length",
+                    "retraction_speed",
+                    "retract_length_toolchange",
+                    "filament_max_volumetric_speed",
+                    "filament_density",
+                    "fan_min_speed",
+                    "fan_max_speed",
+                    "overhang_fan_speed",
+                    "slow_down_layer_time",
+                    "slow_down_min_speed",
                     nullptr
                 };
                 for (const char** k = profile_keys; *k; ++k) {
