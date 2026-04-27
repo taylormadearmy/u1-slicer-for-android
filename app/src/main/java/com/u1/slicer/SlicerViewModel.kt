@@ -232,21 +232,32 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * cleared file.
      */
     private fun refreshCanonicalFilamentList() {
-        val file = _currentModelFile
+        // Prefer the original input file (`rawInputFile`) over the
+        // sanitized `_currentModelFile` — BambuSanitizer strips
+        // `project_settings.config` from the output, so the sanitized
+        // file's canonical comes back null. Falls back to
+        // `_currentModelFile` for the rare case where rawInputFile isn't
+        // tracked (e.g. recovery / re-embed paths).
+        val file = rawInputFile ?: _currentModelFile
         if (file == null) {
             _canonicalFilamentList.value = null
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
             val list = try {
-                com.u1.slicer.data.canonicalListAtLoad(file)
+                // Try `bambuCanonicalList` first to bypass the extension
+                // dispatch in `canonicalListAtLoad` — sanitized fallback
+                // files may not have a `.3mf` extension.
+                com.u1.slicer.bambu.bambuCanonicalList(file)
+                    ?: com.u1.slicer.data.canonicalListAtLoad(file)
             } catch (e: Exception) {
                 android.util.Log.w("SlicerVM", "canonicalListAtLoad failed for ${file.name}: ${e.message}")
                 null
             }
             // Guard: another file load may have raced ahead while we walked the
-            // ZIP. Only publish if the file still matches.
-            if (_currentModelFile === file) {
+            // ZIP. Only publish if the (raw-or-current) file still matches.
+            val currentSource = rawInputFile ?: _currentModelFile
+            if (currentSource?.absolutePath == file.absolutePath) {
                 _canonicalFilamentList.value = list
             }
         }
