@@ -125,6 +125,19 @@ class Phase2AlignmentTest {
     }
 
     /**
+     * Generic per-extruder header reader. OrcaSlicer emits per-extruder
+     * config keys as `; <key> = a,b,c,...` (comma-separated) for numeric
+     * arrays and `; <key> = a;b;c;...` (semicolon-separated) for string
+     * arrays. Returns the raw token list or null if the header is absent.
+     */
+    private fun readArrayHeader(gcode: String, key: String, separator: Char): List<String>? {
+        val line = gcode.lines().firstOrNull {
+            it.trimStart().startsWith("; $key = ")
+        } ?: return null
+        return line.substringAfter("= ").split(separator).map { it.trim() }
+    }
+
+    /**
      * Cascade detector: H2C benchy (7 file filaments) with PETG override at
      * fileIndex 0 must produce a `filament_type` header where index 0 is
      * PETG and ALL other indices are PLA. A failure on indices 4 (which
@@ -276,5 +289,44 @@ class Phase2AlignmentTest {
                 "canonical array at sapil_print.cpp:285.",
             235, tempHeader[0]
         )
+
+        // Phase 2 (2026-04-28) — broadened cascade detector. The
+        // applyConfigToPrusa parallel-write pattern was retired in 1e95c7d
+        // for ALL per-filament tuning keys (not just nozzle_temperature).
+        // Verify each whitelisted key reaches the G-code header at the
+        // canonical extent. Without this, a future regression on, say,
+        // hot_plate_temp would slip past the test that only checks
+        // nozzle_temperature.
+        //
+        // The keys are everything Phase 2 added to profile_keys[] +
+        // gated in applyConfigToPrusa. For string arrays the separator
+        // is ';' (filament_type, filament_settings_id); numeric arrays
+        // use ','.
+        val canonicalKeys = listOf(
+            "nozzle_temperature_initial_layer",
+            "hot_plate_temp",
+            "hot_plate_temp_initial_layer",
+            "retraction_length",
+            "retraction_speed",
+            "retract_length_toolchange",
+            "filament_max_volumetric_speed",
+            "filament_density",
+            "fan_min_speed",
+            "fan_max_speed",
+            "deretraction_speed",
+            "retraction_minimum_travel",
+        )
+        for (key in canonicalKeys) {
+            val arr = readArrayHeader(gcode, key, ',') ?: continue
+            assertTrue(
+                "Cascade detector: `$key` must have ≥7 entries (canonical extent " +
+                    "for H2C benchy with 7 file filaments). Got ${arr.size}: $arr. " +
+                    "Fewer entries → applyConfigToPrusa overwrote the embed value " +
+                    "with a slot-space (4-entry) default and B48 padding stretched " +
+                    "the wrong value. See " +
+                    "docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md",
+                arr.size >= 7
+            )
+        }
     }
 }
