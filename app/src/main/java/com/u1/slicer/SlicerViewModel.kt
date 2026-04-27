@@ -526,40 +526,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val meshAlignedFilamentColors: StateFlow<List<String>> = combine(
         _threeMfInfo,
         _filamentOverrides,
-        _layerToolOnly,
         _canonicalFilamentList,
-    ) { info, overrides, layerToolOnly, canonical ->
+    ) { _, overrides, canonical ->
         val canonicalEntries = canonical?.filaments
         if (canonicalEntries.isNullOrEmpty()) return@combine emptyList()
         // Apply per-file-filament overrides on top of the canonical colours.
-        val withOverrides = canonicalEntries.map { entry ->
+        // After fc43d9f3 (Kotlin-side mesh-index compaction disabled) all
+        // mesh.extruderIndices are file-fileIndex aligned across every file
+        // shape — multi-plate Bambu, per-object multi-extruder, layer-tool.
+        // The palette is therefore the full canonical list, file-fileIndex
+        // indexed, with no plate-narrowing or sort-and-pick gymnastics.
+        canonicalEntries.map { entry ->
             overrides[entry.fileIndex]?.color ?: entry.color
         }
-        if (layerToolOnly) {
-            // Layer-tool: palette indexed by extruderBambu - 1 (file fileIndex).
-            // Return the full canonical palette so every Z-band finds its
-            // colour, even when `info.detectedColors` was narrowed.
-            return@combine withOverrides
-        }
-        // Per-vertex case: only narrow to a plate-aligned subset when a plate
-        // has actually been selected from a multi-plate file (currentPlateId
-        // > 0). For single-plate per-object files (S-Buttons, Calicube,
-        // colored Benchy etc.) the mesh's extruderIndices are already file-
-        // fileIndex aligned and `info.usedExtruderIndices` only carries
-        // object-level data — narrowing collapses the per-volume diversity
-        // and shrinks the palette to a single colour. Multi-plate after
-        // plate-switch (Buzz plate 9) DO need narrowing because native
-        // compacts mesh indices to plate-local 0..N-1 in sorted order.
-        //
-        // `_currentPlateId.value` read directly (not via combine) — plate
-        // switches always emit a fresh `_threeMfInfo` which triggers this
-        // combine, and `_currentPlateId` is set before `_threeMfInfo` in
-        // the selectPlate flow.
-        val plateId = _currentPlateId.value
-        if (plateId <= 0) return@combine withOverrides
-        val used = info?.usedExtruderIndices?.filter { it > 0 }?.sorted().orEmpty()
-        if (used.isEmpty()) return@combine withOverrides
-        used.mapNotNull { idx -> withOverrides.getOrNull(idx - 1) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)
