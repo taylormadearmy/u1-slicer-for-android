@@ -565,12 +565,23 @@ class PreparePreviewViewModelTest {
             )
 
             // Invariant 4: preview mesh distinct RGBA count should match plate 9's
-            // expected distinct slot count when recoloured with plate 9's palette.
+            // expected distinct file-filament count when recoloured with the
+            // canonical-aligned palette (Phase 2 §4 — production sources the
+            // recolor palette from the canonical filament list. The mesh stores
+            // raw fileIndices per triangle; the palette must be sized to
+            // canonical.size so palette[idx] addresses the right colour for
+            // high-fileIndex paint plates like buzz plate 9 (fileIndices 9 + 10).
             val preview = NativeLibrary().getPreparePreviewMesh()
             assertNotNull("plate 9 preview mesh required", preview)
             val mesh = preview!!.toMeshData()!!
-            val palette = plate9Mapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(plate9Colors.getOrElse(slot) { "" })
+            val canonical = viewModel.getCanonicalFilamentList()
+            val canonicalDiag = "  canonicalFilaments=${canonical?.filaments?.map { it.color }}"
+            assertNotNull(
+                "plate 9 must have canonical filament list available\n$diag\n$canonicalDiag",
+                canonical
+            )
+            val palette = canonical!!.filaments.map {
+                SlicerViewModel.staticHexColorToFloatArray(it.color)
             }
             mesh.recolor(palette)
 
@@ -585,11 +596,16 @@ class PreparePreviewViewModelTest {
                 distinctRgba.add((r shl 16) or (g shl 8) or b)
                 if (distinctRgba.size >= 8) break
             }
-            val expectedDistinctSlots = plate9Mapping.distinct().size
+            // Plate 9 mesh uses 2 distinct fileIndices (one per object's extruder
+            // + the paint state) — distinct RGBA count should match
+            // plate9DetectedColors size.
+            val expectedDistinct = plate9DetectedColors.size
             assertEquals(
-                "plate 9 preview mesh distinct RGBA count must match plate 9 mapping's distinct slots\n" +
-                    "$diag\n  distinctRgba=${distinctRgba.size} expected=$expectedDistinctSlots",
-                expectedDistinctSlots,
+                "plate 9 preview mesh distinct RGBA count must match plate 9 " +
+                    "detectedColors count (canonical-aligned recolor)\n" +
+                    "$diag\n$canonicalDiag\n  distinctRgba=${distinctRgba.size} " +
+                    "expected=$expectedDistinct",
+                expectedDistinct,
                 distinctRgba.size
             )
         } finally {

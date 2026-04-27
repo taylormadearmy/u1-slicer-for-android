@@ -524,17 +524,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * callers fall back to the slot palette in that case.
      */
     /**
-     * After fc43d9f3 (Kotlin-side mesh compaction disabled) AND the
-     * Button-for-S-trousers diagnosis (file uses `extruder_colour` not
-     * `filament_colour` so `bambuCanonicalList` only finds 1 entry while
-     * `info.detectedColors` has 12), this flow becomes a thin alias for
-     * `resolvedFilamentColors` — same source-of-truth (`info.detectedColors`
-     * is the more complete combined-array parser), same semantics.
-     * Kept as a separate property to give the recolor path a stable handle
-     * to reach for, but the implementation is now the same flow.
+     * Phase 2 §4 (2026-04-27 architectural fix) — canonical-aligned palette
+     * for the 3D preview's mesh recolor. Sourced from
+     * [_canonicalFilamentList] (file-wide, indexed by fileIndex) so the
+     * mesh's per-triangle `extruderIndices` (raw fileIndices) and the
+     * Z-band recolor's `extruderBambu - 1` lookup both address the right
+     * canonical entry directly.
+     *
+     * Distinct from [resolvedFilamentColors] (which is plate-narrowed for
+     * the chip strip) — the recolor needs the full file palette so a plate
+     * using filaments 10 + 11 finds the right colours at indices 9 + 10
+     * even though the chip strip only displays 2 entries.
+     *
+     * Per-filament user overrides (from the Prepare screen) are applied at
+     * the matching fileIndex.
+     *
+     * Empty when no canonical list is available (STL / non-canonical paths
+     * / pre-load); the recolor consumer falls back to
+     * [resolvedFilamentColors] (slot palette) in that case.
      */
-    val meshAlignedFilamentColors: StateFlow<List<String>>
-        get() = resolvedFilamentColors
+    val meshAlignedFilamentColors: StateFlow<List<String>> = combine(
+        _canonicalFilamentList,
+        _filamentOverrides,
+    ) { canonical, overrides ->
+        val list = canonical ?: return@combine emptyList()
+        if (overrides.isEmpty()) list.filaments.map { it.color }
+        else list.filaments.map { entry ->
+            overrides[entry.fileIndex]?.color ?: entry.color
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)
     val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides
@@ -640,13 +658,30 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * when no model is loaded or the file is unrecognised.
      */
     fun getCanonicalFilamentList(): com.u1.slicer.data.CanonicalFilamentList? {
-        // Prefer the cached canonical list (refreshed on every model load) so
-        // we don't re-read the source ZIP. Falls back to synchronous file I/O
-        // for callers reached before the canonical cache populated (rare:
-        // tests, recovery paths).
+        // Prefer the cached canonical list — it's the file's source-of-truth
+        // canonical from `bambuCanonicalList(sourceFile)`. The cache is set
+        // by `selectPlate` (synchronously from the original input file
+        // before `_currentModelFile` flips to the embedded plate) and by
+        // `refreshCanonicalFilamentList`. Falls back to synchronous I/O on
+        // the source file when the cache is empty (rare: tests / recovery).
         _canonicalFilamentList.value?.let { return it }
-        val file = _currentModelFile ?: return null
-        com.u1.slicer.data.canonicalListAtLoad(file)?.let { return it }
+        // Prefer the ORIGINAL user input file (`rawInputFile`) — its
+        // `project_settings.config` is intact. The sanitized
+        // `_multiPlateSourceFile` has no `project_settings.config` (Bambu
+        // sanitizer strips it), and the embedded plate file has it
+        // rewritten to the slot palette. Try `bambuCanonicalList`
+        // directly to bypass `canonicalListAtLoad`'s extension check.
+        val sources = listOfNotNull(rawInputFile, _multiPlateSourceFile, _currentModelFile)
+        for (source in sources) {
+            com.u1.slicer.bambu.bambuCanonicalList(source)?.let {
+                _canonicalFilamentList.value = it
+                return it
+            }
+            com.u1.slicer.data.canonicalListAtLoad(source)?.let {
+                _canonicalFilamentList.value = it
+                return it
+            }
+        }
         // STL fallback: synthesise a single-entry list from the user's
         // selected extruder preset.
         val slot = _selectedExtruder.value
@@ -1369,18 +1404,52 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Equivalent to extractPlate + restructurePlateFile + embedProfile.
                 val embeddedPlateFile = embedProfile(file, embedInfo, workspaceDir, plateId = plateId)
                 ensureActive()
-                currentModelFile = embeddedPlateFile
+                // Direct field write — bypasses the setter's automatic
+                // `refreshCanonicalFilamentList()` so the cached canonical
+                // (from the multi-plate source file) survives plate
+                // selection. Otherwise the setter would refresh from
+                // `embeddedPlateFile`, whose `filament_colour` is stripped
+                // by the embed pipeline, yielding a degenerate canonical.
+                _currentModelFile = embeddedPlateFile
                 // The embedded file is already plate-scoped — load all (plate_id=0).
                 // The postLoadStateProvider callback reads plate state FROM native
                 // and sets _threeMfInfo AFTER the native load (fixes race condition
                 // where _threeMfInfo was set BEFORE native load completed).
+                // Phase 2 §4 — derive the canonical filament list from the
+                // ORIGINAL multi-plate source file. The embedded plate file
+                // also has project_settings.config preserved, but only its
+                // own plate's .model entries — so the file-wide paintStateMap
+                // is only complete on the source. Use the source file as the
+                // single source of truth so plate-narrowing is canonical-
+                // driven rather than heuristic-driven.
+                //
+                // Use the cached value when present — the async refresh from
+                // initial load may already have populated it. Only fall back
+                // to a synchronous walk when the cache is empty (e.g. fast
+                // user click before async completes). Walking a 73 MB ZIP
+                // synchronously on every plate selection blows the 120s test
+                // wait.
+                val canonical = _canonicalFilamentList.value
+                    ?: try {
+                        // Sanitized `file` (= _multiPlateSourceFile) has its
+                        // `project_settings.config` stripped by BambuSanitizer
+                        // — the original input file (`rawInputFile`) still
+                        // has it. Prefer rawInputFile as the canonical source.
+                        val canonicalSource = rawInputFile ?: file
+                        (com.u1.slicer.bambu.bambuCanonicalList(canonicalSource)
+                            ?: com.u1.slicer.data.canonicalListAtLoad(canonicalSource))
+                            ?.also {
+                                _canonicalFilamentList.value = it
+                            }
+                    } catch (_: Exception) { null }
+
                 loadNativeModel(embeddedPlateFile) {
                     // --- Native-first state reading ---
                     // Read authoritative plate state from native's loaded model.
                     val nativeState = readPlateStateFromNative()
                     // Build the UI-facing ThreeMfInfo from native data + file metadata.
                     val nativeInfo = if (fileInfo != null) {
-                        buildThreeMfInfoFromNative(fileInfo, nativeState, plateId)
+                        buildThreeMfInfoFromNative(fileInfo, nativeState, plateId, canonical)
                     } else {
                         // Non-Bambu fallback: use embedInfo as-is
                         embedInfo
@@ -3790,18 +3859,31 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Build a [ThreeMfInfo] for UI consumers from native-reported plate state.
-     * Combines file-level metadata from [fileInfo] with per-plate
-     * extruder/paint data from [nativeState].
      *
-     * Narrows [ThreeMfInfo.detectedColors] to the plate's used extruders so the UI
-     * shows only the correct colour chips (matching the old [mergeThreeMfInfoForPlate] behaviour).
-     * For layer-tool-only plates (non-painted, non-multi-extruder), enriches the used
-     * set with per-plate layer-tool extruders from the source plate metadata.
+     * Phase 2 §4 (2026-04-27 architectural fix) — canonical-driven plate
+     * narrowing. When [canonical] is non-null (Bambu / OrcaSlicer 3MF), the
+     * plate's `detectedColors` are looked up directly from
+     * [com.u1.slicer.data.CanonicalFilamentList.filaments] keyed by the
+     * fileIndices actually used on this plate. The set of used fileIndices is
+     * derived from the union of:
+     *   - native `usedExtruders` (1-based, includes paint states folded
+     *     by `readPlateStateFromNative`);
+     *   - source plate's per-object / per-part / filament / layer-tool
+     *     extruders (1-based, from source-file metadata).
+     *
+     * This replaces the previous heuristic narrowing pass (~150 lines of
+     * layer-tool-only / Hueforge / per-plate-paint-data branching) — the
+     * canonical list already absorbs B95 high-index paint states, AMS2 fold,
+     * compound-object per-part palettes, and synthesised LAYER_TOOL entries.
+     *
+     * When [canonical] is null (non-Bambu fallback / canonical load failed),
+     * falls back to file-wide [ThreeMfInfo.detectedColors].
      */
     private fun buildThreeMfInfoFromNative(
         fileInfo: ThreeMfInfo,
         nativeState: NativePlateState,
-        plateId: Int
+        plateId: Int,
+        canonical: com.u1.slicer.data.CanonicalFilamentList?,
     ): ThreeMfInfo {
         val usedExtruders = nativeState.usedExtruders
         val objExtruderMap = nativeState.buildObjectExtruderMap()
@@ -3810,12 +3892,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val plateHasPaintData = nativeState.hasPaintData
         val plateHasLayerToolChanges = sourcePlate?.hasLayerToolChanges ?: fileInfo.hasLayerToolChanges
 
-        // Enrich native-reported extruders with layer-tool extruders from the source
-        // plate metadata. Native volumes don't carry layer-tool change data (it comes
-        // from custom_gcode_per_layer.xml), so the native state alone may under-count
-        // for layer-tool plates. Also include the plate's object extruders from the
-        // file-level objectExtruderMap — native may report empty usedExtruders for
-        // plates whose objects have a default extruder that matches the BBS default (1).
+        // Source-plate per-part extruders. For Bambu compound objects (one
+        // <object> with many <part> children on different extruders), the
+        // object-level objectExtruderMap collapses to the object's default
+        // extruder; objectPartExtruders captures the full per-part palette.
+        @Suppress("DEPRECATION")
         val sourcePlateObjectExtruders = sourcePlate?.objectIds
             ?.flatMap { objectId ->
                 val perPart = fileInfo.objectPartExtruders[objectId]
@@ -3835,42 +3916,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             usedExtruders.toSortedSet()
         }
-        Log.i("SlicerVM", "buildThreeMfInfoFromNative: plate=$plateId native=$usedExtruders " +
-            "enriched=$enrichedExtruders hasPaint=$plateHasPaintData")
 
-        // hasMultiExtruderAssignments: based on native-reported per-object/volume
-        // extruder diversity (NOT layer-tool enriched set). Layer-tool changes produce
-        // temporal multi-extruder usage, not spatial per-object assignments.
-        val nativeExtruderDiversity = usedExtruders.size > 1 || objExtruderMap.values.toSet().size > 1
-        val hasMultiExtAssign = nativeExtruderDiversity
-        val layerToolOnly = fileInfo.hasLayerToolChanges && !plateHasPaintData && !hasMultiExtAssign
-
-        // Narrow detectedColors to the plate's enriched extruder indices.
-        // enrichedExtruders are 1-based; detectedColors is 0-indexed.
-        val narrowedColors = if (layerToolOnly) {
-            // Layer-tool-only plates: include the object extruder plus any real
-            // layer-tool secondaries from the source plate metadata.
-            val plateLtColors = sourcePlate?.layerToolColors.orEmpty()
-            val plateLtExtruders = sourcePlate?.layerToolExtruders.orEmpty()
-            val selectedExtruders = when {
-                plateLtColors.isNotEmpty() -> {
-                    val hasRealSecondaries = plateLtColors.any { color ->
-                        fileInfo.detectedColors.any { it.equals(color, ignoreCase = true) }
-                    }
-                    if (hasRealSecondaries) {
-                        (enrichedExtruders + plateLtExtruders).filter { it > 0 }.sorted()
-                    } else {
-                        enrichedExtruders.filter { it > 0 }.sorted()
-                    }
-                }
-                else -> enrichedExtruders.filter { it > 0 }.sorted()
-            }
-            val selected = linkedSetOf<String>()
-            selectedExtruders.forEach { idx ->
-                fileInfo.detectedColors.getOrNull(idx - 1)?.let { selected.add(it) }
-            }
-            selected.toList().ifEmpty { fileInfo.detectedColors }
+        // Canonical-driven narrowing: convert each 1-based extruder/paint-state
+        // to a 0-based fileIndex and look up the colour in the canonical list.
+        // paintStateMap entries are equivalent to (state - 1) for currently-
+        // declared states, so the simple `ext - 1` translation works for both
+        // plain extruders and paint states.
+        val narrowedColors: List<String> = if (canonical != null && canonical.size > 0) {
+            val usedFileIndices = enrichedExtruders.mapNotNull { ext ->
+                val idx = canonical.paintStateMap[ext] ?: (ext - 1)
+                idx.takeIf { it in 0 until canonical.size }
+            }.toSortedSet()
+            usedFileIndices.map { canonical.filaments[it].color }
         } else if (enrichedExtruders.isNotEmpty() && fileInfo.detectedColors.size > 1) {
+            // Non-Bambu / canonical load failed: fall back to fileInfo palette.
             enrichedExtruders.sorted().mapNotNull { idx ->
                 fileInfo.detectedColors.getOrNull(idx - 1)
             }.ifEmpty { fileInfo.detectedColors }
@@ -3878,38 +3937,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             fileInfo.detectedColors
         }
 
-        // Hueforge plate detection: single object, single filament, layer-tool changes,
-        // no paint, no per-object diversity.
-        val isHueforgePlate = fileInfo.hasLayerToolChanges && !plateHasPaintData &&
-            enrichedExtruders.size <= 1 &&
-            fileInfo.objectExtruderMap.values.toSet().size <= 1
+        Log.i("SlicerVM", "buildThreeMfInfoFromNative: plate=$plateId native=$usedExtruders " +
+            "enriched=$enrichedExtruders hasPaint=$plateHasPaintData " +
+            "canonicalSize=${canonical?.size ?: 0} narrowedColors=$narrowedColors")
 
-        val effectiveExtruderCount = if (layerToolOnly) {
-            maxOf(narrowedColors.size, enrichedExtruders.size)
-        } else if (isHueforgePlate) {
-            maxOf(narrowedColors.size, 2)
-        } else if (narrowedColors.isNotEmpty()) {
-            narrowedColors.size
-        } else {
-            maxOf(enrichedExtruders.size, 1)
-        }
+        // For SEMM paint and compound-object plates, keep detectedColors as
+        // narrowed (canonical-driven) for the UI chip display, but the slicer-
+        // facing `filament_colour` palette stays file-wide via embed (handled
+        // separately by ProfileEmbedder). UI consumers read detectedColors;
+        // canonical narrowing is the right shape there.
+        //
+        // Layer-tool-only plates also use narrowedColors — canonical's
+        // `mergeLayerToolData` already synthesises LAYER_TOOL entries for any
+        // referenced extruder beyond the FILE_COLOUR base, so the canonical
+        // lookup yields exactly the colours the plate uses.
+        val paletteColors = narrowedColors.ifEmpty { fileInfo.detectedColors }
+        val paletteCount = paletteColors.size.coerceAtLeast(1)
 
-        // Keep detectedColors file-wide (don't narrow) for SEMM paint and compound-
-        // object plates. The slicer's multi_material_segmentation_by_painting() needs
-        // a filament_colour array sized to the file's full palette so paint states
-        // referencing higher indices aren't dropped — narrowing here was the root
-        // cause of H2C benchy collapsing to 3 tools and F1 calendar plate 1 missing
-        // its 4th colour through the embed pipeline. usedExtruderIndices stays
-        // plate-scoped (UI chip display + slot allocation); detectedColors stays
-        // file-wide (slicer palette).
-        val paletteColors = if (layerToolOnly) narrowedColors else fileInfo.detectedColors
-        val paletteCount = if (layerToolOnly) effectiveExtruderCount else fileInfo.detectedExtruderCount
         // §4 Step 8 — volumeExtruders carries the spatial-only diversity
         // (native-reported usedExtruders ∪ object-level map) so the derived
         // hasMultiExtruderAssignments matches the previous hasMultiExtAssign
-        // semantic without relying on a stored boolean. enrichedExtruders
-        // (which includes layer-tool secondaries) stays in usedExtruderIndices
-        // for the chip-display path.
+        // semantic without relying on a stored boolean.
         val volumeExtrudersForPlate = (usedExtruders + objExtruderMap.values).filter { it > 0 }.toSet()
         return fileInfo.copy(
             plates = listOfNotNull(sourcePlate),
