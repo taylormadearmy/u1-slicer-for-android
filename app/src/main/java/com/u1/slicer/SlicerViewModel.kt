@@ -3963,7 +3963,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // referenced extruder beyond the FILE_COLOUR base, so the canonical
         // lookup yields exactly the colours the plate uses.
         val paletteColors = narrowedColors.ifEmpty { fileInfo.detectedColors }
-        val paletteCount = paletteColors.size.coerceAtLeast(1)
+        // detectedExtruderCount stays file-wide so the slicer's
+        // `extruderCount` covers all canonical fileIndices referenced by
+        // `model_settings.config` parts. Plates whose parts reference
+        // high fileIndices (e.g. Buzz plate 8: parts on extruder=10) need
+        // the slicer's extruder_count to span up to that index, otherwise
+        // the slicer collapses high-fileIndex parts to T0 and emits no
+        // tool changes. The slicer caps at 4 physical slots in the
+        // multi-color block (`coerceIn(1, 4)`); the cap itself preserves
+        // print-time slot constraints. UI chip display uses
+        // `detectedColors.size` (= paletteColors.size, plate-narrowed)
+        // independently.
+        val paletteCount = maxOf(
+            paletteColors.size,
+            fileInfo.detectedExtruderCount
+        ).coerceAtLeast(1)
 
         // §4 Step 8 — volumeExtruders carries the spatial-only diversity
         // (native-reported usedExtruders ∪ object-level map) so the derived
