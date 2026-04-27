@@ -523,23 +523,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Empty when no canonical list is available (STL / non-canonical paths);
      * callers fall back to the slot palette in that case.
      */
-    val meshAlignedFilamentColors: StateFlow<List<String>> = combine(
-        _threeMfInfo,
-        _filamentOverrides,
-        _canonicalFilamentList,
-    ) { _, overrides, canonical ->
-        val canonicalEntries = canonical?.filaments
-        if (canonicalEntries.isNullOrEmpty()) return@combine emptyList()
-        // Apply per-file-filament overrides on top of the canonical colours.
-        // After fc43d9f3 (Kotlin-side mesh-index compaction disabled) all
-        // mesh.extruderIndices are file-fileIndex aligned across every file
-        // shape — multi-plate Bambu, per-object multi-extruder, layer-tool.
-        // The palette is therefore the full canonical list, file-fileIndex
-        // indexed, with no plate-narrowing or sort-and-pick gymnastics.
-        canonicalEntries.map { entry ->
-            overrides[entry.fileIndex]?.color ?: entry.color
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    /**
+     * After fc43d9f3 (Kotlin-side mesh compaction disabled) AND the
+     * Button-for-S-trousers diagnosis (file uses `extruder_colour` not
+     * `filament_colour` so `bambuCanonicalList` only finds 1 entry while
+     * `info.detectedColors` has 12), this flow becomes a thin alias for
+     * `resolvedFilamentColors` — same source-of-truth (`info.detectedColors`
+     * is the more complete combined-array parser), same semantics.
+     * Kept as a separate property to give the recolor path a stable handle
+     * to reach for, but the implementation is now the same flow.
+     */
+    val meshAlignedFilamentColors: StateFlow<List<String>>
+        get() = resolvedFilamentColors
 
     // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)
     val slicingOverrides: StateFlow<SlicingOverrides> = settingsRepo.slicingOverrides
