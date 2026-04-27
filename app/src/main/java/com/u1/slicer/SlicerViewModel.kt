@@ -2735,12 +2735,29 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // NOTE: extruder_temps is what applyConfigToPrusa() actually reads for
                 // nozzle_temperature — NOT the nozzle_temperature key in the embedded profile
                 // (which is not in profile_keys[] and is therefore ignored by the native slicer).
+                //
+                // Phase 2 §4 — slot temps fold in per-canonical-filament
+                // overrides via colorMapping. For each slot s, take the max
+                // temp across file filaments mapped to s. Without this fold,
+                // a PETG override on file filament F whose slot has a PLA
+                // preset would land at 220°C (preset) instead of 235°C
+                // (override), defeating the cascade-detector contract.
+                // (sapil_print.cpp:285 copies cfg.extruder_temps into the
+                // slicer's nozzle_temperature; the B48 padding at line 858
+                // pads to canonical size by repeating the last value.)
+                val canonicalForTemps = getCanonicalFilamentList()
+                val perFilamentTempsForSlots = canonicalForTemps?.let {
+                    buildPerFilamentTypeAndTemp(it, _filamentOverrides.value, extruderPresets.value).second
+                }
                 val sliceConfig = resolvedSliceConfig.let { cfg ->
-                    cfg.copy(extruderTemps = computeFreshSlotTemps(
+                    cfg.copy(extruderTemps = computeCanonicalAwareSlotTemps(
                         slotCount = cfg.extruderCount,
                         usedSlots = toolRemapSlots,
+                        canonical = canonicalForTemps,
+                        perFilamentTemps = perFilamentTempsForSlots,
+                        colorMapping = _colorMapping.value,
                         presets = extruderPresets.value,
-                        filaments = filaments.value
+                        filaments = filaments.value,
                     ))
                 }
                 val profileOverrides = buildProfileOverrides(
@@ -4686,6 +4703,50 @@ internal fun computeFreshSlotTemps(
         filaments.firstOrNull { it.id == profileId }?.nozzleTemp
             ?: nozzleTempDefaultForMaterial(preset?.materialType ?: "PLA")
     }
+}
+
+/**
+ * Phase 2 §4 — slot-space temps that respect per-canonical-filament
+ * material overrides. For each slot s, pick the maximum
+ * `nozzle_temperature` across file filaments mapped to that slot:
+ * `slotTemps[s] = max { perFilamentTemps[f] : colorMapping[f] == s }`.
+ *
+ * Why max: when several file filaments collide on one slot (H2C benchy
+ * mapping = [0,1,2,3,0,1,2] with collisions on slots 0..3) the slot must
+ * hold the hottest required material, otherwise the higher-temp filament
+ * (e.g. PETG override) under-extrudes when its T-command lands on the
+ * slot.
+ *
+ * Why not pad slot-space directly: the C++ side at `sapil_print.cpp:285`
+ * copies `cfg.extruder_temps` into the slicer's `nozzle_temperature`, then
+ * the B48 padding at line 858 pads to canonical size by repeating the last
+ * value. Putting the override in slot-space ensures the override survives
+ * both steps without tripping the slot-cap-vs-canonical-cap mismatch.
+ *
+ * Falls back to [computeFreshSlotTemps] when no canonical list is
+ * available (STL / single-extruder paths).
+ */
+internal fun computeCanonicalAwareSlotTemps(
+    slotCount: Int,
+    usedSlots: List<Int>?,
+    canonical: com.u1.slicer.data.CanonicalFilamentList?,
+    perFilamentTemps: List<Int>?,
+    colorMapping: List<Int>?,
+    presets: List<com.u1.slicer.data.ExtruderPreset>,
+    filaments: List<com.u1.slicer.data.FilamentProfile>,
+): IntArray {
+    val baseline = computeFreshSlotTemps(slotCount, usedSlots, presets, filaments)
+    if (canonical == null || perFilamentTemps == null || colorMapping == null) return baseline
+    val result = baseline.copyOf()
+    for (fileIndex in colorMapping.indices) {
+        val slot = colorMapping[fileIndex]
+        if (slot !in 0 until slotCount) continue
+        val fileTemp = perFilamentTemps.getOrNull(fileIndex) ?: continue
+        if (fileTemp > result[slot]) {
+            result[slot] = fileTemp
+        }
+    }
+    return result
 }
 
 /**

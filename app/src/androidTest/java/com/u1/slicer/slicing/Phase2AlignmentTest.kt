@@ -113,6 +113,18 @@ class Phase2AlignmentTest {
     }
 
     /**
+     * Reads the `; nozzle_temperature = ...` header line from the G-code.
+     * OrcaSlicer emits this as a comma-separated list of integers — one per
+     * extruder. Returns `null` if absent.
+     */
+    private fun readNozzleTemperatureHeader(gcode: String): List<Int>? {
+        val line = gcode.lines().firstOrNull {
+            it.trimStart().startsWith("; nozzle_temperature = ")
+        } ?: return null
+        return line.substringAfter("= ").split(",").mapNotNull { it.trim().toIntOrNull() }
+    }
+
+    /**
      * Cascade detector: H2C benchy (7 file filaments) with PETG override at
      * fileIndex 0 must produce a `filament_type` header where index 0 is
      * PETG and ALL other indices are PLA. A failure on indices 4 (which
@@ -197,10 +209,28 @@ class Phase2AlignmentTest {
         val embedded = embedder.embed(processed, config, outDir, origInfo)
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
 
-        // Slice with 4 physical extruders — the print-time mapping reduces
-        // the canonical 7 down to 4 slots, but the file-filament-space
-        // arrays we just embedded are 7-wide.
-        val result = lib.slice(makeConfig(4))
+        // Slice with 4 physical extruders. cfg.extruderTemps must carry the
+        // canonical-aware slot temps so the override survives the C++
+        // applyConfigToPrusa→nozzle_temperature path (sapil_print.cpp:285).
+        // For colorMapping=[0,1,2,3,0,1,2] with PETG override at fileIndex 0,
+        // slot 0 holds the max temp across file filaments mapped to it
+        // (max(235 PETG, 220 PLA) = 235). Slots 1..3 stay 220.
+        val canonicalSlotTemps = com.u1.slicer.computeCanonicalAwareSlotTemps(
+            slotCount = 4,
+            usedSlots = null,
+            canonical = overridden,
+            perFilamentTemps = nozzleTemps,
+            colorMapping = colorMapping,
+            presets = fourPLAPresets(),
+            filaments = emptyList(),
+        )
+        assertEquals(
+            "Canonical-aware slot temps: slot 0 must hold PETG's 235°C " +
+                "(file filament 0 with PETG override maps there).",
+            235, canonicalSlotTemps[0]
+        )
+        val sliceConfig = makeConfig(4).copy(extruderTemps = canonicalSlotTemps)
+        val result = lib.slice(sliceConfig)
         assertNotNull("slice() must not return null", result)
         result!!
         assertTrue("Slice must succeed: ${result.errorMessage}", result.success)
@@ -232,5 +262,30 @@ class Phase2AlignmentTest {
                 "PLA", header[i],
             )
         }
+
+        // Phase 2 §4 — nozzle_temperature cascade detector. The PETG override
+        // at fileIndex 0 must reach the slicer's nozzle_temperature. Without
+        // computeCanonicalAwareSlotTemps wiring, the C++ applyConfigToPrusa
+        // copy at sapil_print.cpp:285 overwrites the embedded canonical
+        // array with cfg.extruder_temps (slot-space, 4 entries), then B48
+        // padding at line 858 grows the array using the LAST value. Result:
+        // PETG (235°C) gets clobbered to PLA (220°C) at every position. The
+        // E2E result on baf136e showed the legacy behaviour
+        // ("nozzle_temperature = 220,220,...,220").
+        val tempHeader = readNozzleTemperatureHeader(gcode)
+            ?: error("G-code must contain a `; nozzle_temperature = ...` header line")
+        Log.i("Phase2AlignmentTest", "H2C benchy nozzle_temperature header: $tempHeader")
+        assertTrue(
+            "nozzle_temperature must have at least 7 entries (one per file " +
+                "filament). Got ${tempHeader.size}: $tempHeader.",
+            tempHeader.size >= 7
+        )
+        assertEquals(
+            "nozzle_temperature[0] must be 235°C (PETG default for the " +
+                "user's override on fileIndex 0). Got ${tempHeader[0]}. If 220, " +
+                "the slot-space cfg.extruder_temps clobbered the embed's " +
+                "canonical array at sapil_print.cpp:285.",
+            235, tempHeader[0]
+        )
     }
 }
