@@ -397,30 +397,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // B64: SEMM colour permutation — maps compact T-index → physical extruder slot
     // when the user's colour assignment is a non-identity permutation.
     // Null when no permutation needed (identity, H2C, non-SEMM).
-    // Applied post-slice via GcodeToolRemapper, independently of toolRemapSlots.
-    private var semmColorPermutation: List<Int>? = null
-
-    // B92: for each slicer compact tool index k (0..N-1), which index into
-    // detectedColors does it represent. Required when OrcaSlicer's print-order
-    // differs from detectedColors order (e.g. Buzz plate 8: object default is
-    // filament 10 but the painted state is filament 3, so slicer T0=detectedColors[1]
-    // and slicer T1=detectedColors[0]). Null when identity (simple SEMM cases).
-    // Used by the G-code viewer to align Preview palette with Prepare palette.
-    private val _slicerColorOrder = MutableStateFlow<List<Int>?>(null)
-    val slicerColorOrder: StateFlow<List<Int>?> = _slicerColorOrder.asStateFlow()
-
-    // B92: expose semmColorPermutation to Compose so Preview can reindex correctly.
-    private val _semmColorPermutationFlow = MutableStateFlow<List<Int>?>(null)
-    val semmColorPermutationFlow: StateFlow<List<Int>?> = _semmColorPermutationFlow.asStateFlow()
-
-    // B95: true when the post-slice GcodeToolRemapper applied an expanded
-    // filament-index → physical-slot remap (because the embedded filament_colour
-    // was bumped to fit a high-index source filament). When true, the parsedGcode
-    // exposed via [parsedGcode] already carries physical-slot indices, so the
-    // Preview's [normalizeGcodePreviewColors] should bypass the slicerColorOrder
-    // / semmColorPermutation swap branches and use [activeExtruderColors] directly.
-    private val _gcodeUsesPhysicalSlots = MutableStateFlow(false)
-    val gcodeUsesPhysicalSlots: StateFlow<Boolean> = _gcodeUsesPhysicalSlots.asStateFlow()
+    // Phase 2 (2026-04-28) — Group B legacy slice-time remap flows
+    // (`semmColorPermutation`, `_slicerColorOrder`, `_semmColorPermutationFlow`,
+    // `_gcodeUsesPhysicalSlots`) are retired. With the canonical-driven
+    // contract the slicer emits T-indices in fileIndex space and PrintTimeRemap
+    // does slot translation only at Send time, so these slot-aware-slicer
+    // flows are dead by construction.
 
     // B49: cache the Prepare preview MeshData so returning from G-code view is instant.
     // The native side caches the raw mesh, but toMeshData() (normal computation + FloatBuffer
@@ -436,17 +418,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         cachedPrepareMeshPath = null
     }
 
-    /**
-     * B92: reset both the post-slice tool-remap state and the Preview palette-alignment
-     * state so a fresh applyMultiColorAssignments / plate-switch / single-colour path
-     * doesn't carry stale permutation data forward.
-     */
+    /** Reset toolRemapSlots so a fresh load doesn't carry stale slot state forward. */
     private fun resetToolRemapState() {
         toolRemapSlots = null
-        semmColorPermutation = null
-        _semmColorPermutationFlow.value = null
-        _slicerColorOrder.value = null
-        _gcodeUsesPhysicalSlots.value = false
     }
 
     // Filament library — StateFlow so .value is accessible synchronously (e.g. for nozzle temp lookup at slice time)
@@ -1757,24 +1731,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val isIdentity = compactSlots == (0 until slotCount).toList()
             if (isIdentity) null else compactSlots
         }
-        // B64: compute SEMM colour permutation for post-slice G-code remapping.
-        semmColorPermutation = computeSemmColorPermutation(
-            colorMapping = modelColorToExtruder,
-            hasPaintData = hasPaintData,
-            isH2cStyle = isH2cStyle
-        )
-        _semmColorPermutationFlow.value = semmColorPermutation
-        // B92: derive slicer tool-order mapping so the G-code preview can align its
-        // palette with Prepare's compact ordering when OrcaSlicer prints the object
-        // default tool first instead of filament-index-ascending.
-        val info = _threeMfInfo.value
-        _slicerColorOrder.value = computeSlicerColorOrder(
-            detectedColors = info?.detectedColors.orEmpty(),
-            usedExtruderIndices = info?.usedExtruderIndices ?: emptySet(),
-            objectExtruderMap = info?.objectExtruderMap ?: emptyMap(),
-            hasPaintData = hasPaintData,
-            isH2cStyle = isH2cStyle
-        )
+        // Phase 2 (2026-04-28) — Group B retired the slice-time
+        // semmColorPermutation and slicerColorOrder flows. The slicer emits
+        // canonical T-indices and PrintTimeRemap handles slot mapping at
+        // Send time, so post-slice G-code permutation is no longer needed.
         val temps = IntArray(slotCount) { i ->
             val slotIndex = usedSlots.getOrElse(i) { i }
             val preset = extruderPresets.firstOrNull { it.index == slotIndex }
@@ -1830,7 +1790,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "extCount" to slotCount,
                 "toolRemapSlots" to toolRemapSlots,
                 "isIdentity" to (toolRemapSlots == null),
-                "semmColorPermutation" to semmColorPermutation,
                 "slotColors" to fullColors
             )
         )
@@ -2294,7 +2253,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             "copyCount" to _copyCount.value,
             "hasCustomPlacement" to (customObjectPositions != null),
             "toolRemapSlots" to toolRemapSlots,
-            "semmColorPermutation" to semmColorPermutation,
             "colorMapping" to _colorMapping.value,
             "extruderCount" to sliceConfig.extruderCount,
             "wipeTowerEnabled" to sliceConfig.wipeTowerEnabled,
@@ -2895,58 +2853,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             "Injected layer-change pause commands into ${result.gcodePath} using ${layerToolMetadataFile?.name}"
                         )
                     }
-                    // B92: Apply tool remap BEFORE parsing the G-code for the Preview viewer.
-                    // The remap rewrites compact T-indices (T0, T1, ...) to physical slots
-                    // (e.g. T1 → T3 when colorMapping=[0, 3]). validateSliceOutput parses the
-                    // file into ParsedGcode that drives the Preview renderer, so it MUST see
-                    // the post-remap T-indices — otherwise the renderer paints moves with
-                    // GcodeRenderer's default-palette colour at the unmapped slot (sky blue
-                    // for slot 1), reproducing the user's blue-stripes screenshot.
-                    //
-                    // B95: when the embedded filament_colour was bumped to fit a high-index
-                    // source filament (Buzz plate 9: state 11 from `paint_color="8C"`), the
-                    // slicer emits T<filament-1> for each used filament instead of compact
-                    // T0..T(N-1). computeExpandedGcodeRemap returns a list mapping each
-                    // emitted T-index back to the user's physical slot via colorMapping.
-                    // This expanded remap takes precedence over the legacy
-                    // semmColorPermutation when both apply.
-                    val sliceInfo = _threeMfInfo.value
-                    val sliceColorMapping = _colorMapping.value
-                    val maxSourceFilamentIndex = sliceInfo?.usedExtruderIndices?.maxOrNull() ?: 0
-                    val embeddedFilamentCount = computeEmbedTargetCount(
-                        colorMapping = sliceColorMapping,
-                        hasPaintData = sliceInfo?.hasPaintData == true,
-                        toolRemapSlots = toolRemapSlots,
-                        fallbackExtCount = _config.value.extruderCount.coerceAtLeast(1),
-                        hasMultiExtruderAssignments = sliceInfo?.hasMultiExtruderAssignments == true,
-                        maxSourceFilamentIndex = maxSourceFilamentIndex
-                    )
-                    val expandedRemap = computeExpandedGcodeRemap(
-                        usedExtruderIndices = sliceInfo?.usedExtruderIndices.orEmpty(),
-                        colorMapping = sliceColorMapping,
-                        embeddedFilamentCount = embeddedFilamentCount
-                    )
-                    val composedRemap = expandedRemap
-                        ?: composeSemmRemap(toolRemapSlots, semmColorPermutation)
-                    // Phase 2.5 final fix: do NOT bake the slot mapping into
-                    // the G-code at slice time. The G-code keeps the slicer's
-                    // canonical T-indices (file filament indices), and the
-                    // user's slot mapping is applied as a print-time post-
-                    // process when the Filament mapping dialog confirms.
-                    // This is what makes "how many filaments?" answerable
-                    // before the user has picked slots — the slice summary
-                    // can show the file's actual filament count.
-                    _gcodeUsesPhysicalSlots.value = false
-                    val skipSliceTimeRemap = true
-                    if (!skipSliceTimeRemap && composedRemap != null) {
-                        GcodeToolRemapper.remap(result.gcodePath, composedRemap)
-                        Log.i(
-                            "SlicerVM",
-                            "Post-processed G-code: remapped tools to $composedRemap " +
-                                "(expandedRemap=${expandedRemap != null}, " +
-                                "toolRemap=$toolRemapSlots, semmPerm=$semmColorPermutation)"
-                        )
-                    }
+                    // Phase 2 (2026-04-28) — Group B retired the slice-time
+                    // tool remap. The slicer emits canonical T-indices in
+                    // fileIndex space; PrintTimeRemap (separate, Send-time)
+                    // translates to physical slots when the user confirms
+                    // the Filament mapping dialog. The on-disk G-code stays
+                    // in canonical space so "how many filaments?" stays
+                    // answerable from the slice summary alone. The legacy
+                    // composeSemmRemap / computeExpandedGcodeRemap branch
+                    // and its `skipSliceTimeRemap=true` const-true gate
+                    // (~50 LOC) were dead-but-still-computed before; now
+                    // both helpers + the gate are deleted.
                     val outputValidation = validateSliceOutput(
                         result,
                         buildExpectedModelFootprint(mi, copies, custom),
@@ -4855,155 +4772,15 @@ internal fun computeEmbedTargetCount(
     return fallbackExtCount
 }
 
-/**
- * Compute the SEMM colour permutation for post-slice G-code remapping.
- *
- * For normal SEMM paint models, the slicer outputs T0–T(N-1) based on the 3MF's
- * filament_colour order. When the user assigns model colours to physical extruders
- * in a non-identity order (e.g. Color1→E4, [3,0,2,1]), this permutation must be
- * applied to the G-code so T0→T3, T1→T0, etc.
- *
- * Returns null when no remap is needed: identity mapping, H2C models, or non-SEMM models.
- */
-internal fun computeSemmColorPermutation(
-    colorMapping: List<Int>,
-    hasPaintData: Boolean,
-    isH2cStyle: Boolean
-): List<Int>? {
-    if (!hasPaintData) return null
-    if (isH2cStyle) return null
-    val identity = (0 until colorMapping.size).toList()
-    if (colorMapping == identity) return null
-    return colorMapping
-}
-
-/**
- * B92: Compute the mapping from a slicer compact tool index (k, 0-based) to the
- * corresponding index into `detectedColors`.
- *
- * OrcaSlicer's tool ordering for SEMM paint models is **print-order**: the object's
- * default extruder is emitted as T0 first, and paint states are emitted as T1, T2, ...
- * in ascending paint-state order. `detectedColors`, by contrast, is built by
- * `parseForPlateSelection` in **source-filament-ascending order**.
- *
- * When the object default has a higher source filament than one of the paint
- * states — Buzz plate 8 (object=10, paint state 3) is the canonical example —
- * the two orderings disagree. The Prepare preview uses detectedColors order; the
- * G-code uses slicer print order. Without correcting this, the Preview viewer
- * paints T0 with `detectedColors[0]`'s assigned colour even though T0 is really
- * `detectedColors[defaultIndex]`'s tool.
- *
- * Returns `null` when the slicer order equals `detectedColors` order (identity case,
- * safe to keep current behaviour) — includes non-paint, H2C, and simple paint-only
- * models where the default extruder sits at index 0 of detectedColors.
- *
- * For the non-identity case (Buzz plate 8 shape), returns a permutation:
- *   result[0] = defaultIndex      // slicer T0 = object default = detectedColors[defaultIndex]
- *   result[1..N-1] = remaining detectedColors indices in ascending order.
- */
-internal fun computeSlicerColorOrder(
-    detectedColors: List<String>,
-    usedExtruderIndices: Set<Int>,
-    objectExtruderMap: Map<String, Int>,
-    hasPaintData: Boolean,
-    isH2cStyle: Boolean
-): List<Int>? {
-    if (!hasPaintData) return null
-    if (isH2cStyle) return null
-    val n = detectedColors.size
-    if (n < 2) return null
-    // usedExtruderIndices is the sorted-ascending source filament list backing
-    // detectedColors (mergeThreeMfInfoForPlate keeps them aligned).
-    val extruders = usedExtruderIndices.toList()
-    if (extruders.size != n) return null
-    // Determine the dominant object extruder — the one most objects reference.
-    // Models with mixed per-object extruders + paint data fall back to identity
-    // because there is no single "object default" for OrcaSlicer to lead with.
-    val counts = objectExtruderMap.values.groupingBy { it }.eachCount()
-    if (counts.isEmpty()) return null
-    val maxCount = counts.values.max()
-    val dominantCandidates = counts.entries.filter { it.value == maxCount }.map { it.key }
-    if (dominantCandidates.size != 1) return null
-    val defaultExtruder = dominantCandidates.first()
-    val defaultIndex = extruders.indexOf(defaultExtruder)
-    if (defaultIndex <= 0) return null
-    // Slicer order: default first, then paint states ascending (excluding the default).
-    val result = mutableListOf(defaultIndex)
-    for (i in 0 until n) if (i != defaultIndex) result.add(i)
-    val identity = (0 until n).toList()
-    if (result == identity) return null
-    return result
-}
-
-/**
- * B95: Compute the post-slice tool remap for paint plates whose embedded
- * `filament_colour` was bumped to fit a high-index source filament (e.g. Buzz
- * Lightyear plate 9: state 11 from `paint_color="8C"`). The slicer emits
- * `T<filament_index - 1>` for each paint state and object extruder; this
- * function returns a list `out` such that `out[t]` is the physical slot
- * (0..3) the user wants for slicer tool index `t`.
- *
- * Returns `null` when the bump didn't apply (`embeddedFilamentCount` is at or
- * below the user's distinct-slot count) and the existing
- * [computeSemmColorPermutation] / [toolRemapSlots] paths should drive the
- * remap instead.
- *
- * Entries for tool indices the slicer never emits are populated with a
- * harmless identity fallback (`t` itself coerced into 0..3) so any stray
- * out-of-band T-index lands on a valid slot rather than being left as a
- * wrap-around to slot 3 by `GcodeParser`'s `coerceIn(0, 3)`.
- */
-internal fun computeExpandedGcodeRemap(
-    @Suppress("UNUSED_PARAMETER") usedExtruderIndices: Iterable<Int>,
-    colorMapping: List<Int>?,
-    embeddedFilamentCount: Int
-): List<Int>? {
-    if (colorMapping.isNullOrEmpty()) return null
-    if (embeddedFilamentCount <= 0) return null
-    // Only useful when the embed was bumped beyond the distinct-slot count;
-    // otherwise the existing semmColorPermutation / toolRemapSlots logic
-    // keeps the same final mapping with less plumbing. Out-of-range entries
-    // (anything outside 0..3) are not real slots — exclude from the count
-    // so a stray invalid index does not suppress the expansion.
-    val distinctSlots = colorMapping.filter { it in 0..3 }.distinct().size
-    if (embeddedFilamentCount <= distinctSlots) return null
-    // The slicer emits T0..T(embeddedFilamentCount-1) for the N embedded
-    // filaments in order. Drive the per-filament remap directly off the
-    // colorMapping index — `out[i] = colorMapping[i]` puts each emitted tool
-    // on the user's chosen physical slot.
-    //
-    // If `colorMapping` is shorter than `embeddedFilamentCount` (a higher
-    // index was bumped only by maxSourceFilamentIndex / paint-state encoding),
-    // pad the tail with identity-coerced defaults so any stray out-of-band
-    // T-index lands on a valid 0..3 slot rather than being wrap-coerced to
-    // slot 3 by GcodeParser. The previous version of this function had a
-    // separate `usedExtruderIndices`-driven sparse path; that path had a
-    // structural bug (only out[0] received the user's mapping for SEMM-paint
-    // files with `usedExtruderIndices = {1}`, leaving other slots on identity
-    // defaults). The unified dense+identity-tail formulation is correct for
-    // both H2C-style "more model colours than embedded filaments" and B95-style
-    // "high paint state index bumped the embed" cases.
-    return List(embeddedFilamentCount) { i ->
-        val mapped = colorMapping.getOrNull(i)
-        if (mapped != null && mapped in 0..3) mapped else i.coerceIn(0, 3)
-    }
-}
-
-/**
- * Compose toolRemapSlots and semmColorPermutation into a single remap list.
- *
- * semmColorPermutation already maps compact T-index → physical slot, so when
- * both are present it subsumes toolRemapSlots (which maps compact T-index →
- * physical slot for sparse-slot compaction).
- */
-internal fun composeSemmRemap(
-    toolRemapSlots: List<Int>?,
-    semmColorPermutation: List<Int>?
-): List<Int>? = when {
-    semmColorPermutation != null -> semmColorPermutation
-    toolRemapSlots != null -> toolRemapSlots
-    else -> null
-}
+// Phase 2 (2026-04-28) — Group B: the slice-time tool remap helpers
+// (`computeSemmColorPermutation`, `computeSlicerColorOrder`,
+// `computeExpandedGcodeRemap`, `composeSemmRemap`) were retired. The slicer
+// emits canonical T-indices in fileIndex space; PrintTimeRemap (separate,
+// Send-time) translates to physical slots when the user confirms the
+// Filament mapping dialog. None of these helpers had remaining production
+// callers after `1e95c7d` made `applyConfigToPrusa` respect the embed for
+// per-filament tuning. Their unit tests (SlicerColorOrderTest,
+// SemmColorPermutationTest, ExpandedGcodeRemapTest) were removed alongside.
 
 /**
  * B63: Replace the `; filament_type = ...` header comment in a generated G-code file

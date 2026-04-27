@@ -31,10 +31,7 @@ fun GcodeViewer3DScreen(
     parsedGcode: ParsedGcode,
     extruderColors: List<String> = emptyList(),
     colorMapping: List<Int>? = null,
-    semmColorPermutation: List<Int>? = null,
-    slicerColorOrder: List<Int>? = null,
     slicerLayerCount: Int = 0,
-    useDirectSlots: Boolean = false,
     // Phase 2 §4 Step 7 (Preview side) — file-derived per-filament colours
     // (override-applied). When non-empty, drives the slot palette so the
     // standalone G-code 3D viewer shows file colours matching Prepare.
@@ -53,8 +50,8 @@ fun GcodeViewer3DScreen(
     // Set colors + upload gcode atomically on the GL thread.
     // suspendCancellableCoroutine waits for the GL work to finish before
     // clearing the loading indicator.
-    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots, resolvedFilamentColors) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots, resolvedFilamentColors)
+    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
     }
 
     LaunchedEffect(parsedGcode, previewColors, viewerView) {

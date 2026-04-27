@@ -76,9 +76,6 @@ fun U1NavGraph(
             val colorMapping by viewModel.colorMapping.collectAsState()
             val threeMfInfo by viewModel.threeMfInfo.collectAsState()
             val slicerState by viewModel.state.collectAsState()
-            val semmColorPermutation by viewModel.semmColorPermutationFlow.collectAsState()
-            val slicerColorOrder by viewModel.slicerColorOrder.collectAsState()
-            val gcodeUsesPhysicalSlots by viewModel.gcodeUsesPhysicalSlots.collectAsState()
             val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
             val slicerLayerCount = (slicerState as? com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete)?.result?.totalLayers ?: 0
             if (parsedGcode != null) {
@@ -93,10 +90,7 @@ fun U1NavGraph(
                     parsedGcode = parsedGcode!!,
                     extruderColors = extruderColors,
                     colorMapping = gcodeColorMapping,
-                    semmColorPermutation = semmColorPermutation,
-                    slicerColorOrder = slicerColorOrder,
                     slicerLayerCount = slicerLayerCount,
-                    useDirectSlots = gcodeUsesPhysicalSlots,
                     resolvedFilamentColors = resolvedFilamentColors,
                     onBack = { navController.popBackStack() }
                 )

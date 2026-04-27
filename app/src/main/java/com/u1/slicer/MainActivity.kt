@@ -757,53 +757,16 @@ internal data class PendingMappingSend(
     enum class Action { PrintAndUpload, UploadOnly }
 }
 
-/**
- * Phase 2.5 — given the slice-time mapping that produced the current
- * G-code's T-indices and the user's desired final mapping from the
- * Filament mapping dialog, returns the list to feed to
- * [com.u1.slicer.gcode.applyPrintTimeRemap] so the rewrite is correct.
- *
- * Why the delta is needed: the slice path today already bakes the
- * pre-dialog `colorMapping` into the G-code via GcodeToolRemapper.remap,
- * so the on-disk G-code's T<n> already represents physical-slot indices,
- * not file-filament indices. The dialog's `mapping` is what the user
- * wants — relative to the file's filaments. The applyPrintTimeRemap
- * function rewrites T<n> → T<list[n]> verbatim, so the input list must
- * be source-T-indexed, not file-indexed.
- *
- * Result list is sized to cover every distinct T-index that could appear
- * in the source G-code; entries with no explicit rewrite default to
- * identity (which applyPrintTimeRemap also handles via its `?: itself`
- * fallback in the remap line logic).
- *
- * Behaviour notes:
- *  - If [sliceMapping] is null (single-colour or no pre-slice mapping),
- *    the user's mapping is interpreted as file-indexed directly — the
- *    legacy contract.
- *  - If [sliceMapping] has duplicates (overlap from a multi-colour file
- *    sliced with two filaments collapsed onto one slot), the duplicate
- *    source T-index gets the LAST file index's user choice as a tie-
- *    break. The user can't un-collapse a previously-collapsed slice via
- *    the dialog — that would require re-slicing.
- */
-internal fun computeDialogRewrite(
-    sliceMapping: List<Int>?,
-    userMapping: List<Int>,
-): List<Int> {
-    if (sliceMapping == null || sliceMapping.size != userMapping.size) {
-        return userMapping
-    }
-    val maxSrc = sliceMapping.maxOrNull() ?: return userMapping
-    val maxDst = userMapping.maxOrNull() ?: return userMapping
-    val size = maxOf(maxSrc, maxDst, sliceMapping.size - 1, userMapping.size - 1) + 1
-    val rewrite = MutableList(size) { it }  // identity defaults
-    for (i in sliceMapping.indices) {
-        val src = sliceMapping[i]
-        val dst = userMapping[i]
-        if (src in rewrite.indices) rewrite[src] = dst
-    }
-    return rewrite
-}
+// Phase 2 (2026-04-28) — Group B: `computeDialogRewrite` was retired.
+// Pre-Phase-2 the slice path baked the pre-dialog `colorMapping` into the
+// G-code via `GcodeToolRemapper.remap`, so the on-disk T-indices were
+// physical-slot space and the dialog's mapping had to be remapped via this
+// helper. With the canonical contract the slicer emits T-indices in
+// fileIndex space, the GcodeToolRemapper call was removed in `1e95c7d`,
+// and the dialog's mapping is now the only translation needed —
+// `applyPrintTimeRemap(mapping)` is correct directly. The helper had no
+// production callers left and only its unit test
+// (ComputeDialogRewriteTest) referenced it.
 
 // =============================================================================
 // Theme
@@ -1431,9 +1394,6 @@ fun PreviewScreen(
     val config by viewModel.config.collectAsState()
     val extruderPresets by viewModel.extruderPresets.collectAsState()
     val sliceStale by viewModel.sliceStale.collectAsState()
-    val semmColorPermutation by viewModel.semmColorPermutationFlow.collectAsState()
-    val slicerColorOrder by viewModel.slicerColorOrder.collectAsState()
-    val gcodeUsesPhysicalSlots by viewModel.gcodeUsesPhysicalSlots.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
 
     Scaffold(
@@ -1534,10 +1494,7 @@ fun PreviewScreen(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
                             colorMapping = gcodeColorMapping,
-                            semmColorPermutation = semmColorPermutation,
-                            slicerColorOrder = slicerColorOrder,
                             slicerLayerCount = s.result.totalLayers,
-                            useDirectSlots = gcodeUsesPhysicalSlots,
                             onExpand = onNavigateGcodeViewer3D,
                             cameraState = sharedPreviewCameraState,
                             onCameraStateChange = onSharedPreviewCameraStateChange,
@@ -3869,10 +3826,7 @@ fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
     colorMapping: List<Int>? = null,
-    semmColorPermutation: List<Int>? = null,
-    slicerColorOrder: List<Int>? = null,
     slicerLayerCount: Int = 0,
-    useDirectSlots: Boolean = false,
     onExpand: () -> Unit,
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
     onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
@@ -3894,8 +3848,8 @@ fun InlineGcodePreview(
         ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
     else 1
 
-    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots, resolvedFilamentColors) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots, resolvedFilamentColors)
+    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
     }
 
     LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState) {
@@ -4036,96 +3990,34 @@ fun InlineGcodePreview(
 }
 
 /**
- * Build a palette for the G-code preview, indexed by the T-index that appears in
- * the final (post-composeSemmRemap) G-code.
+ * Build a palette for the G-code preview, indexed by the compact slicer
+ * T-index emitted in the canonical-space G-code.
  *
- * For every entry n in the returned list: `normalized[n]` is the hex colour the
- * viewer should render for `T<n>` toolpaths.
+ * Phase 2 (2026-04-28) — the slicer emits canonical (file-fileIndex space)
+ * T-indices and the on-disk G-code is consumed AS-IS by the Preview
+ * renderer. The user's slot mapping is only applied at Send time via
+ * `applyPrintTimeRemap`. So the palette here must align to the slicer's
+ * compact tool indices the renderer reads from `move.extruder`:
  *
- * Indexing contract by pipeline branch:
+ *   compactSlotOrder = colorMapping.distinct().sorted() (capped to 4 slots)
+ *   normalized[c]    = slot preset for compactSlotOrder[c]
+ *                       (fallback: canonical filament colour for the first
+ *                        file filament that maps to that slot)
  *
- *   1. Identity slicer order (no paint data, H2C, simple SEMM where detectedColors
- *      order already matches OrcaSlicer's tool order):
- *        `slicerColorOrder == null && semmColorPermutation == null` →
- *        after post-processing T<n> is the physical slot n, so
- *        `normalized[n] = extruderColors[n]`.
- *
- *   2. SEMM with non-identity colour mapping but slicer order == detectedColors
- *      order (Flarewing 4-colour with user-reassigned extruders):
- *        `slicerColorOrder == null && semmColorPermutation != null` →
- *        post-slice GcodeToolRemapper has already mapped slicer T<k> →
- *        physical T<semmPerm[k]>, so T<physicalSlot> is the user's chosen slot,
- *        `normalized[physicalSlot] = extruderColors[physicalSlot]` is correct.
- *        (Same init behaviour as branch 1.)
- *
- *   3. B92: SEMM where slicer tool order differs from detectedColors order
- *      (Buzz plate 8 shape — object default has a higher source filament index
- *      than some paint states):
- *        `slicerColorOrder != null && semmColorPermutation != null` →
- *        for each slicer compact idx k, physical slot is semmPerm[k], the
- *        detected colour is detectedColors[slicerColorOrder[k]], and the user's
- *        chosen slot for that detected colour is colorMapping[slicerColorOrder[k]].
- *        So `normalized[semmPerm[k]] = extruderColors[colorMapping[slicerColorOrder[k]]]`.
- *
- *   4. Legacy per-object without paint data (toolRemapSlots path, no semmPerm):
- *        `slicerColorOrder == null && semmColorPermutation == null` with
- *        non-identity colorMapping → the original compact-index-based override
- *        is preserved so existing non-SEMM callers keep working.
+ * The legacy slot-aware-slicer branches (semmColorPermutation +
+ * slicerColorOrder cascades, useDirectSlots short-circuit, post-slice
+ * GcodeToolRemapper) were retired with Group B because the slicer no
+ * longer remaps tool indices at slice time.
  */
 internal fun normalizeGcodePreviewColors(
     extruderColors: List<String>,
     colorMapping: List<Int>?,
-    semmColorPermutation: List<Int>? = null,
-    slicerColorOrder: List<Int>? = null,
-    useDirectSlots: Boolean = false,
     resolvedFilamentColors: List<String> = emptyList(),
 ): List<String> {
     val normalized = MutableList(4) { "" }
     for (slot in 0..3) {
         normalized[slot] = extruderColors.getOrNull(slot).orEmpty()
     }
-    // B95 / direct-slot pipeline: when the on-disk G-code already uses physical
-    // slot indices, the init loop's `extruderColors[slot]` mapping is what the
-    // renderer needs. Take the early exit BEFORE the canonical-driven branch so
-    // SEMM remap branches stay reachable when callers explicitly opt in.
-    if (useDirectSlots) return normalized
-    // Phase 2 §4 Step 7 (Preview side) — when canonical-derived per-filament
-    // colours are available AND a colorMapping exists, build the palette so it
-    // agrees with what the printer will actually deposit.
-    //
-    // Indexing contract: with Phase 2.5's print-time-remap design
-    // (skipSliceTimeRemap=true), the slicer emits T<compact> for each embedded
-    // filament — the renderer reads `extruderColors[move.extruder]` and
-    // `move.extruder` is the COMPACT slicer index, not the physical slot.
-    // Therefore `normalized[c]` here represents compact slicer index c, not
-    // slot c. The two coincide only when colorMapping uses all four slots
-    // contiguously {0,1,2,3}; for any other distribution (collisions →
-    // distinctSlots<4, or non-contiguous slot picks) the prior slot-keyed
-    // approach mis-rendered the gap slot with whatever the init loop seeded.
-    //
-    // Algorithm:
-    //   1. compactSlotOrder = colorMapping.distinct().sorted() (capped to
-    //      the 4 physical slots) — the mapping the embed step's
-    //      `buildCompactExtruderRemap` uses to
-    //      reorder file filaments into compact slots (1-based) in the
-    //      embedded model_settings.config. Compact c ↔ physical slot
-    //      compactSlotOrder[c].
-    //   2. For each compact c, prefer the slot's loaded preset colour
-    //      `extruderColors[compactSlotOrder[c]]`. This matches Phase 2 UX
-    //      §3 "Same colour" overlap semantics — when N file filaments
-    //      collapse onto one slot, the slot prints whatever is loaded in
-    //      that slot.
-    //   3. Fall back to a representative file-filament colour
-    //      (`resolvedFilamentColors[fileIdx]` for the first file filament
-    //      assigned to that slot) only when the slot preset is blank.
-    //
-    // This collapses the historical bug where compact 1 (= slot 2 for a
-    // {0,2,3} mapping) rendered with extruderColors[1]'s init value
-    // (slot 1 = E2 preset) instead of slot 2's content. Reported on
-    // Button-for-S-trousers plate 1 as "G-code Preview shows 3 colours not 4
-    // (missing red)" — multiple file filaments with closest-match collapsing
-    // to slot 0 caused the first-mapped filament's hex to win over the
-    // slot's preset; later slots inherited gap-filling init values.
     if (resolvedFilamentColors.isNotEmpty() && !colorMapping.isNullOrEmpty()) {
         // compactSlotOrder is the embed step's distinct-slot list capped at
         // the 4 physical slots — not a filament-count cap.
@@ -4147,28 +4039,10 @@ internal fun normalizeGcodePreviewColors(
         // expect 4 entries — leave the init-loop slot presets in place there.
         return normalized
     }
-    if (slicerColorOrder != null && semmColorPermutation != null && !colorMapping.isNullOrEmpty()) {
-        // Branch 3: align Preview palette with Prepare's compact → slot mapping.
-        semmColorPermutation.forEachIndexed { slicerCompactIdx, physicalSlot ->
-            if (physicalSlot in 0..3) {
-                val detectedIdx = slicerColorOrder.getOrNull(slicerCompactIdx) ?: slicerCompactIdx
-                val userSlot = colorMapping.getOrNull(detectedIdx)
-                if (userSlot != null && userSlot in 0..3) {
-                    val color = extruderColors.getOrNull(userSlot).orEmpty()
-                    if (color.isNotBlank()) {
-                        normalized[physicalSlot] = color
-                    }
-                }
-            }
-        }
-    } else if (semmColorPermutation == null && !colorMapping.isNullOrEmpty()) {
-        // Branch 4: legacy compat — only apply the compact-index override when the
-        // SEMM post-slice remap was NOT active. If semmPerm was active (branch 2),
-        // GcodeToolRemapper has already moved tool indices to physical slots and the
-        // init loop above already produced the right colours.
-        // slot-space: normalized is a 4-entry per-slot palette; iterate
-        // colorMapping up to the array bound so the assignment never goes
-        // out of range. Not a filament-count cap — see HardcodedExtruderCapTest.
+    if (!colorMapping.isNullOrEmpty()) {
+        // Non-canonical path (no resolved filament colours yet): map
+        // compact slicer index → slot preset via colorMapping. Iterate up
+        // to the array bound so the assignment never goes out of range.
         colorMapping.take(normalized.size).forEachIndexed { compactIdx, slot ->
             if (slot in 0..3) {
                 val slotColor = extruderColors.getOrNull(slot).orEmpty()

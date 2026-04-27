@@ -137,66 +137,28 @@ class PreviewColorNormalizationTest {
      * T0 = white (the slot assigned to unpainted) and T3 = red (the slot assigned
      * to painted).
      */
-    @Test
-    fun `normalizeGcodePreviewColors B92 Buzz plate 8 shape aligns Preview with Prepare`() {
-        val extruderColors = listOf("#FF0000", "", "", "#FFFFFF")
-        val colorMapping = listOf(0, 3)
-        val semmColorPermutation = listOf(0, 3)
-        val slicerColorOrder = listOf(1, 0)
-
-        val result = normalizeGcodePreviewColors(
-            extruderColors = extruderColors,
-            colorMapping = colorMapping,
-            semmColorPermutation = semmColorPermutation,
-            slicerColorOrder = slicerColorOrder
-        )
-
-        // T0 prints the unpainted region (slicer T0 = detectedColors[1] = white,
-        // user assigned white → slot 3 = E4 = "#FFFFFF"), so Preview should render
-        // T0 segments with #FFFFFF.
-        assertEquals("T0 (unpainted) must render in E4 white", "#FFFFFF", result[0])
-        // T3 prints the painted region (slicer T1 = detectedColors[0] = brown,
-        // user assigned brown → slot 0 = E1 = "#FF0000"), so Preview should render
-        // T3 segments with #FF0000.
-        assertEquals("T3 (painted) must render in E1 red", "#FF0000", result[3])
-    }
+    /**
+     * Phase 2 (2026-04-28) — the slicer-order/semm-permutation/useDirectSlots
+     * legacy branches were retired with Group B (slice-time tool remap is
+     * dead in Phase 2's canonical contract). Tests that asserted those code
+     * paths' specific behaviour were removed alongside; the canonical-driven
+     * path tests (`collision case ...`, `non-contiguous slots ...`,
+     * `Dragon-style ...`, `falls back to file filament ...`) below cover all
+     * remaining behaviour.
+     */
 
     /**
-     * B92 identity case: slicerColorOrder = null means slicer tool order matches
-     * detectedColors order (simple SEMM, H2C, non-paint). normalizeGcodePreviewColors
-     * should preserve direct slot colours (init loop) without applying the
-     * legacy compact-index override when semmColorPermutation is active.
+     * Pre-canonical caller: no resolvedFilamentColors, non-null colorMapping —
+     * preserves the simple compact-index → slot-preset mapping for callers
+     * that don't pass the canonical filament list yet (e.g. mid-load, before
+     * the resolver populates).
      */
     @Test
-    fun `normalizeGcodePreviewColors with semmPerm and identity slicer order uses direct slot colours`() {
-        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
-        val result = normalizeGcodePreviewColors(
-            extruderColors = extruderColors,
-            colorMapping = listOf(3, 0, 2, 1),
-            semmColorPermutation = listOf(3, 0, 2, 1),
-            slicerColorOrder = null
-        )
-        // After GcodeToolRemapper the G-code has T0..T3 where T<n> is the physical
-        // slot. Preview should render each T<n> with extruderColors[n] (direct slot).
-        assertEquals("#FF0000", result[0])
-        assertEquals("#00FF00", result[1])
-        assertEquals("#0000FF", result[2])
-        assertEquals("#FFFFFF", result[3])
-    }
-
-    /**
-     * B92 legacy caller: semmColorPermutation=null (no SEMM remap), non-null
-     * colorMapping — preserves pre-v1.6.10 behaviour used by per-object path and
-     * single-colour SEMM callers that don't pass the new params.
-     */
-    @Test
-    fun `normalizeGcodePreviewColors legacy call without semmPerm retains compact override`() {
+    fun `normalizeGcodePreviewColors no canonical with compact mapping uses compact-to-slot`() {
         val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = listOf(2, 3),
-            semmColorPermutation = null,
-            slicerColorOrder = null
         )
         // Compact 0 → slot 2 (blue), compact 1 → slot 3 (white).
         assertEquals("#0000FF", result[0])
@@ -238,9 +200,6 @@ class PreviewColorNormalizationTest {
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = colorMapping,
-            semmColorPermutation = null,
-            slicerColorOrder = null,
-            useDirectSlots = false,
             resolvedFilamentColors = resolvedFilamentColors,
         )
         // compactSlotOrder = [0,1,2,3], so compact c = slot c. Each compact
@@ -273,9 +232,6 @@ class PreviewColorNormalizationTest {
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = colorMapping,
-            semmColorPermutation = null,
-            slicerColorOrder = null,
-            useDirectSlots = false,
             resolvedFilamentColors = resolvedFilamentColors,
         )
         // compactSlotOrder = [0, 2, 3]. Compact 0 → slot 0 (red), compact 1
@@ -302,9 +258,6 @@ class PreviewColorNormalizationTest {
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = colorMapping,
-            semmColorPermutation = null,
-            slicerColorOrder = null,
-            useDirectSlots = false,
             resolvedFilamentColors = resolvedFilamentColors,
         )
         // compactSlotOrder = [0,1,2,3]. Each compact c renders with slot c's
@@ -331,9 +284,6 @@ class PreviewColorNormalizationTest {
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = colorMapping,
-            semmColorPermutation = null,
-            slicerColorOrder = null,
-            useDirectSlots = false,
             resolvedFilamentColors = resolvedFilamentColors,
         )
         // compact 1 → slot 1 (blank preset) → fallback to resolvedFilamentColors[1].
@@ -344,29 +294,6 @@ class PreviewColorNormalizationTest {
         assertEquals("compact 3 → slot 3 preset", "#FFFFFF", result[3])
     }
 
-    /**
-     * useDirectSlots=true short-circuits the canonical-driven branch so
-     * downstream callers that have already baked physical slot indices into
-     * the G-code (B95 expanded-remap path) get direct slot colours.
-     */
-    @Test
-    fun `normalizeGcodePreviewColors with useDirectSlots returns direct slot palette`() {
-        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
-        val resolvedFilamentColors = listOf("#A0A000", "#00A0A0", "#A000A0")
-        val colorMapping = listOf(0, 2, 3)  // would have permuted via compactSlotOrder
-        val result = normalizeGcodePreviewColors(
-            extruderColors = extruderColors,
-            colorMapping = colorMapping,
-            semmColorPermutation = null,
-            slicerColorOrder = null,
-            useDirectSlots = true,
-            resolvedFilamentColors = resolvedFilamentColors,
-        )
-        // useDirectSlots short-circuits BEFORE the canonical-driven branch;
-        // T0..T3 in the on-disk G-code are already physical slot indices.
-        assertEquals("#FF0000", result[0])
-        assertEquals("#00FF00", result[1])
-        assertEquals("#0000FF", result[2])
-        assertEquals("#FFFFFF", result[3])
-    }
+    // useDirectSlots was retired with Group B (Phase 2 canonical contract;
+    // the slicer no longer baked physical slot indices into the G-code).
 }
