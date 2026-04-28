@@ -711,25 +711,30 @@ class MainActivity : ComponentActivity() {
                                     extruderPresets = extruderPresets,
                                     initialMapping = currentMapping,
                                     onConfirm = { mapping ->
-                                        val source = java.io.File(pending.gcodePath)
-                                        val remapped = java.io.File(
-                                            source.parentFile,
-                                            "${source.nameWithoutExtension}.remapped.${source.extension}"
+                                        val sourceFile = java.io.File(pending.gcodePath)
+                                        val remappedFile = java.io.File(
+                                            sourceFile.parentFile,
+                                            "${sourceFile.nameWithoutExtension}.remapped.${sourceFile.extension}"
                                         )
                                         pendingMappingSend = null
                                         navigateTab(Routes.PRINTER)
                                         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                            com.u1.slicer.gcode.applyPrintTimeRemap(
-                                                sourceGcodePath = source.absolutePath,
-                                                outputPath = remapped.absolutePath,
+                                            // Phase 2 B.1 — typed boundary.
+                                            // Source is canonical; the remap
+                                            // produces physical so the
+                                            // PrinterViewModel call sites
+                                            // typecheck.
+                                            val physical = com.u1.slicer.gcode.applyPrintTimeRemap(
+                                                source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
+                                                output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
                                                 colorMapping = mapping,
                                             )
                                             withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 when (pending.action) {
                                                     PendingMappingSend.Action.PrintAndUpload ->
-                                                        printerViewModel.sendAndPrint(remapped.absolutePath)
+                                                        printerViewModel.sendAndPrint(physical)
                                                     PendingMappingSend.Action.UploadOnly ->
-                                                        printerViewModel.sendUploadOnly(remapped.absolutePath)
+                                                        printerViewModel.sendUploadOnly(physical)
                                                 }
                                             }
                                         }
@@ -746,21 +751,29 @@ class MainActivity : ComponentActivity() {
                             // null here (identity copy), going through the
                             // helper means a future change to the absent
                             // path lands in one place, not three.
-                            val source = java.io.File(pending.gcodePath)
-                            val exported = java.io.File(
-                                source.parentFile,
-                                "${source.nameWithoutExtension}.remapped.${source.extension}"
+                            val sourceFile = java.io.File(pending.gcodePath)
+                            val exportedFile = java.io.File(
+                                sourceFile.parentFile,
+                                "${sourceFile.nameWithoutExtension}.remapped.${sourceFile.extension}"
                             )
                             pendingMappingSend = null
                             navigateTab(Routes.PRINTER)
                             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                viewModel.prepareExportableGcodeWithMapping(source, exported, mapping = null)
+                                // Phase 2 B.1 — Absent canonical path
+                                // means legacy/unrecognised file. Treat
+                                // the source as already physical-slot
+                                // (v1.6.13-era contract) and copy
+                                // verbatim into the typed output.
+                                viewModel.prepareExportableGcodeWithMapping(
+                                    sourceFile, exportedFile, mapping = null
+                                )
+                                val physical = com.u1.slicer.gcode.PhysicalGcodePath.of(exportedFile)
                                 withContext(kotlinx.coroutines.Dispatchers.Main) {
                                     when (pending.action) {
                                         PendingMappingSend.Action.PrintAndUpload ->
-                                            printerViewModel.sendAndPrint(exported.absolutePath)
+                                            printerViewModel.sendAndPrint(physical)
                                         PendingMappingSend.Action.UploadOnly ->
-                                            printerViewModel.sendUploadOnly(exported.absolutePath)
+                                            printerViewModel.sendUploadOnly(physical)
                                     }
                                 }
                             }

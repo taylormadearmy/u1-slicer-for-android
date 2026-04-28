@@ -95,3 +95,24 @@ fun applyPrintTimeRemap(
         }
     }
 }
+
+/**
+ * Phase 2 B.1 (2026-04-28) — type-safe overload of [applyPrintTimeRemap].
+ * Consumes a [CanonicalGcodePath] and produces a [PhysicalGcodePath]; only
+ * functions that send G-code to the printer accept the latter, so callers
+ * that forget to remap fail at compile time.
+ *
+ * When [colorMapping] is empty the input is copied verbatim to the output
+ * — used for legacy / single-colour cases where the source is already in
+ * physical-slot space. The return value is still typed
+ * [PhysicalGcodePath] because the caller has asserted (by handing in
+ * an empty mapping) that the source is print-ready.
+ */
+fun applyPrintTimeRemap(
+    source: CanonicalGcodePath,
+    output: PhysicalGcodePath,
+    colorMapping: List<Int>,
+): PhysicalGcodePath {
+    applyPrintTimeRemap(source.absolutePath, output.absolutePath, colorMapping)
+    return output
+}
