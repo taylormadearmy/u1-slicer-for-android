@@ -70,14 +70,34 @@ echo "    debug:     $DEBUG_APK"
 echo "    androidTest: $TEST_APK"
 
 # --- Install on every device --------------------------------------------
+#
+# Skip devices where install fails (USB stability issues, missing
+# on-device install permission, etc.) and proceed with whichever
+# devices accept the APKs. Without this filter, `set -e` aborted
+# the whole sweep when one of three devices had a flaky USB link.
 
 echo ""
 echo "=== Installing APKs on all devices ==="
+WORKING_DEVICES=()
 for DEV in "${DEVICES[@]}"; do
   echo "    $DEV"
-  adb -s "$DEV" install -r "$DEBUG_APK"
-  adb -s "$DEV" install -r "$TEST_APK"
+  if adb -s "$DEV" install -r "$DEBUG_APK" 2>&1 | tail -2 | grep -qE "Success|already" && \
+     adb -s "$DEV" install -r "$TEST_APK" 2>&1 | tail -2 | grep -qE "Success|already"; then
+    WORKING_DEVICES+=("$DEV")
+  else
+    echo "    SKIP $DEV (install failed; check USB/cable + on-device install permission)"
+  fi
 done
+
+if [ ${#WORKING_DEVICES[@]} -eq 0 ]; then
+  echo "No devices accepted the APKs." >&2
+  exit 1
+fi
+
+echo ""
+echo "=== ${#WORKING_DEVICES[@]} working device(s) for sharding: ${WORKING_DEVICES[*]} ==="
+DEVICES=("${WORKING_DEVICES[@]}")
+COUNT=${#DEVICES[@]}
 
 # Orchestrator + services packages — these are normally installed by
 # gradle's `connectedDebugAndroidTest` task on first run. If a device has
