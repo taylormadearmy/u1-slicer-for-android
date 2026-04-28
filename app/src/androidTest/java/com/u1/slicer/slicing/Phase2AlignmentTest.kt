@@ -302,21 +302,18 @@ class Phase2AlignmentTest {
         // gated in applyConfigToPrusa. For string arrays the separator
         // is ';' (filament_type, filament_settings_id); numeric arrays
         // use ','.
-        // Material-tuned per-filament keys only. Hardware-tuned keys
-        // (retraction_length, retraction_speed, retract_length_toolchange,
-        // deretraction_speed, retraction_minimum_travel) are intentionally
-        // NOT in the embed → slicer flow because U1 is direct-drive and
-        // Bambu Studio embeds carry bowden-style values that cause
-        // heat-creep clogs on direct drive — applyConfigToPrusa writes the
-        // JNI config's hardware-correct value unconditionally.
+        // Phase 2 (2026-04-28) — only `nozzle_temperature_initial_layer`
+        // remains in the canonical embed flow because the gcode
+        // differential vs v1.6.13 showed that respecting embed values
+        // for other per-filament tuning keys (bed temp, fan, volumetric
+        // speed, slow_down, flush) caused U1 print regressions on Bambu/
+        // Prusa-prepared files. The user's only override surface today
+        // is material type, which only drives nozzle temp. Other
+        // material-tuned keys stay clamped to U1 hardware defaults via
+        // applyConfigToPrusa until their corresponding override UI ships.
+        // See docs/superpowers/exploration/2026-04-28-gcode-baseline-diff.md
         val canonicalKeys = listOf(
             "nozzle_temperature_initial_layer",
-            "hot_plate_temp",
-            "hot_plate_temp_initial_layer",
-            "filament_max_volumetric_speed",
-            "filament_density",
-            "fan_min_speed",
-            "fan_max_speed",
         )
         for (key in canonicalKeys) {
             val arr = readArrayHeader(gcode, key, ',') ?: continue

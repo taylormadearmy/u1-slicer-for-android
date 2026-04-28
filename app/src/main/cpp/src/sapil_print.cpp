@@ -281,43 +281,35 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         }
     }
 
-    // Phase 2 (2026-04-28) — material-tuned per-filament gate. When an
-    // embedded Snapmaker profile is loaded, the canonical-aware embed
-    // pipeline writes these arrays sized to the canonical filament count
-    // with per-file-filament overrides applied. The embed values reach
-    // `dpc` via the `profile_keys[]` loop above. Skipping the writes here
-    // lets those canonical-aware values survive — without this gate,
-    // applyConfigToPrusa unconditionally overwrites them with slot-space
-    // defaults (4 entries sized to physical slots), then B48 padding
-    // repeats the last value through the canonical extent, clobbering
-    // per-filament overrides.
-    //
-    // Only **material-tuned** keys are gated (temperature, cooling,
-    // volumetric speed). **Hardware-tuned** keys (retraction lengths,
-    // retraction speeds, toolchange retraction) stay UNgated because the
-    // U1 is a direct-drive extruder — Bambu Studio embeds typically carry
-    // bowden-tuned 10mm retraction which causes heat-creep clogs on direct
-    // drive. The embed must not be allowed to override hardware-tied
-    // settings.
-    //
-    // For STL / no-embedded-profile files all writes run as the single
-    // source of truth.
-    // See docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
+    // Phase 2 (2026-04-28) — `nozzle_temperature` gate ONLY. The
+    // canonical-aware embed pipeline writes this array with per-file-
+    // filament material overrides applied. Skipping the write here lets
+    // those values survive (the embed reached `dpc` via profile_keys[]
+    // above). Other per-filament keys (bed temp, retraction, fan,
+    // volumetric speed, slow_down, flush) are NOT gated — they stay
+    // clamped to U1 hardware defaults regardless of embed because the
+    // gcode differential vs v1.6.13 (see
+    // `docs/superpowers/exploration/2026-04-28-gcode-baseline-diff.md`)
+    // showed that respecting embed values for them causes print
+    // regressions on Bambu/Prusa-prepared files (cool-plate 45°C bed
+    // temps, conservative fan curves, 3× higher Prusa-calibrated purge
+    // volumes). The user's only override surface today is material type,
+    // which only drives nozzle temp.
     if (!has_embedded_profile) {
-        // Temperature (OrcaSlicer per-extruder keys) — material-tuned, gated.
         dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(temps));
         dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(first_temps));
-        // Bed temperature — OrcaSlicer resolves bed temp from the active plate type (curr_bed_type).
-        // We set btPEI (textured PEI plate), so hot_plate_temp is the one that matters.
-        // Also set the initial layer variant (+5°C for better first layer adhesion, matching pla.json).
-        dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(bed_temps));
-        std::vector<int> bed_temps_initial(n_ext, config.bed_temp + 5);
-        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(bed_temps_initial));
     }
-    // Retraction (OrcaSlicer keys) — hardware-tuned, NOT gated. The U1
+    // Bed temperature — OrcaSlicer resolves bed temp from the active plate type (curr_bed_type).
+    // We set btPEI (textured PEI plate), so hot_plate_temp is the one that matters.
+    // Also set the initial layer variant (+5°C for better first layer adhesion, matching pla.json).
+    // Always written: U1 hardware default takes precedence over embed.
+    dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(bed_temps));
+    std::vector<int> bed_temps_initial(n_ext, config.bed_temp + 5);
+    dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(bed_temps_initial));
+
+    // Retraction (OrcaSlicer keys) — hardware-tuned, always written. The U1
     // direct-drive extruder requires ≤5mm retraction; Bambu Studio profiles
-    // ship 10mm bowden defaults that cause heat-creep clogs. Always write
-    // the JNI config's value regardless of embedded profile.
+    // ship 10mm bowden defaults that cause heat-creep clogs.
     dpc.set_key_value("retraction_length", new Slic3r::ConfigOptionFloats(retract_len));
     dpc.set_key_value("retraction_speed", new Slic3r::ConfigOptionFloats(retract_spd));
     // Toolchange retraction — OrcaSlicer defaults to 10mm (bowden).  For the Snapmaker U1's
@@ -377,29 +369,25 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // access produces corrupt wipe tower coordinates (2^116 / -inf X values).
     dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
 
-    // Phase 2 (2026-04-28) — per-filament tuning gate (continued). Same
-    // rationale as the temperature/retraction gate above: when an embed
-    // is present the canonical-aware values from profile_keys[] win; when
-    // there isn't one (STL / non-Snapmaker file) these defaults fill in.
-    if (!has_embedded_profile) {
-        // Filament max volumetric speed — OrcaSlicer defaults to 2 mm³/s which throttles all
-        // print speeds to ~22 mm/s.  Set to 21 mm³/s (matching Snapmaker PLA profile) as fallback;
-        // the embedded config can override via the profile_keys[] list.
-        dpc.set_key_value("filament_max_volumetric_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 21.0)));
-        // Filament density for weight estimation (PLA = 1.24 g/cm³)
-        dpc.set_key_value("filament_density", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.24)));
+    // Filament max volumetric speed — OrcaSlicer defaults to 2 mm³/s which throttles all
+    // print speeds to ~22 mm/s.  Set to 21 mm³/s (matching Snapmaker PLA profile) as fallback.
+    // Always written: U1 hardware default; the embed's value is for Bambu/Prusa hardware
+    // and may be lower (12 mm³/s for PETG) which would unnecessarily throttle U1 prints.
+    dpc.set_key_value("filament_max_volumetric_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 21.0)));
+    // Filament density for weight estimation (PLA = 1.24 g/cm³)
+    dpc.set_key_value("filament_density", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.24)));
 
-        // Fan / cooling — OrcaSlicer defaults fan_min_speed to 20%, but PLA needs 100%.
-        // These fallbacks match pla.json; embedded config overrides via profile_keys[].
-        // fan_min_speed and fan_max_speed are coFloats in OrcaSlicer (per-extruder arrays).
-        dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
-        dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
-        // overhang_fan_speed is coInts (per-extruder)
-        dpc.set_key_value("overhang_fan_speed", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 100)));
-        // Slow-down cooling — OrcaSlicer default is 5s, Snapmaker profile uses 4s
-        dpc.set_key_value("slow_down_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 4.0)));
-        dpc.set_key_value("slow_down_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 20.0)));
-    }
+    // Fan / cooling — OrcaSlicer defaults fan_min_speed to 20%, but PLA needs 100%.
+    // These fallbacks match pla.json. Always written: U1 cooling profile differs from
+    // Bambu/Prusa profiles (Bambu uses 60-80% fan, U1 needs 100% for PLA).
+    // fan_min_speed and fan_max_speed are coFloats in OrcaSlicer (per-extruder arrays).
+    dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+    dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+    // overhang_fan_speed is coInts (per-extruder)
+    dpc.set_key_value("overhang_fan_speed", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 100)));
+    // Slow-down cooling — OrcaSlicer default is 5s, Snapmaker profile uses 4s
+    dpc.set_key_value("slow_down_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 4.0)));
+    dpc.set_key_value("slow_down_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 20.0)));
 
     // G-code dialect — NOT set as a fallback here because gcode_flavor=klipper suppresses
     // M104/M109 temp commands from the slicer body, relying on the start G-code template.
@@ -791,36 +779,34 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "initial_layer_jerk",
                     "top_surface_jerk",
                     "travel_jerk",
-                    // Phase 2 (2026-04-28) — per-filament tuning. The
-                    // canonical-aware embed pipeline writes these arrays sized
+                    // Phase 2 (2026-04-28) — nozzle_temperature only. The
+                    // canonical-aware embed pipeline writes this array sized
                     // to the canonical filament count with per-file-filament
-                    // overrides applied (e.g. PETG override on Filament 1
-                    // produces nozzle_temperature=[235,220,...] and PETG-tuned
-                    // retraction/cooling). Without these in profile_keys[] the
-                    // applyConfigToPrusa fallback below clobbers them with
-                    // slot-space uniform defaults — see
-                    // docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
+                    // material overrides applied (e.g. PETG override on
+                    // Filament 1 produces nozzle_temperature=[235,220,...]).
+                    // Without it in profile_keys[] the applyConfigToPrusa
+                    // fallback overwrote with slot-space uniform defaults —
+                    // see docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
+                    //
+                    // GCode differential against v1.6.13 (2026-04-28) revealed
+                    // that whitelisting other per-filament tuning keys
+                    // (`hot_plate_temp`, `fan_*`, `filament_max_volumetric_speed`,
+                    // `slow_down_*`, `flush_volumes_matrix`, etc.) caused U1
+                    // print-quality regressions on Bambu/PrusaSlicer files
+                    // because their embedded profiles target Bambu/Prusa
+                    // hardware (lower bed temps, conservative fan curves,
+                    // 3× higher purge volumes for non-Snapmaker calibration).
+                    // U1 users would silently lose adhesion (cool-plate 45°C
+                    // vs hot-plate 65°C), gain stringing (low fan), or burn
+                    // 3× the purge filament (Korok mask flush_multiplier
+                    // 0.3 → 1 from PrusaSlicer embed). Phase 2's user-
+                    // facing override surface today is JUST material type,
+                    // which only drives nozzle temp. Other material-tuned
+                    // keys stay clamped to U1 hardware defaults via
+                    // applyConfigToPrusa until the corresponding override
+                    // UI lands.
                     "nozzle_temperature",
                     "nozzle_temperature_initial_layer",
-                    // (hot_plate_temp + hot_plate_temp_initial_layer already
-                    // declared above at lines 576-577; intentionally not
-                    // duplicated here.)
-                    //
-                    // Retraction keys (retraction_length, retraction_speed,
-                    // retract_length_toolchange, deretraction_speed,
-                    // retraction_minimum_travel) are intentionally NOT
-                    // whitelisted: they're hardware-tuned, not material-
-                    // tuned, and Bambu Studio embeds carry bowden-style
-                    // 10mm defaults that cause heat-creep clogs on the U1's
-                    // direct-drive extruder. applyConfigToPrusa always
-                    // writes the JNI config's direct-drive value (≤5mm).
-                    "filament_max_volumetric_speed",
-                    "filament_density",
-                    "fan_min_speed",
-                    "fan_max_speed",
-                    "overhang_fan_speed",
-                    "slow_down_layer_time",
-                    "slow_down_min_speed",
                     nullptr
                 };
                 for (const char** k = profile_keys; *k; ++k) {
