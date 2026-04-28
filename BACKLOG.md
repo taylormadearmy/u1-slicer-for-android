@@ -4,6 +4,23 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B96: SEMM-painted files emit canonical-fileIndex T-indices instead of physical-slot — pre-existing, amplified by Phase 2 — OPEN
+- **Symptom**: SEMM (paint-state) painted files produce G-code with T-index spread that doesn't match desktop Snapmaker Orca's output. Most extreme on `colored_3DBenchy (1).3mf`:
+  - Desktop Snapmaker Orca: `T0=3, T1=4, T2=2` (3 tools used for the 3 visible paint regions)
+  - v1.6.13 Android: `T0=2, T1=5, T2=3, T3=2` (4 tools, T3 unused in desktop)
+  - v1.7.0-dev Phase 2 narrowed gate: `T0=15, T1=19, T2=19, T3=0, T4-T9=73` (10× more transitions, spread to canonical 10-wide)
+- **Distinct from B62/B92/B95**: those were paint-state decoding/permutation issues with concrete fixes. B96 is the slicer-side T-index spread itself — the slicer emits per-canonical-slot transitions even where no paint regions are assigned to those slots.
+- **User-facing impact**: Send → printer still works (PrintTimeRemap converts canonical → physical at upload time). Save Gcode + Share Gcode also work in Phase 2 after the 2026-04-28 fix that routes them through the same remap. The amplification inflates wipe-tower waste for SEMM files (more transitions than the model actually needs) but does not cause print failure.
+- **Other affected fixtures (verified in 2026-04-28 E2E batch)**:
+  - `old.3mf` (legacy SEMM 2-colour): 1.9× transition amplification (782 → 1496 lines)
+  - `PrusaSlicer-printables-Korok_mask_4colour.3mf`: T4 added to body (5-wide canonical)
+  - `skywing-seawing-silkwing.3mf`: 2× transition amplification (11 → 22)
+- **Per-object and layer-tool paths are NOT affected** (verified clean on Dragon Scale plate 3, slip-slide plate 3, Button-for-S-trousers, foldy+coaster, calib-cube, Shashibo plate 5).
+- **Pre-existing**: confirmed via desktop reference (`G:/My Drive/Logs/colour_3DBenchy_PLA_1h15m.gcode`) and by direct snapshot comparison of v1.6.13 vs Phase 2 narrowed-gate harness output. v1.6.13 was already wrong vs desktop; Phase 2 amplifies the same underlying bug because the canonical-list expansion sizes per-extruder arrays wider, and SEMM segmentation iterates them.
+- **Investigation not started**: needs to identify why OrcaSlicer's `multi_material_segmentation_by_painting()` emits transitions for canonical slots with no painted triangles. May be in OrcaSlicer's wipe-tower / per-extruder per-layer purge cycle path. Track in a separate branch from Phase 2.
+- **Not a Phase 2 ship blocker**: Send-to-printer + Save/Share remap paths are correct; print correctness preserved. Cosmetic / waste-of-filament issue only.
+- **Source**: Surfaced during 2026-04-28 G-code differential investigation; user reports `colored_3DBenchy` "has been a trouble file forever".
+
 ### B95: Buzz plate 9 paint state dropped by slicer — only T0 in G-code (GitHub #102) — FIXED v1.6.13
 - **Symptom**: On v1.6.10, Buzz Lightyear plate 9 Prepare showed 2 distinct colours correctly (peach #FFD6C1 + white #FFFFFF per the B90 detection fix), but the sliced G-code contained only `T0` (3 tool changes across 605 layers) with no `T1`/`T2`/`T3`. Slice summary reported a single extruder; G-code 3D preview rendered the whole model in the renderer's default slot-0 colour.
 - **Distinct from B92**: B92 was about Prepare ↔ Preview palette alignment on plates where OrcaSlicer's print order disagreed with detectedColors. Plate 9's slicer never emitted the paint state as a tool change, so this is a paint-segmentation / embedder issue upstream of any palette alignment.

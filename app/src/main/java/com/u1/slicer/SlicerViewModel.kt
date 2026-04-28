@@ -3639,27 +3639,67 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Phase 2 (2026-04-28) — produces a print-ready copy of the sliced
+     * G-code at [destFile] by applying the current [colorMapping] via
+     * [com.u1.slicer.gcode.applyPrintTimeRemap]. Phase 2 emits T-indices in
+     * canonical-fileIndex space (e.g. T4-T9 for 10-wide canonical lists);
+     * the U1 firmware only understands physical slots T0-T3, so any export
+     * destined for the printer (Save, Share, manual upload) must remap
+     * before leaving the app. Returns true if the file was produced; false
+     * if the source is missing.
+     *
+     * If [colorMapping] is null/empty (single-colour or no-mapping case)
+     * the function falls back to a direct copy — applyPrintTimeRemap also
+     * handles empty mapping as identity copy, so this guard is purely an
+     * optimisation.
+     */
+    internal fun prepareExportableGcode(sourceFile: File, destFile: File): Boolean {
+        if (!sourceFile.exists()) return false
+        val mapping = _colorMapping.value
+        if (mapping.isNullOrEmpty()) {
+            sourceFile.copyTo(destFile, overwrite = true)
+        } else {
+            com.u1.slicer.gcode.applyPrintTimeRemap(
+                sourceGcodePath = sourceFile.absolutePath,
+                outputPath = destFile.absolutePath,
+                colorMapping = mapping,
+            )
+        }
+        return true
+    }
+
     fun shareGcode() {
         val state = _state.value
         if (state !is SlicerState.SliceComplete) return
 
-        val context = getApplication<Application>()
-        val gcodeFile = File(state.result.gcodePath)
-        if (!gcodeFile.exists()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val sourceFile = File(state.result.gcodePath)
+            val shareFile = File(
+                sourceFile.parentFile,
+                "${sourceFile.nameWithoutExtension}.share.${sourceFile.extension}"
+            )
+            if (!prepareExportableGcode(sourceFile, shareFile)) return@launch
 
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            gcodeFile
-        )
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                shareFile
+            )
 
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/octet-stream"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/octet-stream"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            withContext(Dispatchers.Main) {
+                context.startActivity(
+                    Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
         }
-        context.startActivity(Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     fun saveGcodeTo(uri: Uri) {
@@ -3669,10 +3709,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
-                val gcodeFile = File(state.result.gcodePath)
+                val sourceFile = File(state.result.gcodePath)
+                val exportFile = File(
+                    sourceFile.parentFile,
+                    "${sourceFile.nameWithoutExtension}.export.${sourceFile.extension}"
+                )
+                if (!prepareExportableGcode(sourceFile, exportFile)) return@launch
                 context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                    gcodeFile.inputStream().use { it.copyTo(out) }
+                    exportFile.inputStream().use { it.copyTo(out) }
                 }
+                exportFile.delete()
             } catch (_: Throwable) {
                 // Silent fail — user may have cancelled the save dialog
             }
