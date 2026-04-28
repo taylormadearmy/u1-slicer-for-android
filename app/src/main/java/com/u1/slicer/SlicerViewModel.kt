@@ -612,26 +612,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         // Non-MMU path — derive the source-extruder compaction order.
         //
-        // Phase 2 (post-round-2-review, Reviewer 3 P2 F7) — UNION of
-        //   - per-object extruder (`objectExtruderMap`), AND
-        //   - per-volume extruder (`objectPartExtruders`).
+        // Phase 2 (post-round-3-review, Reviewer 3 NEW-CONCERN) —
+        // source from `usedExtruderIndices` (plate-narrowed by
+        // `buildThreeMfInfoFromNative`), NOT from
+        // `objectExtruderMap`/`objectPartExtruders` directly. The
+        // round-2 fix unioned `objectPartExtruders` to cover compound
+        // objects, but `objectPartExtruders` is the *file-wide*
+        // pre-Phase-1 map that `buildThreeMfInfoFromNative` does NOT
+        // narrow to the active plate. On multi-plate files that
+        // leaks other plates' volume extruders into the compaction
+        // order, expanding the palette beyond the plate's actual
+        // canonical-fileIndex coverage.
         //
-        // Pre-fix used `objectExtruderMap.values` only.
-        // `NativePlateState.buildObjectExtruderMap()` collapses a
-        // compound object (multiple volumes with different extruders)
-        // to one value, so a non-MMU object with volumes on filaments
-        // 3 + 4 was being palette-aligned with one entry only — mesh
-        // indices {0, 1} addressed only one canonical entry plus a
-        // fallback. The full per-volume set covers the compound case.
-        //
-        // For multi-plate files `_threeMfInfo` is already plate-
-        // narrowed post-selectPlate so both maps cover only the
-        // active plate's objects.
-        val perObject = mfInfo?.objectExtruderMap?.values?.toSet().orEmpty()
-        val perVolume = mfInfo?.objectPartExtruders?.values?.flatten()?.toSet().orEmpty()
-        val sourceExtruders = (perObject + perVolume)
-            .filter { it > 0 }
-            .sorted()
+        // `usedExtruderIndices` carries both per-object AND per-
+        // volume extruders (it's "actually assigned to objects/
+        // volumes in model config" per its docstring), and IS plate-
+        // narrowed by the native-first plate-state read. One field,
+        // covers compound objects, plate-correct.
+        val sourceExtruders = mfInfo?.usedExtruderIndices
+            ?.filter { it > 0 }
+            ?.sorted()
+            ?: return@combine fullPalette
         if (sourceExtruders.isEmpty()) return@combine fullPalette
         sourceExtruders.map { ext ->
             fullPalette.getOrNull(ext - 1).orEmpty()
@@ -3840,30 +3841,50 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     internal fun resolveExportMapping(): List<Int>? {
         val canonical = _canonicalFilamentList.value
-        // Phase 2 (post-round-2-review, Reviewer 3 P1) — supply
+        // Phase 2 (post-round-2-review, Reviewer 3 P1; tightened
+        // post-round-3-review for F2 fallback gap) — supply
         // confirmedMappingFileIndices when the live `_colorMapping` is
         // plate-narrowed (multi-plate file post-selectPlate). Without
         // it the resolver assumes positional `mapping[i] → fileIdx i`,
         // which is wrong for plates whose filaments don't start at
         // canonical fileIdx 0.
         //
-        // The plate's filamentIndices are 1-indexed in Bambu's
-        // ThreeMfPlate format; convert to 0-indexed canonical
-        // fileIndices for the resolver. Only supply the keys when the
-        // mapping is actually plate-narrowed (size < canonicalSize),
-        // otherwise the canonical-aligned positional path is correct.
+        // Two sources, in priority order:
+        //   1. plate.filamentIndices (1-indexed Bambu → 0-indexed
+        //      canonical). The richest source when present.
+        //   2. _threeMfInfo.usedExtruderIndices (1-indexed plate-
+        //      narrowed extruder set). Reviewer 3 round 3 caught the
+        //      original fix's blind spot: legacy/recovery paths can
+        //      have empty `plate.filamentIndices`. Using sorted
+        //      `usedExtruderIndices` gives the canonical fileIndices
+        //      for the plate's filaments in sorted-ascending order,
+        //      matching how detectedColors are produced for those
+        //      plates.
+        //
+        // Only supply the keys when the mapping is actually plate-
+        // narrowed (size < canonicalSize), otherwise the canonical-
+        // aligned positional path is correct.
         val confirmed = _colorMapping.value
         val canonicalSize = canonical?.size ?: 0
         val mappingFileIndices: List<Int>? = if (
             !confirmed.isNullOrEmpty() &&
             confirmed.size < canonicalSize
         ) {
+            val info = _threeMfInfo.value
             val plateId = recoveryPlateId.takeIf { it >= 0 }
             val plate = plateId?.let {
-                _threeMfInfo.value?.plates?.firstOrNull { p -> p.plateId == it }
+                info?.plates?.firstOrNull { p -> p.plateId == it }
             }
-            plate?.filamentIndices
+            val fromPlate = plate?.filamentIndices
                 ?.map { it - 1 }  // 1-indexed Bambu → 0-indexed canonical
+                ?.filter { it in 0 until canonicalSize }
+                ?.takeIf { it.size == confirmed.size }
+            // Fallback to usedExtruderIndices when plate.filamentIndices
+            // is missing or wrong size.
+            fromPlate ?: info?.usedExtruderIndices
+                ?.filter { it > 0 }
+                ?.sorted()
+                ?.map { it - 1 }  // 1-indexed → 0-indexed canonical
                 ?.filter { it in 0 until canonicalSize }
                 ?.takeIf { it.size == confirmed.size }
         } else null
