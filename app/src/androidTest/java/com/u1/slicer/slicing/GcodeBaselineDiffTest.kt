@@ -316,6 +316,15 @@ class GcodeBaselineDiffTest {
             sliceState as SlicerViewModel.SlicerState.SliceComplete
             val snapshot = buildSnapshot(snapshotName, sliceState.result.gcodePath)
             val outFile = File(baselineDir, "$snapshotName.snapshot.txt")
+            // Delete-before-write: across reinstalls the test app's UID
+            // changes, so files left from prior runs are owned by a
+            // previous UID and trigger EACCES on overwrite even though
+            // the directory is shared via media_rw group. Deleting the
+            // stale file first lets the fresh-UID write succeed.
+            // (Discovered 2026-04-28 sweep run b37v82bdb after the
+            // post-Buzz-fix sweep retained snapshots from an earlier
+            // sweep with a prior UID.)
+            if (outFile.exists()) outFile.delete()
             outFile.writeText(snapshot)
             assertNotNull(
                 "Wrote snapshot to ${outFile.absolutePath} (size=${outFile.length()})",
