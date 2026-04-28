@@ -266,12 +266,14 @@ If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous 
    CMAKE_BUILD_TYPE:STRING=Release
    ```
    Do NOT set `CMAKE_CXX_FLAGS_RELEASE` — leave it empty so the toolchain default (`-O3 -DNDEBUG`) is used.
-3. Run `ninja -j1` in the directory (OOMs at `-j2`+)
-4. Strip: `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip --strip-unneeded libprusaslicer-jni.so`
-5. Copy to `app/src/main/jniLibs/arm64-v8a/`
-6. **Verify size**: stripped Release `.so` should be ~19-21MB. If it's 50MB+, you built with Debug — redo.
-7. **Verify compiler**: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17.0.2`.
-8. `./gradlew clean installDebug` — incremental builds may cache old APK
+3. **CRITICAL when building from a worktree**: the existing build dir is bound to a specific source directory (see `CMAKE_HOME_DIRECTORY` in `CMakeCache.txt`). If you only modified `sapil_print.cpp` in the worktree but the worktree has additional/modified files in `app/src/main/cpp/src/` that the bound source tree is missing (Phase 1+ added `sapil_bambu_*.cpp/h`, `sapil_diagnostics.cpp/h` changes, `sapil_model.cpp` changes, `slicer_wrapper.cpp` changes, plus `CMakeLists.txt` and `include/sapil.h`), the resulting `.so` will be missing native methods and instrumented tests will fail with `UnsatisfiedLinkError`. **Always copy the full set of worktree-modified files (`diff -rq` between `cpp/src` and `cpp/include` and `CMakeLists.txt`) into the bound source tree before running ninja, then `cmake .` to rescan globs, then `ninja -j1`, then restore the source tree afterwards.** The pre-existing pattern of "copy only sapil_print.cpp, build, restore" is unsafe across worktrees with multi-file native diffs.
+4. Run `ninja -j1` in the directory (OOMs at `-j2`+)
+5. Strip: `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip --strip-unneeded libprusaslicer-jni.so`
+6. Copy to `app/src/main/jniLibs/arm64-v8a/`
+7. **Verify size**: stripped Release `.so` should be ~19-21MB. If it's 50MB+, you built with Debug — redo.
+8. **Verify compiler**: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17.0.2`.
+9. **Verify JNI symbol completeness**: `llvm-readelf -p .dynsym libprusaslicer-jni.so | grep Java_com_u1_slicer_NativeLibrary | wc -l` should match the count of `external fun` declarations in `app/src/main/java/com/u1/slicer/NativeLibrary.kt`. A mismatch means the build dropped JNI methods (often: a worktree-only source file wasn't picked up by CMake — see step 3).
+10. `./gradlew clean installDebug` — incremental builds may cache old APK
 
 ### Fresh build (when no existing build dir works)
 
