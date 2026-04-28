@@ -546,6 +546,29 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
 
         // Detect whether the embedded config is a Snapmaker profile before applying
         // any overrides — both applyConfigToPrusa and profile_keys need this flag.
+        //
+        // Phase 2 B.3 status (2026-04-28): the Kotlin `ProfileEmbedder`
+        // now writes an explicit `snapmaker_authored_profile = "1"` key
+        // to the embedded `Metadata/project_settings.config` JSON, so a
+        // future native check can replace this PRINT_START heuristic
+        // with a tautological true-positive. Implementing that check
+        // requires registering `snapmaker_authored_profile` as a
+        // ConfigOptionString in OrcaSlicer's `PrintConfig.cpp` schema
+        // (otherwise `model_config.option<>()` returns null for
+        // unregistered keys), which is invasive enough that it's
+        // tracked as a separate native commit. For now the heuristic
+        // stays — the Kotlin marker is in place and harmless until
+        // the native side reads it.
+        //
+        // Reviewer concerns (R1, R2): a Bambu/PrusaSlicer file
+        // prepared for any Klipper-based printer (Voron, RatRig, etc.)
+        // could false-positive here. Mitigation in the meantime:
+        // ProfileEmbedder rewrites `machine_start_gcode` to U1's
+        // PRINT_START template before the native side ever sees it,
+        // so Bambu/Klipper-foreign profiles never reach this check
+        // with their original start G-code intact. The only path that
+        // bypasses ProfileEmbedder is direct legacy load of pre-marked
+        // Snapmaker 3MFs (where the heuristic fires correctly).
         auto& model_config = getModelConfig();
         bool is_snapmaker_profile = false;
         if (!model_config.empty()) {

@@ -278,6 +278,25 @@ class ProfileEmbedder(private val context: Context) {
         config["print_settings_id"] = "0.20mm Standard @Snapmaker U1"
         config["print_compatible_printers"] = mutableListOf("Snapmaker U1 (0.4 nozzle) - multiplate")
 
+        // Phase 2 B.3 (2026-04-28, post-adversarial-review) — explicit
+        // marker for native `is_snapmaker_profile` detection. The pre-
+        // revision detection in `sapil_print.cpp` matched on
+        // `machine_start_gcode.contains("PRINT_START")` which is the
+        // ubiquitous Klipper macro name. Reviewers (R1, R2) flagged
+        // false-positive risk for Bambu/PrusaSlicer files prepared for
+        // any Klipper-based printer (Voron, RatRig, etc.) — those
+        // would have triggered the broad `profile_keys[]` whitelist
+        // and crashed in `multi_material_segmentation_by_painting()`
+        // when Bambu's proprietary template variables hit the U1
+        // pipeline.
+        //
+        // The `snapmaker_authored_profile = "1"` key is set ONLY by
+        // this Kotlin embedder, so a native check on the key is a
+        // tautological true-positive. The PRINT_START heuristic stays
+        // as a fallback for any path that bypasses the embedder
+        // (recovery / direct loads of pre-marked Snapmaker 3MFs).
+        config["snapmaker_authored_profile"] = "1"
+
         // Snapmaker U1 has independent extruders (NOT SEMM/MMU), but OrcaSlicer's
         // multi_material_segmentation_by_painting() runs based on filament_diameter.size() > 1,
         // not single_extruder_multi_material. Force SEMM=0 to prevent 94mm retraction sequences.
