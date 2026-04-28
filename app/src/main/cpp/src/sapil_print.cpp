@@ -281,20 +281,30 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         }
     }
 
-    // Phase 2 (2026-04-28) — per-filament tuning gate. When an embedded
-    // Snapmaker profile is loaded, the canonical-aware embed pipeline writes
-    // these arrays sized to the canonical filament count with per-file-
-    // filament overrides applied. The embed values reach `dpc` via the
-    // `profile_keys[]` loop above. Skipping the writes here lets those
-    // canonical-aware values survive — without this gate, applyConfigToPrusa
-    // unconditionally overwrites them with slot-space defaults (4 entries
-    // sized to physical slots), then B48 padding repeats the last value
-    // through the canonical extent, clobbering per-filament overrides.
-    // For STL / no-embedded-profile files the writes still run as the
-    // single source of truth.
+    // Phase 2 (2026-04-28) — material-tuned per-filament gate. When an
+    // embedded Snapmaker profile is loaded, the canonical-aware embed
+    // pipeline writes these arrays sized to the canonical filament count
+    // with per-file-filament overrides applied. The embed values reach
+    // `dpc` via the `profile_keys[]` loop above. Skipping the writes here
+    // lets those canonical-aware values survive — without this gate,
+    // applyConfigToPrusa unconditionally overwrites them with slot-space
+    // defaults (4 entries sized to physical slots), then B48 padding
+    // repeats the last value through the canonical extent, clobbering
+    // per-filament overrides.
+    //
+    // Only **material-tuned** keys are gated (temperature, cooling,
+    // volumetric speed). **Hardware-tuned** keys (retraction lengths,
+    // retraction speeds, toolchange retraction) stay UNgated because the
+    // U1 is a direct-drive extruder — Bambu Studio embeds typically carry
+    // bowden-tuned 10mm retraction which causes heat-creep clogs on direct
+    // drive. The embed must not be allowed to override hardware-tied
+    // settings.
+    //
+    // For STL / no-embedded-profile files all writes run as the single
+    // source of truth.
     // See docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
     if (!has_embedded_profile) {
-        // Temperature (OrcaSlicer per-extruder keys)
+        // Temperature (OrcaSlicer per-extruder keys) — material-tuned, gated.
         dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(temps));
         dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(first_temps));
         // Bed temperature — OrcaSlicer resolves bed temp from the active plate type (curr_bed_type).
@@ -303,15 +313,17 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(bed_temps));
         std::vector<int> bed_temps_initial(n_ext, config.bed_temp + 5);
         dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(bed_temps_initial));
-
-        // Retraction (OrcaSlicer keys)
-        dpc.set_key_value("retraction_length", new Slic3r::ConfigOptionFloats(retract_len));
-        dpc.set_key_value("retraction_speed", new Slic3r::ConfigOptionFloats(retract_spd));
-        // Toolchange retraction — OrcaSlicer defaults to 10mm (bowden).  For the Snapmaker U1's
-        // direct-drive extruders this pulls filament past the heat break, causing heat-creep clogs
-        // during the standby period between tool changes.  Use the same length as normal retraction.
-        dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
     }
+    // Retraction (OrcaSlicer keys) — hardware-tuned, NOT gated. The U1
+    // direct-drive extruder requires ≤5mm retraction; Bambu Studio profiles
+    // ship 10mm bowden defaults that cause heat-creep clogs. Always write
+    // the JNI config's value regardless of embedded profile.
+    dpc.set_key_value("retraction_length", new Slic3r::ConfigOptionFloats(retract_len));
+    dpc.set_key_value("retraction_speed", new Slic3r::ConfigOptionFloats(retract_spd));
+    // Toolchange retraction — OrcaSlicer defaults to 10mm (bowden).  For the Snapmaker U1's
+    // direct-drive extruders this pulls filament past the heat break, causing heat-creep clogs
+    // during the standby period between tool changes.  Use the same length as normal retraction.
+    dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
 
     // Multi-extruder machine type — the Snapmaker U1 has 4 independent extruders, NOT a
     // single-extruder multi-material (SEMM) setup like Bambu/Prusa MMU.  Embedded Snapmaker
@@ -397,15 +409,10 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
 
     // Deretraction speed — OrcaSlicer defaults to 0 (= same as retraction speed).
     // Snapmaker profile uses 35 mm/s for smoother prime-after-retract.
-    // Phase 2 (2026-04-28) — same gate as the per-filament tuning block above:
-    // these are per-extruder arrays. profile_keys[] already lists them (lines
-    // 627-628), so without this gate applyConfigToPrusa unconditionally
-    // clobbers embed values with slot-space defaults. Same cascade pattern
-    // as nozzle_temperature pre-`1e95c7d`.
-    if (!has_embedded_profile) {
-        dpc.set_key_value("deretraction_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 35.0)));
-        dpc.set_key_value("retraction_minimum_travel", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.0)));
-    }
+    // Hardware-tuned (direct-drive vs bowden); always write the JNI value,
+    // never let an embed override it.
+    dpc.set_key_value("deretraction_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 35.0)));
+    dpc.set_key_value("retraction_minimum_travel", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.0)));
 
     // Line widths — must be set explicitly.
     // When left at 0 (absolute), MultiMaterialSegmentation calls
@@ -798,9 +805,15 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // (hot_plate_temp + hot_plate_temp_initial_layer already
                     // declared above at lines 576-577; intentionally not
                     // duplicated here.)
-                    "retraction_length",
-                    "retraction_speed",
-                    "retract_length_toolchange",
+                    //
+                    // Retraction keys (retraction_length, retraction_speed,
+                    // retract_length_toolchange, deretraction_speed,
+                    // retraction_minimum_travel) are intentionally NOT
+                    // whitelisted: they're hardware-tuned, not material-
+                    // tuned, and Bambu Studio embeds carry bowden-style
+                    // 10mm defaults that cause heat-creep clogs on the U1's
+                    // direct-drive extruder. applyConfigToPrusa always
+                    // writes the JNI config's direct-drive value (≤5mm).
                     "filament_max_volumetric_speed",
                     "filament_density",
                     "fan_min_speed",

@@ -302,19 +302,21 @@ class Phase2AlignmentTest {
         // gated in applyConfigToPrusa. For string arrays the separator
         // is ';' (filament_type, filament_settings_id); numeric arrays
         // use ','.
+        // Material-tuned per-filament keys only. Hardware-tuned keys
+        // (retraction_length, retraction_speed, retract_length_toolchange,
+        // deretraction_speed, retraction_minimum_travel) are intentionally
+        // NOT in the embed → slicer flow because U1 is direct-drive and
+        // Bambu Studio embeds carry bowden-style values that cause
+        // heat-creep clogs on direct drive — applyConfigToPrusa writes the
+        // JNI config's hardware-correct value unconditionally.
         val canonicalKeys = listOf(
             "nozzle_temperature_initial_layer",
             "hot_plate_temp",
             "hot_plate_temp_initial_layer",
-            "retraction_length",
-            "retraction_speed",
-            "retract_length_toolchange",
             "filament_max_volumetric_speed",
             "filament_density",
             "fan_min_speed",
             "fan_max_speed",
-            "deretraction_speed",
-            "retraction_minimum_travel",
         )
         for (key in canonicalKeys) {
             val arr = readArrayHeader(gcode, key, ',') ?: continue
