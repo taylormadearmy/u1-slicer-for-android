@@ -219,6 +219,46 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _canonicalFilamentList.asStateFlow()
 
     /**
+     * Phase 2 (2026-04-28, post-adversarial-review) — identity tag for
+     * the canonical-list cache. Records the absolute path of the source
+     * file the cached `_canonicalFilamentList` was derived from. Set
+     * synchronously by [beginNewModelLoad] (before any async embed /
+     * prepare call could query the cache) and updated alongside every
+     * `_canonicalFilamentList.value = ...` write.
+     *
+     * `getCanonicalFilamentList()` checks this against the current
+     * source path; if they don't match the cache is treated as stale
+     * and re-derived from the current file. Closes the cross-load leak
+     * the reviewer flagged where loading file B after file A could
+     * embed/map B using A's canonical list because the async cache
+     * refresh hadn't published yet.
+     */
+    @Volatile
+    private var canonicalCacheSourcePath: String? = null
+
+    /**
+     * Phase 2 (2026-04-28, post-adversarial-review) — synchronous
+     * reset called at the very start of every load entry point
+     * ([loadModel], [loadModelFromFile]). Clears all per-file mutable
+     * state that would otherwise outlive the previous file:
+     *
+     *   - `_canonicalFilamentList` (cached for getCanonicalFilamentList)
+     *   - `canonicalCacheSourcePath` (the cache identity tag)
+     *   - `_filamentOverrides` (per-file-index user overrides)
+     *
+     * The reset is synchronous so any subsequent code path —
+     * including async embed / prepare calls fired by the same load —
+     * sees a clean slate when it queries the canonical list. Matches
+     * the review's "synchronously clear at the start of every load"
+     * recommendation.
+     */
+    private fun beginNewModelLoad() {
+        _canonicalFilamentList.value = null
+        canonicalCacheSourcePath = null
+        _filamentOverrides.value = emptyMap()
+    }
+
+    /**
      * Reloads [_canonicalFilamentList] from the current model file. The paint-
      * walk in `bambuCanonicalList` walks every `.model` entry, which can be
      * a few seconds on Buzz-Lightyear-sized files (73 MB), so the load runs
@@ -531,11 +571,52 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val meshAlignedFilamentColors: StateFlow<List<String>> = combine(
         _canonicalFilamentList,
         _filamentOverrides,
-    ) { canonical, overrides ->
+        _threeMfInfo,
+        _layerToolOnly,
+    ) { canonical, overrides, mfInfo, layerTool ->
         val list = canonical ?: return@combine emptyList()
-        if (overrides.isEmpty()) list.filaments.map { it.color }
+        val fullPalette = if (overrides.isEmpty()) list.filaments.map { it.color }
         else list.filaments.map { entry ->
             overrides[entry.fileIndex]?.color ?: entry.color
+        }
+
+        // Phase 2 (2026-04-28, post-adversarial-review) — sparse non-MMU
+        // mesh palette alignment.
+        //
+        // The native preview mesh has two compaction shapes:
+        //   - MMU (paint segmentation): native B46 SKIPS compaction so
+        //     `extruder_indices[tri]` carries the raw paint-state value
+        //     (1..N). Kotlin's recolor logic indexes `palette[state-1]`.
+        //     Palette must be the full canonical list. This applies to
+        //     hasPaintData=true and to layerToolOnly (Z-band recolor
+        //     also indexes palette by 1-based extruderBambu).
+        //   - non-MMU (per-object extruder): native compacts via
+        //     `compactPreviewIndices(out)` so `extruder_indices[tri]`
+        //     is dense 0..N-1 keyed by sorted-ascending source extruder.
+        //     If a sparse plate uses file filaments 3 + 4, mesh indices
+        //     are {0, 1} but the canonical palette indices 0 + 1 still
+        //     refer to file filaments 1 + 2. Pre-fix the palette was
+        //     full canonical, painting filaments 3 + 4 with filaments
+        //     1 + 2's colours. The fix: reorder the canonical palette
+        //     to the same compaction order as the mesh.
+        val hasPaint = mfInfo?.hasPaintData == true
+        if (hasPaint || layerTool) {
+            return@combine fullPalette
+        }
+
+        // Non-MMU path — derive the source-extruder compaction order
+        // from `objectExtruderMap` (1-based per-object extruder). For
+        // multi-plate files `_threeMfInfo` is already plate-narrowed
+        // post-selectPlate so the map covers only the active plate's
+        // objects.
+        val sourceExtruders = mfInfo?.objectExtruderMap?.values
+            ?.toSet()
+            ?.filter { it > 0 }
+            ?.sorted()
+            ?: return@combine fullPalette
+        if (sourceExtruders.isEmpty()) return@combine fullPalette
+        sourceExtruders.map { ext ->
+            fullPalette.getOrNull(ext - 1).orEmpty()
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -643,13 +724,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * when no model is loaded or the file is unrecognised.
      */
     fun getCanonicalFilamentList(): com.u1.slicer.data.CanonicalFilamentList? {
-        // Prefer the cached canonical list — it's the file's source-of-truth
-        // canonical from `bambuCanonicalList(sourceFile)`. The cache is set
-        // by `selectPlate` (synchronously from the original input file
-        // before `_currentModelFile` flips to the embedded plate) and by
-        // `refreshCanonicalFilamentList`. Falls back to synchronous I/O on
-        // the source file when the cache is empty (rare: tests / recovery).
-        _canonicalFilamentList.value?.let { return it }
+        // Phase 2 (2026-04-28, post-adversarial-review) — verify the
+        // cached canonical belongs to the current source file before
+        // returning it. Pre-fix the cache was returned blindly; loading
+        // file B after file A could embed B using A's canonical because
+        // the async refresh hadn't published yet.
+        val currentSource = (rawInputFile ?: _multiPlateSourceFile ?: _currentModelFile)?.absolutePath
+        val cached = _canonicalFilamentList.value
+        if (cached != null && canonicalCacheSourcePath == currentSource && currentSource != null) {
+            return cached
+        }
         // Prefer the ORIGINAL user input file (`rawInputFile`) — its
         // `project_settings.config` is intact. The sanitized
         // `_multiPlateSourceFile` has no `project_settings.config` (Bambu
@@ -660,10 +744,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         for (source in sources) {
             com.u1.slicer.bambu.bambuCanonicalList(source)?.let {
                 _canonicalFilamentList.value = it
+                canonicalCacheSourcePath = source.absolutePath
                 return it
             }
             com.u1.slicer.data.canonicalListAtLoad(source)?.let {
                 _canonicalFilamentList.value = it
+                canonicalCacheSourcePath = source.absolutePath
                 return it
             }
         }
@@ -1036,6 +1122,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         invalidatePrepareMeshCache()
+        // Phase 2 (2026-04-28) — same synchronous reset as
+        // `loadModelFromFile`. The adversarial review found this picker
+        // path missing the override-clear; without it, file A's
+        // per-filament overrides could silently apply to file B.
+        beginNewModelLoad()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -1217,10 +1308,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         invalidatePrepareMeshCache()
-        // Phase 2 (2026-04-28) — clear per-filament overrides at the start of
-        // every load so file A's filament 0 override doesn't silently apply
-        // to file B's filament 0 (different material, different colour).
-        _filamentOverrides.value = emptyMap()
+        // Phase 2 (2026-04-28) — clear per-filament overrides + canonical
+        // cache at the start of every load so file A's overrides /
+        // canonical-list don't silently apply to file B (the adversarial
+        // review's cross-load leak).
+        beginNewModelLoad()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -3897,33 +3989,53 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val json = native.nativeGetAllVolumeExtruders()
             val parsed = NativePlateState.parseVolumeMapJson(json)
 
-            // If volumes report paint data, also collect paint extruder states from native
-            if (parsed.hasPaintData) {
-                val paintExtruders = mutableSetOf<Int>()
-                for (obj in parsed.objects) {
-                    for (vol in obj.volumes) {
-                        if (vol.isMmPainted) {
-                            // kind=0 is MMU paint segmentation
-                            val counts = native.nativeGetPaintStateCounts(
-                                obj.objectIndex, vol.volumeIndex, 0
-                            )
-                            if (counts != null) {
-                                // counts is [state1, count1, state2, count2, ...]
-                                for (k in counts.indices step 2) {
-                                    val paintState = counts[k]
-                                    if (paintState > 0 && counts[k + 1] > 0) {
-                                        paintExtruders.add(paintState)
-                                    }
-                                }
-                            }
+            // Phase 2 (2026-04-28, post-adversarial-review) — probe
+            // `nativeGetPaintStateCounts` on EVERY volume on the plate,
+            // not just those whose `isMmPainted` flag is set, AND not
+            // gated on the file-level `parsed.hasPaintData`. SEMM
+            // plates whose paint data is encoded on individual triangles
+            // rather than marked at the volume level have volumes that
+            // come back with `isMmPainted=false` but still return non-
+            // empty paint-state counts when queried — slip-slide-spin
+            // plate 3 was the canary in `PlateStateEnrichment.kt` that
+            // documented this. Querying unconditionally and ignoring
+            // nulls/empties gives the full set without false positives
+            // on non-painted volumes.
+            //
+            // Cost: extra JNI call per volume on non-painted files.
+            // Acceptable — typical fixtures have under ~50 volumes and
+            // the call returns null fast for non-painted ones.
+            val paintExtruders = mutableSetOf<Int>()
+            for (obj in parsed.objects) {
+                for (vol in obj.volumes) {
+                    // kind=0 is MMU paint segmentation
+                    val counts = native.nativeGetPaintStateCounts(
+                        obj.objectIndex, vol.volumeIndex, 0
+                    ) ?: continue
+                    // counts is [state1, count1, state2, count2, ...]
+                    for (k in counts.indices step 2) {
+                        if (k + 1 >= counts.size) break
+                        val paintState = counts[k]
+                        if (paintState > 0 && counts[k + 1] > 0) {
+                            paintExtruders.add(paintState)
                         }
                     }
                 }
-                parsed.copy(
-                    usedExtruders = (parsed.usedExtruders + paintExtruders).toSortedSet()
-                )
-            } else {
+            }
+            if (paintExtruders.isEmpty()) {
                 parsed
+            } else {
+                parsed.copy(
+                    usedExtruders = (parsed.usedExtruders + paintExtruders).toSortedSet(),
+                    // Promote hasPaintData if any volume actually carried
+                    // paint data, even when no volume's `isMmPainted`
+                    // flag was set — downstream consumers
+                    // (buildThreeMfInfoFromNative, B81 plate-classification,
+                    // canonical-list construction) read this flag and
+                    // skipping it leaves SEMM plates classified as
+                    // non-painted.
+                    hasPaintData = true,
+                )
             }
         }
         Log.i("SlicerVM", "readPlateStateFromNative: usedExtruders=${state.usedExtruders}, " +

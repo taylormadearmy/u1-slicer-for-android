@@ -244,13 +244,26 @@ class PreviewColorNormalizationTest {
     }
 
     /**
-     * Dragon plate 3 regression guard: 4 distinct file filaments → 4
-     * distinct slots, contiguous {0,1,2,3}. Before-and-after of the fix
-     * must yield the same Preview palette so the canonical-Prepare-Preview
-     * agreement contract from commit 7fca77b survives.
+     * Dragon plate 3 regression guard. Phase 2 (2026-04-28, post-
+     * adversarial-review) — palette is canonical-fileIndex space
+     * (slicer body emits `T<fileIndex>`, not `T<compactSlot>`), so
+     * `result[fileIdx]` returns the slot preset that the user mapped
+     * `fileIdx` to. For colorMapping=[2,0,3,1]:
+     *   - fileIdx 0 → slot 2 → blue
+     *   - fileIdx 1 → slot 0 → red
+     *   - fileIdx 2 → slot 3 → white
+     *   - fileIdx 3 → slot 1 → green
+     *
+     * Pre-revision the palette was indexed by compact-slot order
+     * (`compactSlotOrder = colorMapping.distinct().sorted()`), giving
+     * `[red, green, blue, white]` regardless of mapping permutation —
+     * which was correct under v1.6.13's slicer-side T-index baking but
+     * wrong under Phase 2's canonical-emit contract. The reviewer's
+     * "G-code preview palette is still capped to four colors" finding
+     * caught this.
      */
     @Test
-    fun `normalizeGcodePreviewColors Dragon-style 4-distinct-slots renders preset colours`() {
+    fun `normalizeGcodePreviewColors Dragon-style 4-distinct-slots renders mapped slot presets`() {
         val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
         val resolvedFilamentColors = listOf("#A00000", "#00A000", "#0000A0", "#F0F0F0")
         // file filament i → slot per Dragon plate 3 shape (4 distinct slots).
@@ -260,13 +273,43 @@ class PreviewColorNormalizationTest {
             colorMapping = colorMapping,
             resolvedFilamentColors = resolvedFilamentColors,
         )
-        // compactSlotOrder = [0,1,2,3]. Each compact c renders with slot c's
-        // preset colour. The renderer's T<c> matches what the user sees in
-        // the Send dialog row (slot c's preset swatch).
-        assertEquals("#FF0000", result[0])
-        assertEquals("#00FF00", result[1])
-        assertEquals("#0000FF", result[2])
-        assertEquals("#FFFFFF", result[3])
+        // Each canonical fileIdx renders in the colour of the slot the
+        // user picked for that filament in the Send dialog.
+        assertEquals("fileIdx 0 → slot 2 → blue", "#0000FF", result[0])
+        assertEquals("fileIdx 1 → slot 0 → red", "#FF0000", result[1])
+        assertEquals("fileIdx 2 → slot 3 → white", "#FFFFFF", result[2])
+        assertEquals("fileIdx 3 → slot 1 → green", "#00FF00", result[3])
+    }
+
+    /**
+     * Phase 2 high-T canonical preview palette regression guard.
+     * Reviewer-flagged scenario: H2C benchy slices to T0..T6, Buzz
+     * plate 9 to T9+T10. Pre-fix the palette was capped at 4 entries
+     * so high-T tools collapsed visually onto the last colour. Post-
+     * fix the palette grows to canonical size (or colorMapping size).
+     */
+    @Test
+    fun `normalizeGcodePreviewColors high-T canonical palette grows beyond 4`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        // 7 file filaments mapping across 4 physical slots with
+        // collisions (H2C benchy shape).
+        val colorMapping = listOf(0, 1, 2, 3, 0, 1, 2)
+        val resolvedFilamentColors = listOf(
+            "#A00000", "#00A000", "#0000A0", "#F0F0F0",
+            "#660000", "#006600", "#000066",
+        )
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // Palette length must grow to at least 7 (canonical extent).
+        assertTrue("palette must extend to canonical size, got ${result.size}",
+            result.size >= 7)
+        // High-T entries resolve via colorMapping → slot preset.
+        assertEquals("fileIdx 4 → slot 0 → red", "#FF0000", result[4])
+        assertEquals("fileIdx 5 → slot 1 → green", "#00FF00", result[5])
+        assertEquals("fileIdx 6 → slot 2 → blue", "#0000FF", result[6])
     }
 
     /**

@@ -4051,50 +4051,70 @@ fun InlineGcodePreview(
  * GcodeToolRemapper) were retired with Group B because the slicer no
  * longer remaps tool indices at slice time.
  */
+/**
+ * Phase 2 (2026-04-28, post-adversarial-review) — produces the
+ * extruder-colour palette consumed by the G-code 3D preview renderer.
+ *
+ * Pre-fix this always returned a 4-entry palette; the renderer clamps
+ * `move.extruder` to the last palette index, so canonical files where
+ * the slicer emits T4..T9+ in body collapsed all high-index tools onto
+ * the last colour. The reviewer caught this on Buzz plate 9 (T9 + T10
+ * in body) and on H2C benchy (T0..T6 active).
+ *
+ * The fix: when [resolvedFilamentColors] is non-empty (canonical-aware
+ * path) the palette grows to canonical size. Each canonical fileIndex
+ * gets its file-relative colour, and the renderer can paint T<n>
+ * directly without clamping. When [resolvedFilamentColors] is empty
+ * (legacy path, single-colour, STL), keep the 4-entry palette so
+ * existing callers that expect that shape still work.
+ */
 internal fun normalizeGcodePreviewColors(
     extruderColors: List<String>,
     colorMapping: List<Int>?,
     resolvedFilamentColors: List<String> = emptyList(),
 ): List<String> {
-    val normalized = MutableList(4) { "" }
-    for (slot in 0..3) {
-        normalized[slot] = extruderColors.getOrNull(slot).orEmpty()
-    }
-    if (resolvedFilamentColors.isNotEmpty() && !colorMapping.isNullOrEmpty()) {
-        // compactSlotOrder is the embed step's distinct-slot list capped at
-        // the 4 physical slots — not a filament-count cap.
-        val compactSlotOrder = colorMapping.distinct().sorted().filter { it in 0..3 }.take(4)  // slot-space
-        compactSlotOrder.forEachIndexed { compactIdx, slot ->
-            val slotPreset = extruderColors.getOrNull(slot).orEmpty()
-            val resolved = if (slotPreset.isNotBlank()) {
-                slotPreset
-            } else {
-                val firstFileIdx = colorMapping.indexOfFirst { it == slot }
-                resolvedFilamentColors.getOrNull(firstFileIdx).orEmpty()
-            }
-            if (resolved.isNotBlank()) {
-                normalized[compactIdx] = resolved
+    if (resolvedFilamentColors.isNotEmpty() || !colorMapping.isNullOrEmpty()) {
+        // Phase 2 canonical path. Palette length grows with the canonical
+        // filament list (or colorMapping size, whichever is larger) so
+        // high-T canonical files (T4..T9+) don't visually collapse onto
+        // the last entry the way the pre-fix 4-cap did.
+        //
+        // For each canonical fileIndex i, pick the colour the user
+        // expects to see for "the print region drawn with file filament
+        // i":
+        //   1. If `colorMapping[i]` resolves to a 0..3 physical slot
+        //      with a non-blank preset colour, use it. The user picked
+        //      that slot in the Send dialog; that's the colour they'll
+        //      see on the printer too.
+        //   2. Else fall back to `resolvedFilamentColors[i]` — the
+        //      file's own filament colour.
+        //   3. Else fall back to `extruderColors[i % 4]` — legacy
+        //      default, keeps anything the slicer emits visible.
+        //
+        // This combines the canonical-length palette (the reviewer's
+        // recommendation) with the slot-preset preference (the original
+        // "missing red" fix from `7fca77b`).
+        val length = maxOf(
+            resolvedFilamentColors.size,
+            colorMapping?.size ?: 0,
+            4,
+        )
+        return MutableList(length) { i ->
+            val slot = colorMapping?.getOrNull(i)
+            val slotColor = slot?.takeIf { it in 0..3 }
+                ?.let { extruderColors.getOrNull(it).orEmpty() }
+            when {
+                !slotColor.isNullOrBlank() -> slotColor
+                resolvedFilamentColors.getOrNull(i)?.isNotBlank() == true ->
+                    resolvedFilamentColors[i]
+                else -> extruderColors.getOrNull(i % 4).orEmpty()
             }
         }
-        // Compact slots beyond compactSlotOrder.size are not addressed by any
-        // T<n> the slicer will emit, but blank entries can break callers that
-        // expect 4 entries — leave the init-loop slot presets in place there.
-        return normalized
     }
-    if (!colorMapping.isNullOrEmpty()) {
-        // Non-canonical path (no resolved filament colours yet): map
-        // compact slicer index → slot preset via colorMapping. Iterate up
-        // to the array bound so the assignment never goes out of range.
-        colorMapping.take(normalized.size).forEachIndexed { compactIdx, slot ->
-            if (slot in 0..3) {
-                val slotColor = extruderColors.getOrNull(slot).orEmpty()
-                if (slotColor.isNotBlank()) {
-                    normalized[compactIdx] = slotColor
-                }
-            }
-        }
-    }
-    return normalized
+    // Legacy path: 4-slot palette indexed by physical slot. Used when
+    // neither resolvedFilamentColors nor colorMapping is available
+    // (single-colour STL, very early during load, etc.)
+    return MutableList(4) { extruderColors.getOrNull(it).orEmpty() }
 }
 
 @Composable

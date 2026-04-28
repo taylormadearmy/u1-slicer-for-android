@@ -257,11 +257,21 @@ object GcodeParser {
                     continue
                 }
 
-                // T0–T9 — tool change. Phase 2 — no longer clamped to 0..3
-                // because multi-filament files (paint segmentation / MMU)
-                // legitimately use higher T-indices.
-                if (c0 == 'T' && cmdLen == 2 && l[start + 1] in '0'..'9') {
-                    val raw = l[start + 1] - '0'
+                // Tool change. Phase 2 (2026-04-28, post-adversarial-review)
+                // — parses multi-digit T-indices, not just T0..T9. Buzz
+                // plate 9 emits T10 + T11 in canonical-fileIndex space;
+                // the prior `cmdLen == 2` check skipped them so any
+                // extrusion after `T10` was attributed to the previous
+                // tool, breaking per-filament usage summaries and
+                // gcode-preview colouring.
+                if (c0 == 'T' && cmdLen >= 2 && l[start + 1] in '0'..'9') {
+                    var raw = 0
+                    var i = start + 1
+                    val end = start + cmdLen
+                    while (i < end && l[i] in '0'..'9') {
+                        raw = raw * 10 + (l[i] - '0')
+                        i++
+                    }
                     currentExtruder = raw.coerceIn(0, 31)  // safety cap
                     ensureExtruderCapacity(currentExtruder)
                 }

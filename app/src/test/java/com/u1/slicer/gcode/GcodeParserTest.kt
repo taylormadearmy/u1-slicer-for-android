@@ -601,6 +601,75 @@ class GcodeParserTest {
         assertTrue("T1 filament should be > 0", result.perExtruderFilamentMm[1] > 0f)
     }
 
+    @Test
+    fun `parse multi-digit T-index attributes extrusion to high tool`() {
+        // Phase 2 (2026-04-28, post-adversarial-review): canonical
+        // fileIndex G-code can emit T10/T11/etc. Pre-fix, the parser's
+        // `cmdLen == 2` guard skipped multi-digit T commands, leaving
+        // following extrusion attributed to the previous tool. Buzz
+        // plate 9 (Phase 2 canonical 11-wide list) hits this directly.
+        //
+        // The parser returns a COMPACT per-extruder array (one entry
+        // per distinct tool that produced extrusion, sorted ascending)
+        // — not indexed by raw tool number. So this test asserts the
+        // parser correctly distinguishes T0 from T10 / T11 by using
+        // monotonic E values that produce extrusion on each tool, then
+        // checking the compact array has one entry per distinct tool.
+        val file = writeGcode(
+            """
+            G92 E0
+            G1 X1 Y0 Z0.2 E1
+            T10
+            G92 E0
+            G1 X10 Y0 E1.5
+            T11
+            G92 E0
+            G1 X20 Y0 E0.8
+            """.trimIndent()
+        )
+        val result = GcodeParser.parse(file)
+        // Three distinct tools (T0, T10, T11) each produced extrusion,
+        // so the compact array has three entries. Pre-fix the parser
+        // skipped T10/T11 entirely so all extrusion accumulated under
+        // T0 — compact size would be 1.
+        assertEquals(3, result.perExtruderFilamentMm.size)
+        // All three compact entries should be > 0.
+        for (i in result.perExtruderFilamentMm.indices) {
+            assertTrue("compact[$i] filament must be > 0, got ${result.perExtruderFilamentMm[i]}",
+                result.perExtruderFilamentMm[i] > 0f)
+        }
+    }
+
+    @Test
+    fun `parse T15 single command attributes extrusion to high tool not T0`() {
+        // Edge case: arbitrary multi-digit T-index within the safety
+        // cap (0..31). Confirms the parser scans all digits, not just
+        // two — pre-fix, T15 would have been skipped entirely and the
+        // following G1 extrusion would have stayed on T0.
+        val file = writeGcode(
+            """
+            G92 E0
+            T15
+            G1 X10 Y0 Z0.2 E2.0
+            """.trimIndent()
+        )
+        val result = GcodeParser.parse(file)
+        // Only T15 produced extrusion → compact array of size 1, with
+        // the full 2.0 mm attributed to it (not T0). Pre-fix, T15 would
+        // be ignored and the extrusion would land on T0 — compact size
+        // would still be 1, but the wrong extruder. Distinguish by
+        // examining the underlying tool-order tracking via the layer's
+        // moves: every move should reference extruder 15.
+        assertEquals(1, result.perExtruderFilamentMm.size)
+        assertTrue(result.perExtruderFilamentMm[0] > 0f)
+        // Inspect the move's extruder field to confirm T15 was actually
+        // adopted (not silently skipped).
+        val anyMove = result.layers.flatMap { it.moves }.firstOrNull { it.type == MoveType.EXTRUDE }
+        assertNotNull("Expected at least one extruding move", anyMove)
+        assertEquals("Move extruder must be 15 (post-T15), not 0",
+            15, anyMove!!.extruder)
+    }
+
     // Helper extension
     private fun ParsedGcode.moves(layerIndex: Int) = layers[layerIndex].moves
 }
