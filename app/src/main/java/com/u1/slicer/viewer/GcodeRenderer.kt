@@ -73,7 +73,24 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var lastGcode: ParsedGcode? = null
     private var lastPackResult: SegmentPackResult? = null
 
-    private val extruderColors = arrayOf(
+    /**
+     * Phase 2 (2026-04-28, post-delta-review F8 fix) — palette grows
+     * with the canonical filament list. Pre-fix this was a fixed
+     * `Array<FloatArray>` of 4 entries, and `setExtruderColors`
+     * dropped any entry beyond index 3 with `if (i >= extruderColors.size)
+     * return@forEachIndexed`. The MainActivity-side
+     * `normalizeGcodePreviewColors` change in commit `09b2daf` produced
+     * a canonical-length palette but the renderer truncated it back to
+     * 4 — high-T tools (T4..T9+) collapsed onto the last colour because
+     * `GcodeSegmentPacker.pack` clamps via
+     * `extruderPalette[move.extruder.coerceIn(0, extruderPalette.size - 1)]`.
+     *
+     * Now the array is reassigned on each `setExtruderColors` call so
+     * canonical-width palettes flow through to the packer unmolested.
+     * Default initial length is 4 (matching legacy behaviour for
+     * non-canonical / single-colour cases).
+     */
+    private var extruderColors: Array<FloatArray> = arrayOf(
         floatArrayOf(1.0f, 0.6f, 0.0f, 1.0f),
         floatArrayOf(0.2f, 0.7f, 1.0f, 1.0f),
         floatArrayOf(0.0f, 0.9f, 0.4f, 1.0f),
@@ -97,18 +114,40 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     )
 
     fun setExtruderColors(hexColors: List<String>) {
-        hexColors.forEachIndexed { i, hex ->
-            if (i >= extruderColors.size || hex.isBlank()) return@forEachIndexed
-            try {
-                val c = android.graphics.Color.parseColor(if (hex.startsWith("#")) hex else "#$hex")
-                extruderColors[i] = floatArrayOf(
-                    android.graphics.Color.red(c) / 255f,
-                    android.graphics.Color.green(c) / 255f,
-                    android.graphics.Color.blue(c) / 255f,
-                    1.0f
-                )
-            } catch (_: Exception) { }
+        if (hexColors.isEmpty()) return
+        // Phase 2 (2026-04-28, post-delta-review F8) — replace the
+        // palette wholesale instead of mutating a fixed-size array.
+        // Length grows to max(hexColors.size, 4) so downstream
+        // GcodeSegmentPacker sees the full canonical palette and
+        // T-indices beyond 3 don't get clamped to the last colour.
+        // Entries with blank hex preserve the previous palette's
+        // colour at that index (or fall back to a neutral grey if no
+        // previous entry existed).
+        val length = maxOf(hexColors.size, 4)
+        val previous = extruderColors
+        val parsed = Array(length) { i ->
+            val hex = hexColors.getOrNull(i)
+            if (!hex.isNullOrBlank()) {
+                try {
+                    val c = android.graphics.Color.parseColor(
+                        if (hex.startsWith("#")) hex else "#$hex"
+                    )
+                    floatArrayOf(
+                        android.graphics.Color.red(c) / 255f,
+                        android.graphics.Color.green(c) / 255f,
+                        android.graphics.Color.blue(c) / 255f,
+                        1.0f,
+                    )
+                } catch (_: Exception) {
+                    previous.getOrNull(i)?.copyOf()
+                        ?: floatArrayOf(0.6f, 0.6f, 0.6f, 1.0f)
+                }
+            } else {
+                previous.getOrNull(i)?.copyOf()
+                    ?: floatArrayOf(0.6f, 0.6f, 0.6f, 1.0f)
+            }
         }
+        extruderColors = parsed
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {

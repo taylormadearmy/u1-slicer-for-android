@@ -40,6 +40,20 @@ data class SliceJob(
      * [colorMapping].
      */
     val colorMappingCsv: String? = null,
+    /**
+     * Phase 2 (2026-04-28, schema v6, post-round-2-review) — physical
+     * slot picked for single-colour jobs at slice time. Single-colour
+     * canonical lists (size == 1) intentionally have null
+     * [colorMappingCsv]; the user's slot pick lives only in
+     * `SlicerViewModel._selectedExtruder` until this column was added.
+     * Reviewer 3's P1 finding: without persisting it,
+     * `shareJobGcode` for a single-colour job sliced for E3 falls back
+     * to identity mapping `[0]` and exports as T0/E1.
+     *
+     * Null for multi-colour jobs (the colorMappingCsv path covers
+     * those) and for pre-schema-v6 jobs.
+     */
+    val selectedExtruderAtSlice: Int? = null,
 )
 
 /**

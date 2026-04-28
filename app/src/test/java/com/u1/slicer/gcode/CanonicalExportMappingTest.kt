@@ -145,4 +145,75 @@ class CanonicalExportMappingTest {
         )
         assertEquals(listOf(0, 1, 2, 3), result)
     }
+
+    @Test
+    fun plateNarrowedMappingWithFileIndexKeys_appliesAtCorrectCanonicalIndices() {
+        // Phase 2 (post-round-2-review, Reviewer 3 P1) — multi-plate
+        // file with 10 canonical filaments, plate uses file filaments
+        // 1 + 2 (0-indexed: 0 + 1). User maps plate-filament 0 → E2
+        // (slot 1) and plate-filament 1 → E1 (slot 0).
+        //
+        // Pre-fix the resolver did positional expansion: result[0]=1,
+        // result[1]=0, then mod-4 for the rest. That's the "correct"
+        // shape for THIS plate but only because plate filaments 0 + 1
+        // happen to be at canonical fileIndices 0 + 1.
+        //
+        // The real failure mode (per Reviewer 3): a plate using file
+        // filaments 8 + 9 (canonical fileIndices 7 + 8). Pre-fix would
+        // emit result[0]=slot for plate-fil 0, result[1]=slot for
+        // plate-fil 1, then result[2..9]=mod-4. The slicer body emits
+        // T7 + T8 for those filaments — those would land on result[7]
+        // and result[8], which the pre-fix populates with arbitrary
+        // mod-4 values, NOT the user's confirmed slot picks. Post-fix:
+        // the byFileIdx map ensures the user's mapping lands at the
+        // right canonical fileIndex.
+        val result = resolveCanonicalExportMapping(
+            canonicalSize = 10,
+            confirmedMapping = listOf(1, 0),
+            selectedExtruder = 0,
+            confirmedMappingFileIndices = listOf(7, 8),  // plate uses canonical fileIdx 7 + 8
+        )
+        // result[7] = slot 1 (user's pick for plate-filament 0 = canonical 7)
+        // result[8] = slot 0 (user's pick for plate-filament 1 = canonical 8)
+        // Other indices: mod-4 fallback (unmapped, won't be emitted by slicer)
+        assertEquals(1, result?.get(7))
+        assertEquals(0, result?.get(8))
+        // Verify mod-4 default at unmapped indices
+        assertEquals(0, result?.get(0))  // 0 % 4
+        assertEquals(1, result?.get(1))
+        assertEquals(2, result?.get(2))
+        assertEquals(3, result?.get(3))
+    }
+
+    @Test
+    fun plateNarrowedMappingWithFileIndexKeys_outOfRangeFileIdxIgnored() {
+        // Defensive: stale plate metadata claims a canonical fileIdx
+        // beyond canonicalSize. The resolver should silently drop the
+        // entry rather than throwing or producing a sparse list.
+        val result = resolveCanonicalExportMapping(
+            canonicalSize = 4,
+            confirmedMapping = listOf(0, 1, 2),
+            selectedExtruder = 0,
+            confirmedMappingFileIndices = listOf(0, 1, 99),  // last entry out of range
+        )
+        // First two land correctly, third is dropped.
+        assertEquals(0, result?.get(0))
+        assertEquals(1, result?.get(1))
+        // Index 2 falls back to mod-4 = 2 (untouched by mapping).
+        assertEquals(2, result?.get(2))
+    }
+
+    @Test
+    fun confirmedMappingValuesClampedToPhysicalRange() {
+        // Phase 2 (post-round-2-review, Reviewer 1 hardening) —
+        // confirmedMapping entries must be coerced to 0..3 so a stale
+        // / malformed entry can't produce out-of-range T<n> on the
+        // printer-bound output.
+        val result = resolveCanonicalExportMapping(
+            canonicalSize = 3,
+            confirmedMapping = listOf(99, -5, 7),
+            selectedExtruder = 0,
+        )
+        assertEquals(listOf(3, 0, 3), result)  // clamped to 0..3
+    }
 }

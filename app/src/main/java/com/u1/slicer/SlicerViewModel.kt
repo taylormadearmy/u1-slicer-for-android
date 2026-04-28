@@ -281,6 +281,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val file = rawInputFile ?: _currentModelFile
         if (file == null) {
             _canonicalFilamentList.value = null
+            canonicalCacheSourcePath = null
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -299,6 +300,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val currentSource = rawInputFile ?: _currentModelFile
             if (currentSource?.absolutePath == file.absolutePath) {
                 _canonicalFilamentList.value = list
+                // Phase 2 (post-round-2-review F4 tightening) — keep
+                // the cache-identity tag in lock-step with the value.
+                // Reviewer 2 noted async refresh paths weren't
+                // updating it.
+                canonicalCacheSourcePath = file.absolutePath
             }
         }
     }
@@ -604,16 +610,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             return@combine fullPalette
         }
 
-        // Non-MMU path — derive the source-extruder compaction order
-        // from `objectExtruderMap` (1-based per-object extruder). For
-        // multi-plate files `_threeMfInfo` is already plate-narrowed
-        // post-selectPlate so the map covers only the active plate's
-        // objects.
-        val sourceExtruders = mfInfo?.objectExtruderMap?.values
-            ?.toSet()
-            ?.filter { it > 0 }
-            ?.sorted()
-            ?: return@combine fullPalette
+        // Non-MMU path — derive the source-extruder compaction order.
+        //
+        // Phase 2 (post-round-2-review, Reviewer 3 P2 F7) — UNION of
+        //   - per-object extruder (`objectExtruderMap`), AND
+        //   - per-volume extruder (`objectPartExtruders`).
+        //
+        // Pre-fix used `objectExtruderMap.values` only.
+        // `NativePlateState.buildObjectExtruderMap()` collapses a
+        // compound object (multiple volumes with different extruders)
+        // to one value, so a non-MMU object with volumes on filaments
+        // 3 + 4 was being palette-aligned with one entry only — mesh
+        // indices {0, 1} addressed only one canonical entry plus a
+        // fallback. The full per-volume set covers the compound case.
+        //
+        // For multi-plate files `_threeMfInfo` is already plate-
+        // narrowed post-selectPlate so both maps cover only the
+        // active plate's objects.
+        val perObject = mfInfo?.objectExtruderMap?.values?.toSet().orEmpty()
+        val perVolume = mfInfo?.objectPartExtruders?.values?.flatten()?.toSet().orEmpty()
+        val sourceExtruders = (perObject + perVolume)
+            .filter { it > 0 }
+            .sorted()
         if (sourceExtruders.isEmpty()) return@combine fullPalette
         sourceExtruders.map { ext ->
             fullPalette.getOrNull(ext - 1).orEmpty()
@@ -1533,6 +1551,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             ?: com.u1.slicer.data.canonicalListAtLoad(canonicalSource))
                             ?.also {
                                 _canonicalFilamentList.value = it
+                                // Phase 2 (post-round-2-review F4) —
+                                // keep the cache-identity tag in lock-
+                                // step with the value.
+                                canonicalCacheSourcePath = canonicalSource.absolutePath
                             }
                     } catch (_: Exception) { null }
 
@@ -3026,6 +3048,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             colorMappingCsv = _colorMapping.value
                                 ?.takeIf { it.isNotEmpty() }
                                 ?.joinToString(","),
+                            // Phase 2 schema v6 (post-round-2-review,
+                            // Reviewer 3 P1) — single-colour slot pick
+                            // persistence. Captured for ALL jobs (even
+                            // multi-colour, where it's harmless extra
+                            // metadata) since the consumer in
+                            // shareJobGcode reads it only when the
+                            // canonical list is single-filament.
+                            selectedExtruderAtSlice = _selectedExtruder.value
+                                .takeIf { it in 0..3 },
                         )
                     )
                     // Copy gcode to durable per-job storage so Jobs "View G-code" always reads the
@@ -3471,12 +3502,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceFile.parentFile,
                 "${sourceFile.nameWithoutExtension}.share.${sourceFile.extension}"
             )
-            // Build the mapping from job metadata. Pre-Phase-2 jobs
-            // (canonicalListSize == null) get null mapping → identity
-            // copy → original physical-slot G-code is preserved.
+            // Build the mapping from job metadata.
+            //   - canonicalListSize == null  → pre-Phase-2 job whose
+            //     stored G-code is already physical-slot. Identity copy.
+            //   - canonicalListSize == 1 + selectedExtruderAtSlice
+            //     present → single-colour job; map T0 to the saved
+            //     slot. Phase 2 schema v6 (post-round-2-review): without
+            //     this branch a single-colour job sliced for E3 would
+            //     export as T0/E1 (the mod-4 fallback always emits 0).
+            //   - colorMappingCsv non-null → multi-colour confirmed
+            //     mapping; decode + use directly.
+            //   - canonicalListSize present but no mapping/slot → user
+            //     never confirmed; fall back to identity-mod-4.
             val mapping = com.u1.slicer.data.decodedColorMapping(job)
-                ?: job.canonicalListSize?.let { size ->
-                    List(size) { i -> i % 4 }
+                ?: when {
+                    job.canonicalListSize == null -> null
+                    job.canonicalListSize == 1 && job.selectedExtruderAtSlice != null ->
+                        listOf(job.selectedExtruderAtSlice.coerceIn(0, 3))
+                    else -> List(job.canonicalListSize) { i -> i % 4 }
                 }
             if (!prepareExportableGcodeWithMapping(sourceFile, shareFile, mapping)) return@launch
 
@@ -3797,10 +3840,39 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     internal fun resolveExportMapping(): List<Int>? {
         val canonical = _canonicalFilamentList.value
+        // Phase 2 (post-round-2-review, Reviewer 3 P1) — supply
+        // confirmedMappingFileIndices when the live `_colorMapping` is
+        // plate-narrowed (multi-plate file post-selectPlate). Without
+        // it the resolver assumes positional `mapping[i] → fileIdx i`,
+        // which is wrong for plates whose filaments don't start at
+        // canonical fileIdx 0.
+        //
+        // The plate's filamentIndices are 1-indexed in Bambu's
+        // ThreeMfPlate format; convert to 0-indexed canonical
+        // fileIndices for the resolver. Only supply the keys when the
+        // mapping is actually plate-narrowed (size < canonicalSize),
+        // otherwise the canonical-aligned positional path is correct.
+        val confirmed = _colorMapping.value
+        val canonicalSize = canonical?.size ?: 0
+        val mappingFileIndices: List<Int>? = if (
+            !confirmed.isNullOrEmpty() &&
+            confirmed.size < canonicalSize
+        ) {
+            val plateId = recoveryPlateId.takeIf { it >= 0 }
+            val plate = plateId?.let {
+                _threeMfInfo.value?.plates?.firstOrNull { p -> p.plateId == it }
+            }
+            plate?.filamentIndices
+                ?.map { it - 1 }  // 1-indexed Bambu → 0-indexed canonical
+                ?.filter { it in 0 until canonicalSize }
+                ?.takeIf { it.size == confirmed.size }
+        } else null
+
         return com.u1.slicer.gcode.resolveCanonicalExportMapping(
-            canonicalSize = canonical?.size ?: 0,
-            confirmedMapping = _colorMapping.value,
+            canonicalSize = canonicalSize,
+            confirmedMapping = confirmed,
             selectedExtruder = _selectedExtruder.value,
+            confirmedMappingFileIndices = mappingFileIndices,
         )
     }
 
