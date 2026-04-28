@@ -4082,25 +4082,34 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val json = native.nativeGetAllVolumeExtruders()
             val parsed = NativePlateState.parseVolumeMapJson(json)
 
-            // Phase 2 (2026-04-28, post-adversarial-review) — probe
-            // `nativeGetPaintStateCounts` on EVERY volume on the plate,
-            // not just those whose `isMmPainted` flag is set, AND not
-            // gated on the file-level `parsed.hasPaintData`. SEMM
-            // plates whose paint data is encoded on individual triangles
-            // rather than marked at the volume level have volumes that
-            // come back with `isMmPainted=false` but still return non-
-            // empty paint-state counts when queried — slip-slide-spin
-            // plate 3 was the canary in `PlateStateEnrichment.kt` that
-            // documented this. Querying unconditionally and ignoring
-            // nulls/empties gives the full set without false positives
-            // on non-painted volumes.
+            // Phase 2 (2026-04-28, post-adversarial-review; tightened
+            // 2026-04-28 evening after Buzz cold-load regression) —
+            // probe `nativeGetPaintStateCounts` selectively:
             //
-            // Cost: extra JNI call per volume on non-painted files.
-            // Acceptable — typical fixtures have under ~50 volumes and
-            // the call returns null fast for non-painted ones.
+            //   - When `vol.isMmPainted` is true → probe (we know the
+            //     volume has paint data, just need to enumerate states).
+            //   - When `parsed.hasPaintData` is FALSE at the file level
+            //     → probe every volume regardless. This covers the
+            //     documented SEMM-without-isMmPainted edge case from
+            //     `PlateStateEnrichment.kt` (slip-slide-spin plate 3
+            //     canary): paint data encoded on individual triangles
+            //     rather than marked at the volume level.
+            //   - When `parsed.hasPaintData` is TRUE and `isMmPainted`
+            //     is false → SKIP. The file-level flag means at least
+            //     one painted volume was found; un-flagged volumes
+            //     contribute no NEW paint states. The earlier
+            //     "always probe" version doubled JNI calls on Buzz
+            //     (large multi-plate file with mixed isMmPainted
+            //     volumes), pushing cold-load over its 90s gate.
+            //
+            // Cost: when `parsed.hasPaintData=true` we probe only the
+            // flagged subset (matches pre-fix behaviour). When
+            // `parsed.hasPaintData=false` we probe everything (matches
+            // the F5 widening, preserving the SEMM canary).
             val paintExtruders = mutableSetOf<Int>()
             for (obj in parsed.objects) {
                 for (vol in obj.volumes) {
+                    if (!vol.isMmPainted && parsed.hasPaintData) continue
                     // kind=0 is MMU paint segmentation
                     val counts = native.nativeGetPaintStateCounts(
                         obj.objectIndex, vol.volumeIndex, 0
