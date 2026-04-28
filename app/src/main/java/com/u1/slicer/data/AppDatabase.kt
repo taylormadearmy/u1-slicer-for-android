@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 
 @Database(
     entities = [FilamentProfile::class, SliceJob::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -69,6 +69,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 → v5: add canonicalListSize + colorMappingCsv columns to
+         * slice_jobs (Phase 2, 2026-04-28). Lets `shareJobGcode()`
+         * reproduce the canonical→physical mapping when sharing a
+         * historical job. Both columns nullable; pre-v5 rows correspond
+         * to v1.6.13-era jobs whose stored G-code is already physical-
+         * slot, so null → identity copy on share.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE slice_jobs ADD COLUMN canonicalListSize INTEGER")
+                db.execSQL("ALTER TABLE slice_jobs ADD COLUMN colorMappingCsv TEXT")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -76,7 +91,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "u1_slicer.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .addCallback(SeedCallback())
                     .build()
                 INSTANCE = instance

@@ -654,27 +654,36 @@ class MainActivity : ComponentActivity() {
                 // Send and the actual upload. Always shown when the user
                 // taps Send (PrintAndUpload) or Upload Only.
                 pendingMappingSend?.let { pending ->
-                    // Phase 2 (2026-04-28) — canonical list lookup hoisted to
-                    // Dispatchers.IO via produceState. On Buzz Lightyear (73 MB
-                    // ZIP, 11 filaments, paint walk) the synchronous variant
-                    // froze the main thread for several seconds when this
-                    // dialog opened. Compose redraws the dialog as `null` while
-                    // the lookup runs and switches to the loaded canonical
-                    // when ready.
-                    val rawCanonical by produceState<com.u1.slicer.data.CanonicalFilamentList?>(
-                        initialValue = null, key1 = pending.gcodePath
+                    // Phase 2 (2026-04-28, revised after adversarial review)
+                    // — three-state canonical lookup. The lookup runs on
+                    // Dispatchers.IO via produceState, so the initial
+                    // composition has no answer yet. Pre-revision, that
+                    // initial-null was indistinguishable from "no canonical
+                    // list" and the fallback branch would send the raw
+                    // canonical-fileIndex G-code straight to the printer
+                    // before the lookup could complete.
+                    //
+                    // CanonicalLookup encodes the three states explicitly:
+                    //   Loading  — IO in flight; keep dialog alive
+                    //   Absent   — IO finished, no canonical list (legacy
+                    //              file, STL with no canonical, etc.)
+                    //   Present  — IO finished with a list; show dialog
+                    val canonicalState by produceState<CanonicalLookup>(
+                        initialValue = CanonicalLookup.Loading,
+                        key1 = pending.gcodePath,
                     ) {
-                        value = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val list = withContext(kotlinx.coroutines.Dispatchers.IO) {
                             viewModel.getCanonicalFilamentList()
                         }
+                        value = if (list != null) CanonicalLookup.Present(list) else CanonicalLookup.Absent
                     }
                     val extruderPresets by viewModel.extruderPresets.collectAsState()
                     val currentMapping by viewModel.colorMapping.collectAsState()
                     val overrides by viewModel.filamentOverrides.collectAsState()
-                    val canonical = remember(rawCanonical, overrides) {
-                        rawCanonical?.let { raw ->
+                    val canonical = remember(canonicalState, overrides) {
+                        (canonicalState as? CanonicalLookup.Present)?.let { p ->
                             com.u1.slicer.data.applyOverridesToCanonical(
-                                raw,
+                                p.list,
                                 overrides.mapValues { (_, ov) ->
                                     ov.color to ov.materialType
                                 },
@@ -682,62 +691,80 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     val scope = rememberCoroutineScope()
-                    if (canonical != null) {
-                        // Phase 2.5 final: slices now produce canonical
-                        // (file-filament-relative) T-indices — the slice-time
-                        // GcodeToolRemapper.remap call is skipped. So the
-                        // dialog's user mapping is applied directly: for each
-                        // file index i, T<i> in the source G-code is rewritten
-                        // to T<userMapping[i]> in the output. The legacy delta
-                        // path (computeDialogRewrite) is preserved for
-                        // safety but degenerates to identity-source here.
-                        com.u1.slicer.ui.FilamentMappingDialog(
-                            canonicalList = canonical,
-                            extruderPresets = extruderPresets,
-                            initialMapping = currentMapping,
-                            onConfirm = { mapping ->
-                                val source = java.io.File(pending.gcodePath)
-                                val remapped = java.io.File(
-                                    source.parentFile,
-                                    "${source.nameWithoutExtension}.remapped.${source.extension}"
-                                )
-                                // Phase 2 (2026-04-28) — applyPrintTimeRemap
-                                // moved to Dispatchers.IO. For multi-MB
-                                // G-code (50+ MB on big multi-colour prints)
-                                // the previous synchronous call froze the
-                                // dialog for 1-3s before the Send action
-                                // fired.
-                                pendingMappingSend = null
-                                navigateTab(Routes.PRINTER)
-                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                    com.u1.slicer.gcode.applyPrintTimeRemap(
-                                        sourceGcodePath = source.absolutePath,
-                                        outputPath = remapped.absolutePath,
-                                        colorMapping = mapping,
-                                    )
-                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                        when (pending.action) {
-                                            PendingMappingSend.Action.PrintAndUpload ->
-                                                printerViewModel.sendAndPrint(remapped.absolutePath)
-                                            PendingMappingSend.Action.UploadOnly ->
-                                                printerViewModel.sendUploadOnly(remapped.absolutePath)
+                    when (canonicalState) {
+                        is CanonicalLookup.Loading -> {
+                            // IO in flight; keep pendingMappingSend alive.
+                            // Composition will re-fire when produceState
+                            // updates. No Send fires here — the race that
+                            // sent canonical G-code to the printer pre-
+                            // revision is closed.
+                        }
+                        is CanonicalLookup.Present -> {
+                            if (canonical != null) {
+                                // Phase 2.5 final: slices produce canonical
+                                // (file-filament-relative) T-indices. The
+                                // dialog's mapping is applied directly: for
+                                // each file index i, T<i> is rewritten to
+                                // T<userMapping[i]>.
+                                com.u1.slicer.ui.FilamentMappingDialog(
+                                    canonicalList = canonical,
+                                    extruderPresets = extruderPresets,
+                                    initialMapping = currentMapping,
+                                    onConfirm = { mapping ->
+                                        val source = java.io.File(pending.gcodePath)
+                                        val remapped = java.io.File(
+                                            source.parentFile,
+                                            "${source.nameWithoutExtension}.remapped.${source.extension}"
+                                        )
+                                        pendingMappingSend = null
+                                        navigateTab(Routes.PRINTER)
+                                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                            com.u1.slicer.gcode.applyPrintTimeRemap(
+                                                sourceGcodePath = source.absolutePath,
+                                                outputPath = remapped.absolutePath,
+                                                colorMapping = mapping,
+                                            )
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                when (pending.action) {
+                                                    PendingMappingSend.Action.PrintAndUpload ->
+                                                        printerViewModel.sendAndPrint(remapped.absolutePath)
+                                                    PendingMappingSend.Action.UploadOnly ->
+                                                        printerViewModel.sendUploadOnly(remapped.absolutePath)
+                                                }
+                                            }
                                         }
+                                    },
+                                    onDismiss = { pendingMappingSend = null }
+                                )
+                            }
+                        }
+                        is CanonicalLookup.Absent -> {
+                            // Legacy / unrecognised file with no canonical
+                            // list. Route through the resolver-driven helper
+                            // so the export boundary stays consistent with
+                            // Save/Share — even though the resolver returns
+                            // null here (identity copy), going through the
+                            // helper means a future change to the absent
+                            // path lands in one place, not three.
+                            val source = java.io.File(pending.gcodePath)
+                            val exported = java.io.File(
+                                source.parentFile,
+                                "${source.nameWithoutExtension}.remapped.${source.extension}"
+                            )
+                            pendingMappingSend = null
+                            navigateTab(Routes.PRINTER)
+                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                viewModel.prepareExportableGcodeWithMapping(source, exported, mapping = null)
+                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    when (pending.action) {
+                                        PendingMappingSend.Action.PrintAndUpload ->
+                                            printerViewModel.sendAndPrint(exported.absolutePath)
+                                        PendingMappingSend.Action.UploadOnly ->
+                                            printerViewModel.sendUploadOnly(exported.absolutePath)
                                     }
                                 }
-                            },
-                            onDismiss = { pendingMappingSend = null }
-                        )
-                    } else {
-                        // Fallback: no canonical list available (no model
-                        // loaded, unrecognised file). Send unchanged.
-                        when (pending.action) {
-                            PendingMappingSend.Action.PrintAndUpload ->
-                                printerViewModel.sendAndPrint(pending.gcodePath)
-                            PendingMappingSend.Action.UploadOnly ->
-                                printerViewModel.sendUploadOnly(pending.gcodePath)
+                            }
                         }
-                        pendingMappingSend = null
-                        navigateTab(Routes.PRINTER)
                     }
                 }
             }
@@ -755,6 +782,21 @@ internal data class PendingMappingSend(
     val action: Action,
 ) {
     enum class Action { PrintAndUpload, UploadOnly }
+}
+
+/**
+ * Phase 2 (2026-04-28, post-adversarial-review) — three-state canonical
+ * filament list lookup for the Send dialog. Distinguishes "IO in flight"
+ * from "no canonical list" so a fast-tap user can't slip canonical-
+ * fileIndex G-code past the mapping dialog while the lookup is loading.
+ *
+ * See `docs/superpowers/specs/2026-04-28-canonical-export-mapping-helper-design.md`
+ * § "Send dialog three-state lookup".
+ */
+internal sealed class CanonicalLookup {
+    object Loading : CanonicalLookup()
+    object Absent : CanonicalLookup()
+    data class Present(val list: com.u1.slicer.data.CanonicalFilamentList) : CanonicalLookup()
 }
 
 // Phase 2 (2026-04-28) — Group B: `computeDialogRewrite` was retired.
