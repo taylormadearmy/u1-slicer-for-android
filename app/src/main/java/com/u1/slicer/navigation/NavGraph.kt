@@ -77,6 +77,7 @@ fun U1NavGraph(
             val threeMfInfo by viewModel.threeMfInfo.collectAsState()
             val slicerState by viewModel.state.collectAsState()
             val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
+            val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
             val slicerLayerCount = (slicerState as? com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete)?.result?.totalLayers ?: 0
             if (parsedGcode != null) {
                 // B48: H2C models (>4 model colours) — slicer's T0-T3 are physical
@@ -91,7 +92,14 @@ fun U1NavGraph(
                     extruderColors = extruderColors,
                     colorMapping = gcodeColorMapping,
                     slicerLayerCount = slicerLayerCount,
-                    resolvedFilamentColors = resolvedFilamentColors,
+                    // Bug 1 class sibling fix (post-v2.0.0-validation):
+                    // gcode body emits T<canonical-fileIndex>; palette
+                    // must be canonical-aligned. Pre-fix used
+                    // resolvedFilamentColors (plate-narrowed) which
+                    // misindexed for multi-plate Bambu fileIdx > 0.
+                    resolvedFilamentColors = canonicalFilamentColors
+                        .takeIf { it.isNotEmpty() }
+                        ?: resolvedFilamentColors,
                     onBack = { navController.popBackStack() }
                 )
             }

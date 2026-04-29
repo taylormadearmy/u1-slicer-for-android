@@ -1046,6 +1046,7 @@ fun PrepareScreen(
     val sourceConfig by viewModel.sourceConfig.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     val meshAlignedFilamentColors by viewModel.meshAlignedFilamentColors.collectAsState()
+    val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
 
     // Plate selector dialog
@@ -1537,6 +1538,7 @@ fun PreviewScreen(
     val extruderPresets by viewModel.extruderPresets.collectAsState()
     val sliceStale by viewModel.sliceStale.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
+    val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
 
     Scaffold(
         topBar = {
@@ -1641,7 +1643,15 @@ fun PreviewScreen(
                             cameraState = sharedPreviewCameraState,
                             onCameraStateChange = onSharedPreviewCameraStateChange,
                             onResetView = onResetPreviewCamera,
-                            resolvedFilamentColors = resolvedFilamentColors,
+                            // Bug 1 class sibling fix (post-v2.0.0-validation):
+                            // gcode body emits T<canonical-fileIndex>; palette
+                            // must be canonical-aligned so palette[T] resolves
+                            // to the right file colour. Pre-fix used
+                            // `resolvedFilamentColors` which is plate-narrowed
+                            // and misindexed for multi-plate fileIdx > 0.
+                            resolvedFilamentColors = canonicalFilamentColors
+                                .takeIf { it.isNotEmpty() }
+                                ?: resolvedFilamentColors,
                         )
                         }
                     }

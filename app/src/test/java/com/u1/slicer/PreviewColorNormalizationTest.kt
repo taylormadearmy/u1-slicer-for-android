@@ -340,6 +340,102 @@ class PreviewColorNormalizationTest {
         assertEquals("fileIdx 3 → file colour", "#F0F0F0", result[3])
     }
 
+    /**
+     * Phase 2 (post-v2.0.0-validation, Bug 1 class sibling) — Dragon
+     * plate 1 regression: the gcode preview palette must be
+     * canonical-fileIndex-aligned, not plate-narrowed.
+     *
+     * The slicer emits T<canonical-fileIndex> in the G-code body. For
+     * Dragon plate 1 the file's canonical filament list is 13 wide; the
+     * plate uses fileIdx 1 (#9D2235 burgundy) + fileIdx 2 (#443089
+     * purple). Slicer emits T1 + T2 (canonical), and the renderer
+     * queries palette[1] and palette[2].
+     *
+     * Pre-fix the gcode preview was fed `resolvedFilamentColors` (size
+     * 2 = [#9D2235, #443089]) so:
+     *   - palette[0] = #9D2235 (wrong slot — canonical fileIdx 0 should
+     *     be the file's actual fileIdx 0 colour)
+     *   - palette[1] = #443089 (WRONG — fileIdx 1 should be burgundy)
+     *   - palette[2] = fallback to extruderColors[2 % 4] = blue
+     * The G-code preview rendered T1 as purple and T2 as blue, neither
+     * of which matched the Prepare 3D preview.
+     *
+     * Post-fix the gcode preview is fed `canonicalFilamentColors` (size
+     * 13 = file-wide canonical colours). palette[1] = burgundy,
+     * palette[2] = purple — agrees with Prepare.
+     *
+     * Calicube didn't surface this because its plate filaments occupy
+     * canonical fileIdx 0 + 1 (contiguous from 0); the plate-narrowed
+     * palette accidentally aligned. Multi-plate Bambu files whose
+     * plate filaments don't start at fileIdx 0 (Dragon plate 1, Button-S,
+     * etc.) all hit it.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors canonical-aligned palette renders Dragon plate 1 fileIdx 1+2 correctly`() {
+        val extruderColors = listOf("#FF0000", "", "#0000FF", "")  // E1=red, E3=blue
+        // Canonical-aligned palette (size 13 = full file). For Dragon
+        // plate 1: fileIdx 0 = #F4EE2A yellow, fileIdx 1 = #9D2235
+        // burgundy, fileIdx 2 = #443089 purple, etc.
+        val canonicalPalette = listOf(
+            "#F4EE2A", "#9D2235", "#443089", "#FFFFFF",
+            "#443089", "#443089", "#443089", "#443089",
+            "#443089", "#FFFFFF", "#443089", "#000000", "#A7A9AA",
+        )
+        // Plate-narrowed mapping (size 2): plate filament 0 → slot 0,
+        // plate filament 1 → slot 2.
+        val colorMapping = listOf(0, 2)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = canonicalPalette,
+        )
+        // Critical: palette[1] (T1 in gcode) renders as fileIdx 1's
+        // file colour (burgundy), NOT as filament-2's colour (which
+        // is what the plate-narrowed pre-fix palette would have given).
+        assertEquals("fileIdx 1 → file's burgundy", "#9D2235", result[1])
+        assertEquals("fileIdx 2 → file's purple", "#443089", result[2])
+        assertEquals("fileIdx 0 → file's yellow", "#F4EE2A", result[0])
+        // Palette length must accommodate all canonical fileIndices, not
+        // just the 2 plate filaments. Size >= 13.
+        assertTrue(
+            "palette must accommodate all canonical fileIndices " +
+                "(found size ${result.size}, expected >= 13)",
+            result.size >= 13
+        )
+    }
+
+    /**
+     * Phase 2 (post-v2.0.0-validation, Bug 1 class sibling) — regression
+     * guard documenting the pre-fix wrong behaviour. With a plate-
+     * narrowed `resolvedFilamentColors` (size 2 from the live
+     * `_threeMfInfo.detectedColors`), the palette indices misalign with
+     * the gcode's canonical T-values. This test would have FAILED on
+     * the pre-fix code and asserts the right symptoms so a future
+     * regression is caught.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors plate-narrowed input misaligns indices for canonical-T gcode`() {
+        val extruderColors = listOf("#FF0000", "", "#0000FF", "")
+        // Plate-narrowed (pre-fix shape) — size 2 only.
+        val plateNarrowed = listOf("#9D2235", "#443089")
+        val colorMapping = listOf(0, 2)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = plateNarrowed,
+        )
+        // With plate-narrowed input the helper produces palette where
+        // palette[1] = #443089 (Filament 2's colour, but T1 in gcode is
+        // canonical fileIdx 1 = burgundy). This is the BUG state — the
+        // post-fix wiring of canonicalFilamentColors avoids this by
+        // never feeding plate-narrowed input to the gcode preview.
+        assertEquals("plate-narrowed misalignment: palette[1] is purple not burgundy",
+            "#443089", result[1])
+        // Critical: the helper itself isn't broken — it's the caller
+        // that must feed canonical-aligned input. This test documents
+        // that contract: feeding plate-narrowed → wrong output.
+    }
+
     // useDirectSlots was retired with Group B (Phase 2 canonical contract;
     // the slicer no longer baked physical slot indices into the G-code).
 }

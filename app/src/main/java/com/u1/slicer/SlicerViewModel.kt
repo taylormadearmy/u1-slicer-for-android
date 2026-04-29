@@ -508,6 +508,44 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
+     * Phase 2 (post-v2.0.0-validation, Bug 1 class sibling fix) —
+     * canonical-fileIndex-aligned palette for the **G-code preview body**.
+     *
+     * The slicer emits `T<canonical-fileIndex>` in the G-code body. The
+     * preview renderer queries `palette[T]` to colour each toolpath
+     * segment. So the palette must be canonical-fileIndex-aligned:
+     * `palette[i]` = canonical fileIdx i's colour (with per-filament
+     * Prepare override applied), file-wide.
+     *
+     * Distinct from [resolvedFilamentColors], which is plate-narrowed for
+     * the Slice Summary chip strip and Filament Mapping dialog rows.
+     *
+     * Bug class: pre-fix the gcode preview consumed
+     * [resolvedFilamentColors] which is plate-narrowed (size = plate
+     * filament count). For multi-plate Bambu files whose plate filaments
+     * don't start at canonical fileIdx 0 (e.g. Dragon plate 1 using
+     * canonical fileIdx 1+2 of 13), the palette indices misaligned with
+     * the G-code T-values: T1 rendered as filament 2's colour, T2 fell
+     * back to slot preset blue. Calicube didn't surface it because its
+     * plate uses canonical fileIdx 0+1 (contiguous from 0) — the
+     * plate-narrowed palette accidentally aligned with canonical
+     * fileIndex.
+     *
+     * Empty when no canonical list is available — caller falls back to
+     * the legacy 4-slot palette in [normalizeGcodePreviewColors].
+     */
+    val canonicalFilamentColors: StateFlow<List<String>> = combine(
+        _canonicalFilamentList,
+        _filamentOverrides,
+    ) { canonical, overrides ->
+        val list = canonical ?: return@combine emptyList()
+        if (overrides.isEmpty()) list.filaments.map { it.color }
+        else list.filaments.map { entry ->
+            overrides[entry.fileIndex]?.color ?: entry.color
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
      * Phase 2 (Approach C) — palette aligned to the **mesh's** extruder-index
      * space, NOT the file's. Used by the 3D Prepare preview's recolor path so
      * the displayed colours always agree with what the mesh's `extruderIndices`

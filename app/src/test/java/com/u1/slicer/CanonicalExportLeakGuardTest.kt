@@ -216,6 +216,59 @@ class CanonicalExportLeakGuardTest {
     }
 
     /**
+     * Bug 1 class extension — gcode preview palette must be CANONICAL-
+     * fileIndex-aligned (file-wide), not plate-narrowed. The renderer
+     * queries palette[T] where T is a canonical fileIdx emitted by the
+     * slicer; for multi-plate Bambu files whose plate filaments don't
+     * start at canonical fileIdx 0 (e.g. Dragon plate 1 using fileIdx
+     * 1+2 of 13), a plate-narrowed palette mis-indexes:
+     *   - palette[1] returns plate filament 1's colour (correct fileIdx
+     *     would be filament 2's)
+     *   - palette[2] falls back to slot preset
+     *
+     * The post-fix wiring uses `canonicalFilamentColors` (file-wide
+     * canonical, override-applied) for gcode preview composables.
+     * `resolvedFilamentColors` (plate-narrowed) stays for chip-strip
+     * surfaces only.
+     *
+     * Guard: SlicerViewModel must declare `canonicalFilamentColors`
+     * StateFlow, and both gcode preview entry points (InlineGcodePreview
+     * + GcodeViewer3DScreen) must consume it.
+     */
+    @Test
+    fun gcodePreviewPalette_consumesCanonicalFilamentColorsNotPlateNarrowed() {
+        val vmSrc = readSource("SlicerViewModel.kt")
+        assertTrue(
+            "SlicerViewModel must declare `canonicalFilamentColors: " +
+                "StateFlow<List<String>>` — file-wide canonical-fileIndex-" +
+                "aligned palette for the gcode preview body. Pre-fix the " +
+                "preview consumed plate-narrowed `resolvedFilamentColors` " +
+                "and mis-indexed for multi-plate fileIdx > 0 " +
+                "(Dragon plate 1 surfaced this regression).",
+            vmSrc.contains("val canonicalFilamentColors: StateFlow<List<String>>")
+        )
+        val mainSrc = readSource("MainActivity.kt")
+        assertTrue(
+            "MainActivity must collect canonicalFilamentColors via " +
+                "`viewModel.canonicalFilamentColors.collectAsState()` and " +
+                "pass it to InlineGcodePreview as the palette source. " +
+                "Pre-fix the wiring used resolvedFilamentColors which is " +
+                "plate-narrowed for multi-plate Bambu files.",
+            mainSrc.contains("viewModel.canonicalFilamentColors.collectAsState()") &&
+                mainSrc.contains("canonicalFilamentColors")
+        )
+        val navSrc = readSource("navigation/NavGraph.kt")
+        assertTrue(
+            "navigation/NavGraph.kt must collect and pass " +
+                "canonicalFilamentColors to GcodeViewer3DScreen — the " +
+                "fullscreen gcode preview also needs canonical-aligned " +
+                "palette indexing.",
+            navSrc.contains("viewModel.canonicalFilamentColors.collectAsState()") &&
+                navSrc.contains("canonicalFilamentColors")
+        )
+    }
+
+    /**
      * Bug 1 class — gcode preview palette construction must prefer
      * file colour over slot preset colour. The pre-fix
      * `normalizeGcodePreviewColors` did the opposite (slot first,
