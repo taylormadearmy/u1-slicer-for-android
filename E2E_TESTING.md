@@ -117,6 +117,75 @@ filaments if H2C isn't available.
   revert to the file's original colour for filament 1; a re-slice
   should produce a header without PETG.
 
+### Manual regression checks (v2.0.x — Phase 2 export-mapping classes)
+
+Run after any change to: the Filament Mapping dialog, the Slice Summary
+chip strip, the gcode preview palette helper
+(`normalizeGcodePreviewColors`), `applyPrintTimeRemap` callers, the
+slice-time `colorMappingCsv` persist site (`SlicerViewModel`), or
+`shareJobGcode`.
+
+Three bug classes were identified during v2.0.0 manual verification.
+The unit-level `CanonicalExportLeakGuardTest` enforces structural
+invariants statically; these manual checks catch the **visual /
+behavioural** failures.
+
+**Suggested fixture:** `Dragon Scale infinity.3mf` plate 1 (multi-plate
+file whose plate filaments occupy non-contiguous canonical
+fileIndices). `Button-for-S-trousers.3mf` is a second canary —
+similar shape, also surfaced regressions in v2.0.0 round 1.
+
+- **Class 1 — gcode preview colour parity with Prepare:** Load Dragon
+  Scale plate 1. On Prepare, note the exact swatch colours shown in
+  the filament list and 3D preview (these are the file's filament
+  colours, e.g. blue + grey for plate 1). Slice. Open the **G-code
+  preview** (Preview tab). The toolpath colours must match the Prepare
+  colours **exactly** — same hue, same brightness ordering. Regression
+  shape: G-code preview shows the user's slot-preset colours (e.g.
+  E1 red, E2 green) instead of the file's filament colours. Repeat on
+  Button-for-S-trousers and Calicube. Sanity check: Calicube on
+  default presets historically flipped this — file colours are
+  cyan/orange, slot defaults are red/green. The G-code preview must
+  show cyan/orange.
+- **Class 2 — Filament Mapping dialog row count:** Load Dragon Scale
+  plate 1. Tap **Map & Print** (or **Map & Upload**). The dialog
+  should show **exactly the active plate's filament rows**, not the
+  file-wide canonical list. For Dragon plate 1 that is **2 rows**
+  (the plate uses 2 filaments). Regression shape: 13 rows (or whatever
+  the file-wide count is). Repeat on Button-S — should show 2 rows,
+  not 15.
+- **Class 2 — printer-bound G-code uses only physical T0-T3:** With
+  Dragon plate 1 sliced and the Filament Mapping dialog confirmed,
+  use **Save G-code** (or **Share G-code**) to extract the output to
+  disk. Open the file in a text viewer, scroll to the body, and search
+  for `T4` / `T5` / `T6` / `T7` / `T8` / `T9` (canonical fileIndices
+  the slicer emits for non-contiguous plate filaments). There must be
+  **zero matches** — every tool change must reference T0..T3 only.
+  Same check applies to **Jobs tab → Share** for any historical job.
+  Regression shape: the printer rejects the print or aborts at the
+  first canonical-T tool change.
+- **Class 3 — Slice Summary chip strip uses plate's filaments:** With
+  Dragon plate 1 sliced, scroll the Slice Summary card (right panel
+  or below the Preview button — depends on screen size). The
+  per-extruder usage chips should show **the file's filament colours
+  for the plate's 2 filaments**, with correct material labels and
+  filament name from the canonical list. Regression shape: 13 rows of
+  bogus mm/g values (file-wide canonical positionally indexed) or
+  wrong colour swatches (E1 red, E2 green) where the plate filaments
+  should be (blue, grey).
+- **Class 3 — Slice Summary fileIdx alignment for sparse plates:**
+  Load `slip slide spin fidget.3mf` plate 3 if available (or any
+  multi-plate where the plate uses canonical fileIndices >= 4). Slice.
+  The Slice Summary chips must show the **plate's filaments**, not
+  fileIndices 0 and 1. Cross-check: the chip colours match the chips
+  in the Filament Mapping dialog and the Multi-Color summary card.
+
+These classes are unit-tested via `CanonicalExportLeakGuardTest`
+(structural grep guards) + `SliceJobMappingResolutionTest`
+(resolver coverage). The manual rubric above is the visual safety
+net — flag any divergence between Prepare colours, dialog row count,
+and Slice Summary chips.
+
 ### Manual regression checks (v1.6.8 — B87/B88/B89/B90/B91)
 
 Run after any change to the Prepare-preview colour pipeline, plate-switch flow,

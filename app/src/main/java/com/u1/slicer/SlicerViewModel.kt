@@ -3052,8 +3052,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             // Phase 2 (2026-04-28) — canonical mapping
                             // metadata for shareJobGcode; lets historical
                             // shares reproduce canonical→physical remap.
+                            //
+                            // Bug-class fix (post-v2.0.0-validation): persist
+                            // the resolved canonical-WIDE mapping, not the
+                            // live `_colorMapping` (which is plate-narrowed
+                            // post-`selectPlate` for multi-plate Bambu
+                            // files). Without this, `shareJobGcode` would
+                            // feed a 2-wide plate-narrowed CSV to
+                            // `applyPrintTimeRemap` for jobs whose actual
+                            // G-code emits canonical T-indices (e.g. T4/T7
+                            // for Dragon plate 1) — leaving those T-values
+                            // un-rewritten and shipping canonical-space
+                            // G-code to the printer. Routing through
+                            // `resolveExportMapping()` here makes the stored
+                            // CSV the same canonical-positional shape that
+                            // Save / Share / Send already produce, and
+                            // unifies all four export paths through one
+                            // resolver.
                             canonicalListSize = _canonicalFilamentList.value?.size,
-                            colorMappingCsv = _colorMapping.value
+                            colorMappingCsv = resolveExportMapping()
                                 ?.takeIf { it.isNotEmpty() }
                                 ?.joinToString(","),
                             // Phase 2 schema v6 (post-round-2-review,
@@ -3510,25 +3527,34 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceFile.parentFile,
                 "${sourceFile.nameWithoutExtension}.share.${sourceFile.extension}"
             )
-            // Build the mapping from job metadata.
-            //   - canonicalListSize == null  → pre-Phase-2 job whose
-            //     stored G-code is already physical-slot. Identity copy.
-            //   - canonicalListSize == 1 + selectedExtruderAtSlice
-            //     present → single-colour job; map T0 to the saved
-            //     slot. Phase 2 schema v6 (post-round-2-review): without
-            //     this branch a single-colour job sliced for E3 would
-            //     export as T0/E1 (the mod-4 fallback always emits 0).
-            //   - colorMappingCsv non-null → multi-colour confirmed
-            //     mapping; decode + use directly.
-            //   - canonicalListSize present but no mapping/slot → user
-            //     never confirmed; fall back to identity-mod-4.
-            val mapping = com.u1.slicer.data.decodedColorMapping(job)
-                ?: when {
-                    job.canonicalListSize == null -> null
-                    job.canonicalListSize == 1 && job.selectedExtruderAtSlice != null ->
-                        listOf(job.selectedExtruderAtSlice.coerceIn(0, 3))
-                    else -> List(job.canonicalListSize) { i -> i % 4 }
-                }
+            // Build the mapping from job metadata. Routes through the
+            // same `resolveCanonicalExportMapping` helper as Save / Share
+            // / Send so the four export paths share one source of truth.
+            //
+            //   - canonicalListSize == null → pre-Phase-2 job whose stored
+            //     G-code is already physical-slot. Skip the helper and
+            //     pass null → identity copy.
+            //   - canonicalListSize present + colorMappingCsv non-null →
+            //     stored CSV is canonical-positional (the slice-time
+            //     persist site already routes through
+            //     `resolveExportMapping()`), so the helper's case-1 path
+            //     returns it as-is.
+            //   - canonicalListSize == 1 + colorMappingCsv null →
+            //     single-colour job; helper's case-3 path uses
+            //     selectedExtruderAtSlice.
+            //   - canonicalListSize > 1 + colorMappingCsv null →
+            //     pre-schema-v5 multi-colour job. Identity-mod-4 fallback
+            //     via the helper.
+            val canonicalSize = job.canonicalListSize ?: 0
+            val mapping: List<Int>? = if (canonicalSize == 0) {
+                null
+            } else {
+                com.u1.slicer.gcode.resolveCanonicalExportMapping(
+                    canonicalSize = canonicalSize,
+                    confirmedMapping = com.u1.slicer.data.decodedColorMapping(job),
+                    selectedExtruder = job.selectedExtruderAtSlice ?: 0,
+                )
+            }
             if (!prepareExportableGcodeWithMapping(sourceFile, shareFile, mapping)) return@launch
 
             val uri = FileProvider.getUriForFile(
