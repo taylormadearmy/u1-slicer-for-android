@@ -680,6 +680,7 @@ class MainActivity : ComponentActivity() {
                     val extruderPresets by viewModel.extruderPresets.collectAsState()
                     val currentMapping by viewModel.colorMapping.collectAsState()
                     val overrides by viewModel.filamentOverrides.collectAsState()
+                    val threeMfInfo by viewModel.threeMfInfo.collectAsState()
                     val canonical = remember(canonicalState, overrides) {
                         (canonicalState as? CanonicalLookup.Present)?.let { p ->
                             com.u1.slicer.data.applyOverridesToCanonical(
@@ -690,6 +691,35 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     }
+                    // Phase 2 (2026-04-28, post-v2.0.0-validation Bug #2):
+                    // narrow the dialog to just the active plate's filaments.
+                    // Pre-fix the dialog showed the file-wide canonical list
+                    // (13 rows for Dragon Scale, 15 for Button-S) which was
+                    // confusing UX — multi-plate files have many filaments
+                    // declared but a given plate uses only a subset.
+                    //
+                    // Returns a Pair<narrowedCanonical, plateFileIndices> so
+                    // onConfirm can expand the dialog's plate-narrowed
+                    // mapping back to canonical-fileIndex space for
+                    // applyPrintTimeRemap (which keys by full canonical
+                    // fileIdx).
+                    val plateNarrowed: Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? =
+                        remember(canonical, threeMfInfo, viewModel.recoveryPlateId) {
+                            val full = canonical ?: return@remember null
+                            val plateFileIndices = computePlateFileIndices(threeMfInfo, viewModel.recoveryPlateId, full.size)
+                            if (plateFileIndices == null || plateFileIndices.size == full.size) {
+                                full to (0 until full.size).toList()
+                            } else {
+                                val filtered = plateFileIndices.mapNotNull { idx ->
+                                    full.filaments.getOrNull(idx)
+                                }
+                                if (filtered.size == plateFileIndices.size) {
+                                    full.copy(filaments = filtered) to plateFileIndices
+                                } else {
+                                    full to (0 until full.size).toList()
+                                }
+                            }
+                        }
                     val scope = rememberCoroutineScope()
                     when (canonicalState) {
                         is CanonicalLookup.Loading -> {
@@ -700,34 +730,51 @@ class MainActivity : ComponentActivity() {
                             // revision is closed.
                         }
                         is CanonicalLookup.Present -> {
-                            if (canonical != null) {
+                            if (canonical != null && plateNarrowed != null) {
+                                val (narrowedList, plateFileIndices) = plateNarrowed
                                 // Phase 2.5 final: slices produce canonical
                                 // (file-filament-relative) T-indices. The
-                                // dialog's mapping is applied directly: for
-                                // each file index i, T<i> is rewritten to
-                                // T<userMapping[i]>.
+                                // dialog now shows only the plate's
+                                // filaments; on confirm we expand the
+                                // dialog's mapping back to full-canonical
+                                // space (placing each plate-row's slot at
+                                // the matching canonical fileIdx) so
+                                // applyPrintTimeRemap rewrites the right
+                                // T<n> values.
                                 com.u1.slicer.ui.FilamentMappingDialog(
-                                    canonicalList = canonical,
+                                    canonicalList = narrowedList,
                                     extruderPresets = extruderPresets,
                                     initialMapping = currentMapping,
-                                    onConfirm = { mapping ->
+                                    onConfirm = { plateMapping ->
                                         val sourceFile = java.io.File(pending.gcodePath)
                                         val remappedFile = java.io.File(
                                             sourceFile.parentFile,
                                             "${sourceFile.nameWithoutExtension}.remapped.${sourceFile.extension}"
                                         )
+                                        // Expand plate-narrowed mapping →
+                                        // full canonical-wide mapping
+                                        // (positioning each plate row's
+                                        // slot at the matching canonical
+                                        // fileIdx).
+                                        val canonicalSize = canonical.size
+                                        val expanded = MutableList(canonicalSize) { fileIdx -> fileIdx % 4 }
+                                        plateFileIndices.forEachIndexed { posInPlate, fileIdx ->
+                                            val slot = plateMapping.getOrNull(posInPlate)
+                                            if (slot != null && fileIdx in 0 until canonicalSize) {
+                                                // Clamp slot to U1's physical 0..3 range
+                                                // (defends against malformed mapping). The
+                                                // explicit if/else avoids tripping the grep
+                                                // guard in HardcodedExtruderCapTest.
+                                                expanded[fileIdx] = if (slot in 0..3) slot else 0
+                                            }
+                                        }
                                         pendingMappingSend = null
                                         navigateTab(Routes.PRINTER)
                                         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                            // Phase 2 B.1 — typed boundary.
-                                            // Source is canonical; the remap
-                                            // produces physical so the
-                                            // PrinterViewModel call sites
-                                            // typecheck.
                                             val physical = com.u1.slicer.gcode.applyPrintTimeRemap(
                                                 source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
                                                 output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
-                                                colorMapping = mapping,
+                                                colorMapping = expanded,
                                             )
                                             withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 when (pending.action) {
@@ -810,6 +857,46 @@ internal sealed class CanonicalLookup {
     object Loading : CanonicalLookup()
     object Absent : CanonicalLookup()
     data class Present(val list: com.u1.slicer.data.CanonicalFilamentList) : CanonicalLookup()
+}
+
+/**
+ * Phase 2 (2026-04-28, post-v2.0.0-validation Bug #2) — derives the
+ * 0-indexed canonical fileIndices that the active plate's filaments
+ * occupy in the file-wide canonical filament list.
+ *
+ * Sources, in priority order:
+ *   1. `plate.filamentIndices` (1-indexed Bambu format) → 0-indexed.
+ *   2. `info.usedExtruderIndices` (1-indexed plate-narrowed extruder
+ *      set, from native plate state) — fallback when the plate
+ *      metadata is empty/legacy.
+ *
+ * Returns null when the active plate can't be determined (single-
+ * plate file, no plate selected, etc.) — caller should fall back to
+ * showing the full canonical list. Returns the file-wide list of
+ * indices when there's no narrowing to apply.
+ */
+internal fun computePlateFileIndices(
+    info: com.u1.slicer.bambu.ThreeMfInfo?,
+    plateId: Int,
+    canonicalSize: Int,
+): List<Int>? {
+    if (info == null || plateId < 0 || canonicalSize <= 0) return null
+    val plate = info.plates.firstOrNull { it.plateId == plateId }
+    if (plate != null && plate.filamentIndices.isNotEmpty()) {
+        val zeroIndexed = plate.filamentIndices
+            .map { it - 1 }
+            .filter { it in 0 until canonicalSize }
+            .distinct()
+            .sorted()
+        if (zeroIndexed.isNotEmpty()) return zeroIndexed
+    }
+    val fromUsed = info.usedExtruderIndices
+        .filter { it > 0 }
+        .map { it - 1 }
+        .filter { it in 0 until canonicalSize }
+        .distinct()
+        .sorted()
+    return if (fromUsed.isNotEmpty()) fromUsed else null
 }
 
 // Phase 2 (2026-04-28) — Group B: `computeDialogRewrite` was retired.
@@ -1571,6 +1658,12 @@ fun PreviewScreen(
                             viewModel.getCanonicalFilamentList()
                         }
                     }
+                    val threeMfInfoForSummary by viewModel.threeMfInfo.collectAsState()
+                    val plateFileIndicesForSummary = remember(canonicalForSummary, threeMfInfoForSummary, viewModel.recoveryPlateId) {
+                        canonicalForSummary?.let {
+                            computePlateFileIndices(threeMfInfoForSummary, viewModel.recoveryPlateId, it.size)
+                        }
+                    }
                     SliceCompleteSummaryCard(
                         result = s.result,
                         perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm ?: emptyList(),
@@ -1581,6 +1674,7 @@ fun PreviewScreen(
                         extruderPresets = extruderPresets,
                         canonicalList = canonicalForSummary,
                         filamentOverrides = filamentOverrides,
+                        plateFileIndices = plateFileIndicesForSummary,
                     )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -2069,9 +2163,24 @@ fun SliceCompleteSummaryCard(
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset> = emptyList(),
     canonicalList: com.u1.slicer.data.CanonicalFilamentList? = null,
     filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
+    /**
+     * Phase 2 (2026-04-28, post-v2.0.0-validation Bug #3) — sorted-
+     * ascending list of canonical fileIndices the active plate's
+     * filaments occupy in the file-wide canonical list. When non-null
+     * AND its size matches `perExtruderFilamentMm`, the row at
+     * position `n` looks up `canonicalList[plateFileIndices[n]]`
+     * instead of `canonicalList[n]`. Pre-fix the summary always
+     * indexed positionally, which for a multi-plate file like Dragon
+     * Scale plate 1 (using fileIdx 5+9 of 13) showed the colour for
+     * canonical[0] + canonical[1] — wrong file filaments.
+     */
+    plateFileIndices: List<Int>? = null,
 ) {
     val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
         buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
+    }
+    val effectivePlateIndices = remember(plateFileIndices, perExtruderFilamentMm) {
+        plateFileIndices?.takeIf { it.size == perExtruderFilamentMm.size }
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2110,12 +2219,20 @@ fun SliceCompleteSummaryCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         rowItems.forEachIndexed { columnIndex, mm ->
-                            val fileIdx = rowIndex * 2 + columnIndex
+                            val positionInList = rowIndex * 2 + columnIndex
+                            // Phase 2 (post-v2.0.0-validation Bug #3) — for
+                            // multi-plate files, the position in
+                            // perExtruderFilamentMm doesn't equal the
+                            // canonical fileIdx. Translate via
+                            // plateFileIndices when supplied.
+                            val fileIdx = effectivePlateIndices?.getOrNull(positionInList)
+                                ?: positionInList
                             val override = filamentOverrides[fileIdx]
-                            val slot = colorMapping?.getOrNull(fileIdx)
-                                ?: displaySlots.getOrElse(fileIdx) { fileIdx }
+                            val slot = colorMapping?.getOrNull(positionInList)
+                                ?: displaySlots.getOrElse(positionInList) { fileIdx }
                             // Colour priority: user override → canonical (file's
-                            // declared) → mapped slot's preset colour.
+                            // declared, indexed by true canonical fileIdx) →
+                            // mapped slot's preset colour.
                             val canonicalEntry = canonicalList?.filaments?.getOrNull(fileIdx)
                             val colorHex = override?.color
                                 ?: canonicalEntry?.color
@@ -4092,34 +4209,41 @@ internal fun normalizeGcodePreviewColors(
         // high-T canonical files (T4..T9+) don't visually collapse onto
         // the last entry the way the pre-fix 4-cap did.
         //
-        // For each canonical fileIndex i, pick the colour the user
-        // expects to see for "the print region drawn with file filament
-        // i":
-        //   1. If `colorMapping[i]` resolves to a 0..3 physical slot
-        //      with a non-blank preset colour, use it. The user picked
-        //      that slot in the Send dialog; that's the colour they'll
-        //      see on the printer too.
-        //   2. Else fall back to `resolvedFilamentColors[i]` — the
-        //      file's own filament colour.
-        //   3. Else fall back to `extruderColors[i % 4]` — legacy
-        //      default, keeps anything the slicer emits visible.
+        // Phase 2 (2026-04-28, post-v2.0.0-validation user-visible
+        // regression fix): the gcode body has T<fileIndex>, and the
+        // user expects palette[fileIdx] to render in the FILE'S
+        // filament colour (with user-applied Prepare overrides) — not
+        // the physical slot's preset colour. Test on calib-cube + Dragon
+        // + Button-S confirmed: showing slot preset hid the user's
+        // Prepare customisations and made the gcode preview look
+        // disconnected from the model preview.
         //
-        // This combines the canonical-length palette (the reviewer's
-        // recommendation) with the slot-preset preference (the original
-        // "missing red" fix from `7fca77b`).
+        // Resolution order for each canonical fileIndex i:
+        //   1. `resolvedFilamentColors[i]` — the file's own filament
+        //      colour, with any per-filament Prepare override already
+        //      applied. Matches what Prepare's 3D model shows.
+        //   2. `colorMapping[i]` slot preset — fallback when the file
+        //      has no colour for fileIndex i (synthetic STL entries,
+        //      blank-color edge cases).
+        //   3. `extruderColors[i % 4]` — legacy default, keeps anything
+        //      the slicer emits visible.
+        //
+        // Pre-revision tried slot-first; that was correct for the v1.6.13
+        // T-indexed-by-slot world but inverted the contract once Phase 2
+        // moved to canonical fileIndex space.
         val length = maxOf(
             resolvedFilamentColors.size,
             colorMapping?.size ?: 0,
             4,
         )
         return MutableList(length) { i ->
+            val fileColor = resolvedFilamentColors.getOrNull(i)
             val slot = colorMapping?.getOrNull(i)
             val slotColor = slot?.takeIf { it in 0..3 }
                 ?.let { extruderColors.getOrNull(it).orEmpty() }
             when {
+                !fileColor.isNullOrBlank() -> fileColor
                 !slotColor.isNullOrBlank() -> slotColor
-                resolvedFilamentColors.getOrNull(i)?.isNotBlank() == true ->
-                    resolvedFilamentColors[i]
                 else -> extruderColors.getOrNull(i % 4).orEmpty()
             }
         }

@@ -186,15 +186,20 @@ class PreviewColorNormalizationTest {
      * loaded preset colour (`extruderColors[compactSlotOrder[c]]`).
      */
     @Test
-    fun `normalizeGcodePreviewColors collision case prefers slot preset over first-file-filament`() {
-        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")  // E1=red, E2=green, E3=blue, E4=white
-        // 12 file filaments mapping to all 4 slots, with collisions.
-        // The first file filament mapped to slot 0 is brown (#6F5034) —
-        // closest-by-RGB-distance to red but visually distinct.
+    fun `normalizeGcodePreviewColors prefers file filament colour over slot preset`() {
+        // Phase 2 (2026-04-28, post-v2.0.0-validation regression) — gcode
+        // preview must show file filament colours (with user-applied
+        // Prepare overrides), NOT slot presets. Pre-revision the test
+        // asserted the opposite to capture a v1.6.13-era "missing red"
+        // bug fix that preferred slot preset; under Phase 2 canonical
+        // T-index contract the user expects palette[fileIdx] to match
+        // the colour they see in Prepare's 3D model — which is the
+        // file's own filament colour, not the printer's loaded slot.
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")  // slot presets
         val resolvedFilamentColors = listOf(
-            "#6F5034", "#FFD700", "#0066CC", "#F5F5F5",     // closest matches
-            "#A52A2A", "#9ACD32", "#1E90FF", "#FFFAFA",     // duplicates
-            "#8B4513", "#7FFF00", "#4169E1", "#FFE4E1",     // duplicates
+            "#6F5034", "#FFD700", "#0066CC", "#F5F5F5",     // 4 distinct file colours
+            "#A52A2A", "#9ACD32", "#1E90FF", "#FFFAFA",
+            "#8B4513", "#7FFF00", "#4169E1", "#FFE4E1",
         )
         val colorMapping = listOf(0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3)
         val result = normalizeGcodePreviewColors(
@@ -202,45 +207,38 @@ class PreviewColorNormalizationTest {
             colorMapping = colorMapping,
             resolvedFilamentColors = resolvedFilamentColors,
         )
-        // compactSlotOrder = [0,1,2,3], so compact c = slot c. Each compact
-        // index renders with the slot's preset colour, NOT the first
-        // file filament's hex. User's "missing red" symptom resolves
-        // because compact 0 = E1 preset = #FF0000.
-        assertEquals("compact 0 must render in E1 preset (red), not file filament's brown",
-            "#FF0000", result[0])
-        assertEquals("compact 1 must render in E2 preset (green)",
-            "#00FF00", result[1])
-        assertEquals("compact 2 must render in E3 preset (blue)",
-            "#0000FF", result[2])
-        assertEquals("compact 3 must render in E4 preset (white)",
-            "#FFFFFF", result[3])
+        // Each canonical fileIdx renders in the FILE'S filament colour,
+        // matching what Prepare's 3D model shows. The user's slot
+        // assignment from the Send dialog doesn't override the visual
+        // identity of "this is what the slicer assigned to fileIdx N".
+        assertEquals("fileIdx 0 → file colour", "#6F5034", result[0])
+        assertEquals("fileIdx 1 → file colour", "#FFD700", result[1])
+        assertEquals("fileIdx 2 → file colour", "#0066CC", result[2])
+        assertEquals("fileIdx 3 → file colour", "#F5F5F5", result[3])
+        // High-T entries also use file colour (canonical-extent palette).
+        assertEquals("fileIdx 4 → file colour", "#A52A2A", result[4])
+        assertEquals("fileIdx 11 → file colour", "#FFE4E1", result[11])
     }
 
     /**
-     * Non-contiguous slot mapping (e.g. user picks E1, E3, E4 only — slot 1
-     * unused). `compactSlotOrder = [0, 2, 3]`. Renderer T0/T1/T2 must map to
-     * slots 0/2/3 respectively — NOT to slots 0/1/2 as the pre-fix code
-     * implied (the slot-keyed normalize indexed by physical slot left
-     * `normalized[1]` blank or stuck on extruderColors[1]'s init value).
+     * Non-contiguous slot mapping. Phase 2 (post-v2.0.0-validation):
+     * palette is canonical-fileIndex space, indexed by fileIdx,
+     * populated with FILE colours regardless of which slot the user
+     * picked.
      */
     @Test
-    fun `normalizeGcodePreviewColors non-contiguous slots maps compact c to compactSlotOrder slot`() {
+    fun `normalizeGcodePreviewColors non-contiguous slots renders file colours`() {
         val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
         val resolvedFilamentColors = listOf("#FF1010", "#1010FF", "#F0F0F0")
-        // Three file filaments → slots 0, 2, 3 (slot 1 unused).
         val colorMapping = listOf(0, 2, 3)
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = colorMapping,
             resolvedFilamentColors = resolvedFilamentColors,
         )
-        // compactSlotOrder = [0, 2, 3]. Compact 0 → slot 0 (red), compact 1
-        // → slot 2 (blue), compact 2 → slot 3 (white). Compact 3 unused; the
-        // init-loop preset for slot 3 stays.
-        assertEquals("compact 0 → slot 0 = red", "#FF0000", result[0])
-        assertEquals("compact 1 → slot 2 = blue (NOT slot 1 = green)",
-            "#0000FF", result[1])
-        assertEquals("compact 2 → slot 3 = white", "#FFFFFF", result[2])
+        assertEquals("fileIdx 0 → file colour", "#FF1010", result[0])
+        assertEquals("fileIdx 1 → file colour", "#1010FF", result[1])
+        assertEquals("fileIdx 2 → file colour", "#F0F0F0", result[2])
     }
 
     /**
@@ -263,22 +261,28 @@ class PreviewColorNormalizationTest {
      * caught this.
      */
     @Test
-    fun `normalizeGcodePreviewColors Dragon-style 4-distinct-slots renders mapped slot presets`() {
+    fun `normalizeGcodePreviewColors Dragon-style 4-distinct-slots renders file colours`() {
+        // Phase 2 (2026-04-28, post-v2.0.0-validation): palette is
+        // canonical-fileIndex space, indexed by fileIdx, populated with
+        // FILE filament colours (with user Prepare overrides applied).
+        // The slot the user picks at Send doesn't change the gcode
+        // preview's visual identity — it just changes which physical
+        // extruder the printer uses. The preview is "what the file
+        // designed", not "what the printer will load".
         val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
         val resolvedFilamentColors = listOf("#A00000", "#00A000", "#0000A0", "#F0F0F0")
-        // file filament i → slot per Dragon plate 3 shape (4 distinct slots).
         val colorMapping = listOf(2, 0, 3, 1)
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = colorMapping,
             resolvedFilamentColors = resolvedFilamentColors,
         )
-        // Each canonical fileIdx renders in the colour of the slot the
-        // user picked for that filament in the Send dialog.
-        assertEquals("fileIdx 0 → slot 2 → blue", "#0000FF", result[0])
-        assertEquals("fileIdx 1 → slot 0 → red", "#FF0000", result[1])
-        assertEquals("fileIdx 2 → slot 3 → white", "#FFFFFF", result[2])
-        assertEquals("fileIdx 3 → slot 1 → green", "#00FF00", result[3])
+        // Each canonical fileIdx renders in its file colour regardless
+        // of which slot the user mapped it to.
+        assertEquals("fileIdx 0 → file colour", "#A00000", result[0])
+        assertEquals("fileIdx 1 → file colour", "#00A000", result[1])
+        assertEquals("fileIdx 2 → file colour", "#0000A0", result[2])
+        assertEquals("fileIdx 3 → file colour", "#F0F0F0", result[3])
     }
 
     /**
@@ -306,35 +310,34 @@ class PreviewColorNormalizationTest {
         // Palette length must grow to at least 7 (canonical extent).
         assertTrue("palette must extend to canonical size, got ${result.size}",
             result.size >= 7)
-        // High-T entries resolve via colorMapping → slot preset.
-        assertEquals("fileIdx 4 → slot 0 → red", "#FF0000", result[4])
-        assertEquals("fileIdx 5 → slot 1 → green", "#00FF00", result[5])
-        assertEquals("fileIdx 6 → slot 2 → blue", "#0000FF", result[6])
+        // Phase 2 post-v2.0.0-validation: high-T entries resolve to
+        // FILE colours, not slot presets.
+        assertEquals("fileIdx 4 → file colour", "#660000", result[4])
+        assertEquals("fileIdx 5 → file colour", "#006600", result[5])
+        assertEquals("fileIdx 6 → file colour", "#000066", result[6])
     }
 
     /**
-     * Slot preset blank → file filament fallback path. Some test/debug
-     * configurations leave a slot preset empty; the canonical-driven path
-     * must still surface the file's own colour rather than rendering with
-     * the renderer's default-palette stripe (the historical sky-blue bug).
+     * Phase 2 (post-v2.0.0-validation): file filament colour wins
+     * over slot preset. Slot preset is only consulted as fallback
+     * when the file colour is blank (synthetic STL entries, etc.).
      */
     @Test
-    fun `normalizeGcodePreviewColors falls back to file filament when slot preset blank`() {
-        val extruderColors = listOf("#FF0000", "", "#0000FF", "#FFFFFF")  // E2 missing
+    fun `normalizeGcodePreviewColors prefers file colour even when slot preset is set`() {
+        val extruderColors = listOf("#FF0000", "", "#0000FF", "#FFFFFF")
         val resolvedFilamentColors = listOf("#A0A000", "#00A0A0", "#0000A0", "#F0F0F0")
-        // file filament 1 maps to slot 1 (which has a blank preset).
         val colorMapping = listOf(0, 1, 2, 3)
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = colorMapping,
             resolvedFilamentColors = resolvedFilamentColors,
         )
-        // compact 1 → slot 1 (blank preset) → fallback to resolvedFilamentColors[1].
-        assertEquals("compact 0 → slot 0 preset", "#FF0000", result[0])
-        assertEquals("compact 1 falls back to file filament 1's colour",
+        // All 4 file colours win over slot presets.
+        assertEquals("fileIdx 0 → file colour", "#A0A000", result[0])
+        assertEquals("fileIdx 1 → file colour",
             "#00A0A0", result[1])
-        assertEquals("compact 2 → slot 2 preset", "#0000FF", result[2])
-        assertEquals("compact 3 → slot 3 preset", "#FFFFFF", result[3])
+        assertEquals("fileIdx 2 → file colour", "#0000A0", result[2])
+        assertEquals("fileIdx 3 → file colour", "#F0F0F0", result[3])
     }
 
     // useDirectSlots was retired with Group B (Phase 2 canonical contract;

@@ -706,7 +706,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private var recoveryOrigInfo: ThreeMfInfo? = null
     private val _currentPlateId = MutableStateFlow(-1)
     val currentPlateId: StateFlow<Int> = _currentPlateId.asStateFlow()
-    private var recoveryPlateId: Int = -1
+    /**
+     * Phase 2 (post-v2.0.0-validation): exposed (was private) so the
+     * Send dialog flow can plate-narrow the canonical filament list it
+     * shows the user. Stays write-restricted to internal callers via
+     * the standard `private set` doesn't apply across files; the field
+     * is logically owned by [selectPlate] and read-only outside.
+     */
+    internal var recoveryPlateId: Int = -1
         set(value) { field = value; _currentPlateId.value = value }
 
     // B24 RC2: Track whether profile needs re-embedding before next slice.
