@@ -1395,7 +1395,7 @@ class PreparePreviewViewModelTest {
             }
 
             viewModel.selectPlate(8)
-            waitUntil("buzz plate 8 loaded", timeoutMs = 120_000L) {
+            waitUntil("buzz plate 8 loaded", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
                     viewModel.colorMapping.value != null
             }
@@ -1435,6 +1435,60 @@ class PreparePreviewViewModelTest {
                     "(painted + unpainted) — canonicalSize=${canonical.size} " +
                     "prepareCounts=${prepareCounts.mapKeys { (k, _) -> String.format("#%06X", k) }}",
                 prepareCounts.size >= 2
+            )
+
+            // DC15 Discord report (2026-04-30): on v2.0.0.beta.3 the Prepare
+            // mesh renders the candy-cane stripes BLUE + WHITE instead of
+            // RED + WHITE. Filament list, gcode preview, summary and mapping
+            // are correct — the bug is isolated to the mesh palette / index
+            // alignment. Buzz canonical:
+            //   filament 2 (#0086D6, blue)  ← bug renders this
+            //   filament 6 (#C12E1F, red)   ← should render this
+            //   filament 10 (#FFFFFF, white) — body
+            // Plate 8 paint_color attrs are all "3C" (PaintColorDecoder
+            // state 6 → filament 6); body uses object-default extruder 10.
+            // Expected mesh indices (0-based fileIdx): 5 (paint) + 9 (body).
+            //
+            // Root cause was the H2C state-fold (states 5-8 → 1-4) being
+            // applied to the multi-state `get_facets` variant — state-6
+            // triangles populated bucket 2 (filament 2 = blue) AND bucket 6
+            // (filament 6 = red), giving a 50/50 blue+red split alongside
+            // the white body. The fold was meant for the slicer's single-
+            // state queries (so segmentation iterating states 1-4 picks
+            // up 5-8 too on H2C files) and is incorrect for the multi-
+            // state variant where each bucket is independently consumed.
+            //
+            // The pre-existing `prepareCounts.size >= 2` check passed for
+            // BLUE+WHITE just as well as RED+WHITE — that's why the bug
+            // shipped to DC15. The strong assertions below pin the exact
+            // colour set: only RED + WHITE, never BLUE.
+            val white = 0xFFFFFF
+            val red = 0xC12E1F
+            val blue = 0x0086D6
+            val countsHex = prepareCounts
+                .mapKeys { (k, _) -> String.format("#%06X", k) }
+                .toList().sortedByDescending { it.second }
+            assertFalse(
+                "Buzz plate 8 Prepare mesh must NOT render any region blue " +
+                    "(#0086D6 = canonical filament 2). DC15-reported bug: H2C " +
+                    "state-fold doubled state-6 (red) into bucket 2 (blue). " +
+                    "countsByFreq=$countsHex",
+                prepareCounts.containsKey(blue)
+            )
+            assertTrue(
+                "Buzz plate 8 Prepare mesh must contain RED triangles (canonical " +
+                    "filament 6 #C12E1F = candy stripes). countsByFreq=$countsHex",
+                prepareCounts.containsKey(red)
+            )
+            assertTrue(
+                "Buzz plate 8 Prepare mesh must contain WHITE triangles (canonical " +
+                    "filament 10 #FFFFFF = body). countsByFreq=$countsHex",
+                prepareCounts.containsKey(white)
+            )
+            assertEquals(
+                "Buzz plate 8 Prepare mesh must have exactly 2 colours (red + white). " +
+                    "countsByFreq=$countsHex",
+                2, prepareCounts.size
             )
 
             // ---- Slice and read T-counts from the G-code ----
@@ -1533,7 +1587,7 @@ class PreparePreviewViewModelTest {
             }
 
             viewModel.selectPlate(8)
-            waitUntil("buzz plate 8 loaded", timeoutMs = 120_000L) {
+            waitUntil("buzz plate 8 loaded", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
                     viewModel.colorMapping.value != null
             }

@@ -1623,6 +1623,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
+                Log.e("SlicerVM", "selectPlate(${plateId}) threw — clearing model", e)
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error loading plate: ${e.message}")
             }
