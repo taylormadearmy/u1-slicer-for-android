@@ -681,6 +681,7 @@ class MainActivity : ComponentActivity() {
                     val currentMapping by viewModel.colorMapping.collectAsState()
                     val overrides by viewModel.filamentOverrides.collectAsState()
                     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
+                    val parsedGcodeForDialog by viewModel.parsedGcode.collectAsState()
                     val canonical = remember(canonicalState, overrides) {
                         (canonicalState as? CanonicalLookup.Present)?.let { p ->
                             com.u1.slicer.data.applyOverridesToCanonical(
@@ -693,20 +694,25 @@ class MainActivity : ComponentActivity() {
                     }
                     // Phase 2 (2026-04-28, post-v2.0.0-validation Bug #2):
                     // narrow the dialog to just the active plate's filaments.
-                    // Pre-fix the dialog showed the file-wide canonical list
-                    // (13 rows for Dragon Scale, 15 for Button-S) which was
-                    // confusing UX — multi-plate files have many filaments
-                    // declared but a given plate uses only a subset.
+                    // v2.0.0 systematic fix: post-slice perExtruderFilamentMm
+                    // is the single source of truth (canonical fileIdx order,
+                    // 0.0 for unused). computePlateFileIndices uses it to
+                    // derive plateFileIndices = canonical fileIdx where
+                    // mm > 0. Border Collie → [1, 2]; Buzz plate 1 → [0, 1, 5, 8].
                     //
                     // Returns a Pair<narrowedCanonical, plateFileIndices> so
                     // onConfirm can expand the dialog's plate-narrowed
                     // mapping back to canonical-fileIndex space for
-                    // applyPrintTimeRemap (which keys by full canonical
-                    // fileIdx).
+                    // applyPrintTimeRemap (which keys by full canonical fileIdx).
                     val plateNarrowed: Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? =
-                        remember(canonical, threeMfInfo, viewModel.recoveryPlateId) {
+                        remember(canonical, threeMfInfo, viewModel.recoveryPlateId, parsedGcodeForDialog) {
                             val full = canonical ?: return@remember null
-                            val plateFileIndices = computePlateFileIndices(threeMfInfo, viewModel.recoveryPlateId, full.size)
+                            val plateFileIndices = computePlateFileIndices(
+                                threeMfInfo,
+                                viewModel.recoveryPlateId,
+                                full.size,
+                                perExtruderFilamentMm = parsedGcodeForDialog?.perExtruderFilamentMm,
+                            )
                             if (plateFileIndices == null || plateFileIndices.size == full.size) {
                                 full to (0 until full.size).toList()
                             } else {
@@ -745,6 +751,7 @@ class MainActivity : ComponentActivity() {
                                     canonicalList = narrowedList,
                                     extruderPresets = extruderPresets,
                                     initialMapping = currentMapping,
+                                    plateFileIndices = plateFileIndices,
                                     onConfirm = { plateMapping ->
                                         val sourceFile = java.io.File(pending.gcodePath)
                                         val remappedFile = java.io.File(
@@ -879,9 +886,41 @@ internal fun computePlateFileIndices(
     info: com.u1.slicer.bambu.ThreeMfInfo?,
     plateId: Int,
     canonicalSize: Int,
+    perExtruderFilamentMm: List<Float>? = null,
 ): List<Int>? {
-    if (info == null || plateId < 0 || canonicalSize <= 0) return null
-    val plate = info.plates.firstOrNull { it.plateId == plateId }
+    if (canonicalSize <= 0) return null
+    // v2.0.0 systematic fix — when post-slice `perExtruderFilamentMm` is
+    // available, derive plateFileIndices from non-zero canonical entries.
+    // The footer line is the slicer's authoritative output: canonical fileIdx
+    // order, sized to canonical, 0.0 for unused. This is the SINGLE SOURCE
+    // OF TRUTH post-slice and supersedes every pre-slice heuristic below.
+    //
+    // Examples:
+    //   - Border Collie (single-plate SEMM, canonical=5): footer
+    //     [0, X, X, 0, 0] → returns [1, 2]. Dialog shows 2 rows; chips
+    //     label "Filament 2, Filament 3" via fileIdx.
+    //   - Buzz plate 1 (multi-plate, canonical=11): footer
+    //     [X, X, 0, 0, 0, X, 0, 0, X, 0, 0] → returns [0, 1, 5, 8]. Dialog
+    //     shows 4 rows; chips label "Filament 1, 2, 6, 9".
+    //   - slip_slide_spin plate 3 (multi-plate SEMM, canonical=10): footer
+    //     non-zero at [0, 1, 2, 3] → returns [0, 1, 2, 3]. 4 rows / chips.
+    if (perExtruderFilamentMm != null) {
+        val nonZero = perExtruderFilamentMm.indices
+            .filter { perExtruderFilamentMm[it] > 0f && it < canonicalSize }
+        if (nonZero.isNotEmpty()) return nonZero
+    }
+    if (info == null) return null
+    val detectedSize = info.detectedColors.size
+    // Pre-slice fallback for SEMM/painted (single + multi-plate): detectedColors
+    // is the most authoritative pre-slice narrowing signal. Plate metadata
+    // (plate.filamentIndices) can undercount paint states.
+    if (info.hasPaintData && detectedSize in 1..canonicalSize) {
+        return (0 until detectedSize).toList()
+    }
+    // Pre-slice multi-plate non-painted: plate.filamentIndices set by
+    // buildThreeMfInfoFromNative is authoritative for per-object Bambu
+    // models (Dragon Scale and similar).
+    val plate = if (plateId >= 0) info.plates.firstOrNull { it.plateId == plateId } else null
     if (plate != null && plate.filamentIndices.isNotEmpty()) {
         val zeroIndexed = plate.filamentIndices
             .map { it - 1 }
@@ -890,13 +929,20 @@ internal fun computePlateFileIndices(
             .sorted()
         if (zeroIndexed.isNotEmpty()) return zeroIndexed
     }
+    // Per-object multi-extruder (non-painted, single-plate): usedExtruderIndices
+    // captures volume-extruder diversity directly (Button-for-S-trousers).
     val fromUsed = info.usedExtruderIndices
         .filter { it > 0 }
         .map { it - 1 }
         .filter { it in 0 until canonicalSize }
         .distinct()
         .sorted()
-    return if (fromUsed.isNotEmpty()) fromUsed else null
+    if (fromUsed.isNotEmpty()) return fromUsed
+    // Final fallback.
+    if (detectedSize in 1..canonicalSize) {
+        return (0 until detectedSize).toList()
+    }
+    return null
 }
 
 // Phase 2 (2026-04-28) — Group B: `computeDialogRewrite` was retired.
@@ -1669,9 +1715,14 @@ fun PreviewScreen(
                         }
                     }
                     val threeMfInfoForSummary by viewModel.threeMfInfo.collectAsState()
-                    val plateFileIndicesForSummary = remember(canonicalForSummary, threeMfInfoForSummary, viewModel.recoveryPlateId) {
+                    val plateFileIndicesForSummary = remember(canonicalForSummary, threeMfInfoForSummary, viewModel.recoveryPlateId, parsedGcode) {
                         canonicalForSummary?.let {
-                            computePlateFileIndices(threeMfInfoForSummary, viewModel.recoveryPlateId, it.size)
+                            computePlateFileIndices(
+                                threeMfInfoForSummary,
+                                viewModel.recoveryPlateId,
+                                it.size,
+                                perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm,
+                            )
                         }
                     }
                     SliceCompleteSummaryCard(
@@ -2142,20 +2193,34 @@ fun SliceCompleteActionBar(
                     onClick = onSendToPrinter,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Icon(Icons.Default.Print, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Print, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Map & Print", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Map & Print",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
                 OutlinedButton(
                     onClick = onUploadOnly,
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
-                    Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Map & Upload")
+                    Text(
+                        "Map & Upload",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
             }
         }
@@ -2189,8 +2254,26 @@ fun SliceCompleteSummaryCard(
     val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
         buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
     }
-    val effectivePlateIndices = remember(plateFileIndices, perExtruderFilamentMm) {
-        plateFileIndices?.takeIf { it.size == perExtruderFilamentMm.size }
+    // v2.0.0 systematic fix — build the visible chip list from the canonical-
+    // wide gcode-derived plateFileIndices when available; otherwise fall back
+    // to per-extruder mm directly.
+    //
+    // visibleEntries contains (fileIdx, plateNarrowedPosition, mm) for each
+    // chip to render. fileIdx drives label + canonical colour lookup;
+    // plateNarrowedPosition picks into colorMapping when colorMapping is
+    // plate-narrowed; mm is the displayed value.
+    data class ChipEntry(val fileIdx: Int, val plateNarrowedPosition: Int, val mm: Float)
+    val visibleEntries = remember(perExtruderFilamentMm, plateFileIndices) {
+        when {
+            plateFileIndices != null && plateFileIndices.isNotEmpty() -> {
+                plateFileIndices.mapIndexed { posInPlate, fileIdx ->
+                    ChipEntry(fileIdx, posInPlate, perExtruderFilamentMm.getOrNull(fileIdx) ?: 0f)
+                }
+            }
+            else -> {
+                perExtruderFilamentMm.mapIndexed { i, mm -> ChipEntry(i, i, mm) }
+            }
+        }
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2223,23 +2306,27 @@ fun SliceCompleteSummaryCard(
                     style = MaterialTheme.typography.labelMedium,
                     color = Color.White.copy(alpha = 0.8f)
                 )
-                perExtruderFilamentMm.chunked(2).forEachIndexed { rowIndex, rowItems ->
+                visibleEntries.chunked(2).forEachIndexed { rowIndex, rowItems ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        rowItems.forEachIndexed { columnIndex, mm ->
-                            val positionInList = rowIndex * 2 + columnIndex
-                            // Phase 2 (post-v2.0.0-validation Bug #3) — for
-                            // multi-plate files, the position in
-                            // perExtruderFilamentMm doesn't equal the
-                            // canonical fileIdx. Translate via
-                            // plateFileIndices when supplied.
-                            val fileIdx = effectivePlateIndices?.getOrNull(positionInList)
-                                ?: positionInList
+                        rowItems.forEach { entry ->
+                            val fileIdx = entry.fileIdx
+                            val mm = entry.mm
                             val override = filamentOverrides[fileIdx]
-                            val slot = colorMapping?.getOrNull(positionInList)
-                                ?: displaySlots.getOrElse(positionInList) { fileIdx }
+                            // colorMapping shape varies: canonical-wide for
+                            // single-plate (size = canonical), plate-narrowed
+                            // for multi-plate (size = plateFileIndices.size).
+                            // Lookup by fileIdx for canonical-wide, else by
+                            // plateNarrowedPosition.
+                            val slot = colorMapping
+                                ?.let { cm ->
+                                    if (cm.size > entry.plateNarrowedPosition && plateFileIndices != null && cm.size == plateFileIndices.size)
+                                        cm[entry.plateNarrowedPosition]
+                                    else cm.getOrNull(fileIdx)
+                                }
+                                ?: displaySlots.getOrElse(entry.plateNarrowedPosition) { fileIdx }
                             // Colour priority: user override → canonical (file's
                             // declared, indexed by true canonical fileIdx) →
                             // mapped slot's preset colour.

@@ -454,7 +454,13 @@ class GcodeParserTest {
     }
 
     @Test
-    fun `multi-tool computed usage compacts away unused leading tool slots`() {
+    fun `multi-tool footer preserved canonical-wide for fileIdx alignment`() {
+        // v2.0.0 systematic fix (Border Collie + Buzz plate 1 reports): the
+        // footer line is the slicer's authoritative output in CANONICAL
+        // fileIdx order — sized to canonical, with 0.0 for unused entries.
+        // Pre-fix the parser collapsed to compact T-order (sparse), which
+        // broke chip strip labels for sparse-canonical files. Now footer
+        // wins; UI surfaces filter by mm > 0 to hide phantom zeros.
         val file = writeGcode(
             """
             G1 Z0.2
@@ -467,17 +473,21 @@ class GcodeParserTest {
         )
         val result = GcodeParser.parse(file)
 
-        // Parsed extrusion data should drive compact per-tool usage: two tools, no phantom extras.
-        assertEquals(2, result.perExtruderFilamentMm.size)
-        assertEquals(1.0f, result.perExtruderFilamentMm[0], 0.0001f)
-        assertEquals(1.0f, result.perExtruderFilamentMm[1], 0.0001f)
+        // Footer line preserved verbatim — 5 entries with zeros.
+        assertEquals(5, result.perExtruderFilamentMm.size)
+        assertEquals(7203.11f, result.perExtruderFilamentMm[0], 0.01f)
+        assertEquals(6387.34f, result.perExtruderFilamentMm[1], 0.01f)
+        assertEquals(0f, result.perExtruderFilamentMm[2], 0.01f)
+        assertEquals(0f, result.perExtruderFilamentMm[3], 0.01f)
+        assertEquals(0f, result.perExtruderFilamentMm[4], 0.01f)
     }
 
     @Test
-    fun `B67 perExtruderFilamentMm uses natural tool order when T1 appears before T0`() {
-        // Flarewing Dragon SEMM: wipe tower primes T1 first, so T1 appears before T0.
-        // The compact array must still be in natural order (T0, T1) — not first-appearance.
-        // E values are cumulative: T1 extrudes 3mm, T0 extrudes 5mm, T1 extrudes 5mm more.
+    fun `B67 perExtruderFilamentMm uses footer canonical order regardless of T-appearance`() {
+        // Flarewing Dragon SEMM: wipe tower primes T1 first, so T1 appears before T0
+        // in the body. With footer-wins semantics, the slicer-emitted footer line is
+        // ALWAYS in canonical fileIdx order regardless of body T-appearance — natural
+        // alignment, no first-appearance hazard.
         val file = writeGcode(
             """
             G1 Z0.2
@@ -493,10 +503,12 @@ class GcodeParserTest {
         )
         val result = GcodeParser.parse(file)
 
-        assertEquals(2, result.perExtruderFilamentMm.size)
-        // Index 0 must be T0's usage (5.0), not T1's — natural order, not first-appearance
-        assertEquals(5.0f, result.perExtruderFilamentMm[0], 0.0001f)  // T0
-        assertEquals(8.0f, result.perExtruderFilamentMm[1], 0.0001f)  // T1 (3.0 + 5.0)
+        // Footer is canonical: position 0 = fileIdx 0 mm, position 1 = fileIdx 1 mm, etc.
+        assertEquals(4, result.perExtruderFilamentMm.size)
+        assertEquals(100.0f, result.perExtruderFilamentMm[0], 0.01f)  // fileIdx 0 (T0)
+        assertEquals(50.0f, result.perExtruderFilamentMm[1], 0.01f)   // fileIdx 1 (T1)
+        assertEquals(0f, result.perExtruderFilamentMm[2], 0.01f)
+        assertEquals(0f, result.perExtruderFilamentMm[3], 0.01f)
     }
 
     // ─── B52: move cap for very large G-code files ──────────────────────────

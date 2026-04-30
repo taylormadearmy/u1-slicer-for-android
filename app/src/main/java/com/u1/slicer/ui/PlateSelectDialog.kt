@@ -110,11 +110,29 @@ fun PlateSelectDialog(
                                     // derive on demand from the plate's objects' per-volume
                                     // extruder data so the chip strip shows up regardless.
                                     if (info != null) {
-                                        val effectiveFilaments = if (plate.filamentIndices.isNotEmpty()) {
-                                            plate.filamentIndices
-                                        } else {
-                                            derivePlateFilamentIndices(plate, info)
-                                        }
+                                        // v2.0.0 systematic fix (slip_slide_spin
+                                        // plate 3): plate.filamentIndices can
+                                        // undercount when paint data declares
+                                        // more colours than the plate metadata
+                                        // lists. Use the union of every
+                                        // available signal. Plate selector is
+                                        // pre-load — no native data — so we
+                                        // accept that some plates may overcount
+                                        // (e.g. Shashibo plate 5 shows 3 chips
+                                        // for a 2-filament print because the
+                                        // object's per-object default extruder
+                                        // is included; the slicer ignores it
+                                        // post-load. Post-load Prepare and
+                                        // Slice Summary use native + gcode and
+                                        // show the correct count).
+                                        @Suppress("DEPRECATION")
+                                        val effectiveFilaments =
+                                            (plate.filamentIndices +
+                                                plate.paintExtruderStates +
+                                                plate.layerToolExtruders +
+                                                derivePlateFilamentIndices(plate, info))
+                                                .filter { it > 0 }
+                                                .toSet()
                                         if (effectiveFilaments.isNotEmpty()) {
                                             Spacer(Modifier.height(6.dp))
                                             FilamentIndicatorChips(

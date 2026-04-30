@@ -49,6 +49,15 @@ fun FilamentMappingDialog(
     canonicalList: CanonicalFilamentList,
     extruderPresets: List<ExtruderPreset>,
     initialMapping: List<Int>? = null,
+    /**
+     * v2.0.0 systematic fix — when [canonicalList] is plate-narrowed
+     * (e.g. Border Collie 2-of-5, Buzz plate 1 4-of-11), the dialog must
+     * label each row by the original canonical fileIdx so labels match
+     * Prepare's filament list and the Slice Summary chips. When null, row
+     * labels fall back to the positional index (single-plate canonical-wide
+     * dialogs).
+     */
+    plateFileIndices: List<Int>? = null,
     onConfirm: (List<Int>) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -97,8 +106,17 @@ fun FilamentMappingDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     itemsIndexed(canonicalList.filaments) { idx, entry ->
+                        // v2.0.0 systematic fix — when the dialog is showing a
+                        // plate-narrowed canonical list, the row's display
+                        // label must use the original canonical fileIdx (so
+                        // it matches Prepare's filament list and the Slice
+                        // Summary chips), not the narrowed positional index.
+                        // Border Collie: narrowed list = canonical[1..2],
+                        // labels must read "Filament 2", "Filament 3" — NOT
+                        // "Filament 1", "Filament 2".
+                        val displayFileIndex = plateFileIndices?.getOrNull(idx) ?: idx
                         FilamentMappingRow(
-                            fileIndex = idx,
+                            fileIndex = displayFileIndex,
                             fileColor = entry.color,
                             filamentMaterial = entry.materialType,
                             sourceLabel = sourceShortLabel(entry.source),
@@ -123,7 +141,11 @@ fun FilamentMappingDialog(
                         Column(modifier = Modifier.padding(10.dp)) {
                             duplicateSlots.forEach { slot ->
                                 val sharingIndices = mapping.mapIndexedNotNull { i, s ->
-                                    if (s == slot) (i + 1) else null
+                                    if (s == slot) {
+                                        // Use canonical fileIdx for the label
+                                        // when the dialog is plate-narrowed.
+                                        ((plateFileIndices?.getOrNull(i) ?: i) + 1)
+                                    } else null
                                 }
                                 Text(
                                     "E${slot + 1} chosen for filaments ${sharingIndices.joinToString(", ")}",

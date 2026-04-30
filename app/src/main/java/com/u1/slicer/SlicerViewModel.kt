@@ -4266,11 +4266,48 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             ?.toSet()
             ?: emptySet()
 
+        // v2.0.0 systematic fix (Shashibo plate 5 / flippy plate 4 reports).
+        // Architectural principle for "what extruders does this plate use":
+        //   1. Native is authoritative when post-load — it ran the BBS
+        //      importer and knows what the slicer will actually emit.
+        //   2. Pre-load metadata (sourcePlate.layerToolExtruders,
+        //      .filamentIndices, sourcePlateObjectExtruders) can include
+        //      phantom extruders that the slicer ignores — Shashibo plate 5:
+        //      native=[1,2] is correct; layer-tool metadata=[2,3] adds
+        //      phantom 3 → pre-fix showed 3 chips for a 2-filament print.
+        //   3. Painted plates: per-object default extruder IS the BACKGROUND
+        //      for unpainted geometry — slip-slide-spin plate 3 native=[2,3,4]
+        //      paint-only; object default {1} provides base → 4 actual.
+        //   4. Some layer-tool plates produce native=[] (empty) — the BBS
+        //      importer doesn't surface per-volume data for pure layer-tool
+        //      plates with no painted regions (flippy plate 4 Hueforge). Fall
+        //      back to layer-tool metadata when native is empty.
         val enrichedExtruders = if (fileInfo.hasLayerToolChanges && sourcePlate != null) {
-            val ltExtruders = sourcePlate.layerToolExtruders.filter { it > 0 }
-            val filExtruders = sourcePlate.filamentIndices.filter { it > 0 }
-            (usedExtruders + sourcePlateObjectExtruders + ltExtruders + filExtruders).toSortedSet()
+            // Layer-tool files: native (post-load BBS importer) is authoritative
+            // when it has data because it processes the full layer-change
+            // script and reports the actual extruders the slicer will emit.
+            // Per-plate metadata can include phantom extruders the slicer
+            // ignores — Shashibo plate 5: native=[1,2] correct; layer-tool
+            // metadata=[2,3] phantom 3. Pre-fix added the phantom → 3 chips
+            // for a 2-filament print.
+            //
+            // BUT some layer-tool plates produce native=[] (empty) — the
+            // BBS importer doesn't surface per-volume data for pure
+            // layer-tool plates with no painted regions (flippy plate 4
+            // Hueforge). When native is empty, fall back to layer-tool
+            // metadata (with the phantom risk).
+            if (usedExtruders.isNotEmpty()) {
+                usedExtruders.toSortedSet()
+            } else {
+                val ltExtruders = sourcePlate.layerToolExtruders.filter { it > 0 }
+                val filExtruders = sourcePlate.filamentIndices.filter { it > 0 }
+                (ltExtruders + filExtruders + sourcePlateObjectExtruders).toSortedSet()
+            }
         } else if (sourcePlateObjectExtruders.isNotEmpty()) {
+            // Painted / per-object multi-extruder plates: per-object default
+            // is the BACKGROUND extruder for unpainted geometry (e.g. slip-
+            // slide-spin plate 3 native [2,3,4] + object default {1} → 4
+            // physical extruders actually used). Adding it is correct here.
             (usedExtruders + sourcePlateObjectExtruders).toSortedSet()
         } else {
             usedExtruders.toSortedSet()

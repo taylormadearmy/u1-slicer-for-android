@@ -183,15 +183,16 @@ class CanonicalExportLeakGuardTest {
 
     /**
      * Bug 3 class — Slice Summary chip strip indexes the canonical
-     * filament list by row position in `perExtruderFilamentMm`. For
-     * multi-plate files the canonical list is file-wide but
-     * perExtruderFilamentMm is plate-narrowed (slicer emits only the
-     * rows that printed on the active plate). Without translation the
-     * UI shows wrong filament metadata.
+     * filament list by row position in `perExtruderFilamentMm`. With the
+     * v2.0.0 systematic fix, the chip strip iterates `visibleEntries`
+     * (a list of `ChipEntry(fileIdx, plateNarrowedPosition, mm)` triples)
+     * derived from `plateFileIndices`. plateFileIndices itself is
+     * gcode-driven (non-zero perExtruderFilamentMm canonical fileIdx
+     * positions) when post-slice gcode is available.
      *
-     * Guard: the SliceSummary composable must consume an
-     * `effectivePlateIndices` translation, OR the parameter
-     * `plateFileIndices` must be threaded through.
+     * Guard: the SliceSummary composable must consume `plateFileIndices`
+     * AND iterate `visibleEntries` so chip labels use the true canonical
+     * fileIdx (not positional T-index).
      */
     @Test
     fun sliceSummary_indexesCanonicalListThroughPlateFileIndices() {
@@ -204,14 +205,14 @@ class CanonicalExportLeakGuardTest {
             src.contains(composableSignature)
         )
         assertTrue(
-            "Slice Summary composable must thread plateFileIndices for " +
-                "Bug 3 class fix — translates row position in " +
-                "perExtruderFilamentMm to canonical fileIdx for multi-plate " +
-                "files. Look for `plateFileIndices: List<Int>?` in the " +
-                "composable signature and `effectivePlateIndices` in the " +
-                "remember block.",
+            "Slice Summary composable must thread plateFileIndices and " +
+                "build visibleEntries for canonical-fileIdx-aware chip labels " +
+                "(Bug 3 class). Pre-systematic-fix the chip strip iterated " +
+                "perExtruderFilamentMm positionally and labelled chips by " +
+                "T-index (off by one for sparse canonical files like Border " +
+                "Collie / Buzz plate 1).",
             src.contains("plateFileIndices: List<Int>?") &&
-                src.contains("effectivePlateIndices")
+                src.contains("visibleEntries")
         )
     }
 

@@ -288,27 +288,31 @@ object GcodeParser {
         }
 
         val hasComputedExtrusion = computedPerExtruderMm.any { it > 0f }
-        // Phase 2 — no longer cap to 4 entries; the file may have more
-        // filaments than physical extruders.
-        val normalizedFooterPerExtruderMm = perExtruderMm
-            .dropLastWhile { it <= 0f }
         // B67: use SORTED tool order (0,1,2,3) for compact array, not first-appearance
         // order. First-appearance reordering caused the per-extruder summary to swap
-        // E1/E2 values when T1 appeared before T0 in the G-code (e.g. Flarewing Dragon
-        // SEMM where the wipe tower primes T1 first). The display layer
-        // (buildPerExtruderDisplaySlots) handles user-facing slot mapping separately.
+        // E1/E2 values when T1 appeared before T0 in the G-code.
         val compactComputedPerExtruderMm = computedExtruderOrder.sorted().map { idx ->
             computedPerExtruderMm[idx]
         }
+        // v2.0.0 systematic fix (Border Collie + Buzz plate 1 reports): the
+        // footer line `; filament used [mm] = a, b, c, ...` is the slicer's
+        // authoritative output — it is in CANONICAL fileIdx order, sized to
+        // canonical, with 0.0 for unused entries. Pre-fix the parser preferred
+        // `compactComputedPerExtruderMm` (compact T-order, sparse) for multi-
+        // tool jobs to avoid "phantom footer zeros creating fake preview
+        // slots". That trade-off was wrong: it discarded canonical alignment
+        // and made downstream UI label chips by T-index instead of fileIdx
+        // (Border Collie 2 chips labelled "1, 2" instead of "2, 3"; Buzz
+        // plate 1 4 chips labelled "1, 2, 3, 4" instead of "1, 2, 6, 9").
+        // The fix: always prefer the raw canonical-wide footer line. UI
+        // surfaces filter by mm > 0 to hide phantom zeros.
         val resolvedPerExtruderMm = when {
-            // In pause-segment mode, footer comments often don't reflect post-injected tool splits.
+            // Pause-segment mode: footer comments don't reflect post-injected tool splits.
             colorSegmentsByPausePrint && hasComputedExtrusion -> compactComputedPerExtruderMm
-            // For multi-tool jobs, prefer parsed extrusion usage so phantom footer tools
-            // (e.g. extra zero entries) do not create fake preview slots/colors.
-            hasComputedExtrusion && compactComputedPerExtruderMm.size >= 2 -> compactComputedPerExtruderMm
-            normalizedFooterPerExtruderMm.isNotEmpty() -> normalizedFooterPerExtruderMm
-            hasComputedExtrusion -> compactComputedPerExtruderMm
+            // Always prefer the raw canonical-wide footer line when present.
             perExtruderMm.isNotEmpty() -> perExtruderMm
+            // No footer line → fall back to computed (compact T-order).
+            hasComputedExtrusion -> compactComputedPerExtruderMm
             else -> emptyList()
         }
         // Phase 2 — pass the full per-extruder list through. Display layer
