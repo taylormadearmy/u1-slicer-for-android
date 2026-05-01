@@ -154,35 +154,35 @@ class SemmSlicingTest {
         // B44 regression guard: colored_3DBenchy has exactly 4 paint states + 4 config colors
         assertEquals("colored_3DBenchy must detect exactly 4 colors", 4, nColors)
         // Use up to 4 extruders (U1 max), but no more than the file has colors
-        val extCount = nColors.coerceIn(2, 4)
+        val slotCount = nColors.coerceIn(2, 4)
 
         val processed = BambuSanitizer.process(input, outDir)
         val config = embedder.buildConfig(
             info = origInfo,
-            targetExtruderCount = extCount
+            targetExtruderCount = slotCount
         )
 
         val embedded = embedder.embed(processed, config, outDir, origInfo)
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
 
-        val result = lib.slice(makeConfig(extCount))
+        val result = lib.slice(makeConfig(slotCount))
         assertNotNull("slice() must not return null", result)
         result!!
-        assertTrue("$extCount-extruder Benchy must slice: ${result.errorMessage}", result.success)
+        assertTrue("$slotCount-extruder Benchy must slice: ${result.errorMessage}", result.success)
 
         // With N extruders and paint data, there must be tool changes beyond T0
         val gcode = File(result.gcodePath).readText()
         val lines = gcode.lines()
         val t1 = lines.count { it.trimStart().startsWith("T1") }
-        assertTrue("$extCount-extruder SEMM must produce T1 tool changes (got $t1)", t1 > 0)
+        assertTrue("$slotCount-extruder SEMM must produce T1 tool changes (got $t1)", t1 > 0)
         // If we have 3+ extruders, T2 must also appear
-        if (extCount >= 3) {
+        if (slotCount >= 3) {
             val t2 = lines.count { it.trimStart().startsWith("T2") }
-            assertTrue("$extCount-extruder SEMM must produce T2 tool changes (got $t2)", t2 > 0)
+            assertTrue("$slotCount-extruder SEMM must produce T2 tool changes (got $t2)", t2 > 0)
         }
         // All 4 extruders must be active. Check SM_PRINT_AUTO_FEED lines in the
         // resolved start gcode — OrcaSlicer emits these only for is_extruder_used[N]=true.
-        if (extCount >= 4) {
+        if (slotCount >= 4) {
             val autoFeedExtruders = lines
                 .filter { it.contains("SM_PRINT_AUTO_FEED") }
                 .mapNotNull { Regex("""EXTRUDER=(\d+)""").find(it)?.groupValues?.get(1)?.toIntOrNull() }
@@ -437,8 +437,8 @@ class SemmSlicingTest {
         val embedded = embedder.embed(processed, config, outDir, origInfo)
         assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
 
-        val extCount = nColors.coerceIn(2, 4)
-        val result = lib.slice(makeConfig(extCount))
+        val slotCount = nColors.coerceIn(2, 4)
+        val result = lib.slice(makeConfig(slotCount))
         assertNotNull("slice() must not return null", result)
         result!!
         assertTrue(
@@ -452,7 +452,7 @@ class SemmSlicingTest {
         Log.i(
             "SemmSlicingTest",
             "B87 skywing dragon tool counts: T0=${toolCounts[0]} T1=${toolCounts[1]} " +
-                "T2=${toolCounts[2]} T3=${toolCounts[3]} (extCount=$extCount)"
+                "T2=${toolCounts[2]} T3=${toolCounts[3]} (slotCount=$slotCount)"
         )
 
         val toolsPresent = toolCounts.count { it > 0 }

@@ -36,6 +36,46 @@ Use this checklist for final on-device sanity passes before publishing:
 5. Tap-select and drag the prime tower
 6. Slice successfully
 7. Confirm Preview colours match the intended tool usage
+8. Apply the **Universal post-slice rubric** below
+
+## Universal post-slice rubric (every multi-colour file)
+
+These four checks catch the v2.0.x export-mapping bug classes regardless of
+which fixture is in front of you. Run them on **every multi-colour file**
+in any batch — smoke-7, full batch, ad-hoc. Single-colour STL skips
+checks 1–3 (trivial) and runs only check 4.
+
+The bug class only surfaces when at least one of these is wrong; a fixture
+that "looks fine" on a casual glance can still hide a regression. Apply
+the rubric uniformly so a sibling bug in an untested file/plate
+combination doesn't slip past.
+
+| # | Check | What to do | What's wrong if it fails |
+|---|-------|-----------|--------------------------|
+| **1** | G-code preview colours match Prepare 3D file colours | After slice, open the G-code preview (Preview tab or fullscreen). Compare the toolpath colours to the file's filament colours shown in Prepare's filament list. They must match. Default extruder presets are red/green/blue/white — if the preview shows those instead of the file's colours, that's Bug 1 class. | Preview shows slot-preset colours (E1=red etc.) instead of the file's filament colours. The user's Prepare overrides are not reflected. |
+| **2** | Filament Mapping dialog row count = plate filament count | Tap **Map & Print** (or Map & Upload). The dialog header reads "Assign each of the **N** filaments to a physical extruder" — N must match what Prepare's `Filaments(N)` panel shows for the current plate. Cancel the dialog after counting. | Dialog shows file-wide canonical size (e.g. 13 / 15 rows) instead of the plate's actual filament count — Bug 2 class. |
+| **3** | Slice Summary chip count + colours match plate filaments the slicer used | Scroll the Slice Summary card. Per-extruder chip count must equal the number of plate filaments with non-zero `; filament used [mm]` (≤ Prepare's `Filaments(N)`). Each chip's swatch must match the file's filament colour for that row. See the "Zero-mm chip drop" note below for the auto-mapping collision case. | Chip count exceeds plate filament count (file-wide canonical leak) — Bug 3 class. Or chip colours are slot presets instead of file colours. |
+| **4** | Saved G-code body has only T0–T3 | After slice, tap **Save** (or **Share**) G-code. Pull the resulting file and grep: `grep -cE "^T[4-9]" <file>` — must be **0**. For a quick on-device sanity check (Share writes to app sandbox): `adb -s <device> shell "run-as com.u1.slicer.orca cat files/jobs/<id>/output.share.gcode" \| grep -cE "^T[4-9]"`. | Any non-zero count means canonical fileIndex G-code shipped to the printer — Bug 2 critical. The U1 firmware can only execute T0–T3. |
+
+**Zero-mm chip drop (check 3 nuance)**: when a declared filament collides
+with another via auto-mapping (e.g. old.3mf white at slot 5 mapped to E4
+alongside peach at slot 1 — only one wins) the slicer emits 0 mm for it
+and the chip strip hides it. That's expected, not a bug. To distinguish
+expected drop from real Bug 3, pull the on-device gcode `; filament used
+[mm]` line: a `0.00` entry means the filament is genuinely unused and
+the missing chip is correct.
+
+**Single-colour STL** (e.g. `3DBenchy.stl`, `tetrahedron.stl`): skip 1–3
+(no canonical filament list to mis-index). Run check 4 — it should
+trivially pass with only `T0` in the body.
+
+**Why universal**: each previous round of fixes caught siblings in fixtures
+that hadn't been the original repro. Calicube didn't surface the
+canonical-palette regression because its plate uses fileIdx 0+1
+(accidentally aligned). Dragon plate 1 surfaced it because plate uses
+fileIdx 1+2 (non-contiguous). The next sibling will appear in some
+fixture/plate combination we haven't yet tested. Applying these checks
+universally is the cheapest way to catch one before it ships.
 
 ### Manual regression checks (v1.5.26 rotation + prime tower settings — F57/F58)
 
@@ -60,6 +100,131 @@ Run these after any change to the G-code viewer rendering, Jobs tab, or Room sch
 - **F61 — Re-open model from Jobs tab (new jobs only):** Slice any file. Navigate to Jobs tab. Job cards for jobs sliced on v1.5.32+ should show an **Edit icon** button alongside the Layers icon. Tap it. The app should navigate to the Prepare screen and reload the original 3MF/STL — same as if you had opened the file fresh from the picker. Confirm the model geometry, colour count, and prime tower all appear correctly.
 - **F61 — Old jobs (no Edit icon):** Jobs sliced before v1.5.32 (i.e. rows with `sourcePath = NULL` in the database) should show **only** the Layers icon — no Edit icon.
 - **F61 — Room migration smoke test:** On a device that had v1.5.31 installed with existing job history, upgrade to v1.5.32. Confirm the app launches without crash, the Jobs tab shows the existing job history intact, and old jobs have only the Layers icon (no Edit icon).
+
+### Manual regression checks (v1.7.0 — Phase 2 canonical filament list)
+
+Run after any change to per-filament overrides, the canonical filament
+list, the embed pipeline (filament_type / nozzle_temperature /
+filament_colour), the 3D preview recolor path, or the print-time
+mapping dialog.
+
+The Phase 2 architecture review (`docs/superpowers/reviews/2026-04-26-
+phase2-architecture-review.md`) made an entire bug class structurally
+impossible (cascade of slot-preset overrides into other filaments).
+The instrumented test `Phase2AlignmentTest` covers the slice-correctness
+side automatically; manual passes verify the **visual + UX** of the
+override flow — what an instrumented test can't catch.
+
+**Suggested fixture:** H2C benchy
+(`3DBenchy-H2C-Multi-Color-Test-Print.3mf`) — 7 file filaments mapped
+to 4 slots, with several slot collisions; the cascade detector's natural
+home. Substitute any multi-filament file with at least 3 distinct
+filaments if H2C isn't available.
+
+- **P2.1 — Per-filament material override (Prepare → slice):** Load
+  H2C benchy. On the Prepare screen, the filament list should show
+  **all 7 filament rows** (not 4 — the display caps were dropped in
+  §4 Step 6). Tap **Filament 1's material chip** → pick **PETG**.
+  Slice. After slice completes, open the output G-code (via
+  `G:/My Drive/logs/output (N).gcode` or the Jobs tab → Layers icon)
+  and locate the `; filament_type =` and `; nozzle_temperature =`
+  header lines. Expected:
+  - `filament_type = PETG;PLA;PLA;PLA;PLA;PLA;PLA`
+  - `nozzle_temperature = 235,220,220,220,220,220,220`
+  - **Cascade detector:** confirm PETG appears at index 0 AND ONLY
+    at index 0. If PETG also appears at index 4 (which auto-maps to
+    the same slot as 0 in default mapping), the cascade bug is back.
+- **P2.2 — Per-filament colour override visual:** Same file. Tap
+  **Filament 2's colour swatch** → pick a vivid distinct colour
+  (e.g. orange `#FFA500`). The 3D preview should **update
+  immediately** to show filament-2's regions in the new colour. The
+  Multi-Color summary card and the filament-list chip should both
+  reflect the override. Regression shape: preview keeps showing the
+  old colour, override only takes effect after slice.
+- **P2.3 — >4 filament Multi-Color summary visibility:** Confirm
+  the **"Colors:" inline preview** in the Multi-Color summary card
+  shows **all 7 swatches**, not just the first 4. Pre-Phase-2 the
+  display was capped at 4 (`colors.take(4)`).
+- **P2.4 — Override survives Send dialog:** With the PETG override
+  on Filament 1 still applied, slice and tap **Map & Print** (or
+  **Map & Upload**). The Filament mapping dialog should show
+  Filament 1 with the PETG material indicator and a
+  material-mismatch chip if the auto-suggested slot's preset
+  material differs from PETG. Slot picker behaviour should be
+  unchanged from v1.6.13.
+- **P2.5 — Override clear flow:** Tap **Clear** on Filament 1's
+  override (or use the dialog's reset). The 3D preview should
+  revert to the file's original colour for filament 1; a re-slice
+  should produce a header without PETG.
+
+### Manual regression checks (v2.0.x — Phase 2 export-mapping classes)
+
+Run after any change to: the Filament Mapping dialog, the Slice Summary
+chip strip, the gcode preview palette helper
+(`normalizeGcodePreviewColors`), `applyPrintTimeRemap` callers, the
+slice-time `colorMappingCsv` persist site (`SlicerViewModel`), or
+`shareJobGcode`.
+
+Three bug classes were identified during v2.0.0 manual verification.
+The unit-level `CanonicalExportLeakGuardTest` enforces structural
+invariants statically; these manual checks catch the **visual /
+behavioural** failures.
+
+**Suggested fixture:** `Dragon Scale infinity.3mf` plate 1 (multi-plate
+file whose plate filaments occupy non-contiguous canonical
+fileIndices). `Button-for-S-trousers.3mf` is a second canary —
+similar shape, also surfaced regressions in v2.0.0 round 1.
+
+- **Class 1 — gcode preview colour parity with Prepare:** Load Dragon
+  Scale plate 1. On Prepare, note the exact swatch colours shown in
+  the filament list and 3D preview (these are the file's filament
+  colours, e.g. blue + grey for plate 1). Slice. Open the **G-code
+  preview** (Preview tab). The toolpath colours must match the Prepare
+  colours **exactly** — same hue, same brightness ordering. Regression
+  shape: G-code preview shows the user's slot-preset colours (e.g.
+  E1 red, E2 green) instead of the file's filament colours. Repeat on
+  Button-for-S-trousers and Calicube. Sanity check: Calicube on
+  default presets historically flipped this — file colours are
+  cyan/orange, slot defaults are red/green. The G-code preview must
+  show cyan/orange.
+- **Class 2 — Filament Mapping dialog row count:** Load Dragon Scale
+  plate 1. Tap **Map & Print** (or **Map & Upload**). The dialog
+  should show **exactly the active plate's filament rows**, not the
+  file-wide canonical list. For Dragon plate 1 that is **2 rows**
+  (the plate uses 2 filaments). Regression shape: 13 rows (or whatever
+  the file-wide count is). Repeat on Button-S — should show 2 rows,
+  not 15.
+- **Class 2 — printer-bound G-code uses only physical T0-T3:** With
+  Dragon plate 1 sliced and the Filament Mapping dialog confirmed,
+  use **Save G-code** (or **Share G-code**) to extract the output to
+  disk. Open the file in a text viewer, scroll to the body, and search
+  for `T4` / `T5` / `T6` / `T7` / `T8` / `T9` (canonical fileIndices
+  the slicer emits for non-contiguous plate filaments). There must be
+  **zero matches** — every tool change must reference T0..T3 only.
+  Same check applies to **Jobs tab → Share** for any historical job.
+  Regression shape: the printer rejects the print or aborts at the
+  first canonical-T tool change.
+- **Class 3 — Slice Summary chip strip uses plate's filaments:** With
+  Dragon plate 1 sliced, scroll the Slice Summary card (right panel
+  or below the Preview button — depends on screen size). The
+  per-extruder usage chips should show **the file's filament colours
+  for the plate's 2 filaments**, with correct material labels and
+  filament name from the canonical list. Regression shape: 13 rows of
+  bogus mm/g values (file-wide canonical positionally indexed) or
+  wrong colour swatches (E1 red, E2 green) where the plate filaments
+  should be (blue, grey).
+- **Class 3 — Slice Summary fileIdx alignment for sparse plates:**
+  Load `slip slide spin fidget.3mf` plate 3 if available (or any
+  multi-plate where the plate uses canonical fileIndices >= 4). Slice.
+  The Slice Summary chips must show the **plate's filaments**, not
+  fileIndices 0 and 1. Cross-check: the chip colours match the chips
+  in the Filament Mapping dialog and the Multi-Color summary card.
+
+These classes are unit-tested via `CanonicalExportLeakGuardTest`
+(structural grep guards) + `SliceJobMappingResolutionTest`
+(resolver coverage). The manual rubric above is the visual safety
+net — flag any divergence between Prepare colours, dialog row count,
+and Slice Summary chips.
 
 ### Manual regression checks (v1.6.8 — B87/B88/B89/B90/B91)
 
@@ -123,7 +288,10 @@ adb -s <pixel-8a-device-id> logcat -s "SlicerVM,BambuSanitizer,ThreeMfParser,Inl
 
 ## Priority manual files
 
-These are the files most likely to catch regressions quickly:
+These are the files most likely to catch regressions quickly. The
+**Minimum manual check** column lists fixture-specific things to look
+for. Apply the **Universal post-slice rubric** (top of this doc) on top
+of every per-row check — it's not duplicated in each cell.
 
 | File | Why it matters | Minimum manual check |
 |------|----------------|----------------------|
@@ -131,9 +299,9 @@ These are the files most likely to catch regressions quickly:
 | `calib-cube-10-dual-colour-merged.3mf` | Basic 2-colour baseline; post-update Clipper history | Prepare colours, move, slice |
 | `Dragon Scale infinity.3mf` plate 3 | Old-format multi-plate; tri-colour regression history | Plate 3 shows 3 colours, move, slice |
 | `Shashibo-h2s-textured.3mf` plate 5 | Old-format multi-plate textured case | Plate 5 preview colours, slice |
-| `3DBenchy-H2C-Multi-Color-Test-Print.3mf` | H2C sparse paint / 7-colour mapping | Prepare vs Preview colour parity |
+| `3DBenchy-H2C-Multi-Color-Test-Print.3mf` | H2C sparse paint / 7-colour mapping; **Phase 2 cascade-detector canary** | Prepare vs Preview colour parity; **all 7 filament rows visible**; per-filament material override (P2.1–P2.5) — tap Filament 1 → PETG, slice, verify `filament_type = PETG;PLA;PLA;PLA;PLA;PLA;PLA` (no cascade to filament 4) |
 | `colored_3DBenchy (1).3mf` | Non-H2C painted benchy baseline | Prepare colours, slice |
-| `Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf` | B67 canary: large SEMM file (295k paint attrs); catches ProfileEmbedder filament_colour corruption (B66), GcodeParser per-extruder mm swap (B67). **Slow — 3h+ slice.** | Prepare shows 4 colours; `filament_colour` in G-code has **4 distinct hex values** (not `#FFFFFF;#FFFFFF;…`); T0–T3 all non-trivial; `filament used [mm]` first value (T0) is the **largest** of the four |
+| `Flarewing-Dragon_100%_4FilamentMulticolor_v1.1.3mf` | B67 canary: large SEMM file (295k paint attrs); catches ProfileEmbedder filament_colour corruption (B66), GcodeParser per-extruder mm swap (B67). Slice ~1–3 min on Pixel 8a/9a (the "3h+" figure refers to the resulting print time, not slice time). | Prepare shows 4 colours; `filament_colour` in G-code has **4 distinct hex values** (not `#FFFFFF;#FFFFFF;…`); T0–T3 all non-trivial; `filament used [mm]` first value (T0) is the **largest** of the four |
 | `Buzz_Multipart_3MF_Bambu.3mf` — **plates 1 & 9** | B88/B90 canary: 10-plate Bambu with per-object extruder 10 + paint state 8 (filament indices above declared visual count). Catches plate-switch colour leak + high-index `detectedColors` synthesis. | Select plate 1 (4 colours), **Change plate** to plate 9 (2 colours: peach + white, **not** black + blue), slice plate 9, Preview matches Prepare's 2 colours |
 | `skywing-seawing-silkwing.3mf` | B87/B91 canary: dense SEMM (162K paint_color attrs across 35 component models). Catches slow `parseForPlateSelection` regression + multi-colour bottom-layer dropout. | Select plate 1 within ~15s, Prepare shows ≥3 colour regions, slice emits T0/T1/T2 (summary layer count > 0) |
 | `2026+F1+CALENDAR+-+DATES+&+TRACK+NAMES+(P_X+SERIES).3mf` | Large Bambu file / former B18 OOM repro | Loads without OOM, slice preserves multi-colour output |
@@ -186,7 +354,7 @@ If an asset is missing locally, pull it from version control or restore from bac
 
 ### Files to include in a *full* pass (every `assets` file)
 
-Run through **every** file under `app/src/androidTest/assets/` at least once. Known names referenced by tests (include any additional files present in the directory):
+Run through **every** file under `app/src/androidTest/assets/` at least once. Known names referenced by tests (include any additional files present in the directory). Apply the **Universal post-slice rubric** (top of this doc) to every multi-colour file — the focus column lists fixture-specific extras only.
 
 | File | Typical manual focus |
 |------|------------------------|
@@ -221,7 +389,15 @@ Run through **every** file under `app/src/androidTest/assets/` at least once. Kn
 6. **Tap-select** an object; **drag**; repeat for **prime tower** if shown.
 7. **Slice**; wait for completion.
 8. **Open** the G-code preview / summary; confirm **colours and per-extruder usage** match expectations.
-9. Optional: **screenshot** or short **logcat** for the session (see `E2E_TESTING.local.md`).
+9. **Apply the Universal post-slice rubric** (top of this doc — checks 1–4):
+   - G-code preview colours match Prepare's file colours
+   - Filament Mapping dialog row count = plate filament count
+   - Slice Summary chip count + colours match plate filaments
+   - Saved G-code body has zero `^T[4-9]` matches
+   This is **not optional** — it's the cheapest defence against the
+   v2.0.x export-mapping bug class reappearing in a fixture/plate
+   combination we haven't yet repro'd.
+10. Optional: **screenshot** or short **logcat** for the session (see `E2E_TESTING.local.md`).
 
 ### Using AI agents (including subagents)
 

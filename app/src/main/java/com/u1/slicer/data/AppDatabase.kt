@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 
 @Database(
     entities = [FilamentProfile::class, SliceJob::class],
-    version = 4,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -69,6 +69,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v4 → v5: add canonicalListSize + colorMappingCsv columns to
+         * slice_jobs (Phase 2, 2026-04-28). Lets `shareJobGcode()`
+         * reproduce the canonical→physical mapping when sharing a
+         * historical job. Both columns nullable; pre-v5 rows correspond
+         * to v1.6.13-era jobs whose stored G-code is already physical-
+         * slot, so null → identity copy on share.
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE slice_jobs ADD COLUMN canonicalListSize INTEGER")
+                db.execSQL("ALTER TABLE slice_jobs ADD COLUMN colorMappingCsv TEXT")
+            }
+        }
+
+        /**
+         * v5 → v6: add selectedExtruderAtSlice column to slice_jobs
+         * (Phase 2 post-round-2-review, 2026-04-28). Persists the
+         * physical slot picked for single-colour jobs at slice time so
+         * `shareJobGcode` can remap T0 → selected slot instead of
+         * defaulting to slot 0 (Reviewer 3 P1 finding).
+         */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE slice_jobs ADD COLUMN selectedExtruderAtSlice INTEGER")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -76,7 +104,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "u1_slicer.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .addCallback(SeedCallback())
                     .build()
                 INSTANCE = instance

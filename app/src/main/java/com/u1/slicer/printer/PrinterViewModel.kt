@@ -243,10 +243,16 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         _syncState.value = SyncState.Idle
     }
 
-    fun sendAndPrint(gcodePath: String) {
+    /**
+     * Phase 2 B.1 (2026-04-28) — accepts only [com.u1.slicer.gcode.PhysicalGcodePath].
+     * Callers must apply [com.u1.slicer.gcode.applyPrintTimeRemap] (or
+     * confirm the source is already in physical-slot space) before
+     * reaching this function. The compiler enforces it.
+     */
+    fun sendAndPrint(physical: com.u1.slicer.gcode.PhysicalGcodePath) {
         _sendingState.value = SendingState.Uploading
         viewModelScope.launch(Dispatchers.IO) {
-            val file = File(gcodePath)
+            val file = physical.toFile()
             if (!file.exists()) {
                 _sendingState.value = SendingState.Error("G-code file not found")
                 return@launch
@@ -261,10 +267,14 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun sendUploadOnly(gcodePath: String) {
+    /**
+     * Phase 2 B.1 (2026-04-28) — accepts only [com.u1.slicer.gcode.PhysicalGcodePath].
+     * See [sendAndPrint] for the type-safety rationale.
+     */
+    fun sendUploadOnly(physical: com.u1.slicer.gcode.PhysicalGcodePath) {
         _sendingState.value = SendingState.Uploading
         viewModelScope.launch(Dispatchers.IO) {
-            val file = File(gcodePath)
+            val file = physical.toFile()
             if (!file.exists()) {
                 _sendingState.value = SendingState.Error("G-code file not found")
                 return@launch

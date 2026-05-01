@@ -298,6 +298,18 @@ void append_volume(std::ostringstream& out,
 // negligible compared to the parse cost.
 std::map<int, int> count_paint_states(const Slic3r::ModelVolume& mv,
                                       const Slic3r::FacetsAnnotation& facets) {
+    // CAUTION (post-Buzz-plate-8 review):
+    //   `has_facets(state)` uses direct equality (no H2C fold), but
+    //   `get_facets(state)` applies the fold (state N+4 matches query in
+    //   [1..4]). This function relies on that asymmetry: the `has_facets`
+    //   guard returns false for query=2 when a volume's painted triangles
+    //   are all in state 6 (Buzz plate 8 case), so the fold-contaminated
+    //   `get_facets` is never called and `paintExtruders` correctly reports
+    //   {6} only — not {2, 6}.
+    //
+    //   DO NOT change the `has_facets` call here to use `h2c_state_matches`.
+    //   Doing so would surface phantom states (e.g. Buzz plate 8 would report
+    //   state 2 alongside state 6) and regress chip counts in the UI.
     std::map<int, int> counts;
     const int max_state = static_cast<int>(Slic3r::EnforcerBlockerType::ExtruderMax);
     for (int state = 1; state <= max_state; ++state) {

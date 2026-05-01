@@ -37,14 +37,14 @@ class SensoryTwistSupportsTest {
         return file
     }
 
-    private fun makeConfig(extCount: Int = 1) = SliceConfig(
+    private fun makeConfig(slotCount: Int = 1) = SliceConfig(
         layerHeight = 0.2f,
         firstLayerHeight = 0.2f,
         fillDensity = 0.05f,    // match 3MF's 5% embedded infill
         perimeters = 2,
         supportEnabled = false, // global off; per-object override must turn it on
-        extruderCount = extCount,
-        extruderTemps = IntArray(extCount) { 220 },
+        extruderCount = slotCount,
+        extruderTemps = IntArray(slotCount) { 220 },
         nozzleTemp = 220,
         bedTemp = 55,
         wipeTowerEnabled = false

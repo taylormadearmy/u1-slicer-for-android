@@ -137,66 +137,28 @@ class PreviewColorNormalizationTest {
      * T0 = white (the slot assigned to unpainted) and T3 = red (the slot assigned
      * to painted).
      */
-    @Test
-    fun `normalizeGcodePreviewColors B92 Buzz plate 8 shape aligns Preview with Prepare`() {
-        val extruderColors = listOf("#FF0000", "", "", "#FFFFFF")
-        val colorMapping = listOf(0, 3)
-        val semmColorPermutation = listOf(0, 3)
-        val slicerColorOrder = listOf(1, 0)
-
-        val result = normalizeGcodePreviewColors(
-            extruderColors = extruderColors,
-            colorMapping = colorMapping,
-            semmColorPermutation = semmColorPermutation,
-            slicerColorOrder = slicerColorOrder
-        )
-
-        // T0 prints the unpainted region (slicer T0 = detectedColors[1] = white,
-        // user assigned white → slot 3 = E4 = "#FFFFFF"), so Preview should render
-        // T0 segments with #FFFFFF.
-        assertEquals("T0 (unpainted) must render in E4 white", "#FFFFFF", result[0])
-        // T3 prints the painted region (slicer T1 = detectedColors[0] = brown,
-        // user assigned brown → slot 0 = E1 = "#FF0000"), so Preview should render
-        // T3 segments with #FF0000.
-        assertEquals("T3 (painted) must render in E1 red", "#FF0000", result[3])
-    }
+    /**
+     * Phase 2 (2026-04-28) — the slicer-order/semm-permutation/useDirectSlots
+     * legacy branches were retired with Group B (slice-time tool remap is
+     * dead in Phase 2's canonical contract). Tests that asserted those code
+     * paths' specific behaviour were removed alongside; the canonical-driven
+     * path tests (`collision case ...`, `non-contiguous slots ...`,
+     * `Dragon-style ...`, `falls back to file filament ...`) below cover all
+     * remaining behaviour.
+     */
 
     /**
-     * B92 identity case: slicerColorOrder = null means slicer tool order matches
-     * detectedColors order (simple SEMM, H2C, non-paint). normalizeGcodePreviewColors
-     * should preserve direct slot colours (init loop) without applying the
-     * legacy compact-index override when semmColorPermutation is active.
+     * Pre-canonical caller: no resolvedFilamentColors, non-null colorMapping —
+     * preserves the simple compact-index → slot-preset mapping for callers
+     * that don't pass the canonical filament list yet (e.g. mid-load, before
+     * the resolver populates).
      */
     @Test
-    fun `normalizeGcodePreviewColors with semmPerm and identity slicer order uses direct slot colours`() {
-        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
-        val result = normalizeGcodePreviewColors(
-            extruderColors = extruderColors,
-            colorMapping = listOf(3, 0, 2, 1),
-            semmColorPermutation = listOf(3, 0, 2, 1),
-            slicerColorOrder = null
-        )
-        // After GcodeToolRemapper the G-code has T0..T3 where T<n> is the physical
-        // slot. Preview should render each T<n> with extruderColors[n] (direct slot).
-        assertEquals("#FF0000", result[0])
-        assertEquals("#00FF00", result[1])
-        assertEquals("#0000FF", result[2])
-        assertEquals("#FFFFFF", result[3])
-    }
-
-    /**
-     * B92 legacy caller: semmColorPermutation=null (no SEMM remap), non-null
-     * colorMapping — preserves pre-v1.6.10 behaviour used by per-object path and
-     * single-colour SEMM callers that don't pass the new params.
-     */
-    @Test
-    fun `normalizeGcodePreviewColors legacy call without semmPerm retains compact override`() {
+    fun `normalizeGcodePreviewColors no canonical with compact mapping uses compact-to-slot`() {
         val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
         val result = normalizeGcodePreviewColors(
             extruderColors = extruderColors,
             colorMapping = listOf(2, 3),
-            semmColorPermutation = null,
-            slicerColorOrder = null
         )
         // Compact 0 → slot 2 (blue), compact 1 → slot 3 (white).
         assertEquals("#0000FF", result[0])
@@ -204,4 +166,276 @@ class PreviewColorNormalizationTest {
         assertEquals("#0000FF", result[2])
         assertEquals("#FFFFFF", result[3])
     }
+
+    // ── Phase 2 §4 Step 7 — G-code Preview slot-collision fix ───────────────
+
+    /**
+     * S-Buttons plate 1 user repro: 12 file filaments collapse onto 4 slots
+     * via findClosestExtruder + redistributeDuplicateSlots. The auto mapping
+     * uses all four slots {0,1,2,3} but multiple file filaments map to the
+     * same slot. Pre-fix behaviour: `normalized[slot] = resolvedFilamentColors[firstIdx]`
+     * — the first-occurrence file filament's hex (often a brownish near-red
+     * for the slot 0 closest match) drowned out the slot's actual loaded
+     * preset colour. The user perceived "missing red" because slot 0's E1
+     * preset (red) never reached the renderer.
+     *
+     * Fix: drive the palette by `compactSlotOrder = colorMapping.distinct().sorted()`,
+     * indexing by COMPACT slicer T-index (which is what the renderer reads
+     * via `extruderColors[move.extruder]` under Phase 2.5's
+     * skipSliceTimeRemap=true regime). For each compact c, prefer the slot's
+     * loaded preset colour (`extruderColors[compactSlotOrder[c]]`).
+     */
+    @Test
+    fun `normalizeGcodePreviewColors prefers file filament colour over slot preset`() {
+        // Phase 2 (2026-04-28, post-v2.0.0-validation regression) — gcode
+        // preview must show file filament colours (with user-applied
+        // Prepare overrides), NOT slot presets. Pre-revision the test
+        // asserted the opposite to capture a v1.6.13-era "missing red"
+        // bug fix that preferred slot preset; under Phase 2 canonical
+        // T-index contract the user expects palette[fileIdx] to match
+        // the colour they see in Prepare's 3D model — which is the
+        // file's own filament colour, not the printer's loaded slot.
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")  // slot presets
+        val resolvedFilamentColors = listOf(
+            "#6F5034", "#FFD700", "#0066CC", "#F5F5F5",     // 4 distinct file colours
+            "#A52A2A", "#9ACD32", "#1E90FF", "#FFFAFA",
+            "#8B4513", "#7FFF00", "#4169E1", "#FFE4E1",
+        )
+        val colorMapping = listOf(0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // Each canonical fileIdx renders in the FILE'S filament colour,
+        // matching what Prepare's 3D model shows. The user's slot
+        // assignment from the Send dialog doesn't override the visual
+        // identity of "this is what the slicer assigned to fileIdx N".
+        assertEquals("fileIdx 0 → file colour", "#6F5034", result[0])
+        assertEquals("fileIdx 1 → file colour", "#FFD700", result[1])
+        assertEquals("fileIdx 2 → file colour", "#0066CC", result[2])
+        assertEquals("fileIdx 3 → file colour", "#F5F5F5", result[3])
+        // High-T entries also use file colour (canonical-extent palette).
+        assertEquals("fileIdx 4 → file colour", "#A52A2A", result[4])
+        assertEquals("fileIdx 11 → file colour", "#FFE4E1", result[11])
+    }
+
+    /**
+     * Non-contiguous slot mapping. Phase 2 (post-v2.0.0-validation):
+     * palette is canonical-fileIndex space, indexed by fileIdx,
+     * populated with FILE colours regardless of which slot the user
+     * picked.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors non-contiguous slots renders file colours`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        val resolvedFilamentColors = listOf("#FF1010", "#1010FF", "#F0F0F0")
+        val colorMapping = listOf(0, 2, 3)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        assertEquals("fileIdx 0 → file colour", "#FF1010", result[0])
+        assertEquals("fileIdx 1 → file colour", "#1010FF", result[1])
+        assertEquals("fileIdx 2 → file colour", "#F0F0F0", result[2])
+    }
+
+    /**
+     * Dragon plate 3 regression guard. Phase 2 (2026-04-28, post-
+     * adversarial-review) — palette is canonical-fileIndex space
+     * (slicer body emits `T<fileIndex>`, not `T<compactSlot>`), so
+     * `result[fileIdx]` returns the slot preset that the user mapped
+     * `fileIdx` to. For colorMapping=[2,0,3,1]:
+     *   - fileIdx 0 → slot 2 → blue
+     *   - fileIdx 1 → slot 0 → red
+     *   - fileIdx 2 → slot 3 → white
+     *   - fileIdx 3 → slot 1 → green
+     *
+     * Pre-revision the palette was indexed by compact-slot order
+     * (`compactSlotOrder = colorMapping.distinct().sorted()`), giving
+     * `[red, green, blue, white]` regardless of mapping permutation —
+     * which was correct under v1.6.13's slicer-side T-index baking but
+     * wrong under Phase 2's canonical-emit contract. The reviewer's
+     * "G-code preview palette is still capped to four colors" finding
+     * caught this.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors Dragon-style 4-distinct-slots renders file colours`() {
+        // Phase 2 (2026-04-28, post-v2.0.0-validation): palette is
+        // canonical-fileIndex space, indexed by fileIdx, populated with
+        // FILE filament colours (with user Prepare overrides applied).
+        // The slot the user picks at Send doesn't change the gcode
+        // preview's visual identity — it just changes which physical
+        // extruder the printer uses. The preview is "what the file
+        // designed", not "what the printer will load".
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        val resolvedFilamentColors = listOf("#A00000", "#00A000", "#0000A0", "#F0F0F0")
+        val colorMapping = listOf(2, 0, 3, 1)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // Each canonical fileIdx renders in its file colour regardless
+        // of which slot the user mapped it to.
+        assertEquals("fileIdx 0 → file colour", "#A00000", result[0])
+        assertEquals("fileIdx 1 → file colour", "#00A000", result[1])
+        assertEquals("fileIdx 2 → file colour", "#0000A0", result[2])
+        assertEquals("fileIdx 3 → file colour", "#F0F0F0", result[3])
+    }
+
+    /**
+     * Phase 2 high-T canonical preview palette regression guard.
+     * Reviewer-flagged scenario: H2C benchy slices to T0..T6, Buzz
+     * plate 9 to T9+T10. Pre-fix the palette was capped at 4 entries
+     * so high-T tools collapsed visually onto the last colour. Post-
+     * fix the palette grows to canonical size (or colorMapping size).
+     */
+    @Test
+    fun `normalizeGcodePreviewColors high-T canonical palette grows beyond 4`() {
+        val extruderColors = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFFFF")
+        // 7 file filaments mapping across 4 physical slots with
+        // collisions (H2C benchy shape).
+        val colorMapping = listOf(0, 1, 2, 3, 0, 1, 2)
+        val resolvedFilamentColors = listOf(
+            "#A00000", "#00A000", "#0000A0", "#F0F0F0",
+            "#660000", "#006600", "#000066",
+        )
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // Palette length must grow to at least 7 (canonical extent).
+        assertTrue("palette must extend to canonical size, got ${result.size}",
+            result.size >= 7)
+        // Phase 2 post-v2.0.0-validation: high-T entries resolve to
+        // FILE colours, not slot presets.
+        assertEquals("fileIdx 4 → file colour", "#660000", result[4])
+        assertEquals("fileIdx 5 → file colour", "#006600", result[5])
+        assertEquals("fileIdx 6 → file colour", "#000066", result[6])
+    }
+
+    /**
+     * Phase 2 (post-v2.0.0-validation): file filament colour wins
+     * over slot preset. Slot preset is only consulted as fallback
+     * when the file colour is blank (synthetic STL entries, etc.).
+     */
+    @Test
+    fun `normalizeGcodePreviewColors prefers file colour even when slot preset is set`() {
+        val extruderColors = listOf("#FF0000", "", "#0000FF", "#FFFFFF")
+        val resolvedFilamentColors = listOf("#A0A000", "#00A0A0", "#0000A0", "#F0F0F0")
+        val colorMapping = listOf(0, 1, 2, 3)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = resolvedFilamentColors,
+        )
+        // All 4 file colours win over slot presets.
+        assertEquals("fileIdx 0 → file colour", "#A0A000", result[0])
+        assertEquals("fileIdx 1 → file colour",
+            "#00A0A0", result[1])
+        assertEquals("fileIdx 2 → file colour", "#0000A0", result[2])
+        assertEquals("fileIdx 3 → file colour", "#F0F0F0", result[3])
+    }
+
+    /**
+     * Phase 2 (post-v2.0.0-validation, Bug 1 class sibling) — Dragon
+     * plate 1 regression: the gcode preview palette must be
+     * canonical-fileIndex-aligned, not plate-narrowed.
+     *
+     * The slicer emits T<canonical-fileIndex> in the G-code body. For
+     * Dragon plate 1 the file's canonical filament list is 13 wide; the
+     * plate uses fileIdx 1 (#9D2235 burgundy) + fileIdx 2 (#443089
+     * purple). Slicer emits T1 + T2 (canonical), and the renderer
+     * queries palette[1] and palette[2].
+     *
+     * Pre-fix the gcode preview was fed `resolvedFilamentColors` (size
+     * 2 = [#9D2235, #443089]) so:
+     *   - palette[0] = #9D2235 (wrong slot — canonical fileIdx 0 should
+     *     be the file's actual fileIdx 0 colour)
+     *   - palette[1] = #443089 (WRONG — fileIdx 1 should be burgundy)
+     *   - palette[2] = fallback to extruderColors[2 % 4] = blue
+     * The G-code preview rendered T1 as purple and T2 as blue, neither
+     * of which matched the Prepare 3D preview.
+     *
+     * Post-fix the gcode preview is fed `canonicalFilamentColors` (size
+     * 13 = file-wide canonical colours). palette[1] = burgundy,
+     * palette[2] = purple — agrees with Prepare.
+     *
+     * Calicube didn't surface this because its plate filaments occupy
+     * canonical fileIdx 0 + 1 (contiguous from 0); the plate-narrowed
+     * palette accidentally aligned. Multi-plate Bambu files whose
+     * plate filaments don't start at fileIdx 0 (Dragon plate 1, Button-S,
+     * etc.) all hit it.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors canonical-aligned palette renders Dragon plate 1 fileIdx 1+2 correctly`() {
+        val extruderColors = listOf("#FF0000", "", "#0000FF", "")  // E1=red, E3=blue
+        // Canonical-aligned palette (size 13 = full file). For Dragon
+        // plate 1: fileIdx 0 = #F4EE2A yellow, fileIdx 1 = #9D2235
+        // burgundy, fileIdx 2 = #443089 purple, etc.
+        val canonicalPalette = listOf(
+            "#F4EE2A", "#9D2235", "#443089", "#FFFFFF",
+            "#443089", "#443089", "#443089", "#443089",
+            "#443089", "#FFFFFF", "#443089", "#000000", "#A7A9AA",
+        )
+        // Plate-narrowed mapping (size 2): plate filament 0 → slot 0,
+        // plate filament 1 → slot 2.
+        val colorMapping = listOf(0, 2)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = canonicalPalette,
+        )
+        // Critical: palette[1] (T1 in gcode) renders as fileIdx 1's
+        // file colour (burgundy), NOT as filament-2's colour (which
+        // is what the plate-narrowed pre-fix palette would have given).
+        assertEquals("fileIdx 1 → file's burgundy", "#9D2235", result[1])
+        assertEquals("fileIdx 2 → file's purple", "#443089", result[2])
+        assertEquals("fileIdx 0 → file's yellow", "#F4EE2A", result[0])
+        // Palette length must accommodate all canonical fileIndices, not
+        // just the 2 plate filaments. Size >= 13.
+        assertTrue(
+            "palette must accommodate all canonical fileIndices " +
+                "(found size ${result.size}, expected >= 13)",
+            result.size >= 13
+        )
+    }
+
+    /**
+     * Phase 2 (post-v2.0.0-validation, Bug 1 class sibling) — regression
+     * guard documenting the pre-fix wrong behaviour. With a plate-
+     * narrowed `resolvedFilamentColors` (size 2 from the live
+     * `_threeMfInfo.detectedColors`), the palette indices misalign with
+     * the gcode's canonical T-values. This test would have FAILED on
+     * the pre-fix code and asserts the right symptoms so a future
+     * regression is caught.
+     */
+    @Test
+    fun `normalizeGcodePreviewColors plate-narrowed input misaligns indices for canonical-T gcode`() {
+        val extruderColors = listOf("#FF0000", "", "#0000FF", "")
+        // Plate-narrowed (pre-fix shape) — size 2 only.
+        val plateNarrowed = listOf("#9D2235", "#443089")
+        val colorMapping = listOf(0, 2)
+        val result = normalizeGcodePreviewColors(
+            extruderColors = extruderColors,
+            colorMapping = colorMapping,
+            resolvedFilamentColors = plateNarrowed,
+        )
+        // With plate-narrowed input the helper produces palette where
+        // palette[1] = #443089 (Filament 2's colour, but T1 in gcode is
+        // canonical fileIdx 1 = burgundy). This is the BUG state — the
+        // post-fix wiring of canonicalFilamentColors avoids this by
+        // never feeding plate-narrowed input to the gcode preview.
+        assertEquals("plate-narrowed misalignment: palette[1] is purple not burgundy",
+            "#443089", result[1])
+        // Critical: the helper itself isn't broken — it's the caller
+        // that must feed canonical-aligned input. This test documents
+        // that contract: feeding plate-narrowed → wrong output.
+    }
+
+    // useDirectSlots was retired with Group B (Phase 2 canonical contract;
+    // the slicer no longer baked physical slot indices into the G-code).
 }

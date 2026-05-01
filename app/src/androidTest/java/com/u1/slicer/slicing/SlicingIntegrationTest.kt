@@ -881,7 +881,7 @@ class SlicingIntegrationTest {
 
     @Test
     fun nozzleTemp_fromExtruderTemps_appearsInGcode_PETG() {
-        // Simulates what computeFreshExtruderTemps() produces when the user switches to PETG.
+        // Simulates what computeFreshSlotTemps() produces when the user switches to PETG.
         // Before v1.5.63, extruderTemps stayed at 220 (set at load time) even after preset change.
         val config = DEFAULT_CONFIG.copy(
             nozzleTemp = 235,

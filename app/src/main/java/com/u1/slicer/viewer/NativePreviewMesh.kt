@@ -18,19 +18,31 @@ data class NativePreviewMesh(
         val triangleCount = extruderIndices.size
         if (triangleCount == 0 || trianglePositions.size != triangleCount * 9) return null
 
-        // B88: compact raw extruder indices to 0..N-1 using sorted-unique ordering.
-        // Native `compactPreviewIndices` skips compaction when MMU paint data is present
-        // (to preserve state_idx for H2C-style folding), but this leaves plates with
-        // high filament indices (e.g. Buzz Lightyear plate 9 uses filaments 10/11 → raw
-        // indices 9/10) mismatched against the Kotlin `colorMapping`, which is sized to
-        // the plate's compacted `detectedColors`. The result: `MeshData.recolor` clamps
-        // the OOB index to palette.lastIndex, collapsing the preview to a single colour.
+        // Phase 2 (Approach A1): preserve raw file-filament-indexed extruder
+        // indices verbatim. The Phase 2 canonical-list palette is sized to
+        // the file's full filament count and is indexed by file-filament index
+        // (palette[0] = file filament 1, palette[7] = file filament 8, etc.).
         //
-        // Compacting in Kotlin is safe for all existing models — meshes that already use
-        // compact 0..N-1 indices are a no-op under this mapping. `mergeThreeMfInfoForPlate`
-        // produces `detectedColors` in sorted-filament-index order, so the sorted-unique
-        // compact mapping here aligns with the palette ordering.
-        val compactedIndices = compactExtruderIndices(extruderIndices)
+        // Native `compactPreviewIndices` runs only when MMU paint data is absent,
+        // and even then only collapses sparse filament numbering. For non-MMU
+        // files where filaments 1..N are dense (e.g. Calicube uses filaments 1-4),
+        // the compaction is a sorted-unique no-op. For MMU files (e.g. Buzz
+        // Lightyear plate 9 uses paint states 8 and 10), native preserves the
+        // raw paint-state indices so the Phase 2 palette resolves the correct
+        // file-filament colour.
+        //
+        // The previous B88 Kotlin-side compaction was correct for the
+        // pre-Phase-2 contract where the palette was plate-narrowed. With the
+        // Phase 2 canonical palette, compacting here remaps file-filament index
+        // 9 ("filament 10") to mesh index 0 / 1, which then resolves to
+        // `palette[0]` (file filament 1) instead of `palette[9]`. Removing the
+        // Kotlin compaction restores the file-filament-index identity that the
+        // canonical palette expects.
+        //
+        // The `compactExtruderIndices` companion helper is kept for callers that
+        // still want sorted-unique compaction (e.g. legacy slot-narrowed paths
+        // not yet migrated to the canonical list).
+        val previewIndices = extruderIndices.copyOf()
         val buf = MeshData.allocateBuffer(triangleCount)
         var minX = Float.POSITIVE_INFINITY
         var minY = Float.POSITIVE_INFINITY
@@ -93,7 +105,7 @@ data class NativePreviewMesh(
             maxX = maxX,
             maxY = maxY,
             maxZ = maxZ,
-            extruderIndices = compactedIndices
+            extruderIndices = previewIndices
         )
     }
 

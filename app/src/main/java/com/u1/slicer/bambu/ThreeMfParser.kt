@@ -410,7 +410,6 @@ object ThreeMfParser {
                 // correctly (B16 fix: max-per-object missed multi-part colour indices).
                 val uniqueExtruders = if (allExtruderValuesMain.isNotEmpty())
                     allExtruderValuesMain else extruderAssignments.values.toSet()
-                val hasMultiExtruderAssignments = uniqueExtruders.size > 1
                 val layerToolExtruderCount = layerToolInfo?.extruders?.size ?: 0
                 val extruderCount = maxOf(
                     1,
@@ -440,11 +439,11 @@ object ThreeMfParser {
                     hasPaintData = hasPaintData,
                     hasPaintSupports = hasPaintSupports,
                     hasLayerToolChanges = hasLayerToolChanges,
-                    hasMultiExtruderAssignments = hasMultiExtruderAssignments,
                     detectedColors = detectedColors,
                     detectedExtruderCount = extruderCount,
                     hasPlateJsons = plateJsonCount > 1,
                     usedExtruderIndices = uniqueExtruders,
+                    volumeExtruders = uniqueExtruders,  // §4 Step 8
                     objectExtruderMap = extruderAssignments.toMap(),
                     objectPartExtruders = objectPartExtrudersMain.mapValues { it.value.toSet() },
                     compoundPartParents = compoundPartParentsMain.toMap(),

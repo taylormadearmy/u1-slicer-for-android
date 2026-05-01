@@ -243,6 +243,8 @@ class TestCommandReceiver(
         Log.i(TAG, "  hasPaintData: ${info?.hasPaintData}")
         Log.i(TAG, "  hasPlateJsons: ${info?.hasPlateJsons}")
         Log.i(TAG, "  isMultiPlate: ${info?.isMultiPlate}")
+        Log.i(TAG, "  usedExtruderIndices: ${info?.usedExtruderIndices}")
+        Log.i(TAG, "  plates.filamentIndices: ${info?.plates?.map { it.filamentIndices }}")
         Log.i(TAG, "ExtruderPresets: ${presets.map { "${it.label}=${it.color} profileId=${it.filamentProfileId}" }}")
         Log.i(TAG, "ActiveExtruderColors: ${slicerViewModel.activeExtruderColors.value}")
 

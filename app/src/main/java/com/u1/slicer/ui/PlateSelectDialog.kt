@@ -3,10 +3,13 @@ package com.u1.slicer.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Layers
@@ -99,6 +102,44 @@ fun PlateSelectDialog(
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                                         )
+                                    }
+                                    // Per-plate filament indicator: chip strip showing
+                                    // which file filaments this plate uses (file-filament
+                                    // index, 1-based, matching the Prepare filament list).
+                                    // For older Bambu plates that don't carry plateFilamentMap,
+                                    // derive on demand from the plate's objects' per-volume
+                                    // extruder data so the chip strip shows up regardless.
+                                    if (info != null) {
+                                        // v2.0.0 systematic fix (slip_slide_spin
+                                        // plate 3): plate.filamentIndices can
+                                        // undercount when paint data declares
+                                        // more colours than the plate metadata
+                                        // lists. Use the union of every
+                                        // available signal. Plate selector is
+                                        // pre-load — no native data — so we
+                                        // accept that some plates may overcount
+                                        // (e.g. Shashibo plate 5 shows 3 chips
+                                        // for a 2-filament print because the
+                                        // object's per-object default extruder
+                                        // is included; the slicer ignores it
+                                        // post-load. Post-load Prepare and
+                                        // Slice Summary use native + gcode and
+                                        // show the correct count).
+                                        @Suppress("DEPRECATION")
+                                        val effectiveFilaments =
+                                            (plate.filamentIndices +
+                                                plate.paintExtruderStates +
+                                                plate.layerToolExtruders +
+                                                derivePlateFilamentIndices(plate, info))
+                                                .filter { it > 0 }
+                                                .toSet()
+                                        if (effectiveFilaments.isNotEmpty()) {
+                                            Spacer(Modifier.height(6.dp))
+                                            FilamentIndicatorChips(
+                                                filamentIndices = effectiveFilaments.sorted(),
+                                                detectedColors = info.detectedColors,
+                                            )
+                                        }
                                     }
                                 }
                                 Text(
@@ -224,6 +265,94 @@ private fun PlateThumbnail(
             plate.translationX, plate.translationY,
             highlightColor, 0.8f
         )
+    }
+}
+
+/**
+ * Derive the file-filament-index set used on a plate from the plate's
+ * object-level data, for older Bambu file formats that don't carry the
+ * `plateFilamentMap` JSON entry that populates [ThreeMfPlate.filamentIndices]
+ * directly.
+ *
+ * Walks each object on the plate and unions:
+ * - `objectPartExtruders[objectId]` — the per-volume extruder set for
+ *   compound objects (one `<object>` with many `<part>` children, each on
+ *   a different extruder).
+ * - `objectExtruderMap[objectId]` — the object-level default extruder.
+ *
+ * Returns 1-based extruder indices, matching the contract of
+ * [ThreeMfPlate.filamentIndices]. Empty when the plate's objects lack
+ * extruder metadata entirely (single-colour or unrecognised layout).
+ */
+@Suppress("DEPRECATION")
+internal fun derivePlateFilamentIndices(
+    plate: ThreeMfPlate,
+    info: ThreeMfInfo,
+): Set<Int> {
+    val result = mutableSetOf<Int>()
+    for (objectId in plate.objectIds) {
+        val perPart = info.objectPartExtruders[objectId]
+        if (!perPart.isNullOrEmpty()) {
+            result += perPart.filter { it > 0 }
+        } else {
+            info.objectExtruderMap[objectId]?.takeIf { it > 0 }?.let { result += it }
+        }
+    }
+    return result
+}
+
+/**
+ * Per-plate filament indicator — small chip strip that shows the file-
+ * filament indices (1-based, matching the Prepare filament list) used on
+ * a given plate, with the file's declared colour swatch and the index
+ * number. Mirrors the per-object view in desktop Bambu Studio /
+ * OrcaSlicer.
+ */
+@Composable
+private fun FilamentIndicatorChips(
+    filamentIndices: List<Int>,
+    detectedColors: List<String>,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            "Filaments:",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+        )
+        filamentIndices.forEach { idx1Based ->
+            // detectedColors is 0-indexed; filamentIndices are 1-based.
+            val hex = detectedColors.getOrNull(idx1Based - 1).orEmpty()
+            val swatchColor = parseHexColor(hex.ifBlank { "#808080" })
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                        RoundedCornerShape(8.dp),
+                    )
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(swatchColor, CircleShape)
+                        .border(
+                            0.5.dp,
+                            MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                            CircleShape,
+                        ),
+                )
+                Text(
+                    idx1Based.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                )
+            }
+        }
     }
 }
 

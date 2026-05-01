@@ -873,7 +873,7 @@ gh release create v1.5.69 u1-slicer-v1.5.69.apk \
 B77: Sensory Twist Ball (and other Bambu 3MFs with paint-on-supports or per-object overrides) — fix per-object metadata being dropped during sanitization, so enable_support / support_type / layer_height overrides from Bambu Studio's Objects tab are honoured."
 ```
 
-- [ ] **Step 5: Copy APK to G: drive for Tormod's workstation**
+- [ ] **Step 5: Copy APK to G: drive for test workstation**
 
 ```bash
 cp u1-slicer-v1.5.69.apk "G:/My Drive/claude/u1-slicer-v1.5.69.apk"

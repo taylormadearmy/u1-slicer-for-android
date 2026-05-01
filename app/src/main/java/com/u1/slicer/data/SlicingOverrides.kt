@@ -84,11 +84,11 @@ data class SlicingOverrides(
      * This mirrors the [resolveInto] guard: for multi-extruder jobs, ORCA_DEFAULT and USE_FILE
      * must NOT disable the wipe tower — only an explicit OVERRIDE false is honoured.
      *
-     * @param extCount number of extruders being used
+     * @param slotCount number of physical extruder slots being used
      * @param cfgWipeTower current [SliceConfig.wipeTowerEnabled] value
      */
-    fun resolvePrimeTower(extCount: Int, cfgWipeTower: Boolean): Boolean {
-        if (extCount > 1 && primeTower.mode != OverrideMode.OVERRIDE) return true
+    fun resolvePrimeTower(slotCount: Int, cfgWipeTower: Boolean): Boolean {
+        if (slotCount > 1 && primeTower.mode != OverrideMode.OVERRIDE) return true
         return when (primeTower.mode) {
             OverrideMode.USE_FILE     -> cfgWipeTower
             OverrideMode.ORCA_DEFAULT -> @Suppress("UNCHECKED_CAST")

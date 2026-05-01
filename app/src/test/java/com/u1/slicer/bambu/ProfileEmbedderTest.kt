@@ -153,4 +153,72 @@ class ProfileEmbedderTest {
         assertTrue("Must extract extruder=2 regardless of attribute order",
             result.contains("""value="2""""))
     }
+
+    /**
+     * S-Buttons mesh-diversity guard: with a collapsing extruderRemap (which
+     * `buildCompactExtruderRemap` returns for users whose slot presets collapse
+     * multiple file colours onto fewer slots), `convertToModelSettings`
+     * collapses per-object extruder values, eliminating the per-object diversity
+     * the mesh-recolour path needs.
+     *
+     * Phase 2 fix: `embedProfile` now passes `extruderRemap = null` so the
+     * embedded model_settings.config keeps the source's distinct extruder
+     * values. The slicer emits canonical T-indices; the user's slot mapping is
+     * applied at print time by [PrintTimeRemap].
+     *
+     * This test pins both behaviours so a future regression that re-enables
+     * the collapse remap is caught here.
+     */
+    @Test
+    fun `extruderRemap collapses extruders when applied to per-object model`() {
+        // S-Buttons-shaped config: 4 separate objects, each with a distinct
+        // object-level extruder (1..4). No volume sub-elements (mirrors
+        // the calib-cube case but with 4 objects).
+        val input = """
+            <config>
+              <object id="2">
+                <metadata type="object" key="extruder" value="1"/>
+              </object>
+              <object id="3">
+                <metadata type="object" key="extruder" value="2"/>
+              </object>
+              <object id="4">
+                <metadata type="object" key="extruder" value="3"/>
+              </object>
+              <object id="5">
+                <metadata type="object" key="extruder" value="4"/>
+              </object>
+            </config>
+        """.trimIndent()
+
+        // Collapsing remap (4 source extruders → 2 distinct targets).
+        // This is what `buildCompactExtruderRemap` returns when the user's
+        // slot presets collapse multiple file colours onto 2 slots.
+        val collapsing = mapOf(1 to 1, 2 to 2, 3 to 1, 4 to 2)
+        val collapsed = ProfileEmbedder.convertToModelSettings(input.toByteArray(), collapsing)
+        val collapsedExtruders = Regex("""key="extruder"\s+value="(\d+)"""")
+            .findAll(collapsed)
+            .map { it.groupValues[1].toInt() }
+            .toSet()
+        assertEquals(
+            "Collapsing remap reduces 4 source extruders to 2 distinct values — " +
+                "this loses mesh diversity for the 3D Prepare body recolour",
+            setOf(1, 2),
+            collapsedExtruders
+        )
+
+        // Phase 2 contract: embedProfile passes null, so all 4 source extruders
+        // survive and the mesh keeps its per-object diversity.
+        val preserved = ProfileEmbedder.convertToModelSettings(input.toByteArray(), null)
+        val preservedExtruders = Regex("""key="extruder"\s+value="(\d+)"""")
+            .findAll(preserved)
+            .map { it.groupValues[1].toInt() }
+            .toSet()
+        assertEquals(
+            "extruderRemap=null preserves all 4 distinct source extruders so the " +
+                "Prepare preview mesh keeps its 4-distinct-colour layout",
+            setOf(1, 2, 3, 4),
+            preservedExtruders
+        )
+    }
 }

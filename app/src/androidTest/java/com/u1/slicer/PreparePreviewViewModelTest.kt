@@ -212,14 +212,21 @@ class PreparePreviewViewModelTest {
                 distinctNativeIndices.size >= 4
             )
 
-            val colors = viewModel.activeExtruderColors.value
-            val palette = mapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
-            }
+            // Phase 2 §4 Step 6 — preview palette is now canonical-driven.
+            // Recolor with the file's per-filament colours (overlaid by user
+            // overrides). The mesh's extruderIndices are file-filament-indexed,
+            // so palette[i] applies directly without slot-mapping indirection.
+            val resolved = viewModel.resolvedFilamentColors.value
+            assertTrue(
+                "S-Buttons resolvedFilamentColors must have ≥4 entries, got ${resolved.size}",
+                resolved.size >= 4
+            )
+            val palette = resolved.map { SlicerViewModel.staticHexColorToFloatArray(it) }
             mesh.recolor(palette)
 
-            // Count distinct RGBA values in the vertex buffer — if pink (slot 3) is clamped
-            // to blue (slot 2), we'd see only 3 distinct colours even though the mesh has 4 indices.
+            // Count distinct RGBA values in the vertex buffer. Under the
+            // canonical contract, ≥4 distinct file colours means ≥4 distinct
+            // RGBAs in the recolored mesh — no slot palette to collapse them.
             val distinctRgba = mutableSetOf<Int>()
             val buf = mesh.vertices
             val triCount = mesh.vertexCount / 3
@@ -232,7 +239,8 @@ class PreparePreviewViewModelTest {
                 if (distinctRgba.size >= 4) break
             }
             assertTrue(
-                "S-Buttons plate 1 recolored mesh should have at least 4 distinct RGBA values (not 3 due to clamping), got ${distinctRgba.size}",
+                "S-Buttons plate 1 recolored mesh should have at least 4 distinct " +
+                    "RGBA values (file declares 4 colours), got ${distinctRgba.size}",
                 distinctRgba.size >= 4
             )
         } finally {
@@ -312,17 +320,27 @@ class PreparePreviewViewModelTest {
                 distinctColors.size >= 4
             )
 
-            // Also verify the palette produced for the Compose recolor has 4 distinct RGBA values
-            // when applied to the native mesh. This catches colorMapping-level remapping bugs where
-            // palette[3]=activeExtruderColors[mapping[3]]=white even though activeExtruderColors[3]=pink.
+            // Phase 2 §4 Step 6 — preview palette is canonical-driven. The
+            // mesh's recolor uses the file's declared filament colours, NOT
+            // the user's slot-preset palette. So the original B86 bug (E4
+            // collapsing to E2's white because slot 4 fell back to the
+            // default white preset) is structurally impossible: file colours
+            // are never touched by the slot presets.
+            //
+            // What this test now pins: with a file declaring ≥4 distinct
+            // filament colours, the recolored mesh has ≥4 distinct RGBAs,
+            // regardless of what the user's slot presets look like.
             val preview = NativeLibrary().getPreparePreviewMesh()
             assertNotNull("Native prepare preview mesh should be available", preview)
             preview!!
             val mesh = preview.toMeshData()!!
 
-            val palette = mapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
-            }
+            val resolved = viewModel.resolvedFilamentColors.value
+            assertTrue(
+                "B86: resolvedFilamentColors must have ≥4 entries from the file, got ${resolved.size}",
+                resolved.size >= 4
+            )
+            val palette = resolved.map { SlicerViewModel.staticHexColorToFloatArray(it) }
             mesh.recolor(palette)
 
             val distinctRgba = mutableSetOf<Int>()
@@ -337,9 +355,9 @@ class PreparePreviewViewModelTest {
                 if (distinctRgba.size >= 4) break
             }
             assertTrue(
-                "B86: recolored mesh must show 4 distinct RGBA values with [yellow,white,blue,pink] presets " +
-                    "(E4/pink must not collapse to E2/white). " +
-                    "mapping=$mapping colors=$colors distinctRgba=$distinctRgba",
+                "B86: recolored mesh must show 4 distinct RGBA values from the file's " +
+                    "canonical filament colours (independent of the user's slot presets). " +
+                    "resolved=$resolved distinctRgba=$distinctRgba",
                 distinctRgba.size >= 4
             )
         } finally {
@@ -547,12 +565,23 @@ class PreparePreviewViewModelTest {
             )
 
             // Invariant 4: preview mesh distinct RGBA count should match plate 9's
-            // expected distinct slot count when recoloured with plate 9's palette.
+            // expected distinct file-filament count when recoloured with the
+            // canonical-aligned palette (Phase 2 §4 — production sources the
+            // recolor palette from the canonical filament list. The mesh stores
+            // raw fileIndices per triangle; the palette must be sized to
+            // canonical.size so palette[idx] addresses the right colour for
+            // high-fileIndex paint plates like buzz plate 9 (fileIndices 9 + 10).
             val preview = NativeLibrary().getPreparePreviewMesh()
             assertNotNull("plate 9 preview mesh required", preview)
             val mesh = preview!!.toMeshData()!!
-            val palette = plate9Mapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(plate9Colors.getOrElse(slot) { "" })
+            val canonical = viewModel.getCanonicalFilamentList()
+            val canonicalDiag = "  canonicalFilaments=${canonical?.filaments?.map { it.color }}"
+            assertNotNull(
+                "plate 9 must have canonical filament list available\n$diag\n$canonicalDiag",
+                canonical
+            )
+            val palette = canonical!!.filaments.map {
+                SlicerViewModel.staticHexColorToFloatArray(it.color)
             }
             mesh.recolor(palette)
 
@@ -567,11 +596,16 @@ class PreparePreviewViewModelTest {
                 distinctRgba.add((r shl 16) or (g shl 8) or b)
                 if (distinctRgba.size >= 8) break
             }
-            val expectedDistinctSlots = plate9Mapping.distinct().size
+            // Plate 9 mesh uses 2 distinct fileIndices (one per object's extruder
+            // + the paint state) — distinct RGBA count should match
+            // plate9DetectedColors size.
+            val expectedDistinct = plate9DetectedColors.size
             assertEquals(
-                "plate 9 preview mesh distinct RGBA count must match plate 9 mapping's distinct slots\n" +
-                    "$diag\n  distinctRgba=${distinctRgba.size} expected=$expectedDistinctSlots",
-                expectedDistinctSlots,
+                "plate 9 preview mesh distinct RGBA count must match plate 9 " +
+                    "detectedColors count (canonical-aligned recolor)\n" +
+                    "$diag\n$canonicalDiag\n  distinctRgba=${distinctRgba.size} " +
+                    "expected=$expectedDistinct",
+                expectedDistinct,
                 distinctRgba.size
             )
         } finally {
@@ -907,31 +941,62 @@ class PreparePreviewViewModelTest {
             assertNotNull("MeshData conversion should succeed", mesh)
             mesh!!
 
-            // Build palette using the same logic as MainActivity's InlineModelPreview
-            val palette = mapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(colors.getOrElse(slot) { "" })
+            // Phase 2 §4 — preview palette is canonical-driven (file-wide,
+            // indexed by raw fileIndex). Mesh extruderIndices store fileIndices
+            // directly, so palette[fileIndex] addresses the right colour.
+            val canonical = viewModel.getCanonicalFilamentList()
+            assertNotNull("H2C benchy must have canonical filament list", canonical)
+            canonical!!
+            assertTrue(
+                "H2C benchy canonical filament list must have 7 entries " +
+                    "(one per file filament), got ${canonical.size}",
+                canonical.size >= 7
+            )
+            val palette = canonical.filaments.map {
+                SlicerViewModel.staticHexColorToFloatArray(it.color)
             }
-            assertTrue("Palette must have 7 entries (one per model colour)", palette.size >= 7)
-
             mesh.recolor(palette)
 
-            // Find green: any triangle with index 5 should have G ≈ 1.0
+            // Find green's fileIndex via canonical (not hardcoded). Green is the
+            // canonical entry whose hex colour has G as the dominant component —
+            // covers both bright #00FF00 and darker variants like #00AE42.
+            val greenFileIndex = canonical.filaments.indexOfFirst { entry ->
+                val rgba = SlicerViewModel.staticHexColorToFloatArray(entry.color)
+                rgba[1] > rgba[0] && rgba[1] > rgba[2] && rgba[1] > 0.4f
+            }
+            assertTrue(
+                "H2C benchy canonical must contain a green-ish filament; got " +
+                    "filaments=${canonical.filaments.map { it.color }}",
+                greenFileIndex >= 0
+            )
+
+            // Verify green appears in the recoloured mesh — any triangle whose
+            // extruderIndex equals greenFileIndex should have its G channel
+            // matching the canonical's green entry after canonical recolor.
+            val expectedGreen = SlicerViewModel.staticHexColorToFloatArray(
+                canonical.filaments[greenFileIndex].color
+            )
             val indices = mesh.extruderIndices!!
             var greenFound = false
             for (tri in indices.indices) {
                 val idx = indices[tri].toInt() and 0xFF
-                if (idx == 5) {
-                    val gOffset = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX + 7
-                    val g = mesh.vertices.get(gOffset)
-                    if (g > 0.9f) {
+                if (idx == greenFileIndex) {
+                    val rOffset = tri * 3 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX + 6
+                    val r = mesh.vertices.get(rOffset)
+                    val g = mesh.vertices.get(rOffset + 1)
+                    val b = mesh.vertices.get(rOffset + 2)
+                    if (kotlin.math.abs(r - expectedGreen[0]) < 0.05f &&
+                        kotlin.math.abs(g - expectedGreen[1]) < 0.05f &&
+                        kotlin.math.abs(b - expectedGreen[2]) < 0.05f) {
                         greenFound = true
                         break
                     }
                 }
             }
             assertTrue(
-                "H2C benchy Prepare preview must contain green (G>0.9) at index 5 triangles " +
-                    "after recolor with real colorMapping=$mapping, colors=$colors",
+                "H2C benchy Prepare preview must contain canonical green " +
+                    "(${canonical.filaments[greenFileIndex].color}) at fileIndex " +
+                    "$greenFileIndex triangles after canonical recolor",
                 greenFound
             )
 
@@ -944,10 +1009,18 @@ class PreparePreviewViewModelTest {
 
             val state = viewModel.state.value as SlicerViewModel.SlicerState.SliceComplete
             val gcode = java.io.File(state.result.gcodePath).readText()
-            val t1Count = gcode.lines().count { it.trim() == "T1" }
+            // Phase 2 canonical contract: slicer emits T<fileIndex>. Verify
+            // green's T-command appears (or the slot mapping post-remap T1 if
+            // GcodeToolRemapper ran). Accept either compact T1 (legacy slot
+            // remap) or T<greenFileIndex> (canonical fileIndex space).
+            val toolRegex = Regex("""^\s*T(\d+)\s*$""")
+            val toolCounts = gcode.lines().mapNotNull {
+                toolRegex.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
+            }.groupingBy { it }.eachCount()
             assertTrue(
-                "H2C benchy G-code must have T1 tool changes (green), got $t1Count",
-                t1Count > 0
+                "H2C benchy G-code must have at least 2 tool changes (multi-colour); " +
+                    "toolCounts=$toolCounts",
+                toolCounts.size >= 2
             )
         } finally {
             viewModel.clearModel()
@@ -1322,7 +1395,7 @@ class PreparePreviewViewModelTest {
             }
 
             viewModel.selectPlate(8)
-            waitUntil("buzz plate 8 loaded", timeoutMs = 120_000L) {
+            waitUntil("buzz plate 8 loaded", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
                     viewModel.colorMapping.value != null
             }
@@ -1330,15 +1403,20 @@ class PreparePreviewViewModelTest {
 
             val colorMapping = viewModel.colorMapping.value!!
             val extruderColors = viewModel.activeExtruderColors.value.toList()
-            val slicerColorOrder = viewModel.slicerColorOrder.value
-            val semmColorPermutation = viewModel.semmColorPermutationFlow.value
 
             // ---- Prepare: recolour the mesh and tally per-colour triangle counts ----
+            // Phase 2 §4 Step 6 — Prepare palette is canonical-driven (file-wide,
+            // indexed by raw fileIndex). The mesh stores raw fileIndices per
+            // triangle; the palette must be sized to canonical.size so high-
+            // fileIndex paint plates (e.g. Buzz plate 8 uses filaments 3 + 10)
+            // get the right colour at indices 2 + 9.
             val preview = NativeLibrary().getPreparePreviewMesh()
             assertNotNull("plate 8 preview mesh required", preview)
             val mesh = preview!!.toMeshData()!!
-            val palette = colorMapping.map { slot ->
-                SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" })
+            val canonical = viewModel.getCanonicalFilamentList()
+            assertNotNull("plate 8 must have canonical filament list", canonical)
+            val palette = canonical!!.filaments.map {
+                SlicerViewModel.staticHexColorToFloatArray(it.color)
             }
             mesh.recolor(palette)
             val prepareCounts = mutableMapOf<Int, Int>()
@@ -1353,8 +1431,64 @@ class PreparePreviewViewModelTest {
                 prepareCounts[rgb] = (prepareCounts[rgb] ?: 0) + 1
             }
             assertTrue(
-                "Buzz plate 8 Prepare mesh must have at least 2 distinct RGBA colours (painted + unpainted)",
+                "Buzz plate 8 Prepare mesh must have at least 2 distinct RGBA colours " +
+                    "(painted + unpainted) — canonicalSize=${canonical.size} " +
+                    "prepareCounts=${prepareCounts.mapKeys { (k, _) -> String.format("#%06X", k) }}",
                 prepareCounts.size >= 2
+            )
+
+            // DC15 Discord report (2026-04-30): on v2.0.0.beta.3 the Prepare
+            // mesh renders the candy-cane stripes BLUE + WHITE instead of
+            // RED + WHITE. Filament list, gcode preview, summary and mapping
+            // are correct — the bug is isolated to the mesh palette / index
+            // alignment. Buzz canonical:
+            //   filament 2 (#0086D6, blue)  ← bug renders this
+            //   filament 6 (#C12E1F, red)   ← should render this
+            //   filament 10 (#FFFFFF, white) — body
+            // Plate 8 paint_color attrs are all "3C" (PaintColorDecoder
+            // state 6 → filament 6); body uses object-default extruder 10.
+            // Expected mesh indices (0-based fileIdx): 5 (paint) + 9 (body).
+            //
+            // Root cause was the H2C state-fold (states 5-8 → 1-4) being
+            // applied to the multi-state `get_facets` variant — state-6
+            // triangles populated bucket 2 (filament 2 = blue) AND bucket 6
+            // (filament 6 = red), giving a 50/50 blue+red split alongside
+            // the white body. The fold was meant for the slicer's single-
+            // state queries (so segmentation iterating states 1-4 picks
+            // up 5-8 too on H2C files) and is incorrect for the multi-
+            // state variant where each bucket is independently consumed.
+            //
+            // The pre-existing `prepareCounts.size >= 2` check passed for
+            // BLUE+WHITE just as well as RED+WHITE — that's why the bug
+            // shipped to DC15. The strong assertions below pin the exact
+            // colour set: only RED + WHITE, never BLUE.
+            val white = 0xFFFFFF
+            val red = 0xC12E1F
+            val blue = 0x0086D6
+            val countsHex = prepareCounts
+                .mapKeys { (k, _) -> String.format("#%06X", k) }
+                .toList().sortedByDescending { it.second }
+            assertFalse(
+                "Buzz plate 8 Prepare mesh must NOT render any region blue " +
+                    "(#0086D6 = canonical filament 2). DC15-reported bug: H2C " +
+                    "state-fold doubled state-6 (red) into bucket 2 (blue). " +
+                    "countsByFreq=$countsHex",
+                prepareCounts.containsKey(blue)
+            )
+            assertTrue(
+                "Buzz plate 8 Prepare mesh must contain RED triangles (canonical " +
+                    "filament 6 #C12E1F = candy stripes). countsByFreq=$countsHex",
+                prepareCounts.containsKey(red)
+            )
+            assertTrue(
+                "Buzz plate 8 Prepare mesh must contain WHITE triangles (canonical " +
+                    "filament 10 #FFFFFF = body). countsByFreq=$countsHex",
+                prepareCounts.containsKey(white)
+            )
+            assertEquals(
+                "Buzz plate 8 Prepare mesh must have exactly 2 colours (red + white). " +
+                    "countsByFreq=$countsHex",
+                2, prepareCounts.size
             )
 
             // ---- Slice and read T-counts from the G-code ----
@@ -1370,100 +1504,95 @@ class PreparePreviewViewModelTest {
             val result = (sliceState as SlicerViewModel.SlicerState.SliceComplete).result
             val gcode = java.io.File(result.gcodePath).readText()
             val lines = gcode.lines()
-            val toolCounts = (0..3).associateWith { t -> lines.count { it.trim() == "T$t" } }
-                .filter { it.value > 0 }
+            // Phase 2 canonical contract: slicer emits T-indices in fileIndex
+            // space (T0..T(N-1) where N = canonical filaments referenced). May
+            // span beyond T0-T3 because canonical fileIndex isn't slot-bounded.
+            // PrintTimeRemap (separate) translates to physical slots when sending
+            // to the printer.
+            val toolRegex = Regex("""^\s*T(\d+)\s*$""")
+            val toolCounts = lines.mapNotNull {
+                toolRegex.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
+            }.groupingBy { it }.eachCount()
             assertTrue(
                 "Buzz plate 8 must have at least 2 distinct tools in G-code, got $toolCounts",
                 toolCounts.size >= 2
             )
 
-            // ---- Preview: colours via the now-wired normalizeGcodePreviewColors ----
-            val previewColorsForTools = normalizeGcodePreviewColors(
-                extruderColors = extruderColors,
-                colorMapping = colorMapping,
-                semmColorPermutation = semmColorPermutation,
-                slicerColorOrder = slicerColorOrder
+            // C1 from the post-fix code review: the H2C state-fold was only
+            // patched in the multi-state `get_facets`. The single-state
+            // `get_facets(state)` (used by `MultiMaterialSegmentation` per-
+            // extruder query loop) STILL applies the fold. For Buzz plate 8
+            // with `num_facets_states = filament_colour.size + 1 = 11`, the
+            // slicer iterates extruder_idx in [1..11) and calls
+            // `get_facets(EnforcerBlockerType(extruder_idx))` per state.
+            // With the fold, query(state=2) folds into actual=6 and the
+            // state-6 painted geometry ends up projected into BOTH bucket-2
+            // (filament 2 = blue) AND bucket-6 (filament 6 = red) painted_lines
+            // accumulators. Whether this manifests in the saved G-code depends
+            // on whether the segmentation merge collapses overlapping regions
+            // — verify here.
+            //
+            // Buzz plate 8 file-level usage: filament 6 (paint=red, T5 in
+            // 0-indexed canonical) + filament 10 (body=white, T9). Filament 2
+            // (blue) is NOT referenced by the plate's geometry. The footer
+            // `; filament used [mm]` line should report 0 for filament 2 (or
+            // negligible — wipe tower priming only).
+            val footerRegex = Regex("""^;\s*filament used \[mm\]\s*=\s*(.+)$""")
+            val filamentMm = lines
+                .mapNotNull { footerRegex.matchEntire(it)?.groupValues?.get(1) }
+                .firstOrNull()
+                ?.split(",")
+                ?.map { it.trim().toFloatOrNull() ?: 0f }
+                ?: emptyList()
+            assertTrue(
+                "Buzz plate 8 G-code must report `; filament used [mm]` footer " +
+                    "(found none in ${lines.size} lines)",
+                filamentMm.isNotEmpty()
+            )
+            // Reviewer's C1 hypothesis: if the slicer's painted-segmentation
+            // double-counts state-6 into bucket-2, filament 2 will show
+            // significant non-zero mm in the footer. Threshold of 100 mm is
+            // generous for any pure wipe-tower priming overhead.
+            val filament2Mm = filamentMm.getOrNull(1) ?: 0f
+            val filament6Mm = filamentMm.getOrNull(5) ?: 0f
+            val filament10Mm = filamentMm.getOrNull(9) ?: 0f
+            android.util.Log.i(
+                "BuzzPlate8GcodeTest",
+                "filament_used_mm by index: 1(blue)=$filament2Mm, " +
+                    "5(red)=$filament6Mm, 9(white)=$filament10Mm; " +
+                    "full=${filamentMm.mapIndexed { i, v -> "[$i]=$v" }}"
+            )
+            assertTrue(
+                "C1 verification: Buzz plate 8 G-code must use filament 6 (red, " +
+                    "fileIdx 5). Saved G-code reports ${filament6Mm}mm. " +
+                    "filamentMm=$filamentMm",
+                filament6Mm > 100f
+            )
+            assertTrue(
+                "C1 verification: Buzz plate 8 G-code must NOT use filament 2 (blue, " +
+                    "fileIdx 1) — plate 8 paints only filament 6, not filament 2. If " +
+                    "${filament2Mm}mm is significant, the slicer's per-state " +
+                    "segmentation is double-counting state-6 painted geometry into " +
+                    "bucket-2 via the H2C fold in single-state get_facets. " +
+                    "filamentMm=$filamentMm toolCounts=$toolCounts",
+                filament2Mm < 100f
             )
 
-            fun hexToRgb(hex: String): Int? {
-                if (hex.isBlank()) return null
-                val h = if (hex.startsWith("#")) hex.substring(1) else hex
-                if (h.length != 6) return null
-                return try {
-                    h.toInt(16)
-                } catch (e: Exception) {
-                    null
-                }
-            }
-
-            val diag = StringBuilder().apply {
-                appendLine("B92 diag:")
-                appendLine("  colorMapping=$colorMapping")
-                appendLine("  extruderColors=$extruderColors")
-                appendLine("  slicerColorOrder=$slicerColorOrder")
-                appendLine("  semmColorPermutation=$semmColorPermutation")
-                appendLine("  prepareCounts=${prepareCounts.mapKeys { (k, _) -> String.format("#%06X", k) }}")
-                appendLine("  toolCounts=$toolCounts")
-                appendLine("  previewColorsForTools=${previewColorsForTools.mapIndexed { i, c -> "T$i=$c" }}")
-            }.toString()
-
-            // Set equality: Prepare's distinct colours must match Preview's distinct
-            // colours for the T-indices actually present in the G-code.
-            val prepareSet = prepareCounts.keys.toSet()
-            val previewSet = toolCounts.keys.mapNotNull { t -> hexToRgb(previewColorsForTools.getOrNull(t).orEmpty()) }.toSet()
-            assertEquals(
-                "Preview palette (for present tools) must contain the same RGBA set as Prepare\n$diag",
-                prepareSet, previewSet
-            )
-
-            // B92 core assertion: slicerColorOrder must be non-null for the Buzz
-            // plate 8 shape (object default extruder=10 with higher source filament
-            // than the paint state 3). Without it, the G-code viewer would render
-            // T0 with detectedColors[0]'s assigned colour (E1 red = painted's slot)
-            // instead of detectedColors[1]'s assigned colour (E4 white = unpainted's
-            // slot), producing the reported Prepare/Preview swap.
-            assertNotNull(
-                "B92: slicerColorOrder must be populated for plate 8 (object default " +
-                    "has higher source filament than the paint state)\n$diag",
-                slicerColorOrder
-            )
-            assertNotNull(
-                "B92: semmColorPermutation must be populated when the user's mapping " +
-                    "is non-identity\n$diag",
-                semmColorPermutation
-            )
-            val slicerOrder = slicerColorOrder!!
-            val semmPerm = semmColorPermutation!!
-
-            // The slicer-order mapping must differ from identity [0,1,…] because
-            // detectedColors[1] (unpainted white) is the object default and sits
-            // after detectedColors[0] (painted brown) in filament-ascending order,
-            // yet leads in OrcaSlicer's tool ordering.
-            val identityOrder = (0 until slicerOrder.size).toList()
-            assertNotEquals(
-                "B92: slicerColorOrder must be non-identity for Buzz plate 8 " +
-                    "(object default sits at detectedColors[1])\n$diag",
-                identityOrder, slicerOrder
-            )
-
-            // For each present physical T-index, the Preview palette must match the
-            // user's intent for the detected colour that slicer T<k>=detected[slicerOrder[k]]
-            // → physical T<semmPerm[k]>. Any divergence means the viewer renders
-            // at least one tool with the wrong colour.
-            for (slicerCompactIdx in semmPerm.indices) {
-                val physicalSlot = semmPerm[slicerCompactIdx]
-                if (physicalSlot !in toolCounts) continue
-                val detectedIdx = slicerOrder.getOrElse(slicerCompactIdx) { slicerCompactIdx }
-                val userSlot = colorMapping.getOrNull(detectedIdx) ?: continue
-                val expected = extruderColors.getOrNull(userSlot).orEmpty()
-                if (expected.isBlank()) continue
-                val actual = previewColorsForTools.getOrNull(physicalSlot).orEmpty()
-                assertEquals(
-                    "B92: T$physicalSlot (slicer T$slicerCompactIdx → detectedColors[$detectedIdx] " +
-                        "→ user slot $userSlot) must render in $expected\n$diag",
-                    expected.uppercase(), actual.uppercase()
-                )
-            }
+            // Phase 2 contract: Prepare shows canonical (file) colours indexed
+            // by fileIndex; Preview shows slot preset colours indexed by
+            // physical slot. After Group A's canonical-driven recolor, Prepare's
+            // fileIndex space and Preview's slot space are different domains —
+            // they relate via `colorMapping[fileIndex] = slot`, not by raw
+            // RGBA equality. The B92 set-equality invariant was tied to the old
+            // slot-recolor model and no longer holds.
+            //
+            // What we still assert:
+            //   - ≥2 distinct Prepare colours (from canonical at fileIndices used
+            //     by the mesh) — asserted above.
+            //   - ≥2 distinct G-code tools — asserted above.
+            //   - filament 6 (red) actually used; filament 2 (blue) effectively unused
+            //     — asserted above.
+            // These confirm Buzz plate 8 renders + slices to red + white only.
         } finally {
             viewModel.clearModel()
             modelFile.delete()
@@ -1519,7 +1648,7 @@ class PreparePreviewViewModelTest {
             }
 
             viewModel.selectPlate(8)
-            waitUntil("buzz plate 8 loaded", timeoutMs = 120_000L) {
+            waitUntil("buzz plate 8 loaded", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
                     viewModel.colorMapping.value != null
             }

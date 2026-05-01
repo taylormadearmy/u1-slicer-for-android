@@ -3,13 +3,22 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
+Current release: `v2.0.0` (`versionCode 260`)
 
-- **Public release:** `v1.6.13` (`versionCode 258`) — maintained on `release/v1.6.x` branch + `v1.6.13` tag.
-- **`main` baseline:** `v1.7.0-dev` (`versionCode 259`) — Phase 1 of the Bambu via-native-loader refactor merged 2026-04-26. NOT for public consumption; do not publish a GitHub release from `main` until Phase 2 lands.
-- **Phase 2 work:** `feature/phase2-canonical-filaments` branch; design at `docs/superpowers/specs/2026-04-26-canonical-filament-list-design.md`. Phase 2.0 (UX exploration) is the gating first step before any code.
-
+> **NEVER start a print on the user's physical printer without explicit permission.**
+> The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
+> start the print physically. Filament heats, head moves, build plate gets used.
+>
+> When testing send/upload flows on-device:
+>  - Use **"Map & Upload"** / **"Upload Only"** (uploads file but does NOT start the print).
+>  - If you need to test the start-print path, ask the user first — even on what
+>    looks like an idle printer.
+>  - Subagent prompts that drive the device must NOT instruct the agent to tap
+>    "Map & Print" / "Send & Print" without an explicit user-authorised reason.
+>
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
+> For the multi-phase Bambu refactor status (Phase 1 + Phase 2 done; Phase 2.0/2.6 future UX work), see [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md).
 
 ## Build
 
@@ -54,8 +63,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 854 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 225 active instrumented tests + 1 @Ignore'd long-running — uses Orchestrator
+./gradlew testDebugUnitTest                        # 998 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 279 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -64,7 +73,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 822 tests across 59 classes
+### Unit tests (`app/src/test/`) - 998 tests across 74 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -125,9 +134,8 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
-- `bambu/ComputeVisualColorCountByPlateTest.kt` (3) — Review 3 pin tests for `ThreeMfParser.computeVisualColorCountByPlate`: cap-divergence (3 disjoint singleton state sets union, NOT plate-level EarlyExit truncate), B82 plate-1 invariant (per-plate `hasPaint` doesn't bleed across plates), shared-component cross-plate (same path via different object IDs scans once)
 
-### Instrumented tests (`app/src/androidTest/`) - 223 tests across 21 classes
+### Instrumented tests (`app/src/androidTest/`) - 279 tests across 33 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -141,7 +149,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
-- `slicing/BambuPlateStateRegressionTest.kt` (4) — Tier A regression tests for the 6 PM-reported plate state bugs: Dragon plate 3 enriches to 3 extruders (#1), F1 calendar plate 1 enriches to **exactly** 3 extruders (#2 — `==` not `>=` to catch drift in either direction), H2C benchy multi-tool G-code (#5), Buzz cold-load perf gate (#6). Bug #3 (hanging file translate-then-slice) is FIXED by ea420ea; active coverage lives in `SetModelInstancesOffsetTest.calicubeScaleSingleCopy_offsetMatchesGcodeMinX` (the original assertion shape was structurally wrong for the new offset convention; documented in source comments).
+- `slicing/BambuPlateStateRegressionTest.kt` (5) — Tier A regression tests for the 6 PM-reported plate state bugs: Dragon plate 3 / F1 calendar extruder counts (#1/#2), hanging file translate preserved through slice (#3), H2C benchy multi-tool G-code (#5), Buzz cold-load perf gate (#6)
 - `slicing/BambuFixtureHarnessTest.kt` (6) — Tier B data-driven harness: one `@Test` per fixture so Orchestrator gives each its own process (slicing accumulates native memory; combining all 6 in one method OOMs). Validates extruder count, paint flag, per-tool G-code counts, bounding box ceiling for: Dragon Scale plate 3, Button-for-S-trousers, colored Benchy, Shashibo plate 5, slip-slide-spin plate 3, flippy+flappy plate 4
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/NativePreparePreviewTest.kt` (16) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation, H2C benchy full/decimated 7-index preservation + green recolor + interleaving guard, layer-tool Z-band recolor, triangle count cap, B51 old.3mf bounding box + Korok orientation, B72 multi-instance post-slice bounds, B78 Shashibo plate 5 file-scale+centre preservation on fresh load + post-slice dirty-path reset
@@ -256,6 +264,22 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
 > **CRITICAL: Always build with Release optimization.** Debug builds (`-O0`) produce a ~83MB `.so`
 > (vs ~20MB Release) that is 3-5x slower and causes native OOM crashes on heavy multi-colour models.
 
+> **CRITICAL: orcaslicer submodule must be initialised in the build worktree.**
+> Worktrees do not auto-clone submodules — phase2 / refactor / hotfix worktrees
+> typically have an empty `app/src/main/cpp/orcaslicer/` directory and only the
+> .gitlink is tracked. Before any rebuild from a fresh worktree:
+>
+> ```bash
+> git submodule update --init --recursive app/src/main/cpp/orcaslicer
+> ```
+>
+> If you skip this, ninja silently links pre-cached `.o` files from a different
+> worktree's source state and the `.so` may be missing JNI symbols (Buzz plate 8
+> 2026-04-30 incident: rebuild from parent worktree with phase2's `.cxx` cache
+> produced a `.so` without `nativeGetAllVolumeExtruders`, causing
+> `UnsatisfiedLinkError` mid-load). Always rebuild from the worktree whose source
+> matches the branch you intend to ship.
+
 ### Using an existing build directory (preferred — faster)
 
 If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous build:
@@ -270,12 +294,14 @@ If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous 
    CMAKE_BUILD_TYPE:STRING=Release
    ```
    Do NOT set `CMAKE_CXX_FLAGS_RELEASE` — leave it empty so the toolchain default (`-O3 -DNDEBUG`) is used.
-3. Run `ninja -j1` in the directory (OOMs at `-j2`+)
-4. Strip: `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip --strip-unneeded libprusaslicer-jni.so`
-5. Copy to `app/src/main/jniLibs/arm64-v8a/`
-6. **Verify size**: stripped Release `.so` should be ~19-21MB. If it's 50MB+, you built with Debug — redo.
-7. **Verify compiler**: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17.0.2`.
-8. `./gradlew clean installDebug` — incremental builds may cache old APK
+3. **CRITICAL when building from a worktree**: the existing build dir is bound to a specific source directory (see `CMAKE_HOME_DIRECTORY` in `CMakeCache.txt`). If you only modified `sapil_print.cpp` in the worktree but the worktree has additional/modified files in `app/src/main/cpp/src/` that the bound source tree is missing (Phase 1+ added `sapil_bambu_*.cpp/h`, `sapil_diagnostics.cpp/h` changes, `sapil_model.cpp` changes, `slicer_wrapper.cpp` changes, plus `CMakeLists.txt` and `include/sapil.h`), the resulting `.so` will be missing native methods and instrumented tests will fail with `UnsatisfiedLinkError`. **Always copy the full set of worktree-modified files (`diff -rq` between `cpp/src` and `cpp/include` and `CMakeLists.txt`) into the bound source tree before running ninja, then `cmake .` to rescan globs, then `ninja -j1`, then restore the source tree afterwards.** The pre-existing pattern of "copy only sapil_print.cpp, build, restore" is unsafe across worktrees with multi-file native diffs.
+4. Run `ninja -j1` in the directory (OOMs at `-j2`+)
+5. Strip: `$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/*/bin/llvm-strip --strip-unneeded libprusaslicer-jni.so`
+6. Copy to `app/src/main/jniLibs/arm64-v8a/`
+7. **Verify size**: stripped Release `.so` should be ~19-21MB. If it's 50MB+, you built with Debug — redo.
+8. **Verify compiler**: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17.0.2`.
+9. **Verify JNI symbol completeness**: `llvm-readelf -p .dynsym libprusaslicer-jni.so | grep Java_com_u1_slicer_NativeLibrary | wc -l` should match the count of `external fun` declarations in `app/src/main/java/com/u1/slicer/NativeLibrary.kt`. A mismatch means the build dropped JNI methods (often: a worktree-only source file wasn't picked up by CMake — see step 3).
+10. `./gradlew clean installDebug` — incremental builds may cache old APK
 
 ### Fresh build (when no existing build dir works)
 

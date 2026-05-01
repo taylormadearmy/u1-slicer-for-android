@@ -52,8 +52,20 @@ object GcodeParser {
         var lastE = 0f
         var absoluteE = true
         var perExtruderMm = emptyList<Float>()
-        val computedPerExtruderMm = FloatArray(4)
+        // Phase 2 — multi-filament files (paint segmentation, MMU) can have
+        // more than 4 distinct T-indices in the G-code (H2C benchy: 7,
+        // Buzz plate 9: 11). FloatArray(4) silently truncated; we now grow
+        // the buffer on demand. Cap at 32 — well above any realistic file.
+        var computedPerExtruderMm = FloatArray(4)
         val computedExtruderOrder = mutableListOf<Int>()
+        fun ensureExtruderCapacity(idx: Int) {
+            if (idx < computedPerExtruderMm.size) return
+            val needed = (idx + 1).coerceAtMost(32)
+            val grown = FloatArray(needed)
+            System.arraycopy(computedPerExtruderMm, 0,
+                grown, 0, computedPerExtruderMm.size)
+            computedPerExtruderMm = grown
+        }
         var currentFeatureType: Byte = FeatureType.OTHER
         var currentFeatureLabel: String = "OTHER"
         var wipeTowerE = 0f      // total E extruded in prime/wipe tower regions
@@ -190,7 +202,8 @@ object GcodeParser {
                                 } else {
                                     newE.coerceAtLeast(0f)
                                 }
-                                if (moveExtruder in 0..3 && extrudedMm > 0f) {
+                                if (moveExtruder in 0..31 && extrudedMm > 0f) {
+                                    ensureExtruderCapacity(moveExtruder)
                                     if (computedPerExtruderMm[moveExtruder] <= 0f) {
                                         computedExtruderOrder += moveExtruder
                                     }
@@ -244,9 +257,23 @@ object GcodeParser {
                     continue
                 }
 
-                // T0–T9 — tool change
-                if (c0 == 'T' && cmdLen == 2 && l[start + 1] in '0'..'9') {
-                    currentExtruder = (l[start + 1] - '0').coerceIn(0, 3)
+                // Tool change. Phase 2 (2026-04-28, post-adversarial-review)
+                // — parses multi-digit T-indices, not just T0..T9. Buzz
+                // plate 9 emits T10 + T11 in canonical-fileIndex space;
+                // the prior `cmdLen == 2` check skipped them so any
+                // extrusion after `T10` was attributed to the previous
+                // tool, breaking per-filament usage summaries and
+                // gcode-preview colouring.
+                if (c0 == 'T' && cmdLen >= 2 && l[start + 1] in '0'..'9') {
+                    var raw = 0
+                    var i = start + 1
+                    val end = start + cmdLen
+                    while (i < end && l[i] in '0'..'9') {
+                        raw = raw * 10 + (l[i] - '0')
+                        i++
+                    }
+                    currentExtruder = raw.coerceIn(0, 31)  // safety cap
+                    ensureExtruderCapacity(currentExtruder)
                 }
             }
         }
@@ -261,33 +288,39 @@ object GcodeParser {
         }
 
         val hasComputedExtrusion = computedPerExtruderMm.any { it > 0f }
-        val normalizedFooterPerExtruderMm = perExtruderMm
-            .take(4)
-            .dropLastWhile { it <= 0f }
         // B67: use SORTED tool order (0,1,2,3) for compact array, not first-appearance
         // order. First-appearance reordering caused the per-extruder summary to swap
-        // E1/E2 values when T1 appeared before T0 in the G-code (e.g. Flarewing Dragon
-        // SEMM where the wipe tower primes T1 first). The display layer
-        // (buildPerExtruderDisplaySlots) handles user-facing slot mapping separately.
+        // E1/E2 values when T1 appeared before T0 in the G-code.
         val compactComputedPerExtruderMm = computedExtruderOrder.sorted().map { idx ->
             computedPerExtruderMm[idx]
         }
+        // v2.0.0 systematic fix (Border Collie + Buzz plate 1 reports): the
+        // footer line `; filament used [mm] = a, b, c, ...` is the slicer's
+        // authoritative output — it is in CANONICAL fileIdx order, sized to
+        // canonical, with 0.0 for unused entries. Pre-fix the parser preferred
+        // `compactComputedPerExtruderMm` (compact T-order, sparse) for multi-
+        // tool jobs to avoid "phantom footer zeros creating fake preview
+        // slots". That trade-off was wrong: it discarded canonical alignment
+        // and made downstream UI label chips by T-index instead of fileIdx
+        // (Border Collie 2 chips labelled "1, 2" instead of "2, 3"; Buzz
+        // plate 1 4 chips labelled "1, 2, 3, 4" instead of "1, 2, 6, 9").
+        // The fix: always prefer the raw canonical-wide footer line. UI
+        // surfaces filter by mm > 0 to hide phantom zeros.
         val resolvedPerExtruderMm = when {
-            // In pause-segment mode, footer comments often don't reflect post-injected tool splits.
+            // Pause-segment mode: footer comments don't reflect post-injected tool splits.
             colorSegmentsByPausePrint && hasComputedExtrusion -> compactComputedPerExtruderMm
-            // For multi-tool jobs, prefer parsed extrusion usage so phantom footer tools
-            // (e.g. extra zero entries) do not create fake preview slots/colors.
-            hasComputedExtrusion && compactComputedPerExtruderMm.size >= 2 -> compactComputedPerExtruderMm
-            normalizedFooterPerExtruderMm.isNotEmpty() -> normalizedFooterPerExtruderMm
+            // Always prefer the raw canonical-wide footer line when present.
+            perExtruderMm.isNotEmpty() -> perExtruderMm
+            // No footer line → fall back to computed (compact T-order).
             hasComputedExtrusion -> compactComputedPerExtruderMm
-            perExtruderMm.isNotEmpty() -> perExtruderMm.take(4)
             else -> emptyList()
         }
-        val finalPerExtruderMm = if (resolvedPerExtruderMm.size <= 4) {
-            resolvedPerExtruderMm
-        } else {
-            resolvedPerExtruderMm.take(4)
-        }
+        // Phase 2 — pass the full per-extruder list through. Display layer
+        // (SliceCompleteSummaryCard / buildPerExtruderDisplaySlots) handles
+        // user-facing slot mapping; clamping at 4 here drops legitimate
+        // multi-filament data for files with > 4 distinct T-indices
+        // (H2C benchy, Buzz plate 9, etc.).
+        val finalPerExtruderMm = resolvedPerExtruderMm
 
         return ParsedGcode(
             layers = layers,

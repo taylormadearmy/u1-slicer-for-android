@@ -31,20 +31,25 @@ class NativePreviewMeshTest {
         assertEquals(30f, mesh.maxX, 0.001f)
         assertEquals(0f, mesh.minY, 0.001f)
         assertEquals(10f, mesh.maxY, 0.001f)
-        // B88: toMeshData compacts sparse native indices to 0..N-1 so MeshData.recolor
-        // palette lookups align with the Kotlin-compacted colorMapping / detectedColors.
-        // Sorted-unique ordering preserved: raw 0 → compact 0, raw 3 → compact 1.
-        assertArrayEquals(byteArrayOf(0, 1), mesh.extruderIndices)
+        // Phase 2 (Approach A1): toMeshData preserves raw native extruder
+        // indices verbatim — they are file-filament-indexed (0-based) so the
+        // Phase 2 canonical palette resolves the correct colour at each index.
+        // The previous B88 Kotlin-side compaction was correct for the pre-
+        // Phase-2 plate-narrowed palette but produced wrong colours for Buzz
+        // Lightyear plate 9 once the palette became file-filament-indexed.
+        assertArrayEquals(byteArrayOf(0, 3), mesh.extruderIndices)
     }
 
     @Test
-    fun `toMeshData compacts sparse extruder indices to match colorMapping palette`() {
-        // B88: sparse / high raw paint-state indices must compact to 0..N-1 sorted-unique
-        // so `MeshData.recolor(palette)` — where `palette.size == colorMapping.size` —
-        // does not clamp to `palette.lastIndex`. Buzz Lightyear plate 9 shipped raw
-        // indices 9/10 with a 2-entry palette; the clamp collapsed Prepare to a single
-        // colour. H2C painted models where states 0..N-1 are already contiguous are
-        // unaffected by this compaction (it degenerates to the identity map).
+    fun `toMeshData preserves sparse extruder indices for canonical palette lookup`() {
+        // Phase 2: sparse / high raw paint-state indices stay as-is so
+        // `MeshData.recolor(palette)` — where the palette is the file's
+        // canonical filament list (file-filament-indexed, palette[i] is file
+        // filament i+1) — resolves the correct colour for each triangle.
+        // Buzz Lightyear plate 9 ships raw indices 7/9 (paint states 8/10);
+        // those must reach the recolor step intact so palette[7] (file
+        // filament 8 / peach) and palette[9] (file filament 10 / white) light
+        // up rather than collapsing to palette[0] / palette[1].
         val preview = NativePreviewMesh(
             trianglePositions = FloatArray(5 * 9) { idx ->
                 when (idx % 9) {
@@ -57,8 +62,8 @@ class NativePreviewMeshTest {
         )
         val mesh = preview.toMeshData()
         assertNotNull(mesh)
-        // Sorted-unique: 0, 3, 4, 6, 9 → compact 0, 1, 2, 3, 4.
-        assertArrayEquals(byteArrayOf(0, 1, 2, 3, 4), mesh!!.extruderIndices)
+        // Phase 2 contract: indices preserved verbatim.
+        assertArrayEquals(byteArrayOf(0, 3, 4, 6, 9), mesh!!.extruderIndices)
     }
 
     @Test

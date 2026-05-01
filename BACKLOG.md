@@ -4,6 +4,31 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B97: H2C state-fold helper has no provenance check — defensive cleanup
+- **Symptom**: `TriangleSelector::h2c_state_matches` (orcaslicer fork, `src/libslic3r/TriangleSelector.cpp:1428`) returns true for `actual = query+4` whenever `query in [1..4]` regardless of whether the file is genuinely H2C (4-slot dual-AMS) or a normal multi-filament Bambu file with > 4 declared filaments.
+- **User-facing impact**: NONE currently. Buzz plate 8 (the original trigger of this concern) was the multi-state-variant manifestation only — saved G-code is clean (verified 2026-04-30, `filament_used_mm[1]=0` with state-6 painted geometry not bleeding into bucket 2). The slicer's downstream merge/projection step in `MultiMaterialSegmentation` collapses the duplicate-state buckets so phantom extrusion never reaches the output.
+- **Latent risk**: a future file shape that paints with state in 5..8 in a slicer code path that does NOT collapse via `merge_segmented_layers` could surface phantom extrusion. Specifically files with `filament_colour.size() > 4` where the user maps states 5..8 to physically distinct slots.
+- **Proposed fix**: thread an `h2c_active` flag through TriangleSelector (set by the BBS importer when `filament_settings_id` matches `@BBL H2C` or similar — see `SlicerViewModel.kt:4722` for the Kotlin H2C detection markers) and gate the fold on it. The current fold then activates only on real H2C files.
+- **Not a ship blocker**: defensive only; covered by guard tests on Buzz plate 8 G-code (`buzzLightyear_plate8_prepareAndPreviewColoursAgreeByRegionSize` C1 assertion) and the 18-test instrumented sweep including H2C colored_3DBenchy.
+- **Source**: surfaced in the 2026-04-30 code review (post-Buzz fix) as concern C1+C2.
+
+### B96: SEMM-painted files emit canonical-fileIndex T-indices instead of physical-slot — pre-existing, amplified by Phase 2 — OPEN
+- **Symptom**: SEMM (paint-state) painted files produce G-code with T-index spread that doesn't match desktop Snapmaker Orca's output. Most extreme on `colored_3DBenchy (1).3mf`:
+  - Desktop Snapmaker Orca: `T0=3, T1=4, T2=2` (3 tools used for the 3 visible paint regions)
+  - v1.6.13 Android: `T0=2, T1=5, T2=3, T3=2` (4 tools, T3 unused in desktop)
+  - v1.7.0-dev Phase 2 narrowed gate: `T0=15, T1=19, T2=19, T3=0, T4-T9=73` (10× more transitions, spread to canonical 10-wide)
+- **Distinct from B62/B92/B95**: those were paint-state decoding/permutation issues with concrete fixes. B96 is the slicer-side T-index spread itself — the slicer emits per-canonical-slot transitions even where no paint regions are assigned to those slots.
+- **User-facing impact**: Send → printer still works (PrintTimeRemap converts canonical → physical at upload time). Save Gcode + Share Gcode also work in Phase 2 after the 2026-04-28 fix that routes them through the same remap. The amplification inflates wipe-tower waste for SEMM files (more transitions than the model actually needs) but does not cause print failure.
+- **Other affected fixtures (verified in 2026-04-28 E2E batch)**:
+  - `old.3mf` (legacy SEMM 2-colour): 1.9× transition amplification (782 → 1496 lines)
+  - `PrusaSlicer-printables-Korok_mask_4colour.3mf`: T4 added to body (5-wide canonical)
+  - `skywing-seawing-silkwing.3mf`: 2× transition amplification (11 → 22)
+- **Per-object and layer-tool paths are NOT affected** (verified clean on Dragon Scale plate 3, slip-slide plate 3, Button-for-S-trousers, foldy+coaster, calib-cube, Shashibo plate 5).
+- **Pre-existing**: confirmed via desktop reference (`G:/My Drive/Logs/colour_3DBenchy_PLA_1h15m.gcode`) and by direct snapshot comparison of v1.6.13 vs Phase 2 narrowed-gate harness output. v1.6.13 was already wrong vs desktop; Phase 2 amplifies the same underlying bug because the canonical-list expansion sizes per-extruder arrays wider, and SEMM segmentation iterates them.
+- **Investigation not started**: needs to identify why OrcaSlicer's `multi_material_segmentation_by_painting()` emits transitions for canonical slots with no painted triangles. May be in OrcaSlicer's wipe-tower / per-extruder per-layer purge cycle path. Track in a separate branch from Phase 2.
+- **Not a Phase 2 ship blocker**: Send-to-printer + Save/Share remap paths are correct; print correctness preserved. Cosmetic / waste-of-filament issue only.
+- **Source**: Surfaced during 2026-04-28 G-code differential investigation; user reports `colored_3DBenchy` "has been a trouble file forever".
+
 ### B95: Buzz plate 9 paint state dropped by slicer — only T0 in G-code (GitHub #102) — FIXED v1.6.13
 - **Symptom**: On v1.6.10, Buzz Lightyear plate 9 Prepare showed 2 distinct colours correctly (peach #FFD6C1 + white #FFFFFF per the B90 detection fix), but the sliced G-code contained only `T0` (3 tool changes across 605 layers) with no `T1`/`T2`/`T3`. Slice summary reported a single extruder; G-code 3D preview rendered the whole model in the renderer's default slot-0 colour.
 - **Distinct from B92**: B92 was about Prepare ↔ Preview palette alignment on plates where OrcaSlicer's print order disagreed with detectedColors. Plate 9's slicer never emitted the paint state as a tool change, so this is a paint-segmentation / embedder issue upstream of any palette alignment.
@@ -190,14 +215,16 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Fix: post-slice G-code header patch — `fixFilamentTypeHeader()` replaces `; filament_type = PLA` with actual per-extruder material types from extruder presets
 - **Source**: Discord user Jon (2026-04-14)
 
-### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60) — likely fixed v1.6.13, needs E2E confirmation
+### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60) — FIXED v1.6.13 (PaintColorDecoder), reverified v2.0.0
 - For `colored_3DBenchy (1).3mf` (4-colour SEMM), the Prepare preview, G-code preview, and desktop OrcaSlicer all show different colours
 - **Prepare screen**: Only 2 colour chips shown; model renders mostly white/gray — 2 of 4 paint zones missing
 - **G-code preview**: More colours visible in toolpath render but different distribution from desktop reference
 - Not a slicing correctness issue (all 4 extruders active in G-code), but gives user a misleading picture
 - **Affects**: All SEMM painted models (`hasPaintData=true`)
-- **2026-04-23 v1.6.13 manual check**: post-decoder, `colored_3DBenchy (1).3mf` reports `colors=4, mapping=[0, 1, 2, 3]`, all 4 colour chips visible (Color 1 blue, Color 2 red, Color 3 yellow, Color 4 white) and the Prepare 3D mini-preview shows all 4 colours on the Benchy. Symptom appears resolved by the new `PaintColorDecoder` correctly identifying all paint states. Formal verification via the next E2E batch (Prepare colour-zone count + sliced G-code preview render comparison) before closing.
-- **When fixed**: restore CP TOOLCHANGE~27 assertion in the `colored_3DBenchy (1).3mf` E2E check (skill file + memory `e2e-testing.md`) — it was suppressed due to this bug
+- **2026-04-23 v1.6.13 manual check**: post-decoder, `colored_3DBenchy (1).3mf` reports `colors=4, mapping=[0, 1, 2, 3]`, all 4 colour chips visible (Color 1 blue, Color 2 red, Color 3 yellow, Color 4 white) and the Prepare 3D mini-preview shows all 4 colours on the Benchy. Symptom appears resolved by the new `PaintColorDecoder` correctly identifying all paint states.
+- **2026-05-01 v2.0.0 E2E confirmation**: full 16-fixture E2E batch on Pixel 8a — `colored_3DBenchy (1).3mf` shows 4 colour chips, 3 of 4 canonical T-indices used in saved G-code (T3=0 because that paint state is not actually present in the geometry, model-correct). Prepare/Preview palette agreement verified separately by `buzzLightyear_plate8_prepareAndPreviewColoursAgreeByRegionSize` regression guard.
+- **GitHub #60**: ready to close.
+- ~~**When fixed**: restore CP TOOLCHANGE~27 assertion in the `colored_3DBenchy (1).3mf` E2E check~~ — leave suppressed (CP TOOLCHANGE count is genuinely variable across SEMM session-by-session, not a regression signal).
 
 ### B54: Modifier volumes rendered as solid geometry in Prepare preview (GitHub #55) — FIXED
 - **Root cause**: `BambuSanitizer.buildOrcaModelConfig()` hardcoded `subtype="normal_part"` for all `<part>` entries, overwriting `"modifier_part"` from the original 3MF. Also `needsModelConfig` only checked `extruder > 1`, so single-colour files with modifiers got no config at all. OrcaSlicer's BBS loader then defaulted all volumes to `MODEL_PART`, making the modifier cube appear as solid geometry.

@@ -108,127 +108,117 @@ class B95Plate9PaintStateTest {
     }
 
     /**
-     * End-to-end B95 guard: slice plate 9 through the full pipeline.
-     * Pre-fix this FAILS (only T0 emitted). Post-fix both T0 and T1 must
-     * appear because the paint state's triangles should become their own
-     * tool change in the G-code.
+     * End-to-end B95 guard: slice plate 9 through the SlicerViewModel
+     * pipeline and assert the canonical-space G-code emits at least 2
+     * distinct tool changes (paint state + object default).
      *
-     * @Ignore'd for now: the fix requires understanding the bit-packed
-     * encoding of `paint_color` attributes so BambuSanitizer can rewrite
-     * source filament indices to compact ones, OR a native patch inside
-     * `multi_material_segmentation_by_painting()`. An embed-count bump
-     * attempt (filament_colour sized to `max(usedExtruderIndices)`) did
-     * not fix the slicer output and regressed plate 8's Preview palette.
-     * Leaving the assertion in the tree as documentation of the desired
-     * behaviour — unignore when the real fix lands.
+     * Phase 2 contract (2026-04-27 architectural fix): the slicer emits
+     * T-indices in canonical fileIndex space (no slice-time slot remap).
+     * Print-time slot mapping is applied by `PrintTimeRemap` when sending
+     * to the printer; the on-disk G-code carries the slicer's native T-
+     * indices.
+     *
+     * The pre-Phase-2 version of this test hand-rolled
+     * `extractPlate` + `restructurePlateFile` + `embedder.buildConfig`
+     * + `lib.slice` + manual `composeSemmRemap` /
+     * `computeExpandedGcodeRemap` / `GcodeToolRemapper.remap`. That
+     * pipeline is now retired in production and the manual remap collapsed
+     * canonical T-indices back into compact slot space, masking the actual
+     * paint-state-emission invariant. The rewrite goes through the same
+     * production code path the user's Send button drives.
      */
     @Test
-    fun plate9_slicedGcodeHasTwoTools() {
-        val input = asset("Buzz_Multipart_3MF_Bambu.3mf")
+    fun plate9_slicedGcodeHasTwoTools() = kotlinx.coroutines.runBlocking {
+        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
+        val app = ctx.applicationContext as com.u1.slicer.U1SlicerApplication
+        val viewModel = com.u1.slicer.SlicerViewModel(app)
+        val modelFile = asset("Buzz_Multipart_3MF_Bambu.3mf")
 
-        // Extract plate 9 (same path SlicerViewModel takes)
-        val plateFile = BambuSanitizer.extractPlate(input, 9, outDir)
-        assertTrue("plate 9 extract must produce a file", plateFile.exists())
+        try {
+            viewModel.loadModelFromFile(modelFile)
 
-        // Restructure if the plate has multi-color components
-        val restructured = try {
-            BambuSanitizer.restructurePlateFile(plateFile, outDir)
-        } catch (_: Throwable) {
-            plateFile
+            // Buzz is ~73MB; parse + plate enumeration is slow on Pixel 8a.
+            val plateSelectorDeadline = System.currentTimeMillis() + 240_000L
+            while (System.currentTimeMillis() < plateSelectorDeadline) {
+                if (viewModel.showPlateSelector.value ||
+                    viewModel.state.value is com.u1.slicer.SlicerViewModel.SlicerState.Error) break
+                Thread.sleep(100)
+            }
+            val loadState = viewModel.state.value
+            if (loadState is com.u1.slicer.SlicerViewModel.SlicerState.Error) {
+                throw AssertionError("Buzz 3MF load failed: ${loadState.message}")
+            }
+            assertTrue("plate selector must appear", viewModel.showPlateSelector.value)
+
+            viewModel.selectPlate(9)
+            val plateLoadedDeadline = System.currentTimeMillis() + 120_000L
+            while (System.currentTimeMillis() < plateLoadedDeadline) {
+                val s = viewModel.state.value
+                if (s is com.u1.slicer.SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null) break
+                if (s is com.u1.slicer.SlicerViewModel.SlicerState.Error) {
+                    throw AssertionError("Plate 9 load failed: ${s.message}")
+                }
+                Thread.sleep(100)
+            }
+            assertTrue(
+                "plate 9 must reach ModelLoaded with colorMapping",
+                viewModel.state.value is com.u1.slicer.SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            )
+
+            // Sanity: plate 9 has paint data and the canonical-driven plate
+            // narrowing produced 2 detected colours (object default + paint state).
+            val plate9Info = viewModel.threeMfInfo.value!!
+            assertTrue("plate 9 must have paint data", plate9Info.hasPaintData)
+            assertEquals(
+                "plate 9 detectedColors must have 2 entries (object default + paint state); got ${plate9Info.detectedColors}",
+                2, plate9Info.detectedColors.size
+            )
+
+            // Slice through the production path.
+            viewModel.startSlicing()
+            val sliceDeadline = System.currentTimeMillis() + 300_000L
+            while (System.currentTimeMillis() < sliceDeadline) {
+                val s = viewModel.state.value
+                if (s is com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete) break
+                if (s is com.u1.slicer.SlicerViewModel.SlicerState.Error) {
+                    throw AssertionError("Plate 9 slice failed: ${s.message}")
+                }
+                Thread.sleep(200)
+            }
+            val sliceState = viewModel.state.value
+            assertTrue(
+                "plate 9 must reach SliceComplete; got $sliceState",
+                sliceState is com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete
+            )
+            sliceState as com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete
+
+            val gcode = File(sliceState.result.gcodePath).readText()
+            val lines = gcode.lines()
+            // Phase 2: count ANY T-index (canonical fileIndex space, not just
+            // slot space). Buzz plate 9 references file filaments 6 (paint state)
+            // and 10 (object default extruder); the slicer emits at least two
+            // distinct T-indices for them.
+            val toolRegex = Regex("""^\s*T(\d+)\s*$""")
+            val toolCounts = lines.mapNotNull {
+                toolRegex.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
+            }.groupingBy { it }.eachCount()
+            android.util.Log.i(
+                "B95", "plate 9 slice: detectedColors=${plate9Info.detectedColors} " +
+                    "colorMapping=${viewModel.colorMapping.value} toolCounts=$toolCounts"
+            )
+            assertTrue(
+                "B95: plate 9 has 2 distinct detected colours (paint state + object " +
+                    "default) and MUST produce at least 2 tool changes in the G-code. " +
+                    "Got toolCounts=$toolCounts. If only one T-index is emitted, the " +
+                    "paint state was silently dropped — likely because the embedded " +
+                    "filament_colour cannot address the source filament's state index.",
+                toolCounts.size >= 2
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
         }
-
-        val plateInfo = ThreeMfParser.parseForPlateSelection(restructured)
-        assertTrue("restructured plate must retain paint data", plateInfo.hasPaintData)
-
-        // Mirror the real SlicerViewModel pipeline: derive a default identity
-        // colorMapping from detected colours and use computeEmbedTargetCount to
-        // size filament_colour. The B95 fix expects max(usedExtruderIndices) to
-        // bump the embed count when it exceeds distinctSlots.
-        val detectedSize = plateInfo.detectedColors.size
-        val colorMapping = (0 until detectedSize).toList()
-        val targetCount = com.u1.slicer.computeEmbedTargetCount(
-            colorMapping = colorMapping,
-            hasPaintData = plateInfo.hasPaintData,
-            toolRemapSlots = null,
-            fallbackExtCount = detectedSize,
-            hasMultiExtruderAssignments = plateInfo.hasMultiExtruderAssignments,
-            maxSourceFilamentIndex = plateInfo.usedExtruderIndices.maxOrNull() ?: 0
-        )
-        android.util.Log.i("B95",
-            "plate 9 embed setup: detectedSize=$detectedSize " +
-                "usedExtruderIndices=${plateInfo.usedExtruderIndices} " +
-                "targetCount=$targetCount"
-        )
-
-        // Load the source filament_colour so the embedder can size its per-filament
-        // arrays correctly — matching the real SlicerViewModel pipeline.
-        val sourceConfig = ZipFile(input).use { embedder.parseSourceConfig(it) }
-        val config = embedder.buildConfig(
-            info = plateInfo,
-            sourceConfig = sourceConfig,
-            targetExtruderCount = targetCount
-        )
-        val embedded = embedder.embed(restructured, config, outDir, plateInfo)
-        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
-
-        // SliceConfig uses physical extruder count (<=4), not the virtual embed size.
-        val physicalExtruderCount = detectedSize.coerceIn(2, 4)
-        val result = lib.slice(makeConfig(physicalExtruderCount))
-        assertNotNull("slice() must not return null", result)
-        result!!
-        assertTrue("plate 9 must slice: ${result.errorMessage}", result.success)
-
-        // Mirror SlicerViewModel's post-slice remap so high-index slicer tools
-        // (T7 from paint state 8, T9 from object default 10) get collapsed back
-        // to the user's physical slot assignments.
-        val semmPerm = com.u1.slicer.computeSemmColorPermutation(
-            colorMapping = colorMapping,
-            hasPaintData = plateInfo.hasPaintData,
-            isH2cStyle = false
-        )
-        // B95: when the embed was bumped to address high-index source filaments,
-        // the slicer emits T<filament-1> for each used filament (T9 + T10 for plate 9).
-        // computeExpandedGcodeRemap returns a list that maps every emitted T-index back
-        // to a physical slot via the user's colorMapping; this list takes priority
-        // over the legacy compact semmColorPermutation when present.
-        val expanded = com.u1.slicer.computeExpandedGcodeRemap(
-            usedExtruderIndices = plateInfo.usedExtruderIndices,
-            colorMapping = colorMapping,
-            embeddedFilamentCount = targetCount
-        )
-        val composed = expanded ?: com.u1.slicer.composeSemmRemap(null, semmPerm)
-        android.util.Log.i("B95", "plate 9 composedRemap=$composed expanded=$expanded")
-        if (composed != null) {
-            com.u1.slicer.gcode.GcodeToolRemapper.remap(result.gcodePath, composed)
-        }
-
-        val gcode = File(result.gcodePath).readText()
-        val lines = gcode.lines()
-        // Diagnostic: count ALL T-indices (0..15) in the post-remap G-code so we can
-        // see whether the slicer emitted high-index tools (T9/T10 for paint states 10/11)
-        // that the renderer-facing 0..3 view doesn't capture.
-        val allCounts = (0..15).associateWith { t -> lines.count { it.trim() == "T$t" } }
-            .filter { it.value > 0 }
-        val toolCounts = (0..3).map { t -> lines.count { it.trim() == "T$t" } }
-        android.util.Log.i(
-            "B95",
-            "plate 9 slice: T0=${toolCounts[0]} T1=${toolCounts[1]} " +
-                "T2=${toolCounts[2]} T3=${toolCounts[3]} " +
-                "detectedColors=${plateInfo.detectedColors} " +
-                "physicalExtruderCount=$physicalExtruderCount " +
-                "allCounts=$allCounts"
-        )
-
-        val activeTools = toolCounts.count { it > 0 }
-        assertTrue(
-            "B95: plate 9 has 2 distinct detected colours (peach paint state + " +
-                "white object default) and MUST produce at least 2 tool changes " +
-                "in the G-code. Got T0=${toolCounts[0]} T1=${toolCounts[1]} " +
-                "T2=${toolCounts[2]} T3=${toolCounts[3]} " +
-                "(activeTools=$activeTools). If activeTools == 1, the paint state " +
-                "was silently dropped by paint segmentation because the embedded " +
-                "filament_colour cannot address the source filament's state index.",
-            activeTools >= 2
-        )
     }
 }

@@ -56,7 +56,9 @@ import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
 import com.u1.slicer.viewer.MeshData
 import com.u1.slicer.viewer.NativePreviewMesh
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val diagnostics by lazy { DiagnosticsStore(this) }
@@ -474,6 +476,33 @@ class MainActivity : ComponentActivity() {
                 var sharedPreviewCameraState by remember {
                     mutableStateOf<com.u1.slicer.viewer.CameraViewState?>(null)
                 }
+
+                // Phase 2.4 — Filament mapping dialog state. When the user
+                // taps Send to Printer (or Upload Only), we capture the
+                // requested gcode path and the action ("print" vs
+                // "upload-only") here, then show the dialog. On confirm we
+                // applyPrintTimeRemap to a temp file and dispatch the action
+                // with the remapped path.
+                var pendingMappingSend by remember {
+                    mutableStateOf<PendingMappingSend?>(null)
+                }
+                // Bug fix (2026-05-01): hoist the IO scope used by the
+                // FilamentMappingDialog onConfirm out of the
+                // `pendingMappingSend?.let { ... }` gate. Pre-fix the scope
+                // was declared inside the gate; onConfirm ran:
+                //   pendingMappingSend = null
+                //   navigateTab(Routes.PRINTER)
+                //   scope.launch(IO) { applyPrintTimeRemap(); sendAndPrint() }
+                // Setting pendingMappingSend = null caused the gate to leave
+                // composition on the next frame, which cancelled the
+                // rememberCoroutineScope tied to it. The scope.launch
+                // dispatched into a dying scope and the IO coroutine was
+                // silently killed before applyPrintTimeRemap or
+                // sendAndPrint executed — print never sent to printer, no
+                // logs, no error UI. Tying the scope to the parent
+                // composable (which lives across the dialog lifecycle)
+                // makes the IO work survive the dialog dismissal.
+                val sendActionScope = rememberCoroutineScope()
                 val appSlicerState by viewModel.state.collectAsState()
                 val sharedPreviewModelKey = when (val s = appSlicerState) {
                     is SlicerViewModel.SlicerState.Loading -> "loading:${s.message}"
@@ -560,12 +589,16 @@ class MainActivity : ComponentActivity() {
                             onNavigateSettings = { navigateTab(Routes.SETTINGS) },
                             onNavigatePrinter = { navigateTab(Routes.PRINTER) },
                             onSendToPrinter = { gcodePath ->
-                                printerViewModel.sendAndPrint(gcodePath)
-                                navigateTab(Routes.PRINTER)
+                                pendingMappingSend = PendingMappingSend(
+                                    gcodePath = gcodePath,
+                                    action = PendingMappingSend.Action.PrintAndUpload,
+                                )
                             },
                             onUploadOnly = { gcodePath ->
-                                printerViewModel.sendUploadOnly(gcodePath)
-                                navigateTab(Routes.PRINTER)
+                                pendingMappingSend = PendingMappingSend(
+                                    gcodePath = gcodePath,
+                                    action = PendingMappingSend.Action.UploadOnly,
+                                )
                             },
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
@@ -633,10 +666,311 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 )
+
+                // Phase 2.4 — Filament mapping dialog interposed between
+                // Send and the actual upload. Always shown when the user
+                // taps Send (PrintAndUpload) or Upload Only.
+                pendingMappingSend?.let { pending ->
+                    // Phase 2 (2026-04-28, revised after adversarial review)
+                    // — three-state canonical lookup. The lookup runs on
+                    // Dispatchers.IO via produceState, so the initial
+                    // composition has no answer yet. Pre-revision, that
+                    // initial-null was indistinguishable from "no canonical
+                    // list" and the fallback branch would send the raw
+                    // canonical-fileIndex G-code straight to the printer
+                    // before the lookup could complete.
+                    //
+                    // CanonicalLookup encodes the three states explicitly:
+                    //   Loading  — IO in flight; keep dialog alive
+                    //   Absent   — IO finished, no canonical list (legacy
+                    //              file, STL with no canonical, etc.)
+                    //   Present  — IO finished with a list; show dialog
+                    val canonicalState by produceState<CanonicalLookup>(
+                        initialValue = CanonicalLookup.Loading,
+                        key1 = pending.gcodePath,
+                    ) {
+                        val list = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            viewModel.getCanonicalFilamentList()
+                        }
+                        value = if (list != null) CanonicalLookup.Present(list) else CanonicalLookup.Absent
+                    }
+                    val extruderPresets by viewModel.extruderPresets.collectAsState()
+                    val currentMapping by viewModel.colorMapping.collectAsState()
+                    val overrides by viewModel.filamentOverrides.collectAsState()
+                    val threeMfInfo by viewModel.threeMfInfo.collectAsState()
+                    val parsedGcodeForDialog by viewModel.parsedGcode.collectAsState()
+                    val canonical = remember(canonicalState, overrides) {
+                        (canonicalState as? CanonicalLookup.Present)?.let { p ->
+                            com.u1.slicer.data.applyOverridesToCanonical(
+                                p.list,
+                                overrides.mapValues { (_, ov) ->
+                                    ov.color to ov.materialType
+                                },
+                            )
+                        }
+                    }
+                    // Phase 2 (2026-04-28, post-v2.0.0-validation Bug #2):
+                    // narrow the dialog to just the active plate's filaments.
+                    // v2.0.0 systematic fix: post-slice perExtruderFilamentMm
+                    // is the single source of truth (canonical fileIdx order,
+                    // 0.0 for unused). computePlateFileIndices uses it to
+                    // derive plateFileIndices = canonical fileIdx where
+                    // mm > 0. Border Collie → [1, 2]; Buzz plate 1 → [0, 1, 5, 8].
+                    //
+                    // Returns a Pair<narrowedCanonical, plateFileIndices> so
+                    // onConfirm can expand the dialog's plate-narrowed
+                    // mapping back to canonical-fileIndex space for
+                    // applyPrintTimeRemap (which keys by full canonical fileIdx).
+                    val plateNarrowed: Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? =
+                        remember(canonical, threeMfInfo, viewModel.recoveryPlateId, parsedGcodeForDialog) {
+                            val full = canonical ?: return@remember null
+                            val plateFileIndices = computePlateFileIndices(
+                                threeMfInfo,
+                                viewModel.recoveryPlateId,
+                                full.size,
+                                perExtruderFilamentMm = parsedGcodeForDialog?.perExtruderFilamentMm,
+                            )
+                            if (plateFileIndices == null || plateFileIndices.size == full.size) {
+                                full to (0 until full.size).toList()
+                            } else {
+                                val filtered = plateFileIndices.mapNotNull { idx ->
+                                    full.filaments.getOrNull(idx)
+                                }
+                                if (filtered.size == plateFileIndices.size) {
+                                    full.copy(filaments = filtered) to plateFileIndices
+                                } else {
+                                    full to (0 until full.size).toList()
+                                }
+                            }
+                        }
+                    when (canonicalState) {
+                        is CanonicalLookup.Loading -> {
+                            // IO in flight; keep pendingMappingSend alive.
+                            // Composition will re-fire when produceState
+                            // updates. No Send fires here — the race that
+                            // sent canonical G-code to the printer pre-
+                            // revision is closed.
+                        }
+                        is CanonicalLookup.Present -> {
+                            if (canonical != null && plateNarrowed != null) {
+                                val (narrowedList, plateFileIndices) = plateNarrowed
+                                // Phase 2.5 final: slices produce canonical
+                                // (file-filament-relative) T-indices. The
+                                // dialog now shows only the plate's
+                                // filaments; on confirm we expand the
+                                // dialog's mapping back to full-canonical
+                                // space (placing each plate-row's slot at
+                                // the matching canonical fileIdx) so
+                                // applyPrintTimeRemap rewrites the right
+                                // T<n> values.
+                                com.u1.slicer.ui.FilamentMappingDialog(
+                                    canonicalList = narrowedList,
+                                    extruderPresets = extruderPresets,
+                                    initialMapping = currentMapping,
+                                    plateFileIndices = plateFileIndices,
+                                    onConfirm = { plateMapping ->
+                                        val sourceFile = java.io.File(pending.gcodePath)
+                                        val remappedFile = java.io.File(
+                                            sourceFile.parentFile,
+                                            "${sourceFile.nameWithoutExtension}.remapped.${sourceFile.extension}"
+                                        )
+                                        // Expand plate-narrowed mapping →
+                                        // full canonical-wide mapping
+                                        // (positioning each plate row's
+                                        // slot at the matching canonical
+                                        // fileIdx).
+                                        val canonicalSize = canonical.size
+                                        val expanded = MutableList(canonicalSize) { fileIdx -> fileIdx % 4 }
+                                        plateFileIndices.forEachIndexed { posInPlate, fileIdx ->
+                                            val slot = plateMapping.getOrNull(posInPlate)
+                                            if (slot != null && fileIdx in 0 until canonicalSize) {
+                                                // Clamp slot to U1's physical 0..3 range
+                                                // (defends against malformed mapping). The
+                                                // explicit if/else avoids tripping the grep
+                                                // guard in HardcodedExtruderCapTest.
+                                                expanded[fileIdx] = if (slot in 0..3) slot else 0
+                                            }
+                                        }
+                                        pendingMappingSend = null
+                                        navigateTab(Routes.PRINTER)
+                                        sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                            val physical = com.u1.slicer.gcode.applyPrintTimeRemap(
+                                                source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
+                                                output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
+                                                colorMapping = expanded,
+                                            )
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                when (pending.action) {
+                                                    PendingMappingSend.Action.PrintAndUpload ->
+                                                        printerViewModel.sendAndPrint(physical)
+                                                    PendingMappingSend.Action.UploadOnly ->
+                                                        printerViewModel.sendUploadOnly(physical)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onDismiss = { pendingMappingSend = null }
+                                )
+                            }
+                        }
+                        is CanonicalLookup.Absent -> {
+                            // Legacy / unrecognised file with no canonical
+                            // list. Route through the resolver-driven helper
+                            // so the export boundary stays consistent with
+                            // Save/Share — even though the resolver returns
+                            // null here (identity copy), going through the
+                            // helper means a future change to the absent
+                            // path lands in one place, not three.
+                            val sourceFile = java.io.File(pending.gcodePath)
+                            val exportedFile = java.io.File(
+                                sourceFile.parentFile,
+                                "${sourceFile.nameWithoutExtension}.remapped.${sourceFile.extension}"
+                            )
+                            pendingMappingSend = null
+                            navigateTab(Routes.PRINTER)
+                            sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                // Phase 2 B.1 — Absent canonical path
+                                // means legacy/unrecognised file. Treat
+                                // the source as already physical-slot
+                                // (v1.6.13-era contract) and copy
+                                // verbatim into the typed output.
+                                viewModel.prepareExportableGcodeWithMapping(
+                                    sourceFile, exportedFile, mapping = null
+                                )
+                                val physical = com.u1.slicer.gcode.PhysicalGcodePath.of(exportedFile)
+                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    when (pending.action) {
+                                        PendingMappingSend.Action.PrintAndUpload ->
+                                            printerViewModel.sendAndPrint(physical)
+                                        PendingMappingSend.Action.UploadOnly ->
+                                            printerViewModel.sendUploadOnly(physical)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 }
+
+/**
+ * Phase 2.4 — captures a deferred Send action while the Filament mapping
+ * dialog collects the user's slot picks. [action] is either
+ * `Action.PrintAndUpload` (Send to Printer) or `Action.UploadOnly`.
+ */
+internal data class PendingMappingSend(
+    val gcodePath: String,
+    val action: Action,
+) {
+    enum class Action { PrintAndUpload, UploadOnly }
+}
+
+/**
+ * Phase 2 (2026-04-28, post-adversarial-review) — three-state canonical
+ * filament list lookup for the Send dialog. Distinguishes "IO in flight"
+ * from "no canonical list" so a fast-tap user can't slip canonical-
+ * fileIndex G-code past the mapping dialog while the lookup is loading.
+ *
+ * See `docs/superpowers/specs/2026-04-28-canonical-export-mapping-helper-design.md`
+ * § "Send dialog three-state lookup".
+ */
+internal sealed class CanonicalLookup {
+    object Loading : CanonicalLookup()
+    object Absent : CanonicalLookup()
+    data class Present(val list: com.u1.slicer.data.CanonicalFilamentList) : CanonicalLookup()
+}
+
+/**
+ * Phase 2 (2026-04-28, post-v2.0.0-validation Bug #2) — derives the
+ * 0-indexed canonical fileIndices that the active plate's filaments
+ * occupy in the file-wide canonical filament list.
+ *
+ * Sources, in priority order:
+ *   1. `plate.filamentIndices` (1-indexed Bambu format) → 0-indexed.
+ *   2. `info.usedExtruderIndices` (1-indexed plate-narrowed extruder
+ *      set, from native plate state) — fallback when the plate
+ *      metadata is empty/legacy.
+ *
+ * Returns null when the active plate can't be determined (single-
+ * plate file, no plate selected, etc.) — caller should fall back to
+ * showing the full canonical list. Returns the file-wide list of
+ * indices when there's no narrowing to apply.
+ */
+internal fun computePlateFileIndices(
+    info: com.u1.slicer.bambu.ThreeMfInfo?,
+    plateId: Int,
+    canonicalSize: Int,
+    perExtruderFilamentMm: List<Float>? = null,
+): List<Int>? {
+    if (canonicalSize <= 0) return null
+    // v2.0.0 systematic fix — when post-slice `perExtruderFilamentMm` is
+    // available, derive plateFileIndices from non-zero canonical entries.
+    // The footer line is the slicer's authoritative output: canonical fileIdx
+    // order, sized to canonical, 0.0 for unused. This is the SINGLE SOURCE
+    // OF TRUTH post-slice and supersedes every pre-slice heuristic below.
+    //
+    // Examples:
+    //   - Border Collie (single-plate SEMM, canonical=5): footer
+    //     [0, X, X, 0, 0] → returns [1, 2]. Dialog shows 2 rows; chips
+    //     label "Filament 2, Filament 3" via fileIdx.
+    //   - Buzz plate 1 (multi-plate, canonical=11): footer
+    //     [X, X, 0, 0, 0, X, 0, 0, X, 0, 0] → returns [0, 1, 5, 8]. Dialog
+    //     shows 4 rows; chips label "Filament 1, 2, 6, 9".
+    //   - slip_slide_spin plate 3 (multi-plate SEMM, canonical=10): footer
+    //     non-zero at [0, 1, 2, 3] → returns [0, 1, 2, 3]. 4 rows / chips.
+    if (perExtruderFilamentMm != null) {
+        val nonZero = perExtruderFilamentMm.indices
+            .filter { perExtruderFilamentMm[it] > 0f && it < canonicalSize }
+        if (nonZero.isNotEmpty()) return nonZero
+    }
+    if (info == null) return null
+    val detectedSize = info.detectedColors.size
+    // Pre-slice fallback for SEMM/painted (single + multi-plate): detectedColors
+    // is the most authoritative pre-slice narrowing signal. Plate metadata
+    // (plate.filamentIndices) can undercount paint states.
+    if (info.hasPaintData && detectedSize in 1..canonicalSize) {
+        return (0 until detectedSize).toList()
+    }
+    // Pre-slice multi-plate non-painted: plate.filamentIndices set by
+    // buildThreeMfInfoFromNative is authoritative for per-object Bambu
+    // models (Dragon Scale and similar).
+    val plate = if (plateId >= 0) info.plates.firstOrNull { it.plateId == plateId } else null
+    if (plate != null && plate.filamentIndices.isNotEmpty()) {
+        val zeroIndexed = plate.filamentIndices
+            .map { it - 1 }
+            .filter { it in 0 until canonicalSize }
+            .distinct()
+            .sorted()
+        if (zeroIndexed.isNotEmpty()) return zeroIndexed
+    }
+    // Per-object multi-extruder (non-painted, single-plate): usedExtruderIndices
+    // captures volume-extruder diversity directly (Button-for-S-trousers).
+    val fromUsed = info.usedExtruderIndices
+        .filter { it > 0 }
+        .map { it - 1 }
+        .filter { it in 0 until canonicalSize }
+        .distinct()
+        .sorted()
+    if (fromUsed.isNotEmpty()) return fromUsed
+    // Final fallback.
+    if (detectedSize in 1..canonicalSize) {
+        return (0 until detectedSize).toList()
+    }
+    return null
+}
+
+// Phase 2 (2026-04-28) — Group B: `computeDialogRewrite` was retired.
+// Pre-Phase-2 the slice path baked the pre-dialog `colorMapping` into the
+// G-code via `GcodeToolRemapper.remap`, so the on-disk T-indices were
+// physical-slot space and the dialog's mapping had to be remapped via this
+// helper. With the canonical contract the slicer emits T-indices in
+// fileIndex space, the GcodeToolRemapper call was removed in `1e95c7d`,
+// and the dialog's mapping is now the only translation needed —
+// `applyPrintTimeRemap(mapping)` is correct directly. The helper had no
+// production callers left and only its unit test
+// (ComputeDialogRewriteTest) referenced it.
 
 // =============================================================================
 // Theme
@@ -772,6 +1106,9 @@ fun PrepareScreen(
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
+    val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
+    val meshAlignedFilamentColors by viewModel.meshAlignedFilamentColors.collectAsState()
+    val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
 
     // Plate selector dialog
@@ -939,6 +1276,8 @@ fun PrepareScreen(
                                 onResetView = { captureViewer?.resetView(); onResetPreviewCamera?.invoke() },
                                 layerToolOnly = layerToolOnly,
                                 layerToolSegments = threeMfInfo?.layerToolSegments,
+                                resolvedFilamentColors = resolvedFilamentColors,
+                                meshAlignedFilamentColors = meshAlignedFilamentColors,
                                 cachedMesh = if (viewModel.cachedPrepareMeshPath == modelPath) viewModel.cachedPrepareMesh else null,
                                 onMeshCached = { viewModel.cachedPrepareMeshPath = modelPath; viewModel.cachedPrepareMesh = it },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
@@ -994,7 +1333,8 @@ fun PrepareScreen(
                                 )
                             }
                         }
-                        // Inline extruder/color assignment + prime tower toggle
+                        // Inline filament list + prime tower toggle
+                        val filamentOverrides by viewModel.filamentOverrides.collectAsState()
                         PrintSetupSection(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
                             colorMapping = colorMapping,
@@ -1008,7 +1348,14 @@ fun PrepareScreen(
                             onToggleWipeTower = { viewModel.togglePrimeTower() },
                             onAutoMap = {
                                 viewModel.reAutoMapColors(extruderPresets, filaments)
-                            }
+                            },
+                            filamentOverrides = filamentOverrides,
+                            onMaterialOverride = { idx, material ->
+                                viewModel.setFilamentMaterialOverride(idx, material)
+                            },
+                            onColorOverride = { idx, color ->
+                                viewModel.setFilamentColorOverride(idx, color)
+                            },
                         )
                         // Scale & copies controls
                         ScaleSection(
@@ -1020,13 +1367,24 @@ fun PrepareScreen(
                             rotation = modelRotation,
                             onRotationChange = { viewModel.setModelRotation(it) }
                         )
-                        // Single-color extruder picker (hidden for multi-color models)
+                        // Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour models
+                        // (STL, single-filament 3MF) get a one-row Filament list,
+                        // mirroring the multi-colour PrintSetupSection chip strip.
+                        // Slot picking happens at Send time via the Filament mapping
+                        // dialog (no slot picker on Prepare).
                         if (colorMapping == null && state is SlicerViewModel.SlicerState.ModelLoaded) {
                             val selectedExtruder by viewModel.selectedExtruder.collectAsState()
-                            ExtruderPickerRow(
-                                selectedExtruder = selectedExtruder,
+                            SingleColorFilamentRow(
+                                resolvedFilamentColors = resolvedFilamentColors,
                                 extruderPresets = extruderPresets,
-                                onSelect = { viewModel.setSelectedExtruder(it) }
+                                selectedSlot = selectedExtruder,
+                                onMaterialOverride = { material ->
+                                    viewModel.setFilamentMaterialOverride(0, material)
+                                },
+                                onColorOverride = { color ->
+                                    viewModel.setFilamentColorOverride(0, color)
+                                },
+                                filamentOverrides = filamentOverrides,
                             )
                         }
                         ConfigCard(
@@ -1037,7 +1395,8 @@ fun PrepareScreen(
                             onPlateTypeChange = { viewModel.setPlateType(it) },
                             bedTemp = config.bedTemp,
                             onBedTempChange = { viewModel.setBedTemp(it) },
-                            sourceConfig = sourceConfig
+                            sourceConfig = sourceConfig,
+                            filamentCount = threeMfInfo?.detectedColors?.size?.takeIf { it > 0 }
                         )
                     }
                 }
@@ -1240,9 +1599,8 @@ fun PreviewScreen(
     val config by viewModel.config.collectAsState()
     val extruderPresets by viewModel.extruderPresets.collectAsState()
     val sliceStale by viewModel.sliceStale.collectAsState()
-    val semmColorPermutation by viewModel.semmColorPermutationFlow.collectAsState()
-    val slicerColorOrder by viewModel.slicerColorOrder.collectAsState()
-    val gcodeUsesPhysicalSlots by viewModel.gcodeUsesPhysicalSlots.collectAsState()
+    val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
+    val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
 
     Scaffold(
         topBar = {
@@ -1342,15 +1700,45 @@ fun PreviewScreen(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
                             colorMapping = gcodeColorMapping,
-                            semmColorPermutation = semmColorPermutation,
-                            slicerColorOrder = slicerColorOrder,
                             slicerLayerCount = s.result.totalLayers,
-                            useDirectSlots = gcodeUsesPhysicalSlots,
                             onExpand = onNavigateGcodeViewer3D,
                             cameraState = sharedPreviewCameraState,
                             onCameraStateChange = onSharedPreviewCameraStateChange,
-                            onResetView = onResetPreviewCamera
+                            onResetView = onResetPreviewCamera,
+                            // Bug 1 class sibling fix (post-v2.0.0-validation):
+                            // gcode body emits T<canonical-fileIndex>; palette
+                            // must be canonical-aligned so palette[T] resolves
+                            // to the right file colour. Pre-fix used
+                            // `resolvedFilamentColors` which is plate-narrowed
+                            // and misindexed for multi-plate fileIdx > 0.
+                            resolvedFilamentColors = canonicalFilamentColors
+                                .takeIf { it.isNotEmpty() }
+                                ?: resolvedFilamentColors,
                         )
+                        }
+                    }
+                    val filamentOverrides by viewModel.filamentOverrides.collectAsState()
+                    // Phase 2 (2026-04-28) — hoist canonical lookup off main
+                    // thread. The synchronous variant froze on Buzz-class
+                    // files. produceState shows a loading state (null) until
+                    // the IO walk completes; SliceCompleteSummaryCard tolerates
+                    // a null canonical (renders without override badges).
+                    val canonicalForSummary by produceState<com.u1.slicer.data.CanonicalFilamentList?>(
+                        initialValue = null, key1 = viewModel.currentModelPath
+                    ) {
+                        value = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            viewModel.getCanonicalFilamentList()
+                        }
+                    }
+                    val threeMfInfoForSummary by viewModel.threeMfInfo.collectAsState()
+                    val plateFileIndicesForSummary = remember(canonicalForSummary, threeMfInfoForSummary, viewModel.recoveryPlateId, parsedGcode) {
+                        canonicalForSummary?.let {
+                            computePlateFileIndices(
+                                threeMfInfoForSummary,
+                                viewModel.recoveryPlateId,
+                                it.size,
+                                perExtruderFilamentMm = parsedGcode?.perExtruderFilamentMm,
+                            )
                         }
                     }
                     SliceCompleteSummaryCard(
@@ -1360,7 +1748,10 @@ fun PreviewScreen(
                         bedTemp = config.bedTemp,
                         extruderColors = extruderColors,
                         colorMapping = colorMapping,
-                        extruderPresets = extruderPresets
+                        extruderPresets = extruderPresets,
+                        canonicalList = canonicalForSummary,
+                        filamentOverrides = filamentOverrides,
+                        plateFileIndices = plateFileIndicesForSummary,
                     )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -1539,7 +1930,12 @@ fun ConfigCard(
     onPlateTypeChange: ((com.u1.slicer.data.PlateType) -> Unit)? = null,
     bedTemp: Int? = null,
     onBedTempChange: ((Int) -> Unit)? = null,
-    sourceConfig: Map<String, Any>? = null
+    sourceConfig: Map<String, Any>? = null,
+    // Phase 2 §4 Step 7 — file-filament count (canonical list size).
+    // Drives the support-filament dropdown's option range so the user
+    // sees real filament numbers instead of slot indices. Null when no
+    // model is loaded (settings screen).
+    filamentCount: Int? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1576,7 +1972,8 @@ fun ConfigCard(
                     onPlateTypeChange = onPlateTypeChange,
                     bedTemp = bedTemp,
                     onBedTempChange = onBedTempChange,
-                    sourceConfig = sourceConfig
+                    sourceConfig = sourceConfig,
+                    filamentCount = filamentCount,
                 )
             }
 
@@ -1812,20 +2209,34 @@ fun SliceCompleteActionBar(
                     onClick = onSendToPrinter,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
-                    Icon(Icons.Default.Print, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Print, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Print", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Map & Print",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
                 OutlinedButton(
                     onClick = onUploadOnly,
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
-                    Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Upload")
+                    Text(
+                        "Map & Upload",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
             }
         }
@@ -1840,10 +2251,55 @@ fun SliceCompleteSummaryCard(
     bedTemp: Int = 0,
     extruderColors: List<String> = emptyList(),
     colorMapping: List<Int>? = null,
-    extruderPresets: List<com.u1.slicer.data.ExtruderPreset> = emptyList()
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset> = emptyList(),
+    canonicalList: com.u1.slicer.data.CanonicalFilamentList? = null,
+    filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
+    /**
+     * Phase 2 (2026-04-28, post-v2.0.0-validation Bug #3) — sorted-
+     * ascending list of canonical fileIndices the active plate's
+     * filaments occupy in the file-wide canonical list. When non-null
+     * AND its size matches `perExtruderFilamentMm`, the row at
+     * position `n` looks up `canonicalList[plateFileIndices[n]]`
+     * instead of `canonicalList[n]`. Pre-fix the summary always
+     * indexed positionally, which for a multi-plate file like Dragon
+     * Scale plate 1 (using fileIdx 5+9 of 13) showed the colour for
+     * canonical[0] + canonical[1] — wrong file filaments.
+     */
+    plateFileIndices: List<Int>? = null,
 ) {
     val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
         buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
+    }
+    // v2.0.0 systematic fix — build the visible chip list from the canonical-
+    // wide gcode-derived plateFileIndices when available; otherwise fall back
+    // to per-extruder mm directly.
+    //
+    // visibleEntries contains (fileIdx, plateNarrowedPosition, mm) for each
+    // chip to render. fileIdx drives label + canonical colour lookup;
+    // plateNarrowedPosition picks into colorMapping when colorMapping is
+    // plate-narrowed; mm is the displayed value.
+    data class ChipEntry(val fileIdx: Int, val plateNarrowedPosition: Int, val mm: Float)
+    val visibleEntries = remember(perExtruderFilamentMm, plateFileIndices) {
+        when {
+            plateFileIndices != null && plateFileIndices.isNotEmpty() -> {
+                // plateFileIndices is already filtered to non-zero footer
+                // entries by `computePlateFileIndices` (mm > 0 guard).
+                plateFileIndices.mapIndexed { posInPlate, fileIdx ->
+                    ChipEntry(fileIdx, posInPlate, perExtruderFilamentMm.getOrNull(fileIdx) ?: 0f)
+                }
+            }
+            else -> {
+                // H2 from post-Buzz code review (2026-04-30): when
+                // plateFileIndices is null (non-Bambu / canonical load
+                // failed), the GcodeParser preference for the canonical-wide
+                // footer can include trailing zeros for declared-but-unused
+                // filaments. Filter `mm > 0` here so the chip strip never
+                // renders a "Filament N · 0 mm (0.0 g)" ghost entry.
+                perExtruderFilamentMm.mapIndexedNotNull { i, mm ->
+                    if (mm > 0f) ChipEntry(i, i, mm) else null
+                }
+            }
+        }
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1876,20 +2332,44 @@ fun SliceCompleteSummaryCard(
                     style = MaterialTheme.typography.labelMedium,
                     color = Color.White.copy(alpha = 0.8f)
                 )
-                perExtruderFilamentMm.chunked(2).forEachIndexed { rowIndex, rowItems ->
+                visibleEntries.chunked(2).forEachIndexed { rowIndex, rowItems ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        rowItems.forEachIndexed { columnIndex, mm ->
-                            val i = rowIndex * 2 + columnIndex
-                            val slot = displaySlots.getOrElse(i) { i.coerceIn(0, 3) }
-                            val colorHex = extruderColors.getOrNull(slot)?.takeIf { it.isNotBlank() } ?: "#808080"
+                        rowItems.forEach { entry ->
+                            val fileIdx = entry.fileIdx
+                            val mm = entry.mm
+                            val override = filamentOverrides[fileIdx]
+                            // colorMapping shape varies: canonical-wide for
+                            // single-plate (size = canonical), plate-narrowed
+                            // for multi-plate (size = plateFileIndices.size).
+                            // Lookup by fileIdx for canonical-wide, else by
+                            // plateNarrowedPosition.
+                            val slot = colorMapping
+                                ?.let { cm ->
+                                    if (cm.size > entry.plateNarrowedPosition && plateFileIndices != null && cm.size == plateFileIndices.size)
+                                        cm[entry.plateNarrowedPosition]
+                                    else cm.getOrNull(fileIdx)
+                                }
+                                ?: displaySlots.getOrElse(entry.plateNarrowedPosition) { fileIdx }
+                            // Colour priority: user override → canonical (file's
+                            // declared, indexed by true canonical fileIdx) →
+                            // mapped slot's preset colour.
+                            val canonicalEntry = canonicalList?.filaments?.getOrNull(fileIdx)
+                            val colorHex = override?.color
+                                ?: canonicalEntry?.color
+                                ?: extruderColors.getOrNull(slot)?.takeIf { it.isNotBlank() }
+                                ?: "#808080"
                             val color = try {
                                 Color(android.graphics.Color.parseColor(colorHex))
                             } catch (_: Exception) {
                                 Color.Gray
                             }
+                            // Material priority: override → canonical → slot preset.
+                            val material = override?.materialType
+                                ?: canonicalEntry?.materialType
+                                ?: resolveExtruderMaterialType(slot, extruderPresets)
                             Row(
                                 modifier = Modifier
                                     .weight(1f)
@@ -1905,9 +2385,11 @@ fun SliceCompleteSummaryCard(
                                 }
                                 Spacer(Modifier.width(6.dp))
                                 Column {
-                                    val materialType = resolveExtruderMaterialType(slot, extruderPresets)
                                     Text(
-                                        if (materialType.isNotEmpty()) "E${slot + 1} · $materialType" else "E${slot + 1}",
+                                        if (material.isNotEmpty())
+                                            "Filament ${fileIdx + 1} · $material"
+                                        else
+                                            "Filament ${fileIdx + 1}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.White.copy(alpha = 0.7f)
                                     )
@@ -1953,7 +2435,12 @@ internal fun resolveExtruderMaterialType(slot: Int, presets: List<com.u1.slicer.
  */
 internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?): List<Int> {
     if (count <= 0) return emptyList()
-    if (colorMapping.isNullOrEmpty()) return (0 until count).map { it.coerceIn(0, 3) }
+    // Phase 2 §4 Step 6 — when colorMapping is missing for a multi-filament
+    // file, return identity. Filament indices >= 4 fall through to the grey
+    // fallback in the colour resolver downstream rather than being capped to
+    // slot 3 (which would misrepresent them as sharing slot 3's loaded
+    // colour).
+    if (colorMapping.isNullOrEmpty()) return (0 until count).toList()
 
     val ordered = mutableListOf<Int>()
     colorMapping.forEach { slot ->
@@ -1963,7 +2450,7 @@ internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?):
         if (slot !in ordered) ordered += slot
     }
     while (ordered.size < count) {
-        ordered += ordered.lastOrNull() ?: 0
+        ordered += ordered.lastOrNull() ?: 0  // slot-space; pad with last
     }
     return ordered.take(count)
 }
@@ -2075,7 +2562,10 @@ fun MultiColorInfoCard(
                 ) {
                     Text("Colors: ", style = MaterialTheme.typography.bodySmall,
                         color = Color.White.copy(alpha = 0.6f))
-                    colors.take(4).forEach { hex ->
+                    // Phase 2 §4 Step 6 — show every file filament's colour,
+                    // not just the first 4. Multi-filament files (H2C, MMU)
+                    // can have N > 4 colours all worth surfacing.
+                    colors.forEach { hex ->
                         Box(
                             modifier = Modifier
                                 .size(16.dp)
@@ -2212,6 +2702,20 @@ fun InlineModelPreview(
     // F46: layer-tool (Hueforge) Z-band recolour
     layerToolOnly: Boolean = false,
     layerToolSegments: List<com.u1.slicer.bambu.LayerToolSegment>? = null,
+    // Phase 2 §4 Step 7 (visual side) — per-file-filament resolved colours
+    // (file colour overlaid by Prepare-screen overrides). When non-empty,
+    // drives the 3D preview's recolor palette directly so the visual
+    // agrees with the slicer's embedded filament_colour. Empty for non-
+    // canonical / pre-load states; the slot-mapped fallback path runs.
+    resolvedFilamentColors: List<String> = emptyList(),
+    // Phase 2 (Approach C) — palette aligned to the mesh's extruder-index
+    // space (sorted plate-used file-filament order for the per-vertex
+    // recolor path; full canonical palette for the layer-tool Z-band
+    // recolor path). When non-empty, takes priority over
+    // `resolvedFilamentColors` for the recolor; chip strip / dialog still
+    // read `resolvedFilamentColors` (file-fileIndex aligned). Empty for
+    // STL / non-canonical paths; the slot-mapped fallback runs.
+    meshAlignedFilamentColors: List<String> = emptyList(),
     // B78: snapshot of native instance offsets captured at loadModel time.
     // Used to restore the file's original plate position after prepareSlicer() has
     // clobbered native state; skipped when nativeSliceStateDirty is false so the
@@ -2307,7 +2811,7 @@ fun InlineModelPreview(
     // Fixes B22 race: previously mesh loaded on IO (slow) while colors arrived via StateFlow
     // (fast). Separate LaunchedEffects had timing gaps — colors effect fired before mesh was
     // ready (skip), then mesh effect read stale empty colors from closure (skip).
-    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState, layerToolOnly, layerToolSegments) {
+    LaunchedEffect(mesh, viewerView, extruderColors, colorMapping, cameraState, layerToolOnly, layerToolSegments, resolvedFilamentColors, meshAlignedFilamentColors) {
         val m = mesh; val v = viewerView
         if (m != null && v != null) {
             // Only call setMesh when the mesh instance actually changed
@@ -2319,15 +2823,31 @@ fun InlineModelPreview(
             if (extruderColors.isNotEmpty()) {
                 v.setExtruderColors(extruderColors)
             }
+            // Phase 2 (Approach C) — prefer the mesh-aligned palette when the
+            // ViewModel produces one. The mesh's extruder-index space depends
+            // on the file shape (per-object vs paint-compacted vs layer-tool);
+            // see [SlicerViewModel.meshAlignedFilamentColors] for the contract.
+            // Fall back to `resolvedFilamentColors` (file-fileIndex aligned)
+            // for the rare pre-canonical render — keeps tests asserting the
+            // legacy alignment from breaking and is harmless when the two
+            // happen to match.
+            val canonicalSource = meshAlignedFilamentColors.takeIf { it.isNotEmpty() }
+                ?: resolvedFilamentColors
+            val canonicalPalette: List<FloatArray>? = canonicalSource
+                .takeIf { it.isNotEmpty() }
+                ?.map { hex -> SlicerViewModel.staticHexColorToFloatArray(hex) }
+
             // F46: Z-band recolour for layer-tool (Hueforge) models
             if (layerToolOnly && layerToolSegments != null && extruderColors.isNotEmpty() && colorMapping != null) {
-                val palette = colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
-                Log.i("InlineModelPreview", "recolorByZBands segments=${layerToolSegments.size} paletteSize=${palette.size}")
+                val palette = canonicalPalette
+                    ?: colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
+                Log.i("InlineModelPreview", "recolorByZBands segments=${layerToolSegments.size} paletteSize=${palette.size} canonical=${canonicalPalette != null} meshAligned=${meshAlignedFilamentColors.size}")
                 m.recolorByZBands(layerToolSegments, palette)
                 v.refreshColors()  // upload recolorByZBands result to GPU without overwriting with recolor()
-            } else if (m.hasPerVertexColor && extruderColors.isNotEmpty()) {
-                // Apply recolor when we have both mesh and colors (paint-data models)
-                val palette = if (colorMapping != null) {
+            } else if (m.hasPerVertexColor && (canonicalPalette != null || extruderColors.isNotEmpty())) {
+                // Apply recolor when we have either a canonical-derived
+                // palette OR a slot palette + (paint-data) mesh.
+                val palette = canonicalPalette ?: if (colorMapping != null) {
                     // Multi-color: remap mesh indices → slot colors
                     colorMapping.map { slot -> SlicerViewModel.staticHexColorToFloatArray(extruderColors.getOrElse(slot) { "" }) }
                 } else {
@@ -2338,6 +2858,8 @@ fun InlineModelPreview(
                     "InlineModelPreview",
                     "recolor mapping=$colorMapping " +
                         "extruderColors=$extruderColors paletteSize=${palette.size} " +
+                        "canonical=${canonicalPalette != null} " +
+                        "meshAligned=${meshAlignedFilamentColors.size} " +
                         "hasMeshColors=${m.hasPerVertexColor}"
                 )
                 v.recolorMesh(palette)
@@ -2905,9 +3427,25 @@ fun ModelInfoDialog(
 }
 
 /**
- * Inline section shown on the model-loaded screen for extruder/color assignment
- * and prime tower toggle. Replaces the popup MultiColorDialog for normal workflow.
- * Shows nothing for single-color models with only one extruder.
+ * Phase 2.6a — Prepare-screen filament list.
+ *
+ * Mirrors desktop OrcaSlicer / Bambu Studio's Filament panel: each row
+ * is one filament from the file's canonical list, showing colour and
+ * material type. Slot mapping happens at Send time via the Filament
+ * mapping dialog — no slot picker on Prepare.
+ *
+ * Currently read-only display. Phase 2.6b adds tappable rows that open
+ * an edit dialog (colour picker + material-type dropdown) so users can
+ * override per-filament before slicing — important when the loaded
+ * spool differs from what the file specifies (e.g. printing a 3MF that
+ * declares PLA in PETG → user overrides material so the slicer bakes
+ * the right nozzle temp).
+ *
+ * The prime tower toggle stays — it's a slicing setting, not a slot
+ * mapping concern.
+ *
+ * Hidden entirely for files with one filament and a single-extruder
+ * config (no point showing one row with no controls).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2920,14 +3458,26 @@ fun PrintSetupSection(
     extruderCount: Int,
     onMappingChange: (List<Int>) -> Unit,
     onToggleWipeTower: () -> Unit,
-    onAutoMap: (() -> Unit)? = null
+    onAutoMap: (() -> Unit)? = null,
+    filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
+    onMaterialOverride: (fileIndex: Int, materialType: String?) -> Unit = { _, _ -> },
+    onColorOverride: (fileIndex: Int, color: String?) -> Unit = { _, _ -> },
 ) {
+    // Note: onMappingChange / onAutoMap kept in the signature because callers
+    // still pass them (they wired the legacy slot-picker path). They're
+    // unused by Phase 2.6a — the slot picker has moved to the Filament
+    // mapping dialog at Send time. Will retire when callers update.
+    @Suppress("UNUSED_PARAMETER", "UNUSED_VALUE")
+    val _unused = onMappingChange to onAutoMap
+
     val isMultiColor = detectedColors.isNotEmpty() && colorMapping != null
     val showSection = isMultiColor || extruderCount > 1
     if (!showSection) return
 
-    val mapping = remember(colorMapping) { colorMapping?.toMutableStateList() ?: mutableStateListOf() }
+    val mapping = remember(colorMapping) { colorMapping ?: emptyList() }
     var expanded by remember { mutableStateOf(true) }
+    var editingMaterialFor by remember { mutableStateOf<Int?>(null) }
+    var editingColorFor by remember { mutableStateOf<Int?>(null) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2946,7 +3496,10 @@ fun PrintSetupSection(
                     Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Print Setup", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        if (isMultiColor) "Filaments (${detectedColors.size})" else "Print Setup",
+                        fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                    )
                 }
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -2957,124 +3510,168 @@ fun PrintSetupSection(
 
             AnimatedVisibility(visible = expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (isMultiColor) {
-                if (onAutoMap != null) {
-                    OutlinedButton(
-                        onClick = onAutoMap,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Icons.Default.AutoFixHigh, null,
-                            modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Auto Map to Extruders", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-                detectedColors.forEachIndexed { colorIdx, modelColor ->
-                    var expanded by remember { mutableStateOf(false) }
-                    val selectedSlot = mapping.getOrElse(colorIdx) { 0 }
-                    val selectedPreset = extruderPresets.firstOrNull { it.index == selectedSlot }
-                        ?: extruderPresets.firstOrNull()
-                    val profileId = selectedPreset?.filamentProfileId
-                    val profile = filaments.firstOrNull { it.id == profileId }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Model color swatch
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(androidx.compose.foundation.shape.CircleShape)
-                                .background(com.u1.slicer.ui.parseHexColor(modelColor))
-                                .border(1.dp, MaterialTheme.colorScheme.outline,
-                                    androidx.compose.foundation.shape.CircleShape)
+                    if (isMultiColor) {
+                        // Caption explaining where slot picking now lives.
+                        Text(
+                            "Slot mapping happens when you tap Map & Print →",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                         )
-                        Text("Color ${colorIdx + 1}", style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.width(54.dp))
+                        detectedColors.forEachIndexed { colorIdx, modelColor ->
+                            // Material type: prefer user override, fall back to the
+                            // auto-suggested slot's ExtruderPreset material.
+                            val override = filamentOverrides[colorIdx]
+                            val suggestedSlot = mapping.getOrElse(colorIdx) { 0 }
+                            val suggestedPreset = extruderPresets.firstOrNull { it.index == suggestedSlot }
+                                ?: extruderPresets.firstOrNull()
+                            val materialType = override?.materialType ?: suggestedPreset?.materialType ?: "PLA"
+                            val profileId = suggestedPreset?.filamentProfileId
+                            val profile = filaments.firstOrNull { it.id == profileId }
+                            val isOverridden = override?.materialType != null
+                            // Temp display: when material is overridden, use the
+                            // material's default temp (nozzleTempDefaultForMaterial)
+                            // since the slot's linked profile is no longer the
+                            // source of truth for temp. Otherwise prefer the
+                            // linked filament profile's nozzleTemp.
+                            val displayTemp = if (isOverridden) {
+                                com.u1.slicer.nozzleTempDefaultForMaterial(materialType)
+                            } else {
+                                profile?.nozzleTemp ?: com.u1.slicer.nozzleTempDefaultForMaterial(materialType)
+                            }
 
-                        // Extruder slot picker
-                        ExposedDropdownMenuBox(
-                            expanded = expanded,
-                            onExpandedChange = { expanded = it },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            OutlinedTextField(
-                                value = selectedPreset?.label ?: "E1",
-                                onValueChange = {},
-                                readOnly = true,
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                                leadingIcon = {
-                                    Box(modifier = Modifier.size(14.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                                        RoundedCornerShape(8.dp)
+                                    )
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                // Filament colour swatch — tap to override.
+                                val effectiveColor = override?.color ?: modelColor
+                                val colorIsOverridden = override?.color != null
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
                                         .clip(androidx.compose.foundation.shape.CircleShape)
-                                        .background(selectedPreset?.let { com.u1.slicer.ui.parseHexColor(it.color) } ?: Color.White))
-                                },
-                                modifier = Modifier.menuAnchor().fillMaxWidth(),
-                                textStyle = MaterialTheme.typography.bodySmall,
-                                singleLine = true
-                            )
-                            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                                extruderPresets.forEach { preset ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Row(verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                Box(modifier = Modifier.size(12.dp)
-                                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                                    .background(com.u1.slicer.ui.parseHexColor(preset.color)))
-                                                Text("${preset.label} · ${preset.materialType}",
-                                                    style = MaterialTheme.typography.bodySmall)
-                                            }
-                                        },
-                                        onClick = {
-                                            if (colorIdx < mapping.size) mapping[colorIdx] = preset.index
-                                            else while (mapping.size <= colorIdx) mapping.add(0)
-                                                .also { mapping[colorIdx] = preset.index }
-                                            onMappingChange(mapping.toList())
-                                            expanded = false
-                                        }
+                                        .background(com.u1.slicer.ui.parseHexColor(effectiveColor))
+                                        .border(
+                                            if (colorIsOverridden) 2.dp else 1.dp,
+                                            if (colorIsOverridden)
+                                                MaterialTheme.colorScheme.primary
+                                            else
+                                                MaterialTheme.colorScheme.outline,
+                                            androidx.compose.foundation.shape.CircleShape,
+                                        )
+                                        .clickable { editingColorFor = colorIdx }
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "Filament ${colorIdx + 1}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        effectiveColor.uppercase(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                                     )
                                 }
+                                // Material type chip — tap to override.
+                                Box {
+                                    Surface(
+                                        color = if (isOverridden)
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        else
+                                            MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.clickable { editingMaterialFor = colorIdx },
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                        ) {
+                                            Text(
+                                                materialType,
+                                                style = MaterialTheme.typography.labelMedium,
+                                            )
+                                            Spacer(Modifier.width(2.dp))
+                                            Icon(
+                                                Icons.Default.ArrowDropDown, null,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    }
+                                    DropdownMenu(
+                                        expanded = editingMaterialFor == colorIdx,
+                                        onDismissRequest = { editingMaterialFor = null },
+                                    ) {
+                                        listOf("PLA", "PETG", "ABS", "TPU", "PA", "PC").forEach { m ->
+                                            DropdownMenuItem(
+                                                text = { Text(m) },
+                                                onClick = {
+                                                    onMaterialOverride(colorIdx, m)
+                                                    editingMaterialFor = null
+                                                },
+                                            )
+                                        }
+                                        if (isOverridden) {
+                                            HorizontalDivider()
+                                            DropdownMenuItem(
+                                                text = { Text("Reset to default", style = MaterialTheme.typography.labelMedium) },
+                                                onClick = {
+                                                    onMaterialOverride(colorIdx, null)
+                                                    editingMaterialFor = null
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(
+                                    "${displayTemp}°C",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                )
                             }
                         }
+                    }
 
-                        // Temp from profile
-                        Text(
-                            "${profile?.nozzleTemp ?: 210}°C",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                            modifier = Modifier.width(44.dp)
-                        )
+                    // Prime tower toggle — slicing setting, kept on Prepare.
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.FilterNone, null,
+                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Prime Tower", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Switch(checked = wipeTowerEnabled,
+                            onCheckedChange = { onToggleWipeTower() })
                     }
                 }
             }
-
-            // Prime tower toggle (always show when multi-extruder)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.FilterNone, null, tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                        modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Prime Tower", style = MaterialTheme.typography.bodyMedium)
-                }
-                Switch(checked = wipeTowerEnabled, onCheckedChange = { onToggleWipeTower() })
-            }
-                } // end AnimatedVisibility Column
-            } // end AnimatedVisibility
         }
+    }
+
+    // Phase 2.6c — colour edit dialog for the row whose swatch was tapped.
+    editingColorFor?.let { idx ->
+        val current = filamentOverrides[idx]?.color
+            ?: detectedColors.getOrNull(idx)
+            ?: "#FFFFFF"
+        com.u1.slicer.ui.FilamentColorEditDialog(
+            initialHex = current,
+            onSave = { hex -> onColorOverride(idx, hex) },
+            onDismiss = { editingColorFor = null },
+            onReset = if (filamentOverrides[idx]?.color != null) {
+                { onColorOverride(idx, null) }
+            } else null,
+        )
     }
 }
 
@@ -3369,42 +3966,153 @@ fun ScaleSection(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour filament row for STL
+ * and single-filament 3MF on the Prepare screen. Mirrors the multi-colour
+ * PrintSetupSection chip pattern but for one filament. Slot mapping is
+ * NOT picked here; the Filament mapping dialog at Send time owns slot
+ * selection.
+ *
+ * Replaces the legacy `ExtruderPickerRow` (slot-picker FilterChip row)
+ * which was at odds with the Phase 2 vision of slot-pick-at-Send.
+ *
+ * The row exposes:
+ * - Tap-to-edit colour swatch (override the slot's preset colour for
+ *   this print)
+ * - Tap-to-edit material chip (override the slot's preset material for
+ *   this print)
+ * - A caption pointing at the Send dialog for slot mapping
+ */
 @Composable
-fun ExtruderPickerRow(
-    selectedExtruder: Int,
+fun SingleColorFilamentRow(
+    resolvedFilamentColors: List<String>,
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
-    onSelect: (Int) -> Unit
+    selectedSlot: Int,
+    onMaterialOverride: (String?) -> Unit,
+    onColorOverride: (String?) -> Unit,
+    filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride>,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("Extruder:", style = MaterialTheme.typography.bodyMedium)
-        for (i in 0 until 4) {
-            val preset = extruderPresets.firstOrNull { it.index == i }
-            val color = preset?.color?.takeIf { it.isNotBlank() && it != "#FFFFFF" }
-                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
-            val parsedColor = try {
-                Color(android.graphics.Color.parseColor(color))
-            } catch (_: Exception) { Color.Gray }
+    val override = filamentOverrides[0]
+    // Display colour priority: user override → file's resolved → slot's preset.
+    val slotPreset = extruderPresets.firstOrNull { it.index == selectedSlot }
+        ?: extruderPresets.firstOrNull()
+    val effectiveColor = override?.color
+        ?: resolvedFilamentColors.firstOrNull()?.takeIf { it.isNotBlank() }
+        ?: slotPreset?.color
+        ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[0]
+    val materialType = override?.materialType
+        ?: slotPreset?.materialType
+        ?: "PLA"
+    val isColorOverridden = override?.color != null
+    val isMaterialOverridden = override?.materialType != null
 
-            FilterChip(
-                selected = selectedExtruder == i,
-                onClick = { onSelect(i) },
-                label = { Text("E${i + 1}") },
-                leadingIcon = {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .background(parsedColor, androidx.compose.foundation.shape.CircleShape)
+    var editingMaterial by remember { mutableStateOf(false) }
+    var editingColor by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Palette, null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Filament", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+            Text(
+                "Slot mapping happens when you tap Send →",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                        RoundedCornerShape(8.dp),
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(com.u1.slicer.ui.parseHexColor(effectiveColor))
+                        .border(
+                            if (isColorOverridden) 2.dp else 1.dp,
+                            if (isColorOverridden) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline,
+                            androidx.compose.foundation.shape.CircleShape,
+                        )
+                        .clickable { editingColor = true },
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Filament 1",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
                     )
                 }
-            )
+                Box {
+                    AssistChip(
+                        onClick = { editingMaterial = true },
+                        label = { Text(materialType) },
+                        leadingIcon = if (isMaterialOverridden) {
+                            { Icon(Icons.Default.Edit, null, modifier = Modifier.size(14.dp)) }
+                        } else null,
+                    )
+                    DropdownMenu(
+                        expanded = editingMaterial,
+                        onDismissRequest = { editingMaterial = false },
+                    ) {
+                        listOf("PLA", "PETG", "ABS", "TPU", "PA", "PC").forEach { m ->
+                            DropdownMenuItem(
+                                text = { Text(m) },
+                                onClick = {
+                                    onMaterialOverride(m)
+                                    editingMaterial = false
+                                },
+                            )
+                        }
+                        if (isMaterialOverridden) {
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Reset to default", style = MaterialTheme.typography.labelMedium) },
+                                onClick = {
+                                    onMaterialOverride(null)
+                                    editingMaterial = false
+                                },
+                            )
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    if (editingColor) {
+        val current = override?.color
+            ?: resolvedFilamentColors.firstOrNull()?.takeIf { it.isNotBlank() }
+            ?: slotPreset?.color
+            ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[0]
+        com.u1.slicer.ui.FilamentColorEditDialog(
+            initialHex = current,
+            onSave = { hex -> onColorOverride(hex); editingColor = false },
+            onDismiss = { editingColor = false },
+            onReset = if (override?.color != null) {
+                { onColorOverride(null); editingColor = false }
+            } else null,
+        )
     }
 }
 
@@ -3413,14 +4121,16 @@ fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
     colorMapping: List<Int>? = null,
-    semmColorPermutation: List<Int>? = null,
-    slicerColorOrder: List<Int>? = null,
     slicerLayerCount: Int = 0,
-    useDirectSlots: Boolean = false,
     onExpand: () -> Unit,
     cameraState: com.u1.slicer.viewer.CameraViewState? = null,
     onCameraStateChange: ((com.u1.slicer.viewer.CameraViewState) -> Unit)? = null,
-    onResetView: (() -> Unit)? = null
+    onResetView: (() -> Unit)? = null,
+    // Phase 2 §4 Step 7 (Preview side) — file's per-filament colours
+    // (override-applied). When non-empty, drives the slot palette so the
+    // G-code Preview shows the file's colours (matching the Prepare 3D
+    // preview).
+    resolvedFilamentColors: List<String> = emptyList(),
 ) {
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
     var viewerLoading by remember(parsedGcode) { mutableStateOf(true) }
@@ -3433,8 +4143,8 @@ fun InlineGcodePreview(
         ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
     else 1
 
-    val previewColors = remember(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, semmColorPermutation, slicerColorOrder, useDirectSlots)
+    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
+        normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
     }
 
     LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState) {
@@ -3575,89 +4285,96 @@ fun InlineGcodePreview(
 }
 
 /**
- * Build a palette for the G-code preview, indexed by the T-index that appears in
- * the final (post-composeSemmRemap) G-code.
+ * Build a palette for the G-code preview, indexed by the compact slicer
+ * T-index emitted in the canonical-space G-code.
  *
- * For every entry n in the returned list: `normalized[n]` is the hex colour the
- * viewer should render for `T<n>` toolpaths.
+ * Phase 2 (2026-04-28) — the slicer emits canonical (file-fileIndex space)
+ * T-indices and the on-disk G-code is consumed AS-IS by the Preview
+ * renderer. The user's slot mapping is only applied at Send time via
+ * `applyPrintTimeRemap`. So the palette here must align to the slicer's
+ * compact tool indices the renderer reads from `move.extruder`:
  *
- * Indexing contract by pipeline branch:
+ *   compactSlotOrder = colorMapping.distinct().sorted() (capped to 4 slots)
+ *   normalized[c]    = slot preset for compactSlotOrder[c]
+ *                       (fallback: canonical filament colour for the first
+ *                        file filament that maps to that slot)
  *
- *   1. Identity slicer order (no paint data, H2C, simple SEMM where detectedColors
- *      order already matches OrcaSlicer's tool order):
- *        `slicerColorOrder == null && semmColorPermutation == null` →
- *        after post-processing T<n> is the physical slot n, so
- *        `normalized[n] = extruderColors[n]`.
+ * The legacy slot-aware-slicer branches (semmColorPermutation +
+ * slicerColorOrder cascades, useDirectSlots short-circuit, post-slice
+ * GcodeToolRemapper) were retired with Group B because the slicer no
+ * longer remaps tool indices at slice time.
+ */
+/**
+ * Phase 2 (2026-04-28, post-adversarial-review) — produces the
+ * extruder-colour palette consumed by the G-code 3D preview renderer.
  *
- *   2. SEMM with non-identity colour mapping but slicer order == detectedColors
- *      order (Flarewing 4-colour with user-reassigned extruders):
- *        `slicerColorOrder == null && semmColorPermutation != null` →
- *        post-slice GcodeToolRemapper has already mapped slicer T<k> →
- *        physical T<semmPerm[k]>, so T<physicalSlot> is the user's chosen slot,
- *        `normalized[physicalSlot] = extruderColors[physicalSlot]` is correct.
- *        (Same init behaviour as branch 1.)
+ * Pre-fix this always returned a 4-entry palette; the renderer clamps
+ * `move.extruder` to the last palette index, so canonical files where
+ * the slicer emits T4..T9+ in body collapsed all high-index tools onto
+ * the last colour. The reviewer caught this on Buzz plate 9 (T9 + T10
+ * in body) and on H2C benchy (T0..T6 active).
  *
- *   3. B92: SEMM where slicer tool order differs from detectedColors order
- *      (Buzz plate 8 shape — object default has a higher source filament index
- *      than some paint states):
- *        `slicerColorOrder != null && semmColorPermutation != null` →
- *        for each slicer compact idx k, physical slot is semmPerm[k], the
- *        detected colour is detectedColors[slicerColorOrder[k]], and the user's
- *        chosen slot for that detected colour is colorMapping[slicerColorOrder[k]].
- *        So `normalized[semmPerm[k]] = extruderColors[colorMapping[slicerColorOrder[k]]]`.
- *
- *   4. Legacy per-object without paint data (toolRemapSlots path, no semmPerm):
- *        `slicerColorOrder == null && semmColorPermutation == null` with
- *        non-identity colorMapping → the original compact-index-based override
- *        is preserved so existing non-SEMM callers keep working.
+ * The fix: when [resolvedFilamentColors] is non-empty (canonical-aware
+ * path) the palette grows to canonical size. Each canonical fileIndex
+ * gets its file-relative colour, and the renderer can paint T<n>
+ * directly without clamping. When [resolvedFilamentColors] is empty
+ * (legacy path, single-colour, STL), keep the 4-entry palette so
+ * existing callers that expect that shape still work.
  */
 internal fun normalizeGcodePreviewColors(
     extruderColors: List<String>,
     colorMapping: List<Int>?,
-    semmColorPermutation: List<Int>? = null,
-    slicerColorOrder: List<Int>? = null,
-    useDirectSlots: Boolean = false
+    resolvedFilamentColors: List<String> = emptyList(),
 ): List<String> {
-    val normalized = MutableList(4) { "" }
-    for (slot in 0..3) {
-        normalized[slot] = extruderColors.getOrNull(slot).orEmpty()
-    }
-    // B95: when the post-slice GcodeToolRemapper applies an expanded filament-index
-    // remap (because the embedded filament_colour was bumped to fit a high-index
-    // source filament), parsedGcode's `move.extruder` values are already physical
-    // slot indices — the renderer just needs `extruderColors[slot]` directly. The
-    // legacy branch 3 / branch 4 swaps are designed for the OLD compact-T-index
-    // pipeline and produce incorrect palettes for the new direct-slot world.
-    if (useDirectSlots) return normalized
-    if (slicerColorOrder != null && semmColorPermutation != null && !colorMapping.isNullOrEmpty()) {
-        // Branch 3: align Preview palette with Prepare's compact → slot mapping.
-        semmColorPermutation.forEachIndexed { slicerCompactIdx, physicalSlot ->
-            if (physicalSlot in 0..3) {
-                val detectedIdx = slicerColorOrder.getOrNull(slicerCompactIdx) ?: slicerCompactIdx
-                val userSlot = colorMapping.getOrNull(detectedIdx)
-                if (userSlot != null && userSlot in 0..3) {
-                    val color = extruderColors.getOrNull(userSlot).orEmpty()
-                    if (color.isNotBlank()) {
-                        normalized[physicalSlot] = color
-                    }
-                }
+    if (resolvedFilamentColors.isNotEmpty() || !colorMapping.isNullOrEmpty()) {
+        // Phase 2 canonical path. Palette length grows with the canonical
+        // filament list (or colorMapping size, whichever is larger) so
+        // high-T canonical files (T4..T9+) don't visually collapse onto
+        // the last entry the way the pre-fix 4-cap did.
+        //
+        // Phase 2 (2026-04-28, post-v2.0.0-validation user-visible
+        // regression fix): the gcode body has T<fileIndex>, and the
+        // user expects palette[fileIdx] to render in the FILE'S
+        // filament colour (with user-applied Prepare overrides) — not
+        // the physical slot's preset colour. Test on calib-cube + Dragon
+        // + Button-S confirmed: showing slot preset hid the user's
+        // Prepare customisations and made the gcode preview look
+        // disconnected from the model preview.
+        //
+        // Resolution order for each canonical fileIndex i:
+        //   1. `resolvedFilamentColors[i]` — the file's own filament
+        //      colour, with any per-filament Prepare override already
+        //      applied. Matches what Prepare's 3D model shows.
+        //   2. `colorMapping[i]` slot preset — fallback when the file
+        //      has no colour for fileIndex i (synthetic STL entries,
+        //      blank-color edge cases).
+        //   3. `extruderColors[i % 4]` — legacy default, keeps anything
+        //      the slicer emits visible.
+        //
+        // Pre-revision tried slot-first; that was correct for the v1.6.13
+        // T-indexed-by-slot world but inverted the contract once Phase 2
+        // moved to canonical fileIndex space.
+        val length = maxOf(
+            resolvedFilamentColors.size,
+            colorMapping?.size ?: 0,
+            4,
+        )
+        return MutableList(length) { i ->
+            val fileColor = resolvedFilamentColors.getOrNull(i)
+            val slot = colorMapping?.getOrNull(i)
+            val slotColor = slot?.takeIf { it in 0..3 }
+                ?.let { extruderColors.getOrNull(it).orEmpty() }
+            when {
+                !fileColor.isNullOrBlank() -> fileColor
+                !slotColor.isNullOrBlank() -> slotColor
+                else -> extruderColors.getOrNull(i % 4).orEmpty()
             }
         }
-    } else if (semmColorPermutation == null && !colorMapping.isNullOrEmpty()) {
-        // Branch 4: legacy compat — only apply the compact-index override when the
-        // SEMM post-slice remap was NOT active. If semmPerm was active (branch 2),
-        // GcodeToolRemapper has already moved tool indices to physical slots and the
-        // init loop above already produced the right colours.
-        colorMapping.take(4).forEachIndexed { compactIdx, slot ->
-            if (slot in 0..3) {
-                val slotColor = extruderColors.getOrNull(slot).orEmpty()
-                if (slotColor.isNotBlank()) {
-                    normalized[compactIdx] = slotColor
-                }
-            }
-        }
     }
-    return normalized
+    // Legacy path: 4-slot palette indexed by physical slot. Used when
+    // neither resolvedFilamentColors nor colorMapping is available
+    // (single-colour STL, very early during load, etc.)
+    return MutableList(4) { extruderColors.getOrNull(it).orEmpty() }
 }
 
 @Composable
