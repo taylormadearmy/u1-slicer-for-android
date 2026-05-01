@@ -95,9 +95,16 @@ class NativePreparePreviewTest {
         preview!!
         assertTrue(preview.trianglePositions.isNotEmpty())
         assertTrue(preview.extruderIndices.size * 9 == preview.trianglePositions.size)
-        assertTrue(
-            "Expected at least 2 preview colors from native model import",
-            preview.extruderIndices.toSet().size >= 2
+        // H1 from post-Buzz code review (2026-04-30): pin exact distinct
+        // count so a future fold-style over-count regression (e.g. H2C
+        // state-fold double-counting state-N+4 into bucket-N) is caught
+        // here too. Dual-colour calib cube emits exactly 2 extruder
+        // indices in the preview mesh.
+        val distinct = preview.extruderIndices.map { it.toInt() and 0xFF }.toSet()
+        assertEquals(
+            "Dual-colour calib cube must have exactly 2 distinct preview extruder " +
+                "indices, got $distinct",
+            2, distinct.size
         )
     }
 

@@ -252,6 +252,22 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
 > **CRITICAL: Always build with Release optimization.** Debug builds (`-O0`) produce a ~83MB `.so`
 > (vs ~20MB Release) that is 3-5x slower and causes native OOM crashes on heavy multi-colour models.
 
+> **CRITICAL: orcaslicer submodule must be initialised in the build worktree.**
+> Worktrees do not auto-clone submodules — phase2 / refactor / hotfix worktrees
+> typically have an empty `app/src/main/cpp/orcaslicer/` directory and only the
+> .gitlink is tracked. Before any rebuild from a fresh worktree:
+>
+> ```bash
+> git submodule update --init --recursive app/src/main/cpp/orcaslicer
+> ```
+>
+> If you skip this, ninja silently links pre-cached `.o` files from a different
+> worktree's source state and the `.so` may be missing JNI symbols (Buzz plate 8
+> 2026-04-30 incident: rebuild from parent worktree with phase2's `.cxx` cache
+> produced a `.so` without `nativeGetAllVolumeExtruders`, causing
+> `UnsatisfiedLinkError` mid-load). Always rebuild from the worktree whose source
+> matches the branch you intend to ship.
+
 ### Using an existing build directory (preferred — faster)
 
 If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous build:

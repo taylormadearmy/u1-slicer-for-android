@@ -4,6 +4,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B97: H2C state-fold helper has no provenance check — defensive cleanup
+- **Symptom**: `TriangleSelector::h2c_state_matches` (orcaslicer fork, `src/libslic3r/TriangleSelector.cpp:1428`) returns true for `actual = query+4` whenever `query in [1..4]` regardless of whether the file is genuinely H2C (4-slot dual-AMS) or a normal multi-filament Bambu file with > 4 declared filaments.
+- **User-facing impact**: NONE currently. Buzz plate 8 (the original trigger of this concern) was the multi-state-variant manifestation only — saved G-code is clean (verified 2026-04-30, `filament_used_mm[1]=0` with state-6 painted geometry not bleeding into bucket 2). The slicer's downstream merge/projection step in `MultiMaterialSegmentation` collapses the duplicate-state buckets so phantom extrusion never reaches the output.
+- **Latent risk**: a future file shape that paints with state in 5..8 in a slicer code path that does NOT collapse via `merge_segmented_layers` could surface phantom extrusion. Specifically files with `filament_colour.size() > 4` where the user maps states 5..8 to physically distinct slots.
+- **Proposed fix**: thread an `h2c_active` flag through TriangleSelector (set by the BBS importer when `filament_settings_id` matches `@BBL H2C` or similar — see `SlicerViewModel.kt:4722` for the Kotlin H2C detection markers) and gate the fold on it. The current fold then activates only on real H2C files.
+- **Not a ship blocker**: defensive only; covered by guard tests on Buzz plate 8 G-code (`buzzLightyear_plate8_prepareAndPreviewColoursAgreeByRegionSize` C1 assertion) and the 18-test instrumented sweep including H2C colored_3DBenchy.
+- **Source**: surfaced in the 2026-04-30 code review (post-Buzz fix) as concern C1+C2.
+
 ### B96: SEMM-painted files emit canonical-fileIndex T-indices instead of physical-slot — pre-existing, amplified by Phase 2 — OPEN
 - **Symptom**: SEMM (paint-state) painted files produce G-code with T-index spread that doesn't match desktop Snapmaker Orca's output. Most extreme on `colored_3DBenchy (1).3mf`:
   - Desktop Snapmaker Orca: `T0=3, T1=4, T2=2` (3 tools used for the 3 visible paint regions)

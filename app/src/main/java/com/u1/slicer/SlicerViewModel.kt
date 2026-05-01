@@ -1625,7 +1625,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 if (e is CancellationException) throw e
                 Log.e("SlicerVM", "selectPlate(${plateId}) threw — clearing model", e)
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
-                _state.value = SlicerState.Error("Error loading plate: ${e.message}")
+                // M1 from post-fix code review: include the exception class so
+                // null-message NPEs / UnsatisfiedLinkErrors are surfaced
+                // distinguishably in the UI Error state instead of as bare
+                // "Error loading plate: null".
+                val cause = "${e::class.simpleName}: ${e.message ?: "(no message)"}"
+                _state.value = SlicerState.Error("Error loading plate: $cause")
             }
         }
     }
@@ -4297,6 +4302,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // layer-tool plates with no painted regions (flippy plate 4
             // Hueforge). When native is empty, fall back to layer-tool
             // metadata (with the phantom risk).
+            //
+            // H3 from post-Buzz code review (2026-04-30): when native is
+            // non-empty we drop `sourcePlateObjectExtruders` entirely. For a
+            // hypothetical layer-tool plate where the per-object default is
+            // the BACKGROUND for unpainted regions AND that extruder doesn't
+            // appear in any layer-tool entry, we'd silently lose it. None of
+            // the current fixtures (Shashibo plate 5, flippy plate 4, slip-
+            // slide-spin plate 3) hit that combination, so the divergence is
+            // not currently observable. If a future fixture surfaces a layer-
+            // tool plate with `objectExtruder ∉ native ∪ layerToolExtruders`,
+            // restore the union here. Adding a synthetic regression test
+            // would require either refactoring this branch into an `internal`
+            // helper or adding instrumented coverage on a custom-built 3MF.
             if (usedExtruders.isNotEmpty()) {
                 usedExtruders.toSortedSet()
             } else {

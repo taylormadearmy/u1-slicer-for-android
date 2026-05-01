@@ -61,6 +61,15 @@ fun FilamentMappingDialog(
     onConfirm: (List<Int>) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // M3 from post-Buzz code review (2026-04-30): when [plateFileIndices] is
+    // supplied it MUST be the same size as [canonicalList.filaments], because
+    // each row at position `idx` looks up its display fileIdx via
+    // plateFileIndices[idx]. Mismatched sizes silently fall back to
+    // positional `idx`, producing inconsistent labels within the dialog.
+    require(plateFileIndices == null || plateFileIndices.size == canonicalList.size) {
+        "FilamentMappingDialog: plateFileIndices.size (${plateFileIndices?.size}) " +
+            "must match canonicalList.size (${canonicalList.size})"
+    }
     val mapping = remember(canonicalList, extruderPresets) {
         val seed = if (initialMapping != null && initialMapping.size == canonicalList.size) {
             initialMapping

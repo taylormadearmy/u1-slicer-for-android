@@ -2266,12 +2266,22 @@ fun SliceCompleteSummaryCard(
     val visibleEntries = remember(perExtruderFilamentMm, plateFileIndices) {
         when {
             plateFileIndices != null && plateFileIndices.isNotEmpty() -> {
+                // plateFileIndices is already filtered to non-zero footer
+                // entries by `computePlateFileIndices` (mm > 0 guard).
                 plateFileIndices.mapIndexed { posInPlate, fileIdx ->
                     ChipEntry(fileIdx, posInPlate, perExtruderFilamentMm.getOrNull(fileIdx) ?: 0f)
                 }
             }
             else -> {
-                perExtruderFilamentMm.mapIndexed { i, mm -> ChipEntry(i, i, mm) }
+                // H2 from post-Buzz code review (2026-04-30): when
+                // plateFileIndices is null (non-Bambu / canonical load
+                // failed), the GcodeParser preference for the canonical-wide
+                // footer can include trailing zeros for declared-but-unused
+                // filaments. Filter `mm > 0` here so the chip strip never
+                // renders a "Filament N · 0 mm (0.0 g)" ghost entry.
+                perExtruderFilamentMm.mapIndexedNotNull { i, mm ->
+                    if (mm > 0f) ChipEntry(i, i, mm) else null
+                }
             }
         }
     }

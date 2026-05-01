@@ -1518,6 +1518,66 @@ class PreparePreviewViewModelTest {
                 toolCounts.size >= 2
             )
 
+            // C1 from the post-fix code review: the H2C state-fold was only
+            // patched in the multi-state `get_facets`. The single-state
+            // `get_facets(state)` (used by `MultiMaterialSegmentation` per-
+            // extruder query loop) STILL applies the fold. For Buzz plate 8
+            // with `num_facets_states = filament_colour.size + 1 = 11`, the
+            // slicer iterates extruder_idx in [1..11) and calls
+            // `get_facets(EnforcerBlockerType(extruder_idx))` per state.
+            // With the fold, query(state=2) folds into actual=6 and the
+            // state-6 painted geometry ends up projected into BOTH bucket-2
+            // (filament 2 = blue) AND bucket-6 (filament 6 = red) painted_lines
+            // accumulators. Whether this manifests in the saved G-code depends
+            // on whether the segmentation merge collapses overlapping regions
+            // — verify here.
+            //
+            // Buzz plate 8 file-level usage: filament 6 (paint=red, T5 in
+            // 0-indexed canonical) + filament 10 (body=white, T9). Filament 2
+            // (blue) is NOT referenced by the plate's geometry. The footer
+            // `; filament used [mm]` line should report 0 for filament 2 (or
+            // negligible — wipe tower priming only).
+            val footerRegex = Regex("""^;\s*filament used \[mm\]\s*=\s*(.+)$""")
+            val filamentMm = lines
+                .mapNotNull { footerRegex.matchEntire(it)?.groupValues?.get(1) }
+                .firstOrNull()
+                ?.split(",")
+                ?.map { it.trim().toFloatOrNull() ?: 0f }
+                ?: emptyList()
+            assertTrue(
+                "Buzz plate 8 G-code must report `; filament used [mm]` footer " +
+                    "(found none in ${lines.size} lines)",
+                filamentMm.isNotEmpty()
+            )
+            // Reviewer's C1 hypothesis: if the slicer's painted-segmentation
+            // double-counts state-6 into bucket-2, filament 2 will show
+            // significant non-zero mm in the footer. Threshold of 100 mm is
+            // generous for any pure wipe-tower priming overhead.
+            val filament2Mm = filamentMm.getOrNull(1) ?: 0f
+            val filament6Mm = filamentMm.getOrNull(5) ?: 0f
+            val filament10Mm = filamentMm.getOrNull(9) ?: 0f
+            android.util.Log.i(
+                "BuzzPlate8GcodeTest",
+                "filament_used_mm by index: 1(blue)=$filament2Mm, " +
+                    "5(red)=$filament6Mm, 9(white)=$filament10Mm; " +
+                    "full=${filamentMm.mapIndexed { i, v -> "[$i]=$v" }}"
+            )
+            assertTrue(
+                "C1 verification: Buzz plate 8 G-code must use filament 6 (red, " +
+                    "fileIdx 5). Saved G-code reports ${filament6Mm}mm. " +
+                    "filamentMm=$filamentMm",
+                filament6Mm > 100f
+            )
+            assertTrue(
+                "C1 verification: Buzz plate 8 G-code must NOT use filament 2 (blue, " +
+                    "fileIdx 1) — plate 8 paints only filament 6, not filament 2. If " +
+                    "${filament2Mm}mm is significant, the slicer's per-state " +
+                    "segmentation is double-counting state-6 painted geometry into " +
+                    "bucket-2 via the H2C fold in single-state get_facets. " +
+                    "filamentMm=$filamentMm toolCounts=$toolCounts",
+                filament2Mm < 100f
+            )
+
             // Phase 2 contract: Prepare shows canonical (file) colours indexed
             // by fileIndex; Preview shows slot preset colours indexed by
             // physical slot. After Group A's canonical-driven recolor, Prepare's
@@ -1530,8 +1590,9 @@ class PreparePreviewViewModelTest {
             //   - ≥2 distinct Prepare colours (from canonical at fileIndices used
             //     by the mesh) — asserted above.
             //   - ≥2 distinct G-code tools — asserted above.
-            // These two together are enough to confirm Buzz plate 8 doesn't
-            // collapse to a single colour in either Prepare or Preview.
+            //   - filament 6 (red) actually used; filament 2 (blue) effectively unused
+            //     — asserted above.
+            // These confirm Buzz plate 8 renders + slices to red + white only.
         } finally {
             viewModel.clearModel()
             modelFile.delete()
