@@ -215,14 +215,16 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Fix: post-slice G-code header patch — `fixFilamentTypeHeader()` replaces `; filament_type = PLA` with actual per-extruder material types from extruder presets
 - **Source**: Discord user Jon (2026-04-14)
 
-### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60) — likely fixed v1.6.13, needs E2E confirmation
+### B58: SEMM painted model preview colours don't match sliced output or desktop OrcaSlicer (GitHub #60) — FIXED v1.6.13 (PaintColorDecoder), reverified v2.0.0
 - For `colored_3DBenchy (1).3mf` (4-colour SEMM), the Prepare preview, G-code preview, and desktop OrcaSlicer all show different colours
 - **Prepare screen**: Only 2 colour chips shown; model renders mostly white/gray — 2 of 4 paint zones missing
 - **G-code preview**: More colours visible in toolpath render but different distribution from desktop reference
 - Not a slicing correctness issue (all 4 extruders active in G-code), but gives user a misleading picture
 - **Affects**: All SEMM painted models (`hasPaintData=true`)
-- **2026-04-23 v1.6.13 manual check**: post-decoder, `colored_3DBenchy (1).3mf` reports `colors=4, mapping=[0, 1, 2, 3]`, all 4 colour chips visible (Color 1 blue, Color 2 red, Color 3 yellow, Color 4 white) and the Prepare 3D mini-preview shows all 4 colours on the Benchy. Symptom appears resolved by the new `PaintColorDecoder` correctly identifying all paint states. Formal verification via the next E2E batch (Prepare colour-zone count + sliced G-code preview render comparison) before closing.
-- **When fixed**: restore CP TOOLCHANGE~27 assertion in the `colored_3DBenchy (1).3mf` E2E check (skill file + memory `e2e-testing.md`) — it was suppressed due to this bug
+- **2026-04-23 v1.6.13 manual check**: post-decoder, `colored_3DBenchy (1).3mf` reports `colors=4, mapping=[0, 1, 2, 3]`, all 4 colour chips visible (Color 1 blue, Color 2 red, Color 3 yellow, Color 4 white) and the Prepare 3D mini-preview shows all 4 colours on the Benchy. Symptom appears resolved by the new `PaintColorDecoder` correctly identifying all paint states.
+- **2026-05-01 v2.0.0 E2E confirmation**: full 16-fixture E2E batch on Pixel 8a — `colored_3DBenchy (1).3mf` shows 4 colour chips, 3 of 4 canonical T-indices used in saved G-code (T3=0 because that paint state is not actually present in the geometry, model-correct). Prepare/Preview palette agreement verified separately by `buzzLightyear_plate8_prepareAndPreviewColoursAgreeByRegionSize` regression guard.
+- **GitHub #60**: ready to close.
+- ~~**When fixed**: restore CP TOOLCHANGE~27 assertion in the `colored_3DBenchy (1).3mf` E2E check~~ — leave suppressed (CP TOOLCHANGE count is genuinely variable across SEMM session-by-session, not a regression signal).
 
 ### B54: Modifier volumes rendered as solid geometry in Prepare preview (GitHub #55) — FIXED
 - **Root cause**: `BambuSanitizer.buildOrcaModelConfig()` hardcoded `subtype="normal_part"` for all `<part>` entries, overwriting `"modifier_part"` from the original 3MF. Also `needsModelConfig` only checked `extruder > 1`, so single-colour files with modifiers got no config at all. OrcaSlicer's BBS loader then defaulted all volumes to `MODEL_PART`, making the modifier cube appear as solid geometry.

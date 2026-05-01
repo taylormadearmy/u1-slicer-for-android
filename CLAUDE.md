@@ -7,6 +7,7 @@ Current release: `v2.0.0` (`versionCode 260`)
 
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
+> For the multi-phase Bambu refactor status (Phase 1 + Phase 2 done; Phase 2.0/2.6 future UX work), see [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md).
 
 ## Build
 
@@ -51,8 +52,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 851 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 223 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 998 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 279 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -61,7 +62,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 819 tests across 58 classes
+### Unit tests (`app/src/test/`) - 998 tests across 74 classes
 - `gcode/GcodeParserTest.kt` (33) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
@@ -123,7 +124,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
 
-### Instrumented tests (`app/src/androidTest/`) - 220 tests across 21 classes
+### Instrumented tests (`app/src/androidTest/`) - 279 tests across 33 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
