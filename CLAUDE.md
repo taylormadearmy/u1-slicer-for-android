@@ -20,6 +20,16 @@ Current release: `v2.0.0` (`versionCode 260`)
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
 > For the multi-phase Bambu refactor status (Phase 1 + Phase 2 done; Phase 2.0/2.6 future UX work), see [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md).
 
+
+## Orca Submodule Recovery
+
+Current `main` pins `app/src/main/cpp/orcaslicer` at commit `bd66b99b2d2b69b7d6bb7d14d30cc74c37c6424b` (`docs(triangle-selector): explain single-state get_facets retains H2C fold`). During the 2026-05 project move, fresh submodule initialisation failed because `https://github.com/Snapmaker/OrcaSlicer.git` did not serve that object.
+
+The commit was recovered from the old local object store:
+
+`C:\Users\kevin\old-projects-to-delete\u1-slicer-for-android\.git\worktrees\u1-slicer-orca\modules\app\src\main\cpp\orcaslicer`
+
+It was pushed to `https://github.com/taylormadearmy/OrcaSlicer.git` on branch `codex/recover-u1-main-bd66b99`. Keep `.gitmodules` pointed at that fork unless/until `Snapmaker/OrcaSlicer` is confirmed to contain `bd66b99...`, otherwise new worktrees cannot reproduce the native source tree for the committed Android submodule pointer.
 ## Build
 
 ```bash
