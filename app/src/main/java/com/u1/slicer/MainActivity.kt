@@ -486,6 +486,23 @@ class MainActivity : ComponentActivity() {
                 var pendingMappingSend by remember {
                     mutableStateOf<PendingMappingSend?>(null)
                 }
+                // Bug fix (2026-05-01): hoist the IO scope used by the
+                // FilamentMappingDialog onConfirm out of the
+                // `pendingMappingSend?.let { ... }` gate. Pre-fix the scope
+                // was declared inside the gate; onConfirm ran:
+                //   pendingMappingSend = null
+                //   navigateTab(Routes.PRINTER)
+                //   scope.launch(IO) { applyPrintTimeRemap(); sendAndPrint() }
+                // Setting pendingMappingSend = null caused the gate to leave
+                // composition on the next frame, which cancelled the
+                // rememberCoroutineScope tied to it. The scope.launch
+                // dispatched into a dying scope and the IO coroutine was
+                // silently killed before applyPrintTimeRemap or
+                // sendAndPrint executed — print never sent to printer, no
+                // logs, no error UI. Tying the scope to the parent
+                // composable (which lives across the dialog lifecycle)
+                // makes the IO work survive the dialog dismissal.
+                val sendActionScope = rememberCoroutineScope()
                 val appSlicerState by viewModel.state.collectAsState()
                 val sharedPreviewModelKey = when (val s = appSlicerState) {
                     is SlicerViewModel.SlicerState.Loading -> "loading:${s.message}"
@@ -726,7 +743,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                    val scope = rememberCoroutineScope()
                     when (canonicalState) {
                         is CanonicalLookup.Loading -> {
                             // IO in flight; keep pendingMappingSend alive.
@@ -777,7 +793,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                         pendingMappingSend = null
                                         navigateTab(Routes.PRINTER)
-                                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                        sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                             val physical = com.u1.slicer.gcode.applyPrintTimeRemap(
                                                 source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
                                                 output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
@@ -812,7 +828,7 @@ class MainActivity : ComponentActivity() {
                             )
                             pendingMappingSend = null
                             navigateTab(Routes.PRINTER)
-                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 // Phase 2 B.1 — Absent canonical path
                                 // means legacy/unrecognised file. Treat
                                 // the source as already physical-slot

@@ -5,6 +5,17 @@ Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
 Current release: `v2.0.0` (`versionCode 260`)
 
+> **NEVER start a print on the user's physical printer without explicit permission.**
+> The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
+> start the print physically. Filament heats, head moves, build plate gets used.
+>
+> When testing send/upload flows on-device:
+>  - Use **"Map & Upload"** / **"Upload Only"** (uploads file but does NOT start the print).
+>  - If you need to test the start-print path, ask the user first — even on what
+>    looks like an idle printer.
+>  - Subagent prompts that drive the device must NOT instruct the agent to tap
+>    "Map & Print" / "Send & Print" without an explicit user-authorised reason.
+>
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
 > For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
 > For the multi-phase Bambu refactor status (Phase 1 + Phase 2 done; Phase 2.0/2.6 future UX work), see [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md).
