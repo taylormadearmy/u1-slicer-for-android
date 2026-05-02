@@ -4,6 +4,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B98: Performance investigation plan for large-model load, preview readiness, and safe native optimisation (GitHub #114) — OPEN
+- **Goal**: Identify and implement user-visible performance wins without weakening stability, colour/material accuracy, Bambu settings fidelity, or device safety.
+- **Plan**: `PERFORMANCE_INVESTIGATION_PLAN.md` on branch `codex/performance-investigation-plan`.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/114
+- **Context**: The native real-TBB PoC is not mergeable as-is. Shashibo plate 5 repeatedly stalled with `NativeAlloc` pressure even after removing allocator wrapping and lazily capping TBB to 1 worker. Future work should be profiling-led and focused on user-visible waits rather than broad parallelism.
+- **Initial focus**: large model loading, time to first usable preview, Bambu metadata/settings paths, and only then narrow slicing hotspots with fixture-level canaries.
+- **First milestone**: add/capture stage timing on `main` for representative large fixtures and identify the largest load/preview bottleneck before implementing optimisations.
+
 ### B97: H2C state-fold helper has no provenance check — defensive cleanup
 - **Symptom**: `TriangleSelector::h2c_state_matches` (orcaslicer fork, `src/libslic3r/TriangleSelector.cpp:1428`) returns true for `actual = query+4` whenever `query in [1..4]` regardless of whether the file is genuinely H2C (4-slot dual-AMS) or a normal multi-filament Bambu file with > 4 declared filaments.
 - **User-facing impact**: NONE currently. Buzz plate 8 (the original trigger of this concern) was the multi-state-variant manifestation only — saved G-code is clean (verified 2026-04-30, `filament_used_mm[1]=0` with state-6 painted geometry not bleeding into bucket 2). The slicer's downstream merge/projection step in `MultiMaterialSegmentation` collapses the duplicate-state buckets so phantom extrusion never reaches the output.
