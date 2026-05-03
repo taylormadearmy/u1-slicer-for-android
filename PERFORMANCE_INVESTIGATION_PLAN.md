@@ -38,6 +38,8 @@ That run used the allocator shim, real TBB in place of the global `tbb_serial` i
 
 Interpretation: the performance upside is real enough to justify a fresh investigation. The later post-move PoC did not invalidate these results; it failed to reproduce a clean, comparable benchmark because the project move/submodule recovery changed the setup and the Shashibo harness was over-weighted.
 
+The preserved code shape, old paths, and binary provenance are recorded in `docs/native-perf-pre-move-poc.md`.
+
 ## Guiding Principles
 
 1. Optimise user-visible waits first.
