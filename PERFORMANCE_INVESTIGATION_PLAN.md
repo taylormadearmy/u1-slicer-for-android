@@ -4,7 +4,7 @@
 
 Improve user-visible performance in U1 Slicer for Android without weakening stability, colour/material accuracy, Bambu settings fidelity, or device safety.
 
-The first native TBB PoC showed that broad parallelism changes are not a safe merge path yet. Future performance work should be profiling-led, staged, and judged by fixture-level canaries rather than by isolated microbenchmarks.
+The first native TBB PoC did not establish a safe, measurable win. Future performance work should be profiling-led, staged, and judged by broad automated coverage plus manual UI-first E2E, rather than by isolated microbenchmarks or one troublesome fixture.
 
 ## Current Findings
 
@@ -12,13 +12,13 @@ The `NATIVE_PERF_PLAN.md` broad real-TBB approach is high risk as currently fram
 
 Observed during the native performance PoC:
 
-- Real TBB plus serial `PrintObject::process_external_surfaces()` still caused the Shashibo fixture to stall.
+- Real TBB plus serial `PrintObject::process_external_surfaces()` still stalled on the legacy Shashibo harness, but that harness is no longer a reliable decision gate and should not be used as the basis for accepting or rejecting performance work.
 - Removing allocator wrapping did not fix the stall.
 - Static `oneapi::tbb::global_control` crashed during native library setup.
-- Lazy `global_control` avoided the setup crash, but both `max_allowed_parallelism=2` and `max_allowed_parallelism=1` still failed to complete Shashibo within long timeouts.
+- Lazy `global_control` avoided the setup crash, but the PoC did not complete a reliable broad automated/manual comparison that proved a user-visible win.
 - The repeated device symptom was `Waiting for a blocking GC NativeAlloc`, indicating native allocation pressure or allocator/task behaviour rather than simply too many worker threads.
 
-Conclusion: do not merge a broad switch from the serial TBB shim to real TBB until the Shashibo regression is understood and fixed.
+Conclusion: do not merge a broad switch from the serial TBB shim to real TBB on the PoC evidence alone. The PoC remains unproven, not disproven; future evaluation must use the current testing guidance in `E2E_TESTING.md`.
 
 ## Guiding Principles
 
@@ -26,7 +26,7 @@ Conclusion: do not merge a broad switch from the serial TBB shim to real TBB unt
 2. Measure before changing code.
 3. Prefer narrow changes with clear rollback paths.
 4. Keep the existing serial TBB shim unless a specific hotspot proves safe with real parallelism.
-5. Treat Shashibo as a mandatory canary for memory/stability risk.
+5. Use the current `E2E_TESTING.md` strategy: broad automated tests plus UI-first manual E2E on representative files.
 6. Rebuild and verify native binaries after every native source change.
 7. Do not trade colour, filament, plate, object, or settings accuracy for speed.
 
@@ -140,9 +140,10 @@ Do not do yet:
 
 Use a fixed fixture set with a mix of small, medium, large, Bambu, multi-plate, and multi-colour models.
 
-Mandatory canaries:
+Required validation set:
 
-- Shashibo plate 5: memory/stability canary.
+- `testDebugUnitTest` and `connectedDebugAndroidTest` automated baselines.
+- AI-assisted/manual UI-first E2E over `app/src/androidTest/assets/`, following `E2E_TESTING.md`.
 - Button-for-S-trousers: multi-extruder/tool-change canary.
 - Bambu plate state regression fixtures: colour/settings/plate-state canaries.
 - SEMM slicing fixtures: multi-material slicing canaries.
@@ -209,7 +210,7 @@ A performance PR should not be considered mergeable unless it includes:
 - Before/after timings for the affected workflow.
 - Clear fixture list and device used.
 - Correctness tests for affected colour/settings/plate/object behaviour.
-- Shashibo result when native loading, slicing, allocation, or TBB-adjacent code is touched.
+- Manual/UI-first E2E comparison for touched workflows, especially large model load, preview, colour/settings, and slicing output.
 - Explanation of any changed native binary.
 - Rollback plan if field regressions appear.
 
@@ -227,8 +228,8 @@ Suggested minimum bar:
 4. Optimise the largest load-time bucket first.
 5. Add caching only after measuring repeated work.
 6. Optimise preview readiness separately from final preview quality.
-7. Revisit slicing only with stage-level timing and Shashibo memory data.
-8. Reconsider targeted TBB only if a specific read-only hotspot is isolated and can pass Shashibo.
+7. Revisit slicing only with stage-level timing and the current automated/manual E2E evidence.
+8. Reconsider targeted TBB only if a specific read-only hotspot is isolated and passes the broad automated suite plus manual UI-first E2E.
 
 ## Open Questions
 
