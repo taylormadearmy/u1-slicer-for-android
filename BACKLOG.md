@@ -8,7 +8,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Goal**: Identify and implement user-visible performance wins without weakening stability, colour/material accuracy, Bambu settings fidelity, or device safety.
 - **Plan**: `PERFORMANCE_INVESTIGATION_PLAN.md` on branch `codex/performance-investigation-plan`.
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/114
-- **Context**: The native real-TBB PoC is not mergeable on the evidence collected so far: static `global_control` crashed during setup, and the PoC did not complete a reliable broad automated/manual comparison that proved a user-visible win. The old Shashibo harness stalled during the experiment, but that harness is being retired and must not be used as the basis for accepting or rejecting performance work.
+- **Context**: The pre-move native real-TBB PoC showed measurable upside: two representative tests were about 20% faster, and the four-test mini-benchmark improved from `392.977s` to `347.353s` (~13.1%) while 873 JVM tests, 200 instrumented tests, and a 77-test high-risk colour/stability batch passed. The later post-move PoC did not invalidate that evidence; it failed to reproduce a clean comparable benchmark, and the old Shashibo harness must not be used as the basis for accepting or rejecting performance work. Known implementation hazard: static `global_control` crashed during setup.
 - **Initial focus**: large model loading, time to first usable preview, Bambu metadata/settings paths, and only then narrow slicing hotspots with fixture-level canaries.
 - **First milestone**: add/capture stage timing on `main` for representative large fixtures and identify the largest load/preview bottleneck before implementing optimisations.
 

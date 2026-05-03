@@ -20,6 +20,24 @@ Observed during the native performance PoC:
 
 Conclusion: do not merge a broad switch from the serial TBB shim to real TBB on the PoC evidence alone. The PoC remains unproven, not disproven; future evaluation must use the current testing guidance in `E2E_TESTING.md`.
 
+### Pre-Move PoC Evidence
+
+The original pre-move PoC in `C:\Users\kevin\projects\u1-slicer-orca\.worktrees\native-perf-poc` on branch `codex/native-perf-poc` did show measurable upside before the project move disrupted the worktree setup.
+
+That run used the allocator shim, real TBB in place of the global `tbb_serial` include, and a serialized `PrintObject::process_external_surfaces()` loop. Reported results from the Codex session `Prototype native perf plan` on 2026-04-30 / 2026-05-01:
+
+- Native build: NDK 26 / Clang 17.0.2, stripped Release `.so`, `20,991,736` bytes.
+- `testDebugUnitTest`: 873 tests passed.
+- Full `connectedDebugAndroidTest` on Pixel 8a `43211JEKB16931`: 200 tests passed.
+- Earlier high-risk colour/stability batch: 77 tests passed.
+- Button trousers 3MF: `64.664s -> 53.424s` (`1.21x`).
+- Flarewing Dragon SEMM: `174.935s -> 163.675s` (`1.07x`).
+- H2C full pipeline: `88.057s -> 73.124s` (`1.20x`).
+- H2C SEMM all tools: `65.321s -> 57.130s` (`1.14x`).
+- Aggregate mini-benchmark: `392.977s -> 347.353s`, about `13.1%` faster.
+
+Interpretation: the performance upside is real enough to justify a fresh investigation. The later post-move PoC did not invalidate these results; it failed to reproduce a clean, comparable benchmark because the project move/submodule recovery changed the setup and the Shashibo harness was over-weighted.
+
 ## Guiding Principles
 
 1. Optimise user-visible waits first.
