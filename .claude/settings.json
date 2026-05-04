@@ -1,10 +1,12 @@
 {
   "permissions": {
+    "allow": [
+      "Edit(~/.claude/skills/u1-slicer-confidence-check/**)",
+      "WebFetch(domain:discord.com)",
+      "mcp__discord-custom__read_messages"
+    ],
     "additionalDirectories": [
       "C:\\Users\\kevin\\.claude\\skills"
-    ],
-    "allow": [
-      "Edit(~/.claude/skills/u1-slicer-confidence-check/**)"
     ]
   }
 }

@@ -465,6 +465,40 @@ class SlicingOverridesTest {
         assertEquals("30", result["support_threshold_angle"])
     }
 
+    // --- B100: layer_height override handling in buildProfileOverrides ---
+
+    @Test
+    fun `buildProfileOverrides omits layer_height for USE_FILE mode so source 3MF value survives`() {
+        val cfg = SliceConfig(layerHeight = 0.2f)
+        val ov = SlicingOverrides() // defaults to USE_FILE for layerHeight
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = true)
+        assertFalse("layer_height should be omitted for USE_FILE", result.containsKey("layer_height"))
+    }
+
+    @Test
+    fun `buildProfileOverrides includes layer_height for OVERRIDE mode`() {
+        val cfg = SliceConfig(layerHeight = 0.2f)
+        val ov = SlicingOverrides(layerHeight = OverrideValue(OverrideMode.OVERRIDE, 0.12f))
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = true)
+        assertEquals("0.12", result["layer_height"])
+    }
+
+    @Test
+    fun `buildProfileOverrides includes layer_height for ORCA_DEFAULT mode with default value`() {
+        val cfg = SliceConfig(layerHeight = 0.3f)
+        val ov = SlicingOverrides(layerHeight = OverrideValue(OverrideMode.ORCA_DEFAULT, null))
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = true)
+        assertEquals("0.2", result["layer_height"]) // ORCA_DEFAULTS["layerHeight"] = 0.2f
+    }
+
+    @Test
+    fun `buildProfileOverrides omits layer_height for USE_FILE on STL file too`() {
+        val cfg = SliceConfig(layerHeight = 0.2f)
+        val ov = SlicingOverrides() // USE_FILE
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, hasSourceConfig = false)
+        assertFalse("layer_height omitted for STL USE_FILE too — process profile provides it", result.containsKey("layer_height"))
+    }
+
     // --- F8: Support extruder override tests ---
 
     @Test

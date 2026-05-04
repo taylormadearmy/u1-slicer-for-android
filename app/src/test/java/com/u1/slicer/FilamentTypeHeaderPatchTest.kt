@@ -92,7 +92,37 @@ class FilamentTypeHeaderPatchTest {
             filamentLibrary = emptyList(),
         )
 
-        assertEquals(listOf("TPU"), types)
+        // B102: physical-slot-indexed — TPU at slot 2 (E3), PLA defaults for unused slots 0,1.
+        assertEquals(listOf("PLA", "PLA", "TPU"), types)
+    }
+
+    @Test
+    fun `B102 sparse colorMapping produces physical-slot-indexed filament_type`() {
+        // colorMapping=[2,3]: canonical T0 → physical E3, canonical T1 → physical E4.
+        // After PrintTimeRemap the physical G-code uses T2 and T3. The header must have
+        // PETG at positions 2 and 3 so the printer reads filament_type[2]=PETG (not PLA default).
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PETG", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#0000FF", "PETG", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#FF0000", materialType = "PETG"),
+            ExtruderPreset(index = 3, color = "#0000FF", materialType = "PETG"),
+        )
+
+        val types = resolveFilamentTypesForHeaderPatch(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(2, 3),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+
+        assertEquals(listOf("PLA", "PLA", "PETG", "PETG"), types)
     }
 
     @Test

@@ -7,6 +7,10 @@ import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
+import com.u1.slicer.buildProfileOverridesImpl
+import com.u1.slicer.data.OverrideMode
+import com.u1.slicer.data.OverrideValue
+import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.data.defaultExtruderPresets
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.gcode.GcodeToolRemapper
@@ -1471,6 +1475,52 @@ class BambuPipelineIntegrationTest {
         // Verify specific colors from project_settings.config filament_colour
         assertTrue("Merged colors must include #0056B8",
             mergedInfo.detectedColors.any { it.equals("#0056B8", ignoreCase = true) })
+    }
+
+    /**
+     * B100 regression: layer_height OVERRIDE must change the slice layer count; USE_FILE
+     * must honour the embedded profile's value rather than the Kotlin default (0.2mm).
+     *
+     * Test strategy:
+     * 1. Embed a Snapmaker profile with OVERRIDE layer_height=0.12mm → embedded config has 0.12.
+     * 2. Slice with the 0.0f sentinel (simulating USE_FILE/startSlicing path) — applyConfigToPrusa
+     *    skips layer_height so profile_keys[] keeps the embedded 0.12mm → more layers.
+     * 3. Slice with explicit 0.2f — applyConfigToPrusa overwrites to 0.2mm → fewer layers.
+     * 4. Assert sentinel produces more layers (0.12mm model is sliced more finely).
+     */
+    @Test
+    fun b100_layerHeight_sentinel_respectsEmbeddedProfile() {
+        val threeMf = asset("die-single-colour.3mf")
+
+        // Embed a profile with layer_height=0.12mm
+        val info = ThreeMfParser.parse(threeMf)
+        val ovMap = buildProfileOverridesImpl(
+            cfg = BASE_CONFIG,
+            ov = SlicingOverrides(layerHeight = OverrideValue(OverrideMode.OVERRIDE, 0.12f)),
+            slotCount = 1,
+            hasSourceConfig = false
+        )
+        val embConfig = embedder.buildConfig(info = info, overrides = ovMap)
+        val embedded = embedder.embed(threeMf, embConfig, outDir, info)
+        assertTrue("Embedded file must exist", embedded.exists())
+
+        // Slice with sentinel 0.0f → applyConfigToPrusa skips, profile_keys[] uses 0.12mm
+        lib.clearModel()
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+        val resultSentinel = lib.slice(BASE_CONFIG.copy(layerHeight = 0.0f))!!
+        assertTrue("Sentinel slice must succeed", resultSentinel.success)
+
+        // Slice with explicit 0.2f → applyConfigToPrusa applies 0.2mm (over profile's 0.12mm)
+        lib.clearModel()
+        assertTrue("loadModel must succeed for second run", lib.loadModel(embedded.absolutePath))
+        val resultExplicit = lib.slice(BASE_CONFIG.copy(layerHeight = 0.2f))!!
+        assertTrue("Explicit slice must succeed", resultExplicit.success)
+
+        assertTrue(
+            "0.12mm sentinel should produce more layers than 0.2mm explicit " +
+                "(got sentinel=${resultSentinel.totalLayers} vs explicit=${resultExplicit.totalLayers})",
+            resultSentinel.totalLayers > resultExplicit.totalLayers
+        )
     }
 
 }

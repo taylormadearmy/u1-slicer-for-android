@@ -168,8 +168,18 @@ std::string SlicerEngine::getCoreVersion() const {
 // Key names differ from PrusaSlicer 2.8 — use OrcaSlicer names throughout.
 static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config, bool has_embedded_profile = false) {
     // Layer settings (OrcaSlicer keys)
-    dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(config.layer_height));
-    dpc.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(config.first_layer_height));
+    // layer_height: 0.0f sentinel means "let profile_keys[] value (or OrcaSlicer default) stand".
+    // USE_FILE and ORCA_DEFAULT modes pass 0.0f from Kotlin; OVERRIDE passes the explicit value.
+    if (config.layer_height > 0.0f) {
+        dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(config.layer_height));
+    }
+    // initial_layer_print_height: profile_keys[] applies the embedded profile's value for
+    // Snapmaker profiles (sourced from either the file's config or our process profile).
+    // Only fall back to the JNI value for non-Snapmaker files (plain STL without profile).
+    // has_embedded_profile is true when called with is_snapmaker_profile=true (see call site).
+    if (!has_embedded_profile) {
+        dpc.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(config.first_layer_height));
+    }
     dpc.set_key_value("wall_loops", new Slic3r::ConfigOptionInt(config.perimeters));
     dpc.set_key_value("top_shell_layers", new Slic3r::ConfigOptionInt(config.top_solid_layers));
     dpc.set_key_value("bottom_shell_layers", new Slic3r::ConfigOptionInt(config.bottom_solid_layers));

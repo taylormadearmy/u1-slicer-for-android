@@ -2197,7 +2197,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "(${mergedInfo.plates.size} plates) — waiting for plate selection")
             processed
         } else {
-            embedProfile(processed, mergedInfo, workspaceDir)
+            // B101: pass the first plate's ID for Bambu files so filterModelToPlate runs
+            // and repositions objects to their correct on-plate transforms. Without this,
+            // single-plate Bambu files (e.g. OreoProj1.3mf) load with parts off the build
+            // plate because their <build> items carry plate-specific Z transforms that only
+            // filterModelToPlate strips/normalises. selectPlate() already does this correctly
+            // via plateId; now the initial load path does too.
+            val firstPlateId = if (origInfo.isBambu && mergedInfo.plates.isNotEmpty())
+                mergedInfo.plates.first().plateId else null
+            embedProfile(processed, mergedInfo, workspaceDir, plateId = firstPlateId)
         }
         return PreparedModelArtifacts(
             rawFile = sourceFile,
@@ -2985,7 +2993,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 diagnostics.markSliceInProgress(currentModelFile!!.name)
 
-                val result = native.slice(sliceConfig)
+                // B100: pass 0.0f sentinel for layerHeight when not in OVERRIDE mode so that
+                // applyConfigToPrusa (which runs after profile_keys[]) doesn't stomp the value
+                // the embedded profile set from the source 3MF or the process profile.
+                // In OVERRIDE mode the explicit value is echoed here as a safety net.
+                val jniSliceConfig = sliceConfig.copy(
+                    layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE)
+                        sliceConfig.layerHeight else 0.0f
+                )
+                val result = native.slice(jniSliceConfig)
                 ensureActive()
 
                 // Native cancel: slice() returned with cancelled=true from CanceledException
@@ -5001,7 +5017,10 @@ internal fun buildProfileOverridesImpl(
     val wipeTowerRotationAngle = resolve(ov.wipeTowerRotationAngle, 0f, "wipeTowerRotationAngle")
 
     val result = mutableMapOf<String, Any>(
-        "layer_height" to layerHeight.toString(),
+        // layer_height: omitted for USE_FILE so the source 3MF's value survives through
+        // ProfileEmbedder's preserve path, and the process profile's value survives in the
+        // standard path. ORCA_DEFAULT and OVERRIDE explicitly set a value here; the 0.0f
+        // sentinel passed to JNI (see startSlicing) gates applyConfigToPrusa from stomping it.
         "initial_layer_print_height" to cfg.firstLayerHeight.toString(),
         "wall_loops" to wallCount.toString(),
         "top_shell_layers" to topShellLayers.toString(),
@@ -5058,6 +5077,14 @@ internal fun buildProfileOverridesImpl(
     // positive value; otherwise let applyConfigToPrusa / embedded profile decide.
     if (sparseInfillSpeed > 0) {
         result["sparse_infill_speed"] = sparseInfillSpeed.toString()
+    }
+
+    // layer_height: USE_FILE defers to the source config value (preserve path) or the
+    // process profile value (standard path); ORCA_DEFAULT and OVERRIDE emit explicitly.
+    // applyConfigToPrusa also checks a 0.0f sentinel (see startSlicing) so the embedded
+    // profile value from profile_keys[] wins when the user hasn't chosen a specific override.
+    if (ov.layerHeight.mode != OverrideMode.USE_FILE) {
+        result["layer_height"] = layerHeight.toString()
     }
 
     // Support keys: when mode is USE_FILE and the file has its own config (Bambu 3MF),
@@ -5313,6 +5340,34 @@ internal fun resolveFilamentTypesForHeaderPatch(
         presets = presets,
         filamentLibrary = filamentLibrary,
     ).first
+
+    // B102: when colorMapping is provided, produce a physical-slot-indexed array so that
+    // after PrintTimeRemap the printer can look up filament_type[T_physical] and find the
+    // correct material. Without this, the canonical-indexed array has entries at positions
+    // 0..canonical.size-1, but the physical G-code uses T<colorMapping[i]> — for sparse
+    // mappings like [2,3] the entries at positions 2 and 3 are absent → printer defaults
+    // to PLA (phantom PLA demand).
+    if (!colorMapping.isNullOrEmpty()) {
+        val slotPresetByIndex = presets.associateBy { it.index }
+        val maxPhysicalSlot = colorMapping.maxOrNull() ?: 0
+        val physicalSize = maxOf(maxPhysicalSlot + 1, padTo)
+        val result = MutableList(physicalSize) { idx ->
+            slotPresetByIndex[idx]?.materialType?.takeIf { it.isNotBlank() } ?: "PLA"
+        }
+        // Process in forward order so lower canonical indices (which carry overrides) win
+        // when multiple canonical indices share the same physical slot (e.g. SEMM H2C).
+        val seen = mutableSetOf<Int>()
+        colorMapping.forEachIndexed { canonicalIdx, physicalSlot ->
+            if (physicalSlot in result.indices && canonicalIdx < resolved.size && physicalSlot !in seen) {
+                result[physicalSlot] = resolved[canonicalIdx]
+                seen.add(physicalSlot)
+            }
+        }
+        return result
+    }
+
+    // No mapping (STL / single-colour without explicit slot assignment): return canonical-
+    // indexed array padded to padTo using preset types at the matching positions.
     if (resolved.size >= padTo) return resolved
     val slotTypes = presets.sortedBy { it.index }.map { it.materialType }
     return resolved + (resolved.size until padTo).map { idx ->
