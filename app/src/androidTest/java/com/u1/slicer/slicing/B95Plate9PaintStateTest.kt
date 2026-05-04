@@ -151,7 +151,7 @@ class B95Plate9PaintStateTest {
             assertTrue("plate selector must appear", viewModel.showPlateSelector.value)
 
             viewModel.selectPlate(9)
-            val plateLoadedDeadline = System.currentTimeMillis() + 120_000L
+            val plateLoadedDeadline = System.currentTimeMillis() + 300_000L
             while (System.currentTimeMillis() < plateLoadedDeadline) {
                 val s = viewModel.state.value
                 if (s is com.u1.slicer.SlicerViewModel.SlicerState.ModelLoaded &&

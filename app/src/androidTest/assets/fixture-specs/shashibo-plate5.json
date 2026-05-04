@@ -3,11 +3,11 @@
   "approved": true,
   "plates": [
     {
-      "plateIndex": 4,
-      "expectedExtruderCount": 3,
+      "plateIndex": 5,
+      "expectedExtruderCount": 2,
       "expectedToolCounts": {
         "T0": 71,
-        "T3": 69
+        "T1": 69
       },
       "toolCountTolerance": 10,
       "hasPaintData": false,

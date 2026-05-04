@@ -6,12 +6,17 @@ appId: com.u1.slicer.orca
 - launchApp:
     clearState: true
 
+- runFlow:
+    when:
+      visible: "Android app compatibility"
+    commands:
+      - tapOn: "Don't show again"
 # Title is visible
 - assertVisible: "U1 Slicer"
 
-# Version banner should show the actual core build label.
-- assertVisible:
-    text: "Snapmaker Orca 2.2.4 (Android ARM64)"
+# Prepare landing content is visible
+- assertVisible: "Load a 3D Model"
+- assertVisible: "Supports STL, 3MF, OBJ, STEP"
 
 # Bottom nav bar has all 5 tabs
 - assertVisible: "Prepare"
@@ -25,3 +30,4 @@ appId: com.u1.slicer.orca
 - assertVisible: "Settings"
 - tapOn: "Prepare"
 - assertVisible: "U1 Slicer"
+

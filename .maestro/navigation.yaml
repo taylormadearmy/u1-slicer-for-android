@@ -6,6 +6,11 @@ appId: com.u1.slicer.orca
 - launchApp:
     clearState: true
 
+- runFlow:
+    when:
+      visible: "Android app compatibility"
+    commands:
+      - tapOn: "Don't show again"
 - assertVisible: "Prepare"
 
 - tapOn: "Printer"
@@ -23,3 +28,4 @@ appId: com.u1.slicer.orca
 
 - tapOn: "Prepare"
 - assertVisible: "U1 Slicer"
+

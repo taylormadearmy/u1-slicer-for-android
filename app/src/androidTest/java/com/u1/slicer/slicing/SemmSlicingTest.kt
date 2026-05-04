@@ -78,6 +78,17 @@ class SemmSlicingTest {
         outDir.deleteRecursively()
     }
 
+    private fun hasExactGcodeLine(gcode: String, expected: String): Boolean =
+        gcode.lineSequence().any { it.trim() == expected }
+
+    private fun filamentUsedMm(gcode: String): List<Float> {
+        val payload = gcode.lineSequence()
+            .firstOrNull { it.trimStart().startsWith("; filament used [mm] = ") }
+            ?.substringAfter("=")
+            ?: return emptyList()
+        return payload.split(",").mapNotNull { it.trim().toFloatOrNull() }
+    }
+
     private fun asset(name: String): File {
         val file = File(cacheDir, name.replace("/", "_"))
         InstrumentationRegistry.getInstrumentation().context
@@ -194,6 +205,153 @@ class SemmSlicingTest {
                 setOf(0, 1, 2, 3), autoFeedExtruders
             )
         }
+    }
+
+    /**
+     * B99 crash repro: coloured Benchy with generated supports on PETG E3
+     * and support interfaces on PETG E4 must survive the embedded-profile
+     * path. This is intentionally stronger than the raw STL support test:
+     * it combines Bambu paint segmentation, support/interface extruder
+     * selection, PETG canonical filament metadata, and the prime tower.
+     */
+    @Test
+    fun coloredBenchy_supportPetgE3_interfacePetgE4_slicesSuccessfully() {
+        val input = asset("colored_3DBenchy (1).3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        assertTrue("colored_3DBenchy must have hasPaintData=true", origInfo.hasPaintData)
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val embedOverrides: Map<String, Any> = mapOf(
+            "enable_support" to "1",
+            "support_type" to "normal(auto)",
+            "support_threshold_angle" to "45",
+            "support_interface_top_layers" to "3",
+            "support_interface_bottom_layers" to "0",
+            "support_filament" to "3",
+            "support_interface_filament" to "4",
+            "filament_type" to mutableListOf("PLA", "PLA", "PETG", "PETG"),
+            "nozzle_temperature" to mutableListOf("220", "220", "235", "235"),
+            "nozzle_temperature_initial_layer" to mutableListOf("220", "220", "235", "235"),
+        )
+        val config = embedder.buildConfig(
+            info = origInfo,
+            sourceConfig = sourceConfig,
+            overrides = embedOverrides,
+            targetExtruderCount = 4
+        )
+        assertEquals("3", config["support_filament"].toString())
+        assertEquals("4", config["support_interface_filament"].toString())
+
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val sliceConfig = makeConfig(4).copy(
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            supportFilament = 3,
+            supportInterfaceFilament = 4,
+            extruderTemps = intArrayOf(220, 220, 235, 235),
+        )
+        val result = lib.slice(sliceConfig)
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue(
+            "Colored Benchy with PETG support E3/interface E4 must slice: ${result.errorMessage}",
+            result.success
+        )
+
+        val gcode = File(result.gcodePath).readText()
+        assertTrue(
+            "G-code must preserve support_filament = 3",
+            gcode.contains("support_filament = 3")
+        )
+        assertTrue(
+            "G-code must preserve support_interface_filament = 4",
+            gcode.contains("support_interface_filament = 4")
+        )
+        assertTrue(
+            "G-code must preserve PETG temps for E3/E4",
+            hasExactGcodeLine(gcode, "; nozzle_temperature = 220,220,235,235")
+        )
+        val used = filamentUsedMm(gcode)
+        assertTrue("Support slot E3 must have extrusion, filament used = $used", used.getOrNull(2) ?: 0f > 0f)
+    }
+
+    /**
+     * B99 crash repro variant: H2C Benchy has seven canonical file filaments
+     * mapped onto four physical slots. The reported crash path uses generated
+     * supports on PETG E3 and support interfaces on PETG E4, so this test
+     * keeps the full seven-entry embedded arrays while marking both physical
+     * support slots as PETG.
+     */
+    @Test
+    fun h2cBenchy_supportPetgE3_interfacePetgE4_slicesSuccessfully() {
+        val input = asset("3DBenchy-H2C-Multi-Color.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        assertTrue("H2C benchy must have hasPaintData=true", origInfo.hasPaintData)
+        assertEquals("H2C benchy must detect 7 model colours", 7, origInfo.detectedColors.size)
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val embedOverrides: Map<String, Any> = mapOf(
+            "enable_support" to "1",
+            "support_type" to "normal(auto)",
+            "support_threshold_angle" to "45",
+            "support_interface_top_layers" to "3",
+            "support_interface_bottom_layers" to "0",
+            "support_filament" to "3",
+            "support_interface_filament" to "4",
+            "filament_type" to mutableListOf("PLA", "PLA", "PETG", "PETG", "PLA", "PLA", "PLA"),
+            "nozzle_temperature" to mutableListOf("220", "220", "235", "235", "220", "220", "220"),
+            "nozzle_temperature_initial_layer" to mutableListOf("220", "220", "235", "235", "220", "220", "220"),
+        )
+        val config = embedder.buildConfig(
+            info = origInfo,
+            sourceConfig = sourceConfig,
+            overrides = embedOverrides,
+            targetExtruderCount = 7
+        )
+        assertEquals("3", config["support_filament"].toString())
+        assertEquals("4", config["support_interface_filament"].toString())
+
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val sliceConfig = makeConfig(4).copy(
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            supportFilament = 3,
+            supportInterfaceFilament = 4,
+            extruderTemps = intArrayOf(220, 220, 235, 235),
+        )
+        val result = lib.slice(sliceConfig)
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue(
+            "H2C Benchy with PETG support E3/interface E4 must slice: ${result.errorMessage}",
+            result.success
+        )
+
+        val gcode = File(result.gcodePath).readText()
+        assertTrue(
+            "G-code must preserve seven canonical filament_type entries with PETG at E3/E4 indices",
+            gcode.contains("filament_type = PLA;PLA;PETG;PETG;PLA;PLA;PLA")
+        )
+        assertTrue(
+            "G-code must preserve seven canonical nozzle temps with PETG E3/E4",
+            hasExactGcodeLine(gcode, "; nozzle_temperature = 220,220,235,235,220,220,220")
+        )
+        assertTrue(
+            "G-code must preserve support_filament = 3",
+            gcode.contains("support_filament = 3")
+        )
+        assertTrue(
+            "G-code must preserve support_interface_filament = 4",
+            gcode.contains("support_interface_filament = 4")
+        )
+        val used = filamentUsedMm(gcode)
+        assertTrue("Support slot E3 must have extrusion, filament used = $used", used.getOrNull(2) ?: 0f > 0f)
     }
 
     /**

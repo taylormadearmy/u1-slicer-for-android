@@ -8,11 +8,16 @@ appId: com.u1.slicer.orca
 #   Launch via VIEW intent for the 3MF content URI
 
 # Multi-colour detection — extruder assignment UI should appear
+- runFlow:
+    when:
+      visible: "Android app compatibility"
+    commands:
+      - tapOn: "Don't show again"
 - assertVisible: "Slice Model"
-- assertVisible: "Print Setup"
-- assertVisible: "Auto Map to Extruders"
-- assertVisible: "Color 1"
-- assertVisible: "Color 2"
+- assertVisible: "Filaments (2)"
+- assertVisible: "Filament 1"
+- assertVisible: "Filament 2"
+- assertVisible: "PLA"
 
 # Slice (dual-extruder should be auto-detected)
 - tapOn: "Slice Model"
@@ -21,6 +26,9 @@ appId: com.u1.slicer.orca
     visible: "Slice Summary"
     timeout: 180000
 
-- assertVisible: "Print"
+- assertVisible: "Map & Upload"
 - assertNotVisible: "Error"
 - assertNotVisible: "failed"
+
+
+

@@ -509,6 +509,64 @@ class SlicingOverridesTest {
     }
 
     @Test
+    fun `support filament override grows per-filament arrays to requested index`() {
+        val cfg = SliceConfig(nozzleTemp = 225)
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.OVERRIDE, true),
+            supportFilament = OverrideValue(OverrideMode.OVERRIDE, 4)
+        )
+        val result = buildProfileOverridesImpl(
+            cfg = cfg,
+            ov = ov,
+            slotCount = 1,
+            filamentCount = 1,
+            hasSourceConfig = false,
+            filamentTypes = listOf("TPU"),
+            nozzleTemps = listOf(225),
+            filamentColours = listOf("#112233")
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        val types = result["filament_type"] as List<String>
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as List<String>
+        @Suppress("UNCHECKED_CAST")
+        val colours = result["filament_colour"] as List<String>
+
+        assertEquals("4", result["support_filament"])
+        assertEquals(listOf("TPU", "PLA", "PLA", "PLA"), types)
+        assertEquals(listOf("225", "225", "225", "225"), temps)
+        assertEquals(listOf("#112233", "#FFFFFF", "#FFFFFF", "#FFFFFF"), colours)
+    }
+
+    @Test
+    fun `support interface filament override grows per-filament arrays to requested index`() {
+        val cfg = SliceConfig(nozzleTemp = 220)
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.OVERRIDE, true),
+            supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, 3)
+        )
+        val result = buildProfileOverridesImpl(
+            cfg = cfg,
+            ov = ov,
+            slotCount = 1,
+            filamentCount = 1,
+            hasSourceConfig = false,
+            filamentTypes = listOf("TPU"),
+            nozzleTemps = listOf(225)
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        val types = result["filament_type"] as List<String>
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as List<String>
+
+        assertEquals("3", result["support_interface_filament"])
+        assertEquals(listOf("TPU", "PLA", "PLA"), types)
+        assertEquals(listOf("225", "220", "220"), temps)
+    }
+
+    @Test
     fun `buildProfileOverrides omits support_filament when default (0)`() {
         val cfg = SliceConfig()
         val ov = SlicingOverrides(
@@ -1073,5 +1131,20 @@ class SlicingOverridesTest {
         @Suppress("UNCHECKED_CAST")
         val temps = result["nozzle_temperature"] as List<String>
         assertEquals(listOf("235", "270"), temps)
+    }
+    @Test
+    fun `resolveInto carries support filament choices into raw STL SliceConfig`() {
+        val cfg = SliceConfig(extruderCount = 1)
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.OVERRIDE, true),
+            supportFilament = OverrideValue(OverrideMode.OVERRIDE, 3),
+            supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, 4)
+        )
+
+        val resolved = ov.resolveInto(cfg)
+
+        assertEquals(true, resolved.supportEnabled)
+        assertEquals(3, resolved.supportFilament)
+        assertEquals(4, resolved.supportInterfaceFilament)
     }
 }

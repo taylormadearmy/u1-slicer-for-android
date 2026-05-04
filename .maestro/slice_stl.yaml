@@ -13,9 +13,14 @@ appId: com.u1.slicer.orca
 #     -d "content://media/external/file/$ADB_STL_ID" --grant-read-uri-permission
 
 # Model editor should show once the STL is loaded.
+- runFlow:
+    when:
+      visible: "Android app compatibility"
+    commands:
+      - tapOn: "Don't show again"
 - assertVisible: "Slice Model"
 - assertVisible: "Drag to move objects"
-- assertVisible: "Scale & Copies"
+- assertVisible: "Scale, Copies & Rotation"
 
 # Scroll to slice button
 - scrollUntilVisible:
@@ -34,8 +39,11 @@ appId: com.u1.slicer.orca
 # Result summary must show layer count and time estimate
 - assertVisible: "layers"
 - assertVisible: "Est. Time"
-- assertVisible: "Print"
+- assertVisible: "Map & Upload"
 
 # No crash — check no error dialog is visible
 - assertNotVisible: "Error"
 - assertNotVisible: "failed"
+
+
+

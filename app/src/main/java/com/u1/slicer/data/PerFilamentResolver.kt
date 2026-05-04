@@ -3,19 +3,19 @@ package com.u1.slicer.data
 import com.u1.slicer.nozzleTempDefaultForMaterial
 
 /**
- * Phase 2.7 — pure resolver for the per-canonical-filament `filament_type`
+ * Phase 2.7 - pure resolver for the per-canonical-filament `filament_type`
  * and `nozzle_temperature` arrays sent to the slicer.
  *
  * For each fileIndex `i` in [canonical], the material resolution order is:
- *   1. `overrides[i].second` — user override material from the Prepare screen.
- *   2. `canonical.filaments[i].materialType` — the file's declared material.
- *   3. `presets[colorMapping[i]].materialType` — the slot the filament is
- *      mapped to (only consulted when the file/override don't supply one).
- *   4. `"PLA"` — final fallback.
+ *   1. `overrides[i].second` - user override material from the Prepare screen.
+ *   2. `presets[colorMapping[i]].materialType` — the mapped physical slot,
+ *      matching what the Prepare filament row displays.
+ *   3. `canonical.filaments[i].materialType` — the file's declared material.
+ *   4. `"PLA"` - final fallback.
  *
  * Nozzle-temperature resolution: when the user has overridden the material,
  * the temp comes purely from the resolved material via
- * [nozzleTempDefaultForMaterial] — do NOT consult the slot's linked filament
+ * [nozzleTempDefaultForMaterial] - do NOT consult the slot's linked filament
  * profile, because that profile is tuned for whatever was previously loaded
  * (typically PLA) and would defeat the override. When there is no override,
  * the slot's linked [FilamentProfile.nozzleTemp] wins; falling back to the
@@ -24,15 +24,15 @@ import com.u1.slicer.nozzleTempDefaultForMaterial
  * **Cascade-free**: an override at fileIndex N affects only the entry at
  * index N. Other filaments mapped to the same physical slot are untouched.
  * This is the explicit contract that retired the slot-preset round-trip
- * (`applyFilamentOverridesToPresets`, deleted in §4 Step 4) — see the
+ * (`applyFilamentOverridesToPresets`, deleted in Phase 2 Step 4) - see the
  * architecture review at
- * `docs/superpowers/reviews/2026-04-26-phase2-architecture-review.md` §1.
+ * `docs/superpowers/reviews/2026-04-26-phase2-architecture-review.md` section 1.
  *
  * @param canonical The (possibly override-applied) canonical filament list.
- * @param overrides Map of `fileIndex → (colorHex?, materialType?)`. Only the
+ * @param overrides Map of `fileIndex -> (colorHex?, materialType?)`. Only the
  *   second element (material) is consulted here; colour overrides flow
  *   through [applyOverridesToCanonical] separately.
- * @param colorMapping `fileIndex → physicalSlot` mapping; may be null for
+ * @param colorMapping `fileIndex -> physicalSlot` mapping; may be null for
  *   single-colour files (defaults to slot 0 for every entry).
  * @param presets The user's extruder presets (one per physical slot).
  * @param filamentLibrary The user's saved [FilamentProfile] library; used to
@@ -52,8 +52,8 @@ internal fun resolvePerFilamentTypeAndTemp(
         val slot = colorMapping?.getOrNull(i) ?: 0
         val slotPreset = presets.firstOrNull { it.index == slot }
         val material = overrideMaterial
-            ?: canonical.filaments[i].materialType
             ?: slotPreset?.materialType
+            ?: canonical.filaments[i].materialType
             ?: "PLA"
         types.add(material)
         val profileTemp = if (overrideMaterial == null) {

@@ -9,8 +9,13 @@ appId: com.u1.slicer.orca
 #   Get content URI ID and launch as VIEW intent (see slice_stl.yaml)
 
 # Model editor should show once the 3MF is loaded.
+- runFlow:
+    when:
+      visible: "Android app compatibility"
+    commands:
+      - tapOn: "Don't show again"
 - assertVisible: "Slice Model"
-- assertVisible: "Scale & Copies"
+- assertVisible: "Scale, Copies & Rotation"
 
 # Scroll to slice
 - scrollUntilVisible:
@@ -28,5 +33,8 @@ appId: com.u1.slicer.orca
 
 # Result shown
 - assertVisible: "layers"
-- assertVisible: "Print"
+- assertVisible: "Map & Upload"
 - assertNotVisible: "Error"
+
+
+

@@ -11,15 +11,15 @@
 
 **Test:**
 ```bash
-./gradlew testDebugUnitTest                 # 519 JVM unit tests
-./gradlew connectedDebugAndroidTest         # 125 instrumented tests
+./gradlew testDebugUnitTest                 # 1018 JVM unit tests
+./gradlew connectedDebugAndroidTest         # 288 instrumented tests
 ```
 
 **Target device:** See `AGENTS.local.md` for local device IDs and adb targets.
 **Public-safe rule:** never deploy automated tests to personal or non-phone devices.
 
 **App ID:** `com.u1.slicer.orca`
-**Current release:** `v1.5.10` (`versionCode 176`)
+**Current release:** `v2.0.1` (`versionCode 261`)
 
 ## Backlog
 

@@ -1,5 +1,9 @@
 package com.u1.slicer
 
+import com.u1.slicer.data.CanonicalFilamentList
+import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentEntry
+import com.u1.slicer.data.FilamentSource
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -40,6 +44,82 @@ class FilamentTypeHeaderPatchTest {
         assertEquals("; filament_colour = #FF0000;#00FF00;#0000FF;#FFFFFF", lines[0])
         assertEquals("; filament_type = PETG;ABS;TPU;PLA", lines[1])
         assertEquals("G28", lines[2])
+    }
+
+    @Test
+    fun `header patch types use canonical mapping even when canonical size fits physical slots`() {
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#0086D6", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#FFFF00", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(2, "#FFFFFF", "PLA", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#0086D6", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FFFF00", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#FFFFFF", materialType = "PETG"),
+            ExtruderPreset(index = 3, color = "#6A00D5", materialType = "ABS"),
+        )
+
+        val types = resolveFilamentTypesForHeaderPatch(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1, 2),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+
+        assertEquals(listOf("PLA", "PLA", "PETG"), types)
+    }
+
+    @Test
+    fun `header patch types keep explicit override above mapped slot material`() {
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FFFFFF", "PLA", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 2, color = "#FFFFFF", materialType = "PETG"),
+        )
+
+        val types = resolveFilamentTypesForHeaderPatch(
+            canonical = canonical,
+            overrides = mapOf(0 to (null to "TPU")),
+            colorMapping = listOf(2),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+
+        assertEquals(listOf("TPU"), types)
+    }
+
+    @Test
+    fun `header patch pads beyond canonical when support filament uses higher slot`() {
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#0086D6", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#FFFF00", "PLA", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#0086D6", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FFFF00", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#FFFFFF", materialType = "PETG"),
+            ExtruderPreset(index = 3, color = "#6A00D5", materialType = "ABS"),
+        )
+
+        val types = resolveFilamentTypesForHeaderPatch(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1),
+            presets = presets,
+            filamentLibrary = emptyList(),
+            padTo = 4,
+        )
+
+        assertEquals(listOf("PLA", "PLA", "PETG", "ABS"), types)
     }
 
     @Test

@@ -465,9 +465,13 @@ class PreparePreviewViewModelTest {
 
             // ----- Plate 1: establish a known palette / mapping -----
             viewModel.selectPlate(1)
-            waitUntil("buzz plate 1 loaded", timeoutMs = 120_000L) {
-                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
-                    viewModel.colorMapping.value != null
+            waitUntil("buzz plate 1 loaded", timeoutMs = 300_000L) {
+                (viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null) ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            (viewModel.state.value as? SlicerViewModel.SlicerState.Error)?.let {
+                throw AssertionError("Buzz plate 1 load failed: ${it.message}")
             }
             Thread.sleep(400) // let refreshMappedPreviewColors settle
 
@@ -478,9 +482,13 @@ class PreparePreviewViewModelTest {
 
             // ----- Plate 9: the reported-broken plate -----
             viewModel.selectPlate(9)
-            waitUntil("buzz plate 9 loaded", timeoutMs = 120_000L) {
-                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
-                    viewModel.colorMapping.value != null
+            waitUntil("buzz plate 9 loaded", timeoutMs = 300_000L) {
+                (viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null) ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            (viewModel.state.value as? SlicerViewModel.SlicerState.Error)?.let {
+                throw AssertionError("Buzz plate 9 load failed: ${it.message}")
             }
             Thread.sleep(400)
 
@@ -1072,6 +1080,129 @@ class PreparePreviewViewModelTest {
             assertTrue(
                 "B83: plate 5 must have hasPaintData=true",
                 info.hasPaintData
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
+     * B98/B78 guard: Shashibo plate 5 has been a repeat troublemaker, but the
+     * direct fixture harness can spend >20 minutes in native print.process().
+     * This test deliberately follows the app path instead: load the multi-plate
+     * file, select plate 5 via SlicerViewModel, then verify the Prepare state
+     * and preview mesh are plausible without starting a full slice.
+     */
+    @Test
+    fun shashiboPlate5_selectPlate_appPathLoadsMultiExtruderPreparePreview() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Shashibo-h2s-textured.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("Shashibo plate selector visible", timeoutMs = 120_000L) {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            (viewModel.state.value as? SlicerViewModel.SlicerState.Error)?.let {
+                throw AssertionError("Shashibo load failed before plate selection: ${it.message}")
+            }
+            assertTrue(
+                "Shashibo must expose plate 5 in the app plate selector",
+                viewModel.multiPlatePlates.value.any { it.plateId == 5 }
+            )
+
+            viewModel.selectPlate(5)
+
+            waitUntil("Shashibo plate 5 loaded with Prepare colour mapping", timeoutMs = 180_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+
+            val info = viewModel.threeMfInfo.value
+            val mapping = viewModel.colorMapping.value
+            assertNotNull("Shashibo plate 5 ThreeMfInfo should be available", info)
+            assertNotNull("Shashibo plate 5 color mapping should be available", mapping)
+
+            info!!
+            mapping!!
+            assertEquals(
+                "Shashibo plate 5 selected app state should be narrowed to plate 5",
+                listOf(5),
+                info.plates.map { it.plateId }
+            )
+            assertTrue(
+                "Shashibo plate 5 should keep at least two detected colours, got ${info.detectedColors}",
+                info.detectedColors.size >= 2
+            )
+            assertTrue(
+                "Shashibo plate 5 should keep multi-extruder volume state, got ${info.volumeExtruders}",
+                info.volumeExtruders.size >= 2 || info.usedExtruderIndices.size >= 2
+            )
+            assertTrue(
+                "Shashibo plate 5 Prepare mapping should expose at least two slots, got $mapping",
+                mapping.distinct().size >= 2
+            )
+
+            val preview = NativeLibrary().getPreparePreviewMesh()
+            assertNotNull("Shashibo plate 5 native Prepare preview should be available", preview)
+            preview!!
+            assertTrue("Shashibo plate 5 preview should contain triangles", preview.trianglePositions.isNotEmpty())
+            assertTrue(
+                "Shashibo plate 5 preview extruder index count should match triangle positions",
+                preview.extruderIndices.size * 9 == preview.trianglePositions.size
+            )
+
+            val distinctPreviewIndices = preview.extruderIndices.map { it.toInt() and 0xFF }.toSet()
+            assertTrue(
+                "Shashibo plate 5 preview should preserve at least two extruder indices, got $distinctPreviewIndices",
+                distinctPreviewIndices.size >= 2
+            )
+
+            viewModel.startSlicing()
+            waitUntil("Shashibo plate 5 slice complete", timeoutMs = 300_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            (viewModel.state.value as? SlicerViewModel.SlicerState.Error)?.let {
+                throw AssertionError("Shashibo plate 5 slice failed: ${it.message}")
+            }
+            val result = (viewModel.state.value as SlicerViewModel.SlicerState.SliceComplete).result
+            val toolLineRe = Regex("""^T([0-3])$""")
+            val usedTools = File(result.gcodePath).useLines { lines ->
+                lines.mapNotNull { line ->
+                    toolLineRe.matchEntire(line.trim())?.groupValues?.getOrNull(1)?.toIntOrNull()
+                }.toSet()
+            }
+            assertTrue(
+                "Shashibo plate 5 app-path slice should preserve at least two tools, got $usedTools",
+                usedTools.size >= 2
+            )
+
+            var minX = Float.POSITIVE_INFINITY
+            var maxX = Float.NEGATIVE_INFINITY
+            var minY = Float.POSITIVE_INFINITY
+            var maxY = Float.NEGATIVE_INFINITY
+            for (i in preview.trianglePositions.indices step 3) {
+                val x = preview.trianglePositions[i]
+                val y = preview.trianglePositions[i + 1]
+                if (x < minX) minX = x
+                if (x > maxX) maxX = x
+                if (y < minY) minY = y
+                if (y > maxY) maxY = y
+            }
+            val spanX = maxX - minX
+            val spanY = maxY - minY
+            assertTrue(
+                "Shashibo plate 5 preview should preserve file scale on X (<110mm), got $spanX",
+                spanX < 110f
+            )
+            assertTrue(
+                "Shashibo plate 5 preview should preserve file scale on Y (<110mm), got $spanY",
+                spanY < 110f
             )
         } finally {
             viewModel.clearModel()

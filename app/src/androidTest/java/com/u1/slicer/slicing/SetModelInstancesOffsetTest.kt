@@ -9,7 +9,6 @@ import org.junit.After
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -446,58 +445,40 @@ class SetModelInstancesOffsetTest {
     }
 
     /**
-     * Chunk 4 pin: bug3 (PM-reported hanging-file translate-then-slice).
-     * Loads the hanging file (rotation baked into instance trafo, ~19 MB,
-     * 1,502,662 triangles), translates via setModelInstances to a known
-     * position, slices, and asserts G-code minX/minY land at the requested
-     * origin within ±5 mm.
+     * Chunk 4 pin: bug3 (PM-reported translate-then-slice drift) without the
+     * pathological 1.5M-triangle hanging fixture. The original ignored test
+     * proved the right contract but could run for more than an hour on Pixel 8a.
      *
-     * Currently @Ignore'd: on Pixel 8a the slice phase ran for 1h+ of CPU
-     * time without completing (g-code generation through serialised
-     * Android-only paint segmentation loops on a 1.5 M tri painted mesh).
-     * It did not OOM — memory stayed at ~85 % — it is genuinely just that
-     * slow. Killing the process and retrying gives the same shape.
-     *
-     * The assertion shape this test was meant to lock in is already covered
-     * by the pair:
-     *  - `calicubeScaleSingleCopy_offsetMatchesGcodeMinX` exercises the
-     *    full slice-then-assert-G-code-bounds flow on a small fixture, and
-     *  - `hangingFileNoSlice_storedOffsetRevealsMeshMin` exercises the
-     *    rotation-baked-into-instance-trafo offset math on the hanging
-     *    file without paying the slice cost.
-     *
-     * Re-enabling this test requires either a smaller rotation-baked-trafo
-     * fixture (most plausible: a Bambu single-plate file with embedded
-     * rotation but a thin / low-tri-count mesh) or a dedicated long-running
-     * CI lane that tolerates 1h+ test methods. Until either lands, the
-     * pair above provides the coverage.
+     * This deterministic replacement keeps the bug's important ingredients:
+     * load a model, apply transform state, translate via setModelInstances,
+     * slice, then assert the G-code lower-left bounds land at the requested
+     * origin. `tetrahedron.stl` is tiny, so this can run in the normal suite
+     * instead of being skipped.
      */
-    @Ignore("Times out at >1h on Pixel 8a; coverage split into calicubeScaleSingleCopy + hangingFileNoSlice (see KDoc)")
     @Test
     fun bug3_hangingFile_translatePreservedThroughSlice() {
-        val file = File(cacheDir, "hanging_pre_cut_colour.3mf")
-        assetContext.assets.open("hanging+pre+cut+colour+3mf.3mf").use {
-            it.copyTo(file.outputStream())
-        }
-        assertTrue("loadModel hanging", lib.loadModel(file.absolutePath))
+        val file = copyAsset("tetrahedron.stl")
+        assertTrue("loadModel tetrahedron", lib.loadModel(file.absolutePath))
 
         val mi = lib.getModelInfo()
         assertNotNull("getModelInfo", mi)
-        Log.i("OffsetDiag", "bug3 hangingFile modelInfo: size=${mi!!.sizeX}x${mi.sizeY}x${mi.sizeZ}mm tris=${mi.triangleCount}")
+        Log.i("OffsetDiag", "bug3 smallFixture modelInfo: size=${mi!!.sizeX}x${mi.sizeY}x${mi.sizeZ}mm tris=${mi.triangleCount}")
 
-        // Translate to a clearly off-default position so a "stuck at origin"
-        // bug would be obvious. No setModelScale — keep the file's natural
-        // instance trafo (which already bakes rotation + scale).
-        val originX = 50f
-        val originY = 60f
+        assertTrue("setModelScale", lib.setModelScale(2.0f, 2.0f, 2.0f))
+        assertTrue("setModelRotation", lib.setModelRotation(0f, 0f, 37f))
+
+        // Translate to a clearly off-default position so a stuck-at-origin or
+        // centre-vs-lower-left convention bug is obvious in sliced G-code.
+        val originX = 70f
+        val originY = 80f
         assertTrue(
             "setModelInstances",
             lib.setModelInstances(floatArrayOf(originX, originY))
         )
         val storedOffsets = lib.getInstanceOffsets()
-        Log.i("OffsetDiag", "bug3 hangingFile storedOffsets=${storedOffsets.toList()}")
+        Log.i("OffsetDiag", "bug3 smallFixture storedOffsets=${storedOffsets.toList()}")
 
-        val result = lib.slice(SliceConfig().copy(extruderCount = 1))
+        val result = lib.slice(SliceConfig().copy(extruderCount = 1, brimWidth = 0f, skirtLoops = 0))
         assertNotNull("bug3 slice", result)
         assertTrue("bug3 slice success: ${result!!.errorMessage}", result.success)
         val gcode = File(result.gcodePath).readText()
@@ -510,18 +491,19 @@ class SetModelInstancesOffsetTest {
             .filter { it > 0f }.toList()
         val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
         val gcodeMinY = if (ys.isNotEmpty()) ys.min() else Float.NaN
-        Log.i("OffsetDiag", "bug3 hangingFile gcodeBounds: minX=$gcodeMinX minY=$gcodeMinY")
+        Log.i("OffsetDiag", "bug3 smallFixture gcodeBounds: minX=$gcodeMinX minY=$gcodeMinY")
 
         val tol = 5f
         assertTrue(
-            "bug3 hangingFile gcodeMinX ($gcodeMinX) should match requested origin ($originX) ±${tol}mm. " +
+            "bug3 small fixture gcodeMinX ($gcodeMinX) should match requested origin ($originX) +/-${tol}mm. " +
                 "Stored offset.x=${storedOffsets.getOrNull(0)}.",
             abs(gcodeMinX - originX) <= tol
         )
         assertTrue(
-            "bug3 hangingFile gcodeMinY ($gcodeMinY) should match requested origin ($originY) ±${tol}mm. " +
+            "bug3 small fixture gcodeMinY ($gcodeMinY) should match requested origin ($originY) +/-${tol}mm. " +
                 "Stored offset.y=${storedOffsets.getOrNull(1)}.",
             abs(gcodeMinY - originY) <= tol
         )
     }
 }
+

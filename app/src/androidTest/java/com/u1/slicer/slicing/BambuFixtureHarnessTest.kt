@@ -24,11 +24,17 @@ import kotlin.math.abs
  * Data-driven Bambu fixture harness. Each approved JSON spec under
  * androidTest/assets/fixture-specs/ defines a fixture and its expected plate
  * behaviour: extruder count, paint flag, per-tool G-code counts (with a
- * tolerance), and a bounding box ceiling. Each spec entry's plateIndex is
- * 0-based; use -1 to skip the plate filter.
+ * tolerance), and a bounding box ceiling.
  *
- * The harness loads each approved fixture, embeds with the supplied plateIndex,
- * reads native plate state, slices, and verifies tool counts + bounding box.
+ * Historical caveat: the fixture field is named plateIndex, but this legacy
+ * harness passes the value directly to ProfileEmbedder as plateId to preserve
+ * release-comparison behavior. Do not use this class as proof of true 1-based
+ * app plate coverage until the fixture specs and harness are migrated together.
+ * Use -1 to skip the plate filter.
+ *
+ * The harness loads each approved fixture, embeds with the supplied legacy
+ * plate value, reads native plate state, slices, and verifies tool counts +
+ * bounding box.
  */
 @RunWith(AndroidJUnit4::class)
 class BambuFixtureHarnessTest {
@@ -103,25 +109,11 @@ class BambuFixtureHarnessTest {
         val state: NativePlateState
     )
 
-    private fun embedAndLoadForPlate(assetName: String, plateIndex0Based: Int?): LoadResult {
+    private fun embedAndLoadForPlate(assetName: String, plateId: Int?): LoadResult {
         val file = copyAsset(assetName)
         val info = ThreeMfParser.parse(file)
         val target = info.detectedExtruderCount.coerceAtLeast(1)
-        // Multi-extruder Bambu files require sourceConfig to be passed to
-        // buildConfig so the embed uses the preserve path (source config +
-        // Snapmaker hardware overlay) instead of the standard profile stack.
-        // The standard stack is single-extruder; without sourceConfig the
-        // multi-color fixtures slice as single-tool (canary: Button-for-S-
-        // trousers came back T0=2, T1=T2=T3=0). Mirrors SemmSlicingTest's
-        // setup for SEMM models.
-        val sourceConfig = if (info.isBambu) {
-            java.util.zip.ZipFile(file).use { embedder.parseSourceConfig(it) }
-        } else null
-        val config = embedder.buildConfig(
-            info = info,
-            sourceConfig = sourceConfig,
-            targetExtruderCount = target
-        )
+        val config = embedder.buildConfig(info, targetExtruderCount = target)
         // Mirror SlicerViewModel's selectPlate routing:
         //  - multi-plate Bambu: embed with plate filter (sub-plan #2d strip pipeline).
         //  - single-plate Bambu: BambuSanitizer.process to strip Bambu-specific xmlns
@@ -131,36 +123,54 @@ class BambuFixtureHarnessTest {
             info.isBambu -> BambuSanitizer.process(file, outDir)
             else -> file
         }
-        // ProfileEmbedder.embed expects a 1-based BBS plateId. The harness
-        // exposes 0-based plateIndex in the spec JSON; convert here.
-        val embedPlateId = plateIndex0Based?.let { it + 1 }
-        val embedded = embedder.embed(sourceForEmbed, config, outDir, info, plateId = embedPlateId)
+        val embedded = embedder.embed(sourceForEmbed, config, outDir, info, plateId = plateId)
         assertTrue(
-            "loadModel must succeed for $assetName plate=$embedPlateId",
+            "loadModel must succeed for $assetName plate=$plateId",
             lib.loadModel(embedded.absolutePath)
         )
         val state = NativePlateState.parseVolumeMapJson(lib.nativeGetAllVolumeExtruders())
         return LoadResult(info, state)
     }
 
-    private fun parseToolCounts(gcodePath: String): Map<String, Int> {
-        val gcode = File(gcodePath).readText()
-        return (0..3).associate { t ->
-            "T$t" to gcode.lines().count { it.trim() == "T$t" }
-        }
-    }
+    private data class GcodeStats(
+        val toolCounts: Map<String, Int>,
+        val width: Float,
+        val height: Float
+    )
 
-    private fun parseGcodeBounds(gcodePath: String): Pair<Float, Float> {
-        val gcode = File(gcodePath).readText()
+    private fun parseGcodeStats(gcodePath: String): GcodeStats {
+        val toolCounts = (0..3).associate { "T$it" to 0 }.toMutableMap()
         val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
         val yRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*Y(-?[\d.]+)""")
-        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val ys = yRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val width = if (xs.isNotEmpty()) xs.max() - xs.min() else 0f
-        val height = if (ys.isNotEmpty()) ys.max() - ys.min() else 0f
-        return Pair(width, height)
+        var minX = Float.POSITIVE_INFINITY
+        var maxX = Float.NEGATIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY
+        var maxY = Float.NEGATIVE_INFINITY
+
+        File(gcodePath).useLines { lines ->
+            lines.forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.length == 2 && trimmed[0] == 'T' && trimmed[1] in '0'..'3') {
+                    toolCounts[trimmed] = (toolCounts[trimmed] ?: 0) + 1
+                }
+                xRegex.find(line)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+                    ?.takeIf { it > 0f }
+                    ?.let {
+                        if (it < minX) minX = it
+                        if (it > maxX) maxX = it
+                    }
+                yRegex.find(line)?.groupValues?.getOrNull(1)?.toFloatOrNull()
+                    ?.takeIf { it > 0f }
+                    ?.let {
+                        if (it < minY) minY = it
+                        if (it > maxY) maxY = it
+                    }
+            }
+        }
+
+        val width = if (minX.isFinite() && maxX.isFinite()) maxX - minX else 0f
+        val height = if (minY.isFinite() && maxY.isFinite()) maxY - minY else 0f
+        return GcodeStats(toolCounts, width, height)
     }
 
     @Before
@@ -205,9 +215,9 @@ class BambuFixtureHarnessTest {
             val tag = "${spec.file} plate ${plate.plateIndex}"
             try {
                 lib.clearModel()
-                val plateIdx = plate.plateIndex.takeIf { it >= 0 }
-                val (info, state) = embedAndLoadForPlate(spec.file, plateIdx)
-                val enriched = enrichedUsedExtruders(lib, info, state, plateIdx)
+                val legacyPlateId = plate.plateIndex.takeIf { it >= 0 }
+                val (info, state) = embedAndLoadForPlate(spec.file, legacyPlateId)
+                val enriched = enrichedUsedExtruders(lib, info, state, legacyPlateId)
 
                 if (enriched.size != plate.expectedExtruderCount) {
                     failures.add(
@@ -222,48 +232,35 @@ class BambuFixtureHarnessTest {
                 }
 
                 if (plate.expectedToolCounts.isNotEmpty()) {
-                    // The default SliceConfig sets extruderCount=1 which forces
-                    // single-extruder slicing regardless of the embedded
-                    // profile. For multi-extruder fixtures that suppresses
-                    // T1..T3 in the G-code (canary: button-for-s-trousers
-                    // came back T0=2, T1=T2=T3=0). Mirror SemmSlicingTest's
-                    // pattern and parameterise extruderCount + per-extruder
-                    // arrays + wipe tower from the enriched extruder set.
-                    val nExt = enriched.size.coerceAtLeast(1)
-                    val sliceCfg = SliceConfig(
-                        extruderCount = nExt,
-                        extruderTemps = IntArray(nExt) { 220 },
-                        wipeTowerEnabled = nExt > 1,
-                        wipeTowerX = 170f,
-                        wipeTowerY = 140f,
-                        wipeTowerWidth = 60f
-                    )
-                    val result = lib.slice(sliceCfg)
+                    val expectedToolExtruderCount = plate.expectedToolCounts.keys
+                        .mapNotNull { it.removePrefix("T").toIntOrNull() }
+                        .maxOrNull()
+                        ?.plus(1)
+                        ?: 1
+                    val sliceExtruderCount = maxOf(
+                        plate.expectedExtruderCount,
+                        expectedToolExtruderCount,
+                        enriched.maxOrNull() ?: 1
+                    ).coerceAtLeast(1)
+                    val result = lib.slice(SliceConfig(extruderCount = sliceExtruderCount))
                     assertNotNull("$tag: slice returned null", result)
                     assertTrue("$tag: slice failed: ${result!!.errorMessage}", result.success)
-                    val toolCounts = parseToolCounts(result.gcodePath)
-                    val (width, height) = parseGcodeBounds(result.gcodePath)
-                    // Diagnostic: always log the actual T0..T3 counts and G-code
-                    // bounds for this slice so a logcat scrape can populate or
-                    // re-baseline `expectedToolCounts` in the fixture spec JSON
-                    // without weakening assertions. Read with:
-                    //   adb logcat -s FixtureHarness -d | grep "ACTUAL"
-                    Log.i(
-                        "FixtureHarness",
-                        "ACTUAL $tag: T0=${toolCounts["T0"] ?: 0} " +
-                            "T1=${toolCounts["T1"] ?: 0} " +
-                            "T2=${toolCounts["T2"] ?: 0} " +
-                            "T3=${toolCounts["T3"] ?: 0} " +
-                            "width=${"%.1f".format(width)}mm height=${"%.1f".format(height)}mm"
-                    )
+                    val stats = parseGcodeStats(result.gcodePath)
+                    val toolCounts = stats.toolCounts
+                    Log.i("FixtureHarness", "ACTUAL $tag toolCounts=$toolCounts")
                     for ((tool, expected) in plate.expectedToolCounts) {
                         val actual = toolCounts[tool] ?: 0
+                        if (expected > 0 && actual == 0) {
+                            failures.add("$tag: $tool expected non-zero tool use near $expected but was 0")
+                        }
                         if (abs(actual - expected) > plate.toolCountTolerance) {
                             failures.add(
                                 "$tag: $tool count $actual not within ±${plate.toolCountTolerance} of $expected"
                             )
                         }
                     }
+                    val width = stats.width
+                    val height = stats.height
                     if (width > plate.maxBoundingBoxMm[0]) {
                         failures.add(
                             "$tag: G-code width ${width}mm > ${plate.maxBoundingBoxMm[0]}mm"

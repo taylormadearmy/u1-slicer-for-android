@@ -63,6 +63,28 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
         env->DeleteLocalRef(jarr);
         return result;
     };
+    auto getStringArray = [&](const char* name) -> std::vector<std::string> {
+        jfieldID fid = env->GetFieldID(cls, name, "[Ljava/lang/String;");
+        if (!fid) return {};
+        auto jarr = (jobjectArray) env->GetObjectField(jconfig, fid);
+        if (!jarr) return {};
+        jsize len = env->GetArrayLength(jarr);
+        std::vector<std::string> result;
+        result.reserve(len);
+        for (jsize i = 0; i < len; ++i) {
+            auto jstr = (jstring) env->GetObjectArrayElement(jarr, i);
+            if (jstr) {
+                const char* chars = env->GetStringUTFChars(jstr, nullptr);
+                result.emplace_back(chars ? chars : "");
+                env->ReleaseStringUTFChars(jstr, chars);
+                env->DeleteLocalRef(jstr);
+            } else {
+                result.emplace_back("");
+            }
+        }
+        env->DeleteLocalRef(jarr);
+        return result;
+    };
 
     // Map fields
     config.layer_height = getFloat("layerHeight");
@@ -86,6 +108,8 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
     config.support_enabled = getBool("supportEnabled");
     config.support_type = getString("supportType");
     config.support_angle = getFloat("supportAngle");
+    config.support_filament = getInt("supportFilament");
+    config.support_interface_filament = getInt("supportInterfaceFilament");
 
     config.skirt_loops = getInt("skirtLoops");
     config.skirt_distance = getFloat("skirtDistance");
@@ -98,6 +122,7 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
     config.nozzle_diameter = getFloat("nozzleDiameter");
     config.filament_diameter = getFloat("filamentDiameter");
     config.filament_type = getString("filamentType");
+    config.filament_types = getStringArray("filamentTypes");
 
     // Multi-extruder
     config.extruder_count = getInt("extruderCount");
@@ -166,6 +191,21 @@ jobject configToJava(JNIEnv* env, const SliceConfig& config) {
             env->DeleteLocalRef(jarr);
         }
     };
+    auto setStringArray = [&](const char* name, const std::vector<std::string>& vals) {
+        jfieldID fid = env->GetFieldID(cls, name, "[Ljava/lang/String;");
+        if (fid && !vals.empty()) {
+            jclass stringCls = env->FindClass("java/lang/String");
+            jobjectArray jarr = env->NewObjectArray(vals.size(), stringCls, nullptr);
+            for (jsize i = 0; i < (jsize) vals.size(); ++i) {
+                jstring jval = env->NewStringUTF(vals[i].c_str());
+                env->SetObjectArrayElement(jarr, i, jval);
+                env->DeleteLocalRef(jval);
+            }
+            env->SetObjectField(obj, fid, jarr);
+            env->DeleteLocalRef(jarr);
+            env->DeleteLocalRef(stringCls);
+        }
+    };
 
     setFloat("layerHeight", config.layer_height);
     setFloat("firstLayerHeight", config.first_layer_height);
@@ -184,6 +224,8 @@ jobject configToJava(JNIEnv* env, const SliceConfig& config) {
     setBool("supportEnabled", config.support_enabled);
     setString("supportType", config.support_type);
     setFloat("supportAngle", config.support_angle);
+    setInt("supportFilament", config.support_filament);
+    setInt("supportInterfaceFilament", config.support_interface_filament);
     setInt("skirtLoops", config.skirt_loops);
     setFloat("skirtDistance", config.skirt_distance);
     setFloat("brimWidth", config.brim_width);
@@ -193,6 +235,7 @@ jobject configToJava(JNIEnv* env, const SliceConfig& config) {
     setFloat("nozzleDiameter", config.nozzle_diameter);
     setFloat("filamentDiameter", config.filament_diameter);
     setString("filamentType", config.filament_type);
+    setStringArray("filamentTypes", config.filament_types);
 
     // Multi-extruder
     setInt("extruderCount", config.extruder_count);

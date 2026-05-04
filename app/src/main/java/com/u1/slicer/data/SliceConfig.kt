@@ -32,6 +32,8 @@ data class SliceConfig(
     @JvmField var supportEnabled: Boolean = false,
     @JvmField var supportType: String = "normal",
     @JvmField var supportAngle: Float = 45f,
+    @JvmField var supportFilament: Int = 0,
+    @JvmField var supportInterfaceFilament: Int = 0,
 
     // Skirt/Brim
     @JvmField var skirtLoops: Int = 0,
@@ -49,6 +51,7 @@ data class SliceConfig(
     // Filament
     @JvmField var filamentDiameter: Float = 1.75f,
     @JvmField var filamentType: String = "PLA",
+    @JvmField var filamentTypes: Array<String> = arrayOf(),
 
     // Multi-extruder (up to 4 for Snapmaker U1)
     @JvmField var extruderCount: Int = 1,

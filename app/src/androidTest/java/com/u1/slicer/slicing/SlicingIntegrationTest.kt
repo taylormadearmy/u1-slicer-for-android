@@ -68,6 +68,17 @@ class SlicingIntegrationTest {
         lib.clearModel()
     }
 
+    private fun hasExactGcodeLine(gcode: String, expected: String): Boolean =
+        gcode.lineSequence().any { it.trim() == expected }
+
+    private fun filamentUsedMm(gcode: String): List<Float> {
+        val payload = gcode.lineSequence()
+            .firstOrNull { it.trimStart().startsWith("; filament used [mm] = ") }
+            ?.substringAfter("=")
+            ?: return emptyList()
+        return payload.split(",").mapNotNull { it.trim().toFloatOrNull() }
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private fun asset(name: String): File {
@@ -726,6 +737,210 @@ class SlicingIntegrationTest {
 
     // ─── B55: Slice cancellation ─────────────────────────────────────────────
 
+    /**
+     * B99 regression: raw STL support/interface filament choices must survive
+     * SliceConfig -> JNI -> native DynamicPrintConfig and appear in G-code.
+     */
+    @Test
+    fun tetrahedron_stl_supportAndInterfaceFilaments_appearInGcode() {
+        val config = DEFAULT_CONFIG.copy(
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            extruderCount = 4,
+            filamentTypes = arrayOf("PLA", "PLA", "PETG", "PLA"),
+            extruderTemps = intArrayOf(220, 220, 235, 220),
+            supportFilament = 3,
+            supportInterfaceFilament = 4,
+        )
+        val (success, gcode) = sliceAsset("tetrahedron.stl", config)
+        assertTrue("Slice must succeed", success)
+        assertTrue(
+            "G-code must preserve support_filament = 3",
+            gcode!!.contains("support_filament = 3")
+        )
+        assertTrue(
+            "G-code must preserve support_interface_filament = 4",
+            gcode.contains("support_interface_filament = 4")
+        )
+        assertTrue(
+            "G-code must preserve PETG temp for physical slot E3",
+            hasExactGcodeLine(gcode, "; nozzle_temperature = 220,220,235,220")
+        )
+    }
+
+    /**
+     * B99 crash repro: 3DBenchy STL with generated supports on PETG support
+     * filament E3 and PETG interface filament E4 must not crash the native
+     * slicer. This exercises the real support + interface + prime tower path
+     * that the smaller tetrahedron metadata test does not stress.
+     */
+    @Test
+    fun benchy_stl_supportPetgE3_interfacePetgE4_slicesSuccessfully() {
+        val config = DEFAULT_CONFIG.copy(
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            supportAngle = 45f,
+            extruderCount = 4,
+            filamentTypes = arrayOf("PLA", "PLA", "PETG", "PETG"),
+            extruderTemps = intArrayOf(220, 220, 235, 235),
+            supportFilament = 3,
+            supportInterfaceFilament = 4,
+            wipeTowerEnabled = true,
+            wipeTowerX = 170f,
+            wipeTowerY = 140f,
+            wipeTowerWidth = 60f,
+        )
+        val (success, gcode) = sliceAsset("3DBenchy.stl", config)
+        assertTrue("Benchy with PETG support E3/interface E4 must slice", success)
+        assertTrue(
+            "G-code must preserve support_filament = 3",
+            gcode!!.contains("support_filament = 3")
+        )
+        assertTrue(
+            "G-code must preserve support_interface_filament = 4",
+            gcode.contains("support_interface_filament = 4")
+        )
+        assertTrue(
+            "G-code must preserve PETG temps for physical slots E3/E4",
+            hasExactGcodeLine(gcode, "; nozzle_temperature = 220,220,235,235")
+        )
+        assertTrue(
+            "Native STL slicing must receive per-slot material types before slicing",
+            hasExactGcodeLine(gcode, "; filament_type = PLA;PLA;PETG;PETG")
+        )
+        val used = filamentUsedMm(gcode)
+        assertTrue("Support slot E3 must have extrusion, filament used = $used", used.getOrNull(2) ?: 0f > 0f)
+    }
+
+    /**
+     * B99 manual crash repro: mirror the app slice path for the G-drive
+     * 3DBenchy STL after restoring support-e3/interface-e4 settings. The app
+     * places the model with setModelInstances() before slicing, uses the
+     * slower imported print speeds, and auto-places the prime tower at
+     * (200,10); the simpler metadata-only native test above does not exercise
+     * those conditions.
+     */
+    @Test
+    fun benchy_stl_appPlaced_supportPetgE3_interfacePetgE4_slicesSuccessfully() {
+        val file = asset("3DBenchy.stl")
+        assertTrue("Model must load", lib.loadModel(file.absolutePath))
+        assertTrue(
+            "App-style single-copy placement must succeed",
+            lib.setModelInstances(floatArrayOf(104.999504f, 119.498f))
+        )
+
+        val config = DEFAULT_CONFIG.copy(
+            firstLayerHeight = 0.3f,
+            printSpeed = 60f,
+            travelSpeed = 150f,
+            firstLayerSpeed = 20f,
+            nozzleTemp = 220,
+            bedTemp = 60,
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            supportAngle = 45f,
+            extruderCount = 4,
+            filamentTypes = arrayOf("PLA", "PLA", "PETG", "PETG"),
+            extruderTemps = intArrayOf(220, 220, 235, 235),
+            supportFilament = 3,
+            supportInterfaceFilament = 4,
+            wipeTowerEnabled = true,
+            wipeTowerX = 200f,
+            wipeTowerY = 10f,
+            wipeTowerWidth = 60f,
+        )
+        val result = lib.slice(config)
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue(
+            "App-placed Benchy with PETG support E3/interface E4 must slice: ${result.errorMessage}",
+            result.success
+        )
+        val gcode = File(result.gcodePath).readText()
+        assertTrue(
+            "G-code must preserve support_filament = 3",
+            gcode.contains("support_filament = 3")
+        )
+        assertTrue(
+            "G-code must preserve support_interface_filament = 4",
+            gcode.contains("support_interface_filament = 4")
+        )
+        assertTrue(
+            "G-code must preserve PETG temps for physical slots E3/E4",
+            hasExactGcodeLine(gcode, "; nozzle_temperature = 220,220,235,235")
+        )
+        assertTrue(
+            "Native STL slicing must receive per-slot material types before slicing",
+            hasExactGcodeLine(gcode, "; filament_type = PLA;PLA;PETG;PETG")
+        )
+        val used = filamentUsedMm(gcode)
+        assertTrue("Support slot E3 must have extrusion, filament used = $used", used.getOrNull(2) ?: 0f > 0f)
+    }
+
+    /**
+     * B99 manual crash repro from screenshot:
+     * Support Filament = E2 PETG, Interface Filament = E3 PETG,
+     * Interface Top Layers = 3 override, Interface Bottom Layers = File.
+     */
+    @Test
+    fun benchy_stl_appPlaced_supportPetgE2_interfacePetgE3_slicesSuccessfully() {
+        val file = asset("3DBenchy.stl")
+        assertTrue("Model must load", lib.loadModel(file.absolutePath))
+        assertTrue(
+            "App-style single-copy placement must succeed",
+            lib.setModelInstances(floatArrayOf(104.999504f, 119.498f))
+        )
+
+        val config = DEFAULT_CONFIG.copy(
+            firstLayerHeight = 0.3f,
+            printSpeed = 60f,
+            travelSpeed = 150f,
+            firstLayerSpeed = 20f,
+            nozzleTemp = 220,
+            bedTemp = 60,
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            supportAngle = 45f,
+            extruderCount = 4,
+            filamentTypes = arrayOf("PLA", "PETG", "PETG", "PLA"),
+            extruderTemps = intArrayOf(220, 235, 235, 220),
+            supportFilament = 2,
+            supportInterfaceFilament = 3,
+            wipeTowerEnabled = true,
+            wipeTowerX = 200f,
+            wipeTowerY = 10f,
+            wipeTowerWidth = 60f,
+        )
+        val result = lib.slice(config)
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue(
+            "App-placed Benchy with PETG support E2/interface PETG E3 must slice: ${result.errorMessage}",
+            result.success
+        )
+        val gcode = File(result.gcodePath).readText()
+        assertTrue(
+            "G-code must preserve support_filament = 2",
+            gcode.contains("support_filament = 2")
+        )
+        assertTrue(
+            "G-code must preserve support_interface_filament = 3",
+            gcode.contains("support_interface_filament = 3")
+        )
+        assertTrue(
+            "G-code must preserve PETG temps for active E2/E3 support slots",
+            hasExactGcodeLine(gcode, "; nozzle_temperature = 220,235,235") ||
+                hasExactGcodeLine(gcode, "; nozzle_temperature = 220,235,235,220")
+        )
+        assertTrue(
+            "Native STL slicing must receive per-slot support/interface material types before slicing",
+            hasExactGcodeLine(gcode, "; filament_type = PLA;PETG;PETG") ||
+                hasExactGcodeLine(gcode, "; filament_type = PLA;PETG;PETG;PLA")
+        )
+        val used = filamentUsedMm(gcode)
+        assertTrue("Support slot E2 must have extrusion, filament used = $used", used.getOrNull(1) ?: 0f > 0f)
+        assertTrue("Interface slot E3 must have extrusion, filament used = $used", used.getOrNull(2) ?: 0f > 0f)
+    }
     @Test
     fun sliceCancelReturnsCancelledResult() {
         val file = asset("3DBenchy.stl")

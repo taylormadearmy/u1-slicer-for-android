@@ -58,6 +58,8 @@ struct SliceConfig {
     bool support_enabled = false;
     std::string support_type = "normal"; // "normal", "tree"
     float support_angle = 45.0f;
+    int support_filament = 0;            // 1-based Orca filament index; 0 = default
+    int support_interface_filament = 0;  // 1-based Orca filament index; 0 = default
 
     // Skirt/Brim
     int skirt_loops = 0;
@@ -75,6 +77,7 @@ struct SliceConfig {
     // Filament
     float filament_diameter = 1.75f;
     std::string filament_type = "PLA";
+    std::vector<std::string> filament_types; // per-extruder material types; empty = use filament_type
 
     // Multi-extruder (up to 4 for Snapmaker U1)
     int extruder_count = 1;

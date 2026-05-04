@@ -92,6 +92,29 @@ class ComputePlateFileIndicesTest {
     }
 
     @Test
+    fun `STL support-driven extruders wider than canonical fall back to raw gcode slots`() {
+        // Benchy STL with model on PLA and supports/interfaces forced to PETG:
+        //
+        //   ; filament used [mm] = 3950.12, 1898.68, 24.64
+        //   ; filament_type = PLA;PETG;PETG;PLA
+        //   ; support_filament = 2
+        //   ; support_interface_filament = 3
+        //
+        // STL prepare state has one synthetic canonical model filament, but
+        // slicing can legitimately activate support/interface extruders. In
+        // that shape, returning [0] hides PETG support/interface chips from
+        // the Slice Summary. Returning null lets the caller render the raw
+        // G-code per-extruder slots instead: Filament 1 PLA, 2 PETG, 3 PETG.
+        val result = computePlateFileIndices(
+            info = null,
+            plateId = -1,
+            canonicalSize = 1,
+            perExtruderFilamentMm = listOf(3950.12f, 1898.68f, 24.64f),
+        )
+        assertNull(result)
+    }
+
+    @Test
     fun `gcode-driven path falls back to heuristics when perExtruderFilamentMm all zero`() {
         // Defensive: if the gcode parser returned all-zero (corrupt slice or
         // pre-slice state), don't return an empty plateFileIndices — fall

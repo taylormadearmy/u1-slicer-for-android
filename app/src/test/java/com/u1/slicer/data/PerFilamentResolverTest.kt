@@ -101,25 +101,61 @@ class PerFilamentResolverTest {
     }
 
     @Test
-    fun noOverrides_canonicalDeclaredMaterials_winOverPresets() {
+    fun noOverrides_mappedSlotMaterials_matchPrepareRows() {
         val canonical = CanonicalFilamentList(
             filaments = listOf(
-                FilamentEntry(0, "#FF0000", "PETG", FilamentSource.FILE_COLOUR),
-                FilamentEntry(1, "#00FF00", "ABS", FilamentSource.FILE_COLOUR),
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PLA", FilamentSource.FILE_COLOUR),
                 FilamentEntry(2, "#0000FF", null, FilamentSource.FILE_COLOUR),
             )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FF0000", materialType = "PETG"),
+            ExtruderPreset(index = 1, color = "#00FF00", materialType = "ABS"),
+            ExtruderPreset(index = 2, color = "#0000FF", materialType = "PLA"),
         )
         val (types, temps) = resolvePerFilamentTypeAndTemp(
             canonical = canonical,
             overrides = emptyMap(),
             colorMapping = listOf(0, 1, 2),
-            presets = fourPLAPresets(),  // all PLA
+            presets = presets,
             filamentLibrary = emptyList(),
         )
-        // fileIdx 0 → PETG (from canonical), fileIdx 1 → ABS (from canonical),
-        // fileIdx 2 → PLA (canonical null, falls back to slot 2 preset = PLA).
+        // fileIdx 0 -> PETG (from slot 0 preset), fileIdx 1 -> ABS (from slot 1 preset),
+        // fileIdx 2 -> PLA (canonical null, falls back to slot 2 preset = PLA).
         assertEquals(listOf("PETG", "ABS", "PLA"), types)
         assertEquals(listOf(235, 270, 220), temps)
+    }
+
+    @Test
+    fun h2cSupportFilamentThree_usesMappedSlotPetgEvenWhenFileDeclaresPla() {
+        val canonical = CanonicalFilamentList(
+            filaments = (0 until 7).map { i ->
+                FilamentEntry(
+                    fileIndex = i,
+                    color = "#%06X".format(0x0086D6 + i),
+                    materialType = "PLA",
+                    source = FilamentSource.FILE_COLOUR,
+                )
+            }
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#0086D6", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FFFF00", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#FFFFFF", materialType = "PETG"),
+            ExtruderPreset(index = 3, color = "#6A00D5", materialType = "PLA"),
+        )
+
+        val (types, temps) = resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1, 2, 3, 0, 1, 2),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+
+        assertEquals("PETG", types[2])
+        assertEquals(235, temps[2])
     }
 
     @Test

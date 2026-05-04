@@ -56,6 +56,9 @@ import java.io.File
  * # Check G-code for tool changes
  * adb -s SERIAL shell am broadcast -a com.u1.slicer.orca.CHECK_GCODE
  *
+ * # Export print-ready G-code through the same remap boundary used by Save/Share
+ * adb -s SERIAL shell am broadcast -a com.u1.slicer.orca.EXPORT_GCODE
+ *
  * # Dump the embedded model_settings.config from the last embedded 3MF
  * adb -s SERIAL shell am broadcast -a com.u1.slicer.orca.DUMP_EMBEDDED_CONFIG
  * ```
@@ -92,6 +95,7 @@ class TestCommandReceiver(
         const val ACTION_CHECK_GCODE = "${PREFIX}CHECK_GCODE"
         const val ACTION_DUMP_EMBEDDED_CONFIG = "${PREFIX}DUMP_EMBEDDED_CONFIG"
         const val ACTION_IMPORT_BACKUP = "${PREFIX}IMPORT_BACKUP"
+        const val ACTION_EXPORT_GCODE = "${PREFIX}EXPORT_GCODE"
 
         fun intentFilter(): IntentFilter = IntentFilter().apply {
             addAction(ACTION_LOAD_FILE)
@@ -105,6 +109,7 @@ class TestCommandReceiver(
             addAction(ACTION_CHECK_GCODE)
             addAction(ACTION_DUMP_EMBEDDED_CONFIG)
             addAction(ACTION_IMPORT_BACKUP)
+            addAction(ACTION_EXPORT_GCODE)
         }
     }
 
@@ -132,6 +137,7 @@ class TestCommandReceiver(
             ACTION_CHECK_GCODE -> handleCheckGcode(context)
             ACTION_DUMP_EMBEDDED_CONFIG -> handleDumpEmbeddedConfig(context)
             ACTION_IMPORT_BACKUP -> handleImportBackup(context, intent)
+            ACTION_EXPORT_GCODE -> handleExportGcode()
             else -> Log.w(TAG, "Unknown action: $action")
         }
     }
@@ -282,6 +288,25 @@ class TestCommandReceiver(
         Log.i(TAG, "Wipe tower: $hasWipeTower")
         Log.i(TAG, "Multi-colour: ${t1Count > 3}")
         Log.i(TAG, "=== END CHECK_GCODE ===")
+    }
+
+    private fun handleExportGcode() {
+        val state = slicerViewModel.state.value
+        if (state !is SlicerViewModel.SlicerState.SliceComplete) {
+            Log.e(TAG, "EXPORT_GCODE: current state is not SliceComplete: $state")
+            return
+        }
+
+        Thread {
+            val source = File(state.result.gcodePath)
+            val dest = File(source.parentFile, "${source.nameWithoutExtension}.debug-export.${source.extension}")
+            val ok = slicerViewModel.prepareExportableGcode(source, dest)
+            if (ok) {
+                Log.i(TAG, "EXPORT_GCODE: success path=${dest.absolutePath} size=${dest.length() / 1024}KB")
+            } else {
+                Log.e(TAG, "EXPORT_GCODE: failed source=${source.absolutePath}")
+            }
+        }.start()
     }
 
     private fun handleDumpEmbeddedConfig(context: Context) {

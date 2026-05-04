@@ -116,6 +116,8 @@ data class SlicingOverrides(
             supportEnabled   = res(supports,          base.supportEnabled,    "supports"),
             supportType      = res(supportType,       base.supportType,       "supportType"),
             supportAngle     = res(supportAngle,      base.supportAngle.toInt(), "supportAngle").toFloat(),
+            supportFilament  = res(supportFilament,   base.supportFilament,   "supportFilament"),
+            supportInterfaceFilament = res(supportInterfaceFilament, base.supportInterfaceFilament, "supportInterfaceFilament"),
             brimWidth        = res(brimWidth,          base.brimWidth,         "brimWidth"),
             skirtLoops       = res(skirtLoops,        base.skirtLoops,        "skirtLoops"),
             bedTemp          = res(bedTemp,           base.bedTemp,           "bedTemp"),

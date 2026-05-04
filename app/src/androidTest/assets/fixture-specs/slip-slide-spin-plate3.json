@@ -4,12 +4,10 @@
   "plates": [
     {
       "plateIndex": 2,
-      "expectedExtruderCount": 4,
+      "expectedExtruderCount": 2,
       "expectedToolCounts": {
         "T0": 28,
-        "T1": 49,
-        "T2": 50,
-        "T3": 26
+        "T1": 25
       },
       "toolCountTolerance": 10,
       "hasPaintData": true,

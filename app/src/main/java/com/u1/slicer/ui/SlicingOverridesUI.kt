@@ -25,6 +25,7 @@ import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.PlateType
 import com.u1.slicer.data.SlicingOverrides
+import com.u1.slicer.data.ExtruderPreset
 
 /**
  * Shared slicing overrides UI components used by both SettingsScreen and PrepareScreen (ConfigCard).
@@ -47,6 +48,8 @@ fun SlicingOverridesAccordion(
     // filament_colour array (file-filament space), not slot indices. When
     // null, falls back to the default 4-slot range for backwards-compat.
     filamentCount: Int? = null,
+    extruderPresets: List<ExtruderPreset> = emptyList(),
+    colorMapping: List<Int>? = null,
 ) {
     var expandedSection by remember { mutableStateOf<String?>(defaultExpandedSection) }
 
@@ -408,7 +411,12 @@ fun SlicingOverridesAccordion(
             // For multi-filament files, the dropdown shows up to filamentCount
             // entries; falls back to 1..4 (slot count) when filamentCount is
             // null (settings screen with no model loaded).
-            val filamentOptionsRange = (1..(filamentCount ?: 4))
+            val supportFilamentOptions = listOf(SupportFilamentOption(0, "Default")) +
+                buildSupportFilamentOptions(
+                    extruderPresets = extruderPresets,
+                    colorMapping = colorMapping,
+                    filamentCount = filamentCount,
+                )
             OverrideRow(
                 label = "  Support Filament",
                 override = overrides.supportFilament,
@@ -417,11 +425,10 @@ fun SlicingOverridesAccordion(
                 fileKey = "support_filament",
                 sourceConfig = sourceConfig,
                 valueContent = {
-                    val options = listOf(0 to "Default") + filamentOptionsRange.map { it to "Filament $it" }
                     OverrideDropdown(
                         value = (overrides.supportFilament.value ?: 0).toString(),
-                        options = options.map { it.first.toString() },
-                        labels = options.map { it.second },
+                        options = supportFilamentOptions.map { it.configValue.toString() },
+                        labels = supportFilamentOptions.map { it.label },
                         onValueChange = { onOverridesChange(overrides.copy(supportFilament = OverrideValue(OverrideMode.OVERRIDE, it.toIntOrNull() ?: 0))) }
                     )
                 }
@@ -435,11 +442,10 @@ fun SlicingOverridesAccordion(
                 fileKey = "support_interface_filament",
                 sourceConfig = sourceConfig,
                 valueContent = {
-                    val options = listOf(0 to "Default") + filamentOptionsRange.map { it to "Filament $it" }
                     OverrideDropdown(
                         value = (overrides.supportInterfaceFilament.value ?: 0).toString(),
-                        options = options.map { it.first.toString() },
-                        labels = options.map { it.second },
+                        options = supportFilamentOptions.map { it.configValue.toString() },
+                        labels = supportFilamentOptions.map { it.label },
                         onValueChange = { onOverridesChange(overrides.copy(supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, it.toIntOrNull() ?: 0))) }
                     )
                 }
@@ -821,6 +827,48 @@ internal fun formatFileValue(value: Any): String = when (value) {
     is Number -> value.toString()
     is List<*> -> value.firstOrNull()?.let { formatFileValue(it) } ?: value.toString()
     else -> value.toString()
+}
+
+internal data class SupportFilamentOption(
+    val configValue: Int,
+    val label: String,
+)
+
+internal fun buildSupportFilamentOptions(
+    extruderPresets: List<ExtruderPreset>,
+    colorMapping: List<Int>?,
+    filamentCount: Int?,
+    slotCount: Int = 4,
+): List<SupportFilamentOption> {
+    val presetsBySlot = extruderPresets.associateBy { it.index }
+    val usedConfigValues = mutableSetOf<Int>()
+    return (0 until slotCount).map { slot ->
+        val mappedFileIndex = colorMapping
+            ?.indexOfFirst { it == slot }
+            ?.takeIf { it >= 0 }
+        val preferredValue = when {
+            mappedFileIndex != null -> mappedFileIndex + 1
+            colorMapping == null -> slot + 1
+            else -> null
+        }
+        val configValue = if (preferredValue != null && preferredValue !in usedConfigValues) {
+            preferredValue
+        } else {
+            val minimumSynthetic = (filamentCount ?: 0) + 1
+            generateSequence(maxOf(slot + 1, minimumSynthetic)) { it + 1 }
+                .first { it !in usedConfigValues }
+        }
+        usedConfigValues += configValue
+
+        val preset = presetsBySlot[slot]
+        val material = preset?.materialType?.takeIf { it.isNotBlank() } ?: "PLA"
+        val color = preset?.color?.takeIf { it.isNotBlank() }?.uppercase()
+        val colorLabel = color?.let { " · $it" }.orEmpty()
+        SupportFilamentOption(
+            configValue = configValue,
+            label = "E${slot + 1} · $material$colorLabel",
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

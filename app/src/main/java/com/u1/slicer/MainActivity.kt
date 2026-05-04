@@ -909,7 +909,8 @@ internal fun computePlateFileIndices(
     // available, derive plateFileIndices from non-zero canonical entries.
     // The footer line is the slicer's authoritative output: canonical fileIdx
     // order, sized to canonical, 0.0 for unused. This is the SINGLE SOURCE
-    // OF TRUTH post-slice and supersedes every pre-slice heuristic below.
+    // OF TRUTH post-slice and supersedes every pre-slice heuristic below when
+    // it is the same width as the canonical model/material list.
     //
     // Examples:
     //   - Border Collie (single-plate SEMM, canonical=5): footer
@@ -920,9 +921,13 @@ internal fun computePlateFileIndices(
     //     shows 4 rows; chips label "Filament 1, 2, 6, 9".
     //   - slip_slide_spin plate 3 (multi-plate SEMM, canonical=10): footer
     //     non-zero at [0, 1, 2, 3] → returns [0, 1, 2, 3]. 4 rows / chips.
+    //   - STL with support/interface filaments (canonical=1): footer can be
+    //     wider than the synthetic one-filament model list, e.g. [PLA, PETG,
+    //     PETG]. In that case null deliberately falls back to raw G-code slots.
     if (perExtruderFilamentMm != null) {
         val nonZero = perExtruderFilamentMm.indices
-            .filter { perExtruderFilamentMm[it] > 0f && it < canonicalSize }
+            .filter { perExtruderFilamentMm[it] > 0f }
+        if (nonZero.any { it >= canonicalSize }) return null
         if (nonZero.isNotEmpty()) return nonZero
     }
     if (info == null) return null
@@ -1106,6 +1111,7 @@ fun PrepareScreen(
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
+    val canonicalFilamentList by viewModel.canonicalFilamentList.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     val meshAlignedFilamentColors by viewModel.meshAlignedFilamentColors.collectAsState()
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
@@ -1396,7 +1402,10 @@ fun PrepareScreen(
                             bedTemp = config.bedTemp,
                             onBedTempChange = { viewModel.setBedTemp(it) },
                             sourceConfig = sourceConfig,
-                            filamentCount = threeMfInfo?.detectedColors?.size?.takeIf { it > 0 }
+                            filamentCount = canonicalFilamentList?.size
+                                ?: threeMfInfo?.detectedColors?.size?.takeIf { it > 0 },
+                            extruderPresets = extruderPresets,
+                            colorMapping = colorMapping,
                         )
                     }
                 }
@@ -1936,6 +1945,8 @@ fun ConfigCard(
     // sees real filament numbers instead of slot indices. Null when no
     // model is loaded (settings screen).
     filamentCount: Int? = null,
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset> = emptyList(),
+    colorMapping: List<Int>? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1974,6 +1985,8 @@ fun ConfigCard(
                     onBedTempChange = onBedTempChange,
                     sourceConfig = sourceConfig,
                     filamentCount = filamentCount,
+                    extruderPresets = extruderPresets,
+                    colorMapping = colorMapping,
                 )
             }
 
@@ -2366,10 +2379,13 @@ fun SliceCompleteSummaryCard(
                             } catch (_: Exception) {
                                 Color.Gray
                             }
-                            // Material priority: override → canonical → slot preset.
+                            // Material priority: override -> mapped slot preset -> canonical.
+                            val mappedMaterial = resolveExtruderMaterialType(slot, extruderPresets)
+                                .takeIf { it.isNotBlank() }
                             val material = override?.materialType
+                                ?: mappedMaterial
                                 ?: canonicalEntry?.materialType
-                                ?: resolveExtruderMaterialType(slot, extruderPresets)
+                                ?: ""
                             Row(
                                 modifier = Modifier
                                     .weight(1f)

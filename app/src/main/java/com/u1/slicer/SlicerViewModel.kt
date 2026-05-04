@@ -2297,6 +2297,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // single-filament file has nothing to override against here.
         val originalPresets = extruderPresets.value
         val slotTypes = originalPresets.sortedBy { it.index }.map { it.materialType }
+        val allSlotTemps = computeFreshSlotTemps(
+            slotCount = originalPresets.size.coerceAtLeast(slotCount),
+            usedSlots = null,
+            presets = originalPresets,
+            filaments = filaments.value
+        ).toList()
         val slotTemps = computeFreshSlotTemps(slotCount, usedSlots, originalPresets, filaments.value).toList()
 
         val canonical = getCanonicalFilamentList()
@@ -2304,8 +2310,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             buildPerFilamentTypeAndTemp(it, _filamentOverrides.value, originalPresets)
         }
 
-        val finalTypes = perFilamentArrays?.first ?: slotTypes
-        val finalTemps = perFilamentArrays?.second ?: slotTemps
+        val resolvedTypes = perFilamentArrays?.first ?: slotTypes
+        val resolvedTemps = perFilamentArrays?.second ?: slotTemps
+        // B99: a single-filament STL can still ask OrcaSlicer to print
+        // supports/interface with another physical slot via support_filament
+        // (1-based). Keep the file filament at index 0, then pad any
+        // requested support slots from the user's physical-slot presets so
+        // the emitted filament_type/nozzle_temperature arrays are long
+        // enough and carry the support material instead of collapsing to the
+        // model material.
+        val finalTypes = if (perFilamentArrays != null && resolvedTypes.size < slotTypes.size) {
+            resolvedTypes + slotTypes.drop(resolvedTypes.size)
+        } else {
+            resolvedTypes
+        }
+        val finalTemps = if (perFilamentArrays != null && resolvedTemps.size < allSlotTemps.size) {
+            resolvedTemps + allSlotTemps.drop(resolvedTemps.size)
+        } else {
+            resolvedTemps
+        }
         // Phase 2 §4 Step 2 — file-filament space is canonical.size when a
         // canonical list exists, otherwise it collapses to slot space.
         val filamentCount = finalTypes.size.coerceAtLeast(slotCount)
@@ -2342,8 +2365,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * nozzle_temperature lists. For each file filament i, the resolution
      * order is:
      *   1. User override on that fileIndex (Prepare screen).
-     *   2. Canonical entry's declared materialType (file's filament_type).
-     *   3. The mapped slot's preset materialType.
+     *   2. The mapped slot's preset materialType, matching Prepare rows.
+     *   3. Canonical entry's declared materialType (file's filament_type).
      *   4. "PLA" / 220° as last resort.
      *
      * Nozzle temps are derived from the resolved material via
@@ -2885,8 +2908,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // fallback paths, slot-space presets are the right source.
                 // See docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
                 val sliceConfig = resolvedSliceConfig.let { cfg ->
-                    cfg.copy(extruderTemps = computeFreshSlotTemps(
-                        slotCount = cfg.extruderCount,
+                    val effectiveExtruderCount = maxOf(
+                        cfg.extruderCount,
+                        cfg.supportFilament,
+                        cfg.supportInterfaceFilament,
+                    )
+                    val slotFilamentTypes = extruderPresets.value
+                        .sortedBy { it.index }
+                        .map { it.materialType.takeIf { type -> type.isNotBlank() } ?: "PLA" }
+                    cfg.copy(
+                        extruderCount = effectiveExtruderCount,
+                        wipeTowerEnabled = ov.resolvePrimeTower(effectiveExtruderCount, cfg.wipeTowerEnabled),
+                        filamentTypes = Array(effectiveExtruderCount) { idx ->
+                            slotFilamentTypes.getOrNull(idx) ?: cfg.filamentType.takeIf { it.isNotBlank() } ?: "PLA"
+                        },
+                        extruderTemps = computeFreshSlotTemps(
+                        slotCount = effectiveExtruderCount,
                         usedSlots = toolRemapSlots,
                         presets = extruderPresets.value,
                         filaments = filaments.value
@@ -2972,12 +3009,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // canonical filament so per-filament overrides reach the G-code header.
                     val canonicalForPatch = getCanonicalFilamentList()
                     val basePresets = extruderPresets.value
-                    val ftTypes = if (canonicalForPatch != null
-                        && canonicalForPatch.size > basePresets.size) {
-                        val (perFilamentTypes, _) = buildPerFilamentTypeAndTemp(
-                            canonicalForPatch, _filamentOverrides.value, basePresets
+                    val supportDrivenSlotCount = maxOf(
+                        slicingOverrides.value.supportFilament.value ?: 0,
+                        slicingOverrides.value.supportInterfaceFilament.value ?: 0,
+                    )
+                    val ftTypes = if (
+                        canonicalForPatch != null &&
+                        !(canonicalForPatch.size <= 1 && supportDrivenSlotCount > canonicalForPatch.size)
+                    ) {
+                        resolveFilamentTypesForHeaderPatch(
+                            canonical = canonicalForPatch,
+                            overrides = _filamentOverrides.value
+                                .mapValues { (_, ov) -> ov.color to ov.materialType },
+                            colorMapping = _colorMapping.value,
+                            presets = basePresets,
+                            filamentLibrary = filaments.value,
+                            padTo = maxOf(canonicalForPatch.size, supportDrivenSlotCount),
                         )
-                        perFilamentTypes
                     } else {
                         basePresets.sortedBy { it.index }.map { it.materialType }
                     }
@@ -4316,7 +4364,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // would require either refactoring this branch into an `internal`
             // helper or adding instrumented coverage on a custom-built 3MF.
             if (usedExtruders.isNotEmpty()) {
-                usedExtruders.toSortedSet()
+                if (plateHasPaintData) {
+                    (usedExtruders +
+                        sourcePlate.paintExtruderStates.filter { it > 0 } +
+                        sourcePlate.filamentIndices.filter { it > 0 } +
+                        sourcePlateObjectExtruders).toSortedSet()
+                } else {
+                    usedExtruders.toSortedSet()
+                }
             } else {
                 val ltExtruders = sourcePlate.layerToolExtruders.filter { it > 0 }
                 val filExtruders = sourcePlate.filamentIndices.filter { it > 0 }
@@ -4922,6 +4977,10 @@ internal fun buildProfileOverridesImpl(
     val supportInterfaceBottomLayers = resolve(ov.supportInterfaceBottomLayers, 0, "supportInterfaceBottomLayers")
     val supportFilament = resolve(ov.supportFilament, 0, "supportFilament")
     val supportInterfaceFilament = resolve(ov.supportInterfaceFilament, 0, "supportInterfaceFilament")
+    val effectiveFilamentCount = maxOf(filamentCount, supportFilament, supportInterfaceFilament)
+    while (temps.size < effectiveFilamentCount) {
+        temps.add(nozzleTemps?.getOrNull(temps.size)?.toString() ?: cfg.nozzleTemp.toString())
+    }
     val supportXyDistance = resolve(ov.supportXyDistance, 0.35f, "supportXyDistance")
     val supportInterfacePattern = resolve(ov.supportInterfacePattern, "auto", "supportInterfacePattern")
     val supportInterfaceSpacing = resolve(ov.supportInterfaceSpacing, 0.5f, "supportInterfaceSpacing")
@@ -4979,7 +5038,7 @@ internal fun buildProfileOverridesImpl(
         // B63: filament_type per file filament. Sized to filamentCount so
         // per-canonical-filament overrides survive even when slotCount is
         // smaller (H2C benchy: filamentCount=7, slotCount=4).
-        "filament_type" to MutableList(filamentCount) { i ->
+        "filament_type" to MutableList(effectiveFilamentCount) { i ->
             filamentTypes?.getOrNull(i) ?: "PLA"
         }
     )
@@ -4990,7 +5049,7 @@ internal fun buildProfileOverridesImpl(
     // for non-canonical files the source config / default profile stack
     // owns filament_colour.
     if (filamentColours != null) {
-        result["filament_colour"] = MutableList(filamentCount) { i ->
+        result["filament_colour"] = MutableList(effectiveFilamentCount) { i ->
             filamentColours.getOrNull(i) ?: "#FFFFFF"
         }
     }
@@ -5238,6 +5297,28 @@ internal fun computeEmbedTargetCount(
 // callers after `1e95c7d` made `applyConfigToPrusa` respect the embed for
 // per-filament tuning. Their unit tests (SlicerColorOrderTest,
 // SemmColorPermutationTest, ExpandedGcodeRemapTest) were removed alongside.
+
+internal fun resolveFilamentTypesForHeaderPatch(
+    canonical: com.u1.slicer.data.CanonicalFilamentList,
+    overrides: Map<Int, Pair<String?, String?>>,
+    colorMapping: List<Int>?,
+    presets: List<ExtruderPreset>,
+    filamentLibrary: List<FilamentProfile>,
+    padTo: Int = canonical.size,
+): List<String> {
+    val resolved = com.u1.slicer.data.resolvePerFilamentTypeAndTemp(
+        canonical = canonical,
+        overrides = overrides,
+        colorMapping = colorMapping,
+        presets = presets,
+        filamentLibrary = filamentLibrary,
+    ).first
+    if (resolved.size >= padTo) return resolved
+    val slotTypes = presets.sortedBy { it.index }.map { it.materialType }
+    return resolved + (resolved.size until padTo).map { idx ->
+        slotTypes.getOrNull(idx) ?: "PLA"
+    }
+}
 
 /**
  * B63: Replace the `; filament_type = ...` header comment in a generated G-code file

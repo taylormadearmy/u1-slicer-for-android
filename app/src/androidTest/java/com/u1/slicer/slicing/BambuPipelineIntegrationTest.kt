@@ -101,6 +101,17 @@ class BambuPipelineIntegrationTest {
         outDir.deleteRecursively()
     }
 
+    private fun hasExactGcodeLine(gcode: String, expected: String): Boolean =
+        gcode.lineSequence().any { it.trim() == expected }
+
+    private fun filamentUsedMm(gcode: String): List<Float> {
+        val payload = gcode.lineSequence()
+            .firstOrNull { it.trimStart().startsWith("; filament used [mm] = ") }
+            ?.substringAfter("=")
+            ?: return emptyList()
+        return payload.split(",").mapNotNull { it.trim().toFloatOrNull() }
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private fun asset(name: String): File {
@@ -157,6 +168,83 @@ class BambuPipelineIntegrationTest {
         val gcodeFile = File(result.gcodePath)
         assertTrue("G-code file should exist", gcodeFile.exists())
         return gcodeFile.readText()
+    }
+
+    /**
+     * B99 manual crash repro: Leo support fixture from G-drive test data,
+     * plate 1 ("Print ME"), with support filament E3 and support interface
+     * filament E4 both configured as PETG. This follows the app's Bambu
+     * embedded-profile path rather than the raw STL SliceConfig-only path.
+     */
+    @Test
+    fun leoSupport_plate1_supportPetgE3_interfacePetgE4_slicesSuccessfully() {
+        val input = asset("Leo_test_Supports.3mf")
+        val info = ThreeMfParser.parse(input)
+        assertTrue("Leo support fixture must be detected as Bambu", info.isBambu)
+        assertTrue("Leo support fixture must expose multiple plates", info.plates.size >= 2)
+        assertEquals("Print ME", info.plates.first { it.plateId == 1 }.name)
+
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val embedOverrides: Map<String, Any> = mapOf(
+            "enable_support" to "1",
+            "support_type" to "normal(auto)",
+            "support_threshold_angle" to "45",
+            "support_interface_top_layers" to "3",
+            "support_interface_bottom_layers" to "0",
+            "support_filament" to "3",
+            "support_interface_filament" to "4",
+            "filament_type" to mutableListOf("PLA", "PLA", "PETG", "PETG"),
+            "nozzle_temperature" to mutableListOf("220", "220", "235", "235"),
+            "nozzle_temperature_initial_layer" to mutableListOf("220", "220", "235", "235"),
+        )
+        val embedConfig = embedder.buildConfig(
+            info = info,
+            sourceConfig = sourceConfig,
+            overrides = embedOverrides,
+            targetExtruderCount = maxOf(info.detectedExtruderCount, 4)
+        )
+        val embedded = embedder.embed(input, embedConfig, outDir, info, plateId = 1)
+        assertTrue("loadModel must succeed for Leo plate 1", lib.loadModel(embedded.absolutePath))
+
+        val sliceConfig = BASE_CONFIG.copy(
+            firstLayerHeight = 0.3f,
+            printSpeed = 60f,
+            travelSpeed = 150f,
+            firstLayerSpeed = 20f,
+            nozzleTemp = 220,
+            bedTemp = 60,
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            supportAngle = 45f,
+            extruderCount = 4,
+            extruderTemps = intArrayOf(220, 220, 235, 235),
+            supportFilament = 3,
+            supportInterfaceFilament = 4,
+            wipeTowerEnabled = true,
+            wipeTowerX = 200f,
+            wipeTowerY = 10f,
+            wipeTowerWidth = 60f,
+        )
+        val result = lib.slice(sliceConfig)
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue(
+            "Leo plate 1 with PETG support E3/interface E4 must slice: ${result.errorMessage}",
+            result.success
+        )
+
+        val gcode = File(result.gcodePath).readText()
+        assertTrue("G-code must preserve support_filament = 3", gcode.contains("support_filament = 3"))
+        assertTrue(
+            "G-code must preserve support_interface_filament = 4",
+            gcode.contains("support_interface_filament = 4")
+        )
+        assertTrue(
+            "G-code must preserve PETG temps for E3/E4",
+            hasExactGcodeLine(gcode, "; nozzle_temperature = 220,220,235,235")
+        )
+        val used = filamentUsedMm(gcode)
+        assertTrue("Support slot E3 must have extrusion, filament used = $used", used.getOrNull(2) ?: 0f > 0f)
     }
 
     // ─── Multi-plate detection ────────────────────────────────────────────────

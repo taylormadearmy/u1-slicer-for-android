@@ -482,8 +482,22 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         // Filament type — per-extruder array; affects fan curves, flow limits, and G-code metadata.
         // Without this, OrcaSlicer uses its PLA default regardless of the user's material selection.
         {
-            std::vector<std::string> ftypes(n_ext, config.filament_type);
+            std::vector<std::string> ftypes;
+            ftypes.reserve(n_ext);
+            for (int i = 0; i < n_ext; ++i) {
+                std::string material = (i < (int) config.filament_types.size() && !config.filament_types[i].empty())
+                    ? config.filament_types[i]
+                    : config.filament_type;
+                if (material.empty()) material = "PLA";
+                ftypes.push_back(material);
+            }
             dpc.set_key_value("filament_type", new Slic3r::ConfigOptionStrings(ftypes));
+        }
+        if (config.support_filament > 0) {
+            dpc.set_key_value("support_filament", new Slic3r::ConfigOptionInt(config.support_filament));
+        }
+        if (config.support_interface_filament > 0) {
+            dpc.set_key_value("support_interface_filament", new Slic3r::ConfigOptionInt(config.support_interface_filament));
         }
     }
 
