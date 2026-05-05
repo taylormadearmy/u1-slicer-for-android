@@ -236,7 +236,6 @@ fun MakerWorldBrowserScreen(
                                         if (hasAuthCookies(cookies)) {
                                             Log.i("MWBrowser", "Auth cookies detected (${cookies.length} chars)")
                                             viewModel.saveMakerWorldCookies(cookies)
-                                            viewModel.saveMakerWorldCookiesEnabled(true)
                                         }
                                     }
                                 }

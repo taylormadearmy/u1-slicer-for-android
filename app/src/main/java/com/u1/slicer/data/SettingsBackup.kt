@@ -17,8 +17,7 @@ object SettingsBackup {
         val printerUrl: String?,
         val extruderPresets: List<ExtruderPreset>?,
         val filamentProfiles: List<FilamentProfile>?,
-        val makerWorldCookies: String? = null,
-        val makerWorldCookiesEnabled: Boolean? = null
+        val makerWorldCookies: String? = null
     )
 
     fun import(json: String): BackupData {
@@ -32,8 +31,7 @@ object SettingsBackup {
             printerUrl = if (root.has("printerUrl")) root.getString("printerUrl") else null,
             extruderPresets = root.optJSONArray("extruderPresets")?.let { parseExtruderPresetsArray(it) },
             filamentProfiles = root.optJSONArray("filamentProfiles")?.let { parseFilamentProfilesArray(it) },
-            makerWorldCookies = if (root.has("makerWorldCookies")) root.getString("makerWorldCookies") else null,
-            makerWorldCookiesEnabled = if (root.has("makerWorldCookiesEnabled")) root.getBoolean("makerWorldCookiesEnabled") else null
+            makerWorldCookies = if (root.has("makerWorldCookies")) root.getString("makerWorldCookies") else null
         )
     }
 
@@ -104,8 +102,7 @@ object SettingsBackup {
         extruderPresets: List<ExtruderPreset>,
         filamentProfiles: List<FilamentProfile>,
         filamentNameResolver: (Long) -> String? = { null },
-        makerWorldCookies: String = "",
-        makerWorldCookiesEnabled: Boolean = false
+        makerWorldCookies: String = ""
     ): String {
         val root = JSONObject()
         root.put("version", VERSION)
@@ -117,7 +114,6 @@ object SettingsBackup {
         if (makerWorldCookies.isNotEmpty()) {
             root.put("makerWorldCookies", makerWorldCookies)
         }
-        root.put("makerWorldCookiesEnabled", makerWorldCookiesEnabled)
         return root.toString(2)
     }
 

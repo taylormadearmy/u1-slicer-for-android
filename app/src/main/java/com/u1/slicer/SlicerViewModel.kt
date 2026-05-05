@@ -693,14 +693,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // MakerWorld cookies (for authenticated URL downloads)
     val makerWorldCookies: StateFlow<String> = settingsRepo.makerWorldCookies
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
-    val makerWorldCookiesEnabled: StateFlow<Boolean> = settingsRepo.makerWorldCookiesEnabled
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     fun saveMakerWorldCookies(cookies: String) {
         viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveMakerWorldCookies(cookies) }
-    }
-    fun saveMakerWorldCookiesEnabled(enabled: Boolean) {
-        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveMakerWorldCookiesEnabled(enabled) }
     }
 
     // Track the current working file (may be sanitized copy)
@@ -987,8 +982,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val cookies = com.u1.slicer.network.MakerWorldUtils.sanitizeCookies(
                     settingsRepo.makerWorldCookies.first()
                 )
-                val cookiesEnabled = settingsRepo.makerWorldCookiesEnabled.first()
-                Log.i("SlicerVM", "MakerWorld cookies: enabled=$cookiesEnabled, length=${cookies.length}")
+                Log.i("SlicerVM", "MakerWorld cookies: length=${cookies.length}")
 
                 // Browser-like headers to avoid bot detection (matches u1-slicer-bridge)
                 val browserUA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
@@ -1015,7 +1009,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         header("Sec-Fetch-User", "?1")
                         header("Upgrade-Insecure-Requests", "1")
                     }
-                    if (cookiesEnabled && cookies.isNotBlank()) header("Cookie", cookies)
+                    if (cookies.isNotBlank()) header("Cookie", cookies)
                     return this
                 }
 
@@ -3817,11 +3811,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val profiles = filamentDao.getAll().first()
             val profileMap = profiles.associateBy { it.id }
             val cookies = settingsRepo.makerWorldCookies.first()
-            val cookiesEnabled = settingsRepo.makerWorldCookiesEnabled.first()
             val json = SettingsBackup.export(cfg, overrides, printerUrl, presets, profiles,
                 filamentNameResolver = { id -> profileMap[id]?.name },
-                makerWorldCookies = cookies,
-                makerWorldCookiesEnabled = cookiesEnabled
+                makerWorldCookies = cookies
             )
             onResult(json)
         }
@@ -3845,9 +3837,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 data.makerWorldCookies?.let {
                     settingsRepo.saveMakerWorldCookies(it)
-                }
-                data.makerWorldCookiesEnabled?.let {
-                    settingsRepo.saveMakerWorldCookiesEnabled(it)
                 }
                 // Insert filament profiles first so we can resolve names → IDs.
                 // Skip profiles whose name already exists to prevent duplicates on repeated imports.

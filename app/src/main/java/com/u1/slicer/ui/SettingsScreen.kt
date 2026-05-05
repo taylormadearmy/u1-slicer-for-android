@@ -30,11 +30,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.filled.Architecture
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
@@ -480,39 +478,10 @@ fun SettingsScreen(
                 }
             }
 
-            // ---- MakerWorld Cookies ----
-            val cookiesEnabled by viewModel.makerWorldCookiesEnabled.collectAsState()
-            val makerWorldCookies by viewModel.makerWorldCookies.collectAsState()
-            var cookieInput by remember { mutableStateOf("") }
-            val hasCookies = makerWorldCookies.isNotBlank()
-            var showCookieInfo by remember { mutableStateOf(false) }
+            // ---- MakerWorld ----
             var showMakerWorldModeInfo by remember { mutableStateOf(false) }
-            if (showCookieInfo) {
-                CookieInfoDialog(onDismiss = { showCookieInfo = false })
-            }
             if (showMakerWorldModeInfo) {
                 MakerWorldModeDialog(onDismiss = { showMakerWorldModeInfo = false })
-            }
-            val cookieFileLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.GetContent()
-            ) { uri: Uri? ->
-                if (uri != null) {
-                    val size = context.contentResolver.openAssetFileDescriptor(uri, "r")
-                        ?.use { it.length } ?: -1L
-                    if (size > 65_536L) {
-                        Toast.makeText(context, "File too large — cookies should be a few KB", Toast.LENGTH_SHORT).show()
-                        return@rememberLauncherForActivityResult
-                    }
-                    val text = context.contentResolver.openInputStream(uri)
-                        ?.use { it.bufferedReader().readText().trim() }
-                    if (text == null) {
-                        Toast.makeText(context, "Could not read file", Toast.LENGTH_SHORT).show()
-                    } else if (text.isBlank()) {
-                        Toast.makeText(context, "File was empty", Toast.LENGTH_SHORT).show()
-                    } else {
-                        cookieInput = text
-                    }
-                }
             }
 
             SettingsSection(
@@ -560,93 +529,6 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Browse MakerWorld in App") }
-                }
-
-                // Advanced: manual cookie entry (collapsed by default)
-                var showAdvanced by remember { mutableStateOf(false) }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showAdvanced = !showAdvanced }
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Advanced",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                    Icon(
-                        if (showAdvanced) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (showAdvanced) "Collapse" else "Expand",
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                }
-                AnimatedVisibility(visible = showAdvanced) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                "Send cookies with URL downloads",
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            TextButton(onClick = { showCookieInfo = true }) {
-                                Text("Cookie help")
-                            }
-                            Switch(
-                                checked = cookiesEnabled,
-                                onCheckedChange = { viewModel.saveMakerWorldCookiesEnabled(it) }
-                            )
-                        }
-                        if (cookiesEnabled) {
-                            Text(
-                                if (hasCookies) "Session cookies configured"
-                                else "Add cookies for downloads requiring login",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (hasCookies) Color(0xFF4CAF50)
-                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                            OutlinedTextField(
-                                value = cookieInput,
-                                onValueChange = { cookieInput = it },
-                                label = { Text("MakerWorld Cookies") },
-                                placeholder = { Text("Paste cookies from browser") },
-                                visualTransformation = PasswordVisualTransformation(),
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = {
-                                        if (cookieInput.isNotBlank()) {
-                                            viewModel.saveMakerWorldCookies(cookieInput)
-                                            cookieInput = ""
-                                        }
-                                    },
-                                    enabled = cookieInput.isNotBlank(),
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) { Text("Save Cookies", maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                OutlinedButton(
-                                    onClick = { cookieFileLauncher.launch("text/plain") },
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) { Text("Import from File", maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                if (hasCookies) {
-                                    OutlinedButton(
-                                        onClick = { viewModel.saveMakerWorldCookies("") },
-                                        modifier = Modifier.weight(1f),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) { Text("Clear", maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
@@ -861,76 +743,6 @@ private fun SettingsTextField(label: String, value: String, onValueChange: (Stri
         modifier = Modifier.fillMaxWidth(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true
-    )
-}
-
-@Composable
-private fun CookieInfoDialog(onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Got it") }
-        },
-        title = { Text("MakerWorld Cookies") },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text(
-                    "Recommended: Use your browser",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-                Text(
-                    "Open MakerWorld in Chrome or your default browser, sign in there, then either download the 3MF/STL and open it with U1 Slicer or share the MakerWorld model link back to U1 Slicer.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Text(
-                    "Optional: Browse MakerWorld in app",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-                Text(
-                    "The in-app browser is still useful for public pages and direct downloads, but Google sign-in will open externally and browser login will not sync back into the in-app browser.",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
-                )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Text(
-                    "Advanced: Manual cookie entry",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(bottom = 4.dp)
-                )
-                Text(
-                    "If you want shared-link imports to use your MakerWorld session, you can still paste cookies manually:",
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
-                )
-                val browserSteps = listOf(
-                    "Log in to makerworld.com in your PC browser",
-                    "Press F12 to open Developer Tools\n(steps shown for Chrome; other browsers are similar)",
-                    "Go to the Network tab and check \"Preserve log\"",
-                    "Navigate to any model page",
-                    "Click \"Doc\" filter, then the first makerworld.com request",
-                    "In Request Headers, find the Cookie header",
-                    "Right-click the value → Copy value",
-                    "Paste into a text file and send to your phone, or paste directly below"
-                )
-                browserSteps.forEachIndexed { i, step ->
-                    Text(
-                        "${i + 1}. $step",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(start = 8.dp, bottom = 2.dp)
-                    )
-                }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Text(
-                    "Cookies expire periodically. If downloads stop working, browse MakerWorld again or refresh your cookies.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
-            }
-        }
     )
 }
 

@@ -226,24 +226,11 @@ class SettingsBackupTest {
     }
 
     @Test
-    fun `round-trip preserves MakerWorld cookies`() {
-        val json = SettingsBackup.export(
-            SliceConfig(), SlicingOverrides(), "", emptyList(), emptyList(),
-            makerWorldCookies = "session_id=abc123; token=xyz",
-            makerWorldCookiesEnabled = true
-        )
+    fun `import backup with legacy makerworld cookie keys does not throw`() {
+        // Old backups contain these keys; importer must ignore them gracefully
+        val json = """{"version": 1, "makerWorldCookies":"session=abc","makerWorldCookiesEnabled":true}"""
         val data = SettingsBackup.import(json)
-        assertEquals("session_id=abc123; token=xyz", data.makerWorldCookies)
-        assertEquals(true, data.makerWorldCookiesEnabled)
-    }
-
-    @Test
-    fun `import without MakerWorld cookies returns null`() {
-        val json = SettingsBackup.export(SliceConfig(), SlicingOverrides(), "", emptyList(), emptyList())
-        val data = SettingsBackup.import(json)
-        assertNull(data.makerWorldCookies)
-        // cookiesEnabled should still be present (defaults to false)
-        assertEquals(false, data.makerWorldCookiesEnabled)
+        assertNotNull(data)
     }
 
     @Test

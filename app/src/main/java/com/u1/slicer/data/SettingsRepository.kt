@@ -41,7 +41,6 @@ class SettingsRepository(private val context: Context) {
         val EXTRUDER_PRESETS = stringPreferencesKey("extruder_presets")
         val SLICING_OVERRIDES = stringPreferencesKey("slicing_overrides")
         val MAKERWORLD_COOKIES = stringPreferencesKey("makerworld_cookies")
-        val MAKERWORLD_COOKIES_ENABLED = booleanPreferencesKey("makerworld_cookies_enabled")
         val PLATE_TYPE = stringPreferencesKey("plate_type")
     }
 
@@ -158,14 +157,5 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    val makerWorldCookiesEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[Keys.MAKERWORLD_COOKIES_ENABLED] ?: false
-    }
-
-    suspend fun saveMakerWorldCookiesEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[Keys.MAKERWORLD_COOKIES_ENABLED] = enabled
-        }
-    }
-
 }
+
