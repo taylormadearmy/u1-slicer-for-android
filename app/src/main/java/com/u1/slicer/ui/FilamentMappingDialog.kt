@@ -58,6 +58,21 @@ fun FilamentMappingDialog(
      * dialogs).
      */
     plateFileIndices: List<Int>? = null,
+    /**
+     * Explicit material overrides the user set on the Prepare screen, keyed
+     * by canonical fileIndex. Combined with [sliceTimeColorMapping] to
+     * reconstruct the effective material the G-code was actually sliced with,
+     * so the mismatch warning reflects real temperature conflicts rather than
+     * file-declared vs slot differences that the slicer already resolved.
+     */
+    filamentMaterialOverrides: Map<Int, String?> = emptyMap(),
+    /**
+     * The colorMapping active at slice time (canonical fileIndex → physical
+     * slot index). Used to look up the slot-preset material used when the
+     * G-code temperatures were generated, so the warning fires when the user
+     * re-maps to a slot with a different material than what was sliced.
+     */
+    sliceTimeColorMapping: List<Int>? = null,
     onConfirm: (List<Int>) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -124,10 +139,15 @@ fun FilamentMappingDialog(
                         // labels must read "Filament 2", "Filament 3" — NOT
                         // "Filament 1", "Filament 2".
                         val displayFileIndex = plateFileIndices?.getOrNull(idx) ?: idx
+                        val sliceTimeSlot = sliceTimeColorMapping?.getOrNull(displayFileIndex)
+                        val sliceTimeSlotMaterial = extruderPresets
+                            .firstOrNull { it.index == sliceTimeSlot }?.materialType
                         FilamentMappingRow(
                             fileIndex = displayFileIndex,
                             fileColor = entry.color,
                             filamentMaterial = entry.materialType,
+                            overrideMaterial = filamentMaterialOverrides[displayFileIndex],
+                            sliceTimeSlotMaterial = sliceTimeSlotMaterial,
                             sourceLabel = sourceShortLabel(entry.source),
                             extruderPresets = extruderPresets,
                             selectedSlot = mapping.getOrElse(idx) { 0 },
@@ -215,6 +235,8 @@ private fun FilamentMappingRow(
     fileIndex: Int,
     fileColor: String,
     filamentMaterial: String?,
+    overrideMaterial: String?,
+    sliceTimeSlotMaterial: String?,
     sourceLabel: String?,
     extruderPresets: List<ExtruderPreset>,
     selectedSlot: Int,
@@ -225,14 +247,16 @@ private fun FilamentMappingRow(
         ?: extruderPresets.firstOrNull()
 
     // Phase 2.8 — material mismatch detection.
-    // The filament's expected material (from the file or the user's
-    // Prepare-screen override) may not match the slot's preset material
-    // (what the user has loaded). Surface a non-blocking chip so the
-    // user knows the temps may not match the loaded spool.
+    // Reconstructs the effective material the G-code was sliced with, following
+    // resolvePerFilamentTypeAndTemp's priority: explicit Prepare override →
+    // slot-preset-at-slice-time → file-declared. Warns when the slot the user
+    // has now picked in this dialog differs from that sliced-with material,
+    // meaning the loaded spool's temperature profile won't match the G-code.
     val slotMaterial = selectedPreset?.materialType
-    val mismatch = filamentMaterial != null
+    val slicedWithMaterial = overrideMaterial ?: sliceTimeSlotMaterial ?: filamentMaterial
+    val mismatch = slicedWithMaterial != null
         && slotMaterial != null
-        && !filamentMaterial.equals(slotMaterial, ignoreCase = true)
+        && !slicedWithMaterial.equals(slotMaterial, ignoreCase = true)
 
     Column(
         modifier = Modifier
@@ -335,7 +359,7 @@ private fun FilamentMappingRow(
                 shape = RoundedCornerShape(6.dp),
             ) {
                 Text(
-                    "Slot loaded as $slotMaterial, filament needs $filamentMaterial",
+                    "Sliced as $slicedWithMaterial but slot has $slotMaterial — temps may not match",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

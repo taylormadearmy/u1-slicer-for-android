@@ -768,6 +768,8 @@ class MainActivity : ComponentActivity() {
                                     extruderPresets = extruderPresets,
                                     initialMapping = currentMapping,
                                     plateFileIndices = plateFileIndices,
+                                    filamentMaterialOverrides = overrides.mapValues { (_, ov) -> ov.materialType },
+                                    sliceTimeColorMapping = currentMapping,
                                     onConfirm = { plateMapping ->
                                         val sourceFile = java.io.File(pending.gcodePath)
                                         val remappedFile = java.io.File(

@@ -4,6 +4,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B103: Filament Mapping dialog shows false mismatch warning / misses real remapping conflicts (GitHub #118) — FIXED v2.0.3
+- **False positive symptom**: Slot presets include PETG (e.g. E2=PETG) but file declares PLA → dialog shows red "Slot loaded as PETG, filament needs PLA" warning even though the slicer used PETG temperatures (slot preset wins over file material in `resolvePerFilamentTypeAndTemp`). No actual conflict.
+- **False negative symptom**: User manually re-maps a filament in the dialog to a slot with a different material than it was sliced with (e.g. sliced as PETG via E2, user picks E1=PLA) → no warning shown, but G-code temperatures don't match the loaded spool.
+- **Root cause**: Mismatch check compared raw file-declared `entry.materialType` against the selected slot's material, ignoring that `resolvePerFilamentTypeAndTemp` prefers the slice-time slot preset over file-declared material, and that the user can re-map after slicing.
+- **Fix**: Reconstructs the sliced-with material (Prepare override → slice-time slot preset → file-declared) and warns when the dialog-picked slot differs from that. Warning text: "Sliced as X but slot has Y — temps may not match".
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/118
+
 ### B102: Sliced G-code requires phantom PLA in slot 1 when user only intended PETG (GitHub #117) — OPEN
 - **Symptom**: Job sliced with all material set to PETG prints correctly the first time (heaters reach PETG temps). Restarting the same uploaded G-code from the printer UI: Filament Setup demands PLA in slot 1 alongside the PETG already loaded. User cannot start the print without loading PLA they don't want.
 - **User-facing impact**: Re-running an already-uploaded job from the printer is blocked. Workaround for the first run is unclear — heater temps may have been correct only because the user happened to have PLA-equivalent temps on a different slot, not because the slicer honoured the override.
