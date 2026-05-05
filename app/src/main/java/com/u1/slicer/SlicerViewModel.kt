@@ -28,6 +28,7 @@ import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.data.WipeTowerDepthEstimator
+import com.u1.slicer.gcode.ExcludeObjectInfo
 import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
 import com.u1.slicer.gcode.GcodeToolRemapper
@@ -35,6 +36,7 @@ import com.u1.slicer.gcode.GcodeValidator
 import com.u1.slicer.gcode.LayerToolPauseInjector
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.gcode.buildSuspiciousModelLineContexts
+import com.u1.slicer.gcode.parseExcludeObjects
 import com.u1.slicer.model.CopyArrangeCalculator
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
@@ -192,6 +194,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _parsedGcode = MutableStateFlow<ParsedGcode?>(null)
     val parsedGcode: StateFlow<ParsedGcode?> = _parsedGcode.asStateFlow()
+
+    private val _excludeObjects = MutableStateFlow<List<ExcludeObjectInfo>>(emptyList())
+    val excludeObjects: StateFlow<List<ExcludeObjectInfo>> = _excludeObjects.asStateFlow()
 
     // Bambu / multi-plate state
     private val _threeMfInfo = MutableStateFlow<ThreeMfInfo?>(null)
@@ -3139,6 +3144,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             "estimatedTimeSeconds" to result.estimatedTimeSeconds
                         )
                     )
+                    _excludeObjects.value = parseExcludeObjects(result.gcodePath)
                     // Inject preview thumbnails into G-code for Klipper/Moonraker.
                     // 3MF: extract preview image from ZIP. STL: fall back to GL capture bitmap.
                     try {
@@ -3902,6 +3908,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _state.value = SlicerState.Idle
         _gcodePreview.value = ""
         _parsedGcode.value = null
+        _excludeObjects.value = emptyList()
         _activeExtruderColors.value = emptyList()
         _selectedExtruder.value = 0
         _threeMfInfo.value = null
