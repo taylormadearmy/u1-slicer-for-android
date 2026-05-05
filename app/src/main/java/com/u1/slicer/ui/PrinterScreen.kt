@@ -50,8 +50,13 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
+import com.u1.slicer.gcode.ExcludeObjectInfo
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,6 +64,7 @@ import java.util.concurrent.TimeUnit
 fun PrinterScreen(
     viewModel: PrinterViewModel,
     filaments: List<FilamentProfile> = emptyList(),
+    excludeObjects: List<ExcludeObjectInfo> = emptyList(),
     onNavigateSettings: () -> Unit = {},
     onNavigatePrepare: () -> Unit = {},
     onNavigatePreview: () -> Unit = {},
@@ -72,6 +78,8 @@ fun PrinterScreen(
     val webcamCandidates by viewModel.webcamCandidates.collectAsState()
     val remoteScreenAvailable by viewModel.remoteScreenAvailable.collectAsState()
     val context = LocalContext.current
+    val skippedObjects by viewModel.skippedObjects.collectAsState()
+    var showSkipSheet by remember { mutableStateOf(false) }
 
     var editingHeater by remember { mutableStateOf<String?>(null) }
     var editingValue by remember { mutableStateOf("") }
@@ -124,6 +132,15 @@ fun PrinterScreen(
     DisposableEffect(Unit) {
         viewModel.startCameraKeepalive()
         onDispose { viewModel.stopCameraKeepalive() }
+    }
+
+    if (showSkipSheet) {
+        SkipObjectsSheet(
+            objects = excludeObjects,
+            skippedObjects = skippedObjects,
+            onSkip = { name -> viewModel.skipObject(name) },
+            onDismiss = { showSkipSheet = false }
+        )
     }
 
     // Sync preview dialog
@@ -456,6 +473,18 @@ fun PrinterScreen(
                                         Icon(Icons.Default.Stop, null)
                                         Spacer(Modifier.width(4.dp))
                                         Text("Cancel")
+                                    }
+                                }
+                                if (excludeObjects.isNotEmpty()) {
+                                    Spacer(Modifier.height(8.dp))
+                                    OutlinedButton(
+                                        onClick = { showSkipSheet = true },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Icon(Icons.Default.GridView, contentDescription = null)
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Skip objects")
                                     }
                                 }
                             }
@@ -1081,4 +1110,159 @@ internal fun resolveStatusBadge(printerState: String, justSent: Boolean): String
         printerState == "error"    -> "ERROR"
         else -> printerState.uppercase()
     }
+}
+
+// \u2500\u2500 Skip Objects bottom sheet \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkipObjectsSheet(
+    objects: List<ExcludeObjectInfo>,
+    skippedObjects: Set<String>,
+    onSkip: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 32.dp)
+        ) {
+            Text(
+                text = "Skip objects",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+            ExcludeObjectBedCanvas(
+                objects = objects,
+                skippedObjects = skippedObjects,
+                onSkip = onSkip,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp)
+            )
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(objects) { obj ->
+                    val skipped = obj.name in skippedObjects
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = obj.name,
+                            modifier = Modifier.weight(1f),
+                            color = if (skipped)
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            else
+                                MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (skipped) {
+                            Text(
+                                text = "Skipped",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                            )
+                        } else {
+                            TextButton(onClick = { onSkip(obj.name) }) {
+                                Text("Exclude")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExcludeObjectBedCanvas(
+    objects: List<ExcludeObjectInfo>,
+    skippedObjects: Set<String>,
+    onSkip: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bedMm = 270f
+    val density = LocalDensity.current
+
+    BoxWithConstraints(modifier = modifier.aspectRatio(1f)) {
+        val scalePx = with(density) { maxWidth.toPx() } / bedMm
+
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(objects, skippedObjects, scalePx) {
+                    val minTapRadiusPx = with(density) { 24.dp.toPx() }
+                    detectTapGestures { tap ->
+                        for (obj in objects) {
+                            if (obj.name in skippedObjects) continue
+                            val hit = if (obj.polygon.isNotEmpty()) {
+                                val pts = obj.polygon.map { (x, y) ->
+                                    Offset(x * scalePx, (bedMm - y) * scalePx)
+                                }
+                                pointInPolygon(tap, pts)
+                            } else {
+                                val c = Offset(
+                                    obj.center.first * scalePx,
+                                    (bedMm - obj.center.second) * scalePx
+                                )
+                                (tap - c).getDistance() <= minTapRadiusPx
+                            }
+                            if (hit) { onSkip(obj.name); break }
+                        }
+                    }
+                }
+        ) {
+            // Dark bed background
+            drawRect(androidx.compose.ui.graphics.Color(0xFF1A1A2E))
+
+            for (obj in objects) {
+                val skipped = obj.name in skippedObjects
+                val strokeColor = if (skipped)
+                    androidx.compose.ui.graphics.Color(0xFF555555)
+                else
+                    androidx.compose.ui.graphics.Color(0xFF4CAF50)
+                val fillAlpha = if (skipped) 0.15f else 0.25f
+
+                if (obj.polygon.isNotEmpty()) {
+                    val path = Path().apply {
+                        val pts = obj.polygon.map { (x, y) ->
+                            Offset(x * scalePx, (bedMm - y) * scalePx)
+                        }
+                        moveTo(pts[0].x, pts[0].y)
+                        pts.drop(1).forEach { lineTo(it.x, it.y) }
+                        close()
+                    }
+                    drawPath(path, strokeColor.copy(alpha = fillAlpha), style = Fill)
+                    drawPath(path, strokeColor, style = Stroke(width = 2.dp.toPx()))
+                } else {
+                    val c = Offset(
+                        obj.center.first * scalePx,
+                        (bedMm - obj.center.second) * scalePx
+                    )
+                    drawCircle(
+                        strokeColor,
+                        radius = 12.dp.toPx(),
+                        center = c,
+                        alpha = if (skipped) 0.4f else 1f
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun pointInPolygon(point: Offset, polygon: List<Offset>): Boolean {
+    var inside = false
+    var j = polygon.size - 1
+    for (i in polygon.indices) {
+        val xi = polygon[i].x; val yi = polygon[i].y
+        val xj = polygon[j].x; val yj = polygon[j].y
+        if ((yi > point.y) != (yj > point.y) &&
+            point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi
+        ) inside = !inside
+        j = i
+    }
+    return inside
 }
