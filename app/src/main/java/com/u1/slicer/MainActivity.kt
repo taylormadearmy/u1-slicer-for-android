@@ -611,9 +611,11 @@ class MainActivity : ComponentActivity() {
                     },
                     printerContent = {
                         val filaments by viewModel.filaments.collectAsState(initial = emptyList())
+                        val excludeObjects by viewModel.excludeObjects.collectAsState()
                         PrinterScreen(
                             viewModel = printerViewModel,
                             filaments = filaments,
+                            excludeObjects = excludeObjects,
                             onNavigateSettings = { navigateTab(Routes.SETTINGS) },
                             onNavigatePrepare = { navigateTab(Routes.PREPARE) },
                             onNavigatePreview = { navigateTab(Routes.PREVIEW) },
