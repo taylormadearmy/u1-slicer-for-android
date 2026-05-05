@@ -1108,4 +1108,15 @@ class SlicingIntegrationTest {
         assertTrue("G-code must contain nozzle_temperature = 235 when PETG extruderTemps set",
             gcode!!.contains("; nozzle_temperature = 235"))
     }
+
+    @Test
+    fun tetrahedron_stl_sliced_gcodeContainsExcludeObjectDefine() {
+        val (success, gcode) = sliceAsset("tetrahedron.stl")
+        assertTrue("Slice should succeed", success)
+        assertNotNull(gcode)
+        assertTrue(
+            "G-code must contain EXCLUDE_OBJECT_DEFINE — rebuild native with exclude_object=true",
+            gcode!!.contains("EXCLUDE_OBJECT_DEFINE")
+        )
+    }
 }

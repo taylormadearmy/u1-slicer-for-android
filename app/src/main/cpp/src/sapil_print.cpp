@@ -532,6 +532,11 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     } else {
         dpc.set_key_value("enable_prime_tower", new Slic3r::ConfigOptionBool(false));
     }
+
+    // Exclude object / cancel object support — enables EXCLUDE_OBJECT_DEFINE / EXCLUDE_OBJECT_START /
+    // EXCLUDE_OBJECT_END G-code markers so firmware can cancel individual objects mid-print.
+    // OrcaSlicer defaults to false; enable unconditionally for all U1 prints.
+    dpc.set_key_value("exclude_object", new Slic3r::ConfigOptionBool(true));
 }
 
 SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback progress) {
