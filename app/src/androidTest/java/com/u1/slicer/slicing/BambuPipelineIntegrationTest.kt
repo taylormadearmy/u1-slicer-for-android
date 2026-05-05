@@ -1523,4 +1523,38 @@ class BambuPipelineIntegrationTest {
         )
     }
 
+    /**
+     * B104: OreoProj single-plate Bambu file has 5 build items in the 3MF but only
+     * 2 (Wafer + Oreo Filling) are on the print plate. The other 3 are garbage/degenerate
+     * objects far off the plate (one at Z=634mm), making the combined bounding box
+     * ~987×510×1268mm. Without a plate filter at embed time, loading that expanded file
+     * causes "model too large for bed" → slice abort → "no layers detected".
+     *
+     * This test verifies that embedding with plateId = firstPlateId (the B104 fix)
+     * produces a model within the 270×270mm bed bounds that slices successfully.
+     */
+    @Test
+    fun b104_oreoProj_singlePlateBambu_withPlateFilter_slicesSuccessfully() {
+        val input = asset("Oreo+Proj+1.3mf")
+        val info = ThreeMfParser.parse(input)
+        assertTrue("Oreo+Proj+1 must be detected as Bambu format", info.isBambu)
+        assertTrue("Oreo+Proj+1 must have at least one plate", info.plates.isNotEmpty())
+
+        val firstPlateId = info.plates.first().plateId
+        val sanitized = BambuSanitizer.process(input, outDir)
+        val embedConfig = embedder.buildConfig(info)
+        val embedded = embedder.embed(sanitized, embedConfig, outDir, info, plateId = firstPlateId)
+
+        assertTrue("loadModel must succeed with plate filter", lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(BASE_CONFIG)
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue(
+            "Slice must succeed — plate filter must exclude off-plate garbage objects " +
+                "that would otherwise produce a 987×510mm bounding box: ${result.errorMessage}",
+            result.success
+        )
+        assertTrue("Must have at least 1 layer", result.totalLayers > 0)
+    }
+
 }

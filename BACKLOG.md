@@ -4,6 +4,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B104: Single-plate Bambu files fail to slice after re-embed includes off-plate garbage objects (GitHub #119) — FIXED v2.0.4
+- **Symptom**: `OreoProj+1.3mf` fails with "No layers were detected." after auto-color-mapping triggers a re-embed at slice time. The slicer loads a 987×510×1268mm model and aborts with "Model too large for bed."
+- **Root cause**: The 3MF has 5 build items but only 2 are on the print plate. Initial load correctly applies `filterModelToPlate` via `prepareImportedModelArtifacts(plateId = firstPlateId)`. But `_currentPlateId` is never updated for single-plate files (they skip the plate selector, so `recoveryPlateId` stays at `-1`). When re-embed triggers at slice time, `reembedPlateId = null` → no plate filter → all 5 objects included → oversized bounding box → abort.
+- **Fix**: In both `loadModel(uri)` and `loadModelFromFile(file)`, after the single-plate Bambu path: capture `firstPlateId` from `prepared.mergedInfo.plates.first().plateId`, then set `recoveryPlateId = firstPlateId` after `loadNativeModel()`. Ensures re-embeds use the same plate filter as the initial load.
+- **Test**: `BambuPipelineIntegrationTest#b104_oreoProj_singlePlateBambu_withPlateFilter_slicesSuccessfully` — new instrumented test with `Oreo+Proj+1.3mf` asset.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/119
+- **Related**: B101 (#116) — same file, initial placement (off-plate objects, same cause).
+
 ### B103: Filament Mapping dialog shows false mismatch warning / misses real remapping conflicts (GitHub #118) — FIXED v2.0.3
 - **False positive symptom**: Slot presets include PETG (e.g. E2=PETG) but file declares PLA → dialog shows red "Slot loaded as PETG, filament needs PLA" warning even though the slicer used PETG temperatures (slot preset wins over file material in `resolvePerFilamentTypeAndTemp`). No actual conflict.
 - **False negative symptom**: User manually re-maps a filament in the dialog to a slot with a different material than it was sliced with (e.g. sliced as PETG via E2, user picks E1=PLA) → no warning shown, but G-code temperatures don't match the loaded spool.

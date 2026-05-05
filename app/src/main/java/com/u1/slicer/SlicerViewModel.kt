@@ -1241,6 +1241,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
 
+                // B104: same as loadModelFromFile — capture first plate ID for single-plate
+                // Bambu files so re-embed at slice time applies filterModelToPlate.
+                var firstBambuPlateId: Int? = null
+
                 // For 3MF files: parse metadata and sanitize if Bambu
                 val fileToLoad = if (filename.endsWith(".3mf", ignoreCase = true)) {
                     // Verify it's a valid ZIP first
@@ -1303,6 +1307,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
                     Log.i("SlicerVM", "Single-plate, loading directly")
+                    if (prepared.origInfo.isBambu && prepared.mergedInfo.plates.isNotEmpty()) {
+                        firstBambuPlateId = prepared.mergedInfo.plates.first().plateId
+                    }
 
                     prepared.embeddedFile
                 } else {
@@ -1319,6 +1326,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 currentModelFile = fileToLoad
                 loadNativeModel(fileToLoad)
+                firstBambuPlateId?.let { recoveryPlateId = it }
             } catch (e: Throwable) {
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error: ${e.message}")
@@ -1413,6 +1421,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 )
 
+                // B104: capture the first plate ID for single-plate Bambu files so the
+                // re-embed at slice time applies the same filterModelToPlate that the
+                // initial load used. Without this _currentPlateId stays -1 and re-embed
+                // includes all build items (including garbage off-plate objects), producing
+                // an oversized bounding box that aborts with "no layers detected".
+                var firstBambuPlateId: Int? = null
+
                 val fileToLoad = if (filename.endsWith(".3mf", ignoreCase = true)) {
                     try {
                         java.util.zip.ZipFile(sourceFile).use { zip ->
@@ -1468,6 +1483,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         return@launch
                     }
                     Log.i("SlicerVM", "Single-plate, loading directly")
+                    if (prepared.origInfo.isBambu && prepared.mergedInfo.plates.isNotEmpty()) {
+                        firstBambuPlateId = prepared.mergedInfo.plates.first().plateId
+                    }
 
                     prepared.embeddedFile
                 } else {
@@ -1481,6 +1499,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 currentModelFile = fileToLoad
                 loadNativeModel(fileToLoad)
+                firstBambuPlateId?.let { recoveryPlateId = it }
             } catch (e: Throwable) {
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error: ${e.message}")
