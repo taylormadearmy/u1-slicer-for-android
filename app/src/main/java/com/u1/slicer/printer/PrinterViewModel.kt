@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -58,6 +59,9 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     private val _heaterError = MutableStateFlow<String?>(null)
     val heaterError: StateFlow<String?> = _heaterError.asStateFlow()
+
+    private val _skippedObjects = MutableStateFlow<Set<String>>(emptySet())
+    val skippedObjects: StateFlow<Set<String>> = _skippedObjects.asStateFlow()
 
     private var cameraKeepaliveJob: Job? = null
 
@@ -134,6 +138,16 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     launch(Dispatchers.IO) { pollLedState() }
                 }
                 wasConnected = s.isConnected
+            }
+        }
+        // Reset skippedObjects when a new print starts
+        viewModelScope.launch {
+            var lastFilename = ""
+            status.collect { s ->
+                if (s.filename.isNotEmpty() && s.filename != lastFilename) {
+                    _skippedObjects.value = emptySet()
+                    lastFilename = s.filename
+                }
             }
         }
     }
@@ -300,6 +314,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     fun cancelPrint() {
         viewModelScope.launch(Dispatchers.IO) { printerRepo.cancelPrint() }
+    }
+
+    fun skipObject(name: String) {
+        viewModelScope.launch {
+            printerRepo.sendGcode("EXCLUDE_OBJECT NAME=$name")
+            _skippedObjects.update { it + name }
+        }
     }
 
     fun setHeaterTemperature(heater: String, targetC: Int) {

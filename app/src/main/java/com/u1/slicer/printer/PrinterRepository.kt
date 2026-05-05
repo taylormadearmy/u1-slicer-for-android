@@ -134,6 +134,8 @@ class PrinterRepository(
     suspend fun resumePrint(): Boolean = client.resumePrint()
     suspend fun cancelPrint(): Boolean = client.cancelPrint()
 
+    suspend fun sendGcode(gcode: String): Boolean = client.sendGcode(gcode)
+
     suspend fun getLedState(): Boolean? = client.getLedState()
     suspend fun setLed(on: Boolean): Boolean = client.setLed(on)
     suspend fun setHeaterTemperature(heater: String, targetC: Int): Boolean =
