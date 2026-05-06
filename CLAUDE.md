@@ -31,6 +31,11 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
 
 ## Release
 
+> **NEVER create a GitHub release or push a public tag without explicit user authorization.**
+> Building the APK and staging it locally is fine; the `gh release create` step is not.
+> Releases are permanent public records — always ask before publishing, even if the version
+> bump and APK build were already authorized as part of a fix.
+
 1. **Bump version** in `app/build.gradle` - increment both `versionCode` and `versionName` (e.g. `1.4.10` -> `1.4.11`)
 2. **Update docs** — update test counts in this file and `README.md` if they changed
 3. **Commit and push**:

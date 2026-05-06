@@ -226,6 +226,32 @@ These classes are unit-tested via `CanonicalExportLeakGuardTest`
 net — flag any divergence between Prepare colours, dialog row count,
 and Slice Summary chips.
 
+### Manual regression checks (v2.1.x — B106/B107: STL non-E1 extruder + bed temp)
+
+Run after any change to: `PrintTimeRemap.resolveCanonicalExportMapping`, `applyPrintTimeRemap`,
+`sapil_print.cpp::applyConfigToPrusa` (bed temp keys), `readPrinterMachineGcode`, or any
+path that constructs the JNI `SliceConfig` for STL files.
+
+- **B106 Bug 1 — STL with E3 selected sends T2 (not T0):** Load `tetrahedron.stl`. Slice
+  with default config. Tap **Save G-code** to write the file to local storage. Tap **Map &
+  Upload** and select **E3** for the single filament row in the Filament Mapping dialog.
+  Confirm the dialog upload completes. Pull the uploaded G-code from the device:
+  `adb -s <device> shell "run-as com.u1.slicer.orca cat files/jobs/<id>/output.share.gcode" | grep -E "^T[0-3]" | sort | uniq -c`
+  **Pass**: `T2` count is non-zero, `T0` body count is 0 (T0 may appear in the machine start
+  gcode section, but not in the print body tool-change lines). **Fail**: only T0 appears — B106
+  Bug 1 regression.
+
+- **B107 — STL bed temp matches user setting:** Load `tetrahedron.stl`. Before slicing,
+  confirm Print Setup shows bed temp = 65°C (the default). Slice. Pull the G-code and check:
+  `adb -s <device> shell "run-as com.u1.slicer.orca cat files/transient/<ts>/output.gcode" | grep "bed_temperature"`
+  **Pass**: `; bed_temperature = 65` and `; bed_temperature_initial_layer = 65` (both 65, not
+  70). **Fail**: `initial_layer` value is 70 — B107 regression (+5 hardcode reintroduced).
+
+- **B106 Bug 2 — STL G-code contains PRINT_START:** Same slice from above. Grep:
+  `grep "PRINT_START" output.gcode` **Pass**: PRINT_START appears in the machine start
+  section at the top of the G-code. **Fail**: absent — machine_start_gcode injection
+  regressed and the printer will receive bare G28 instead of the U1 preamble.
+
 ### Manual regression checks (v1.6.8 — B87/B88/B89/B90/B91)
 
 Run after any change to the Prepare-preview colour pipeline, plate-switch flow,
