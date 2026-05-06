@@ -77,7 +77,14 @@ fun resolveCanonicalExportMapping(
     selectedExtruder: Int,
     confirmedMappingFileIndices: List<Int>? = null,
 ): List<Int>? {
-    if (canonicalSize == 0) return null
+    if (canonicalSize == 0) {
+        // B106: non-canonical single-colour (raw STL). Still apply the user's
+        // physical slot so T0 in the sliced G-code is rewritten to the selected
+        // extruder at send time. Without this, STL sliced with E3 selected stays
+        // as T0 and the wrong extruder is used by the printer.
+        val slot = selectedExtruder.coerceIn(0, 3)
+        return if (slot != 0) listOf(slot) else null
+    }
 
     // Phase 2 (post-round-2-review, Reviewer 1 hardening) — clamp every
     // confirmedMapping entry to the U1's physical-slot range. Defends

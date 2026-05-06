@@ -958,6 +958,32 @@ class SlicingOverridesTest {
         assertEquals("60", formatFileValue(listOf(60, 60)))
     }
 
+    // --- B105: single-slot E3 produces 1-element nozzle_temperature ---
+
+    @Test
+    fun `B105 single-slot nozzle_temperature has exactly 1 element when slotCount is 1`() {
+        // Before B105, buildProfileOverrides passed slotTypes.size=4 (all presets) as
+        // filamentCount even when usedSlots was [2]. That inflated nozzle_temperature
+        // to [E3_temp, 210, 210, 210]. After the fix, slotTypes=[E3_material] and
+        // filamentCount=1, so nozzle_temperature must have exactly 1 element.
+        val cfg = SliceConfig(nozzleTemp = 220)
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, nozzleTemps = listOf(220))
+        @Suppress("UNCHECKED_CAST")
+        val temps = result["nozzle_temperature"] as? List<*>
+        assertEquals("B105: single-slot E3 must produce exactly 1 nozzle_temperature entry", 1, temps?.size)
+    }
+
+    @Test
+    fun `B105 single-slot filament_type has exactly 1 element when slotCount is 1`() {
+        val cfg = SliceConfig(nozzleTemp = 220)
+        val ov = SlicingOverrides()
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 1, filamentTypes = listOf("PLA"))
+        @Suppress("UNCHECKED_CAST")
+        val types = result["filament_type"] as? List<*>
+        assertEquals("B105: single-slot E3 must produce exactly 1 filament_type entry", 1, types?.size)
+    }
+
     // --- Korok / SEMM duplicate-slot compact extruder count ---
 
     @Test

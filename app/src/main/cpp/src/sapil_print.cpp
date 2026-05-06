@@ -533,6 +533,21 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         dpc.set_key_value("enable_prime_tower", new Slic3r::ConfigOptionBool(false));
     }
 
+    // B106: for STL files (no embedded Snapmaker profile), inject machine G-code templates
+    // passed from Kotlin via the JNI config. OrcaSlicer resolves {variable} template
+    // expressions at G-code generation time, so machine_start_gcode emits the correct
+    // extruder-conditional SM_ macros (SM_PRINT_AUTO_FEED, SM_PRINT_FLOW_CALIBRATE, etc.).
+    // When has_embedded_profile=true (3MF with Snapmaker profile), the templates are already
+    // applied via profile_keys[] above — guard prevents double-application here.
+    if (!has_embedded_profile) {
+        if (!config.machine_start_gcode.empty()) {
+            dpc.set_key_value("machine_start_gcode", new Slic3r::ConfigOptionString(config.machine_start_gcode));
+        }
+        if (!config.machine_end_gcode.empty()) {
+            dpc.set_key_value("machine_end_gcode", new Slic3r::ConfigOptionString(config.machine_end_gcode));
+        }
+    }
+
     // Exclude object / cancel object support — enables EXCLUDE_OBJECT_DEFINE / EXCLUDE_OBJECT_START /
     // EXCLUDE_OBJECT_END G-code markers so firmware can cancel individual objects mid-print.
     // OrcaSlicer defaults to false; enable unconditionally for all U1 prints.

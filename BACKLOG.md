@@ -4,6 +4,23 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B106: STL print with non-E1 extruder selected sends wrong extruder + missing PRINT_START (GitHub #122) — FIXED v2.1.0
+- **Symptom 1**: Slicing an STL with E3 selected in Filament Mapping → G-code contains T0 (E1) tool changes instead of T2 (E3). Wrong extruder heats and prints. E4 temp anomaly reported on physical printer.
+- **Symptom 2**: STL G-code starts with bare `G28` instead of PRINT_START + SM_PRINT_AUTO_FEED + SM_PRINT_FLOW_CALIBRATE macros, causing print failure.
+- **Root cause (Bug 1)**: `resolveCanonicalExportMapping()` returned `null` (identity, no rewrite) when `canonicalSize == 0` (STL files have no canonical filament list). T0 was never rewritten to T2 at send time.
+- **Root cause (Bug 2)**: STL files have no embedded Snapmaker profile (`is_snapmaker_profile = false`). `profile_keys[]` whitelist only applies when the embedded profile contains PRINT_START. `machine_start_gcode` stayed as OrcaSlicer's bare `G28` default.
+- **Fix (Bug 1)**: `PrintTimeRemap.resolveCanonicalExportMapping`: when `canonicalSize == 0` and `selectedExtruder != 0`, return `listOf(slot)` so T0 → T(slot) at send time.
+- **Fix (Bug 2)**: Added `machineStartGcode`/`machineEndGcode` to `SliceConfig` (Kotlin + C++ struct + JNI bridge). `applyConfigToPrusa()` applies them when `!has_embedded_profile`. Kotlin reads from `assets/orca_profiles/printer/snapmaker_u1.json` for raw STL slices. Required native `.so` rebuild.
+- **Tests**: `CanonicalExportMappingTest` — 4 B106 tests: E1 identity (null), E2/E3/E4 slot remap for STL non-canonical path.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/122
+
+### B105: Single-slot STL slice emits multi-element nozzle_temperature / filament_type arrays (GitHub #121) — FIXED v2.1.0
+- **Symptom**: Slicing an STL with a single extruder slot active produced G-code with incorrectly sized `nozzle_temperature` and `filament_type` header arrays (more than 1 element for a 1-extruder slice).
+- **Root cause**: `buildProfileOverrides()` did not clamp array sizes to 1 when extruder count was 1 (single-slot STL path).
+- **Fix**: Added 1-element guard for `nozzle_temperature` and `filament_type` in the single-slot case.
+- **Tests**: `SlicingOverridesTest` B105 single-slot guard; `FilamentTypeHeaderPatchTest` B105 resolveNonCanonicalHeaderPatchTypes.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/121
+
 ### B104: Single-plate Bambu files fail to slice after re-embed includes off-plate garbage objects (GitHub #119) — FIXED v2.0.4
 - **Symptom**: `OreoProj+1.3mf` fails with "No layers were detected." after auto-color-mapping triggers a re-embed at slice time. The slicer loads a 987×510×1268mm model and aborts with "Model too large for bed."
 - **Root cause**: The 3MF has 5 build items but only 2 are on the print plate. Initial load correctly applies `filterModelToPlate` via `prepareImportedModelArtifacts(plateId = firstPlateId)`. But `_currentPlateId` is never updated for single-plate files (they skip the plate selector, so `recoveryPlateId` stays at `-1`). When re-embed triggers at slice time, `reembedPlateId = null` → no plate filter → all 5 objects included → oversized bounding box → abort.

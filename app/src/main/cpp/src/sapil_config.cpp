@@ -134,6 +134,10 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
     config.wipe_tower_y = getFloat("wipeTowerY");
     config.wipe_tower_width = getFloat("wipeTowerWidth");
 
+    // B106: machine G-code templates for STL files (no embedded Snapmaker profile).
+    config.machine_start_gcode = getString("machineStartGcode");
+    config.machine_end_gcode = getString("machineEndGcode");
+
     env->DeleteLocalRef(cls);
     return config;
 }
@@ -246,6 +250,8 @@ jobject configToJava(JNIEnv* env, const SliceConfig& config) {
     setFloat("wipeTowerX", config.wipe_tower_x);
     setFloat("wipeTowerY", config.wipe_tower_y);
     setFloat("wipeTowerWidth", config.wipe_tower_width);
+    setString("machineStartGcode", config.machine_start_gcode);
+    setString("machineEndGcode", config.machine_end_gcode);
 
     env->DeleteLocalRef(cls);
     return obj;

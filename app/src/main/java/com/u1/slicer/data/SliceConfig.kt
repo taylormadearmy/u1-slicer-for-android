@@ -63,5 +63,11 @@ data class SliceConfig(
     @JvmField var wipeTowerEnabled: Boolean = false,
     @JvmField var wipeTowerX: Float = 170f,
     @JvmField var wipeTowerY: Float = 140f,
-    @JvmField var wipeTowerWidth: Float = 60f
+    @JvmField var wipeTowerWidth: Float = 60f,
+
+    // B106: machine G-code templates — populated from assets for STL files (no embedded
+    // Snapmaker profile). OrcaSlicer resolves {variable} template expressions at generation
+    // time. Empty string = use OrcaSlicer's built-in default (bare G28 for STL).
+    @JvmField var machineStartGcode: String = "",
+    @JvmField var machineEndGcode: String = "",
 )

@@ -90,6 +90,12 @@ struct SliceConfig {
     float wipe_tower_x = 170.0f;
     float wipe_tower_y = 140.0f;
     float wipe_tower_width = 60.0f;
+
+    // B106: machine G-code templates for STL files (no embedded Snapmaker profile).
+    // Empty = use OrcaSlicer's built-in default. OrcaSlicer resolves {variable}
+    // template expressions at G-code generation time.
+    std::string machine_start_gcode;
+    std::string machine_end_gcode;
 };
 
 // ---- Model Info ----

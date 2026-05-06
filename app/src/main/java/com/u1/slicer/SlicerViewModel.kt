@@ -2322,7 +2322,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // apply per file filament, not per slot, so a non-canonical
         // single-filament file has nothing to override against here.
         val originalPresets = extruderPresets.value
-        val slotTypes = originalPresets.sortedBy { it.index }.map { it.materialType }
+        // B105: for non-canonical files with a known slot set (usedSlots != null),
+        // derive types from the used slots only. Using all 4 presets causes
+        // filamentCount=4, inflating nozzle_temperature/filament_type arrays in
+        // embedded profiles to 4 entries when only 1 slot is used (e.g. single-color
+        // 3MF re-embed with E3 remap). OrcaSlicer still uses nozzle_diameter.size()
+        // as its effective extruder count, but mismatched arrays can confuse some
+        // per-filament config paths.
+        val slotTypes = if (usedSlots != null) {
+            usedSlots.map { slot -> originalPresets.firstOrNull { it.index == slot }?.materialType ?: "PLA" }
+        } else {
+            originalPresets.sortedBy { it.index }.map { it.materialType }
+        }
         val allSlotTemps = computeFreshSlotTemps(
             slotCount = originalPresets.size.coerceAtLeast(slotCount),
             usedSlots = null,
@@ -3015,9 +3026,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // applyConfigToPrusa (which runs after profile_keys[]) doesn't stomp the value
                 // the embedded profile set from the source 3MF or the process profile.
                 // In OVERRIDE mode the explicit value is echoed here as a safety net.
+                //
+                // B106: STL files (sourceModelFile == null) have no embedded Snapmaker profile.
+                // Without it, OrcaSlicer uses its bare G28 default start G-code, omitting
+                // PRINT_START and the SM_PRINT_AUTO_FEED / SM_PRINT_FLOW_CALIBRATE macros.
+                // Pass the machine G-code templates from assets so applyConfigToPrusa injects
+                // them when has_embedded_profile=false. 3MF files (sourceModelFile != null)
+                // already embed the profile via ProfileEmbedder — pass empty to avoid overriding it.
+                val (b106StartGcode, b106EndGcode) = if (sourceModelFile == null) {
+                    readPrinterMachineGcode()
+                } else {
+                    "" to ""
+                }
                 val jniSliceConfig = sliceConfig.copy(
                     layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE)
-                        sliceConfig.layerHeight else 0.0f
+                        sliceConfig.layerHeight else 0.0f,
+                    machineStartGcode = b106StartGcode,
+                    machineEndGcode = b106EndGcode,
                 )
                 val result = native.slice(jniSliceConfig)
                 ensureActive()
@@ -3061,7 +3086,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             padTo = maxOf(canonicalForPatch.size, supportDrivenSlotCount),
                         )
                     } else {
-                        basePresets.sortedBy { it.index }.map { it.materialType }
+                        // B105: for non-canonical files (STL, generic 3MF) emit only the
+                        // materials for the physically-used slots. Using all 4 presets
+                        // here wrote a 4-entry filament_type header even for single-colour
+                        // prints (matched the slotTypes bug in buildProfileOverrides).
+                        val usedSlotsForPatch = toolRemapSlots
+                            ?: _colorMapping.value?.distinct()?.sorted()
+                            ?: listOf(_selectedExtruder.value)
+                        resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets)
                     }
                     val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
                     Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
@@ -3759,6 +3791,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Copy the current source model to files/jobs/<jobId>/ for durable storage (F61).
+    private fun readPrinterMachineGcode(): Pair<String, String> {
+        return try {
+            val context = getApplication<Application>()
+            val json = context.assets.open("orca_profiles/printer/snapmaker_u1.json")
+                .bufferedReader().use { org.json.JSONObject(it.readText()) }
+            Pair(
+                json.optString("machine_start_gcode", ""),
+                json.optString("machine_end_gcode", ""),
+            )
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w("SlicerVM", "B106: failed to read machine G-code from assets: ${e.message}")
+            "" to ""
+        }
+    }
+
     private fun copySourceToDurableJobDir(jobId: Long, sourceFile: File?): File? {
         if (sourceFile == null || !sourceFile.exists()) return null
         return try {
@@ -5437,3 +5485,17 @@ internal fun fixFilamentTypeHeader(gcodePath: String, filamentTypes: List<String
     }
 }
 
+/**
+ * B105: For non-canonical files (STL, single-colour 3MF) derive the filament_type
+ * header patch list from the physically-used slots only.
+ *
+ * Before this fix, all 4 presets were emitted regardless of which slots were
+ * actually used. For a single-colour print on E3 that produced
+ * `; filament_type = PLA;PLA;PLA;PLA` (4 entries) instead of `; filament_type = PLA`.
+ */
+internal fun resolveNonCanonicalHeaderPatchTypes(
+    usedSlots: List<Int>,
+    presets: List<ExtruderPreset>,
+): List<String> = usedSlots.map { slot ->
+    presets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+}

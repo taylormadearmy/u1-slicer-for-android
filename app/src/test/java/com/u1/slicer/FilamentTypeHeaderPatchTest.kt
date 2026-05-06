@@ -152,6 +152,55 @@ class FilamentTypeHeaderPatchTest {
         assertEquals(listOf("PLA", "PLA", "PETG", "ABS"), types)
     }
 
+    // --- B105: resolveNonCanonicalHeaderPatchTypes ---
+
+    @Test
+    fun `B105 single-slot E3 produces one-element type list not four`() {
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#FF0000", materialType = "PLA"),
+            ExtruderPreset(index = 3, color = "#0000FF", materialType = "PLA"),
+        )
+        val types = resolveNonCanonicalHeaderPatchTypes(listOf(2), presets)
+        assertEquals("B105: single-slot E3 must produce exactly 1 type entry", 1, types.size)
+        assertEquals("PLA", types[0])
+    }
+
+    @Test
+    fun `B105 single-slot E3 with PETG preset emits PETG`() {
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#FF0000", materialType = "PETG"),
+            ExtruderPreset(index = 3, color = "#0000FF", materialType = "PLA"),
+        )
+        val types = resolveNonCanonicalHeaderPatchTypes(listOf(2), presets)
+        assertEquals(1, types.size)
+        assertEquals("PETG", types[0])
+    }
+
+    @Test
+    fun `B105 two-slot E2 and E3 produces two-element type list`() {
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FF0000", materialType = "ABS"),
+            ExtruderPreset(index = 2, color = "#00FF00", materialType = "PETG"),
+            ExtruderPreset(index = 3, color = "#0000FF", materialType = "PLA"),
+        )
+        val types = resolveNonCanonicalHeaderPatchTypes(listOf(1, 2), presets)
+        assertEquals(listOf("ABS", "PETG"), types)
+    }
+
+    @Test
+    fun `B105 unknown slot falls back to PLA`() {
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FFFFFF", materialType = "PLA"),
+        )
+        val types = resolveNonCanonicalHeaderPatchTypes(listOf(3), presets)
+        assertEquals(listOf("PLA"), types)
+    }
+
     @Test
     fun `returns false and leaves file unchanged when header line absent`() {
         val f = gcode("; filament_density = 1.24", "G28")

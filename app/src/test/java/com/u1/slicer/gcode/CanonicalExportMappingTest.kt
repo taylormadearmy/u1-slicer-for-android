@@ -85,13 +85,59 @@ class CanonicalExportMappingTest {
     @Test
     fun noCanonicalContext_returnsNullForIdentityCopy() {
         // Case 4: legacy / unrecognised file with no canonical filament
-        // list. Caller should treat null as "skip remap, just copy".
+        // list AND default E1 slot → null (identity copy, no rewrite needed).
         val result = resolveCanonicalExportMapping(
             canonicalSize = 0,
             confirmedMapping = null,
             selectedExtruder = 0,
         )
         assertNull(result)
+    }
+
+    // --- B106: STL + non-default extruder must remap T0 at send time ---
+
+    @Test
+    fun B106_stlNonCanonical_selectedE3_mapsT0ToE3() {
+        // STL file (no canonical list, canonicalSize=0) with E3 selected.
+        // The slicer emits T0; send-time must rewrite T0→T2 so the printer
+        // uses the extruder the user actually chose.
+        val result = resolveCanonicalExportMapping(
+            canonicalSize = 0,
+            confirmedMapping = null,
+            selectedExtruder = 2,
+        )
+        assertEquals("B106: T0 must remap to T2 for STL with E3 selected", listOf(2), result)
+    }
+
+    @Test
+    fun B106_stlNonCanonical_selectedE4_mapsT0ToE4() {
+        val result = resolveCanonicalExportMapping(
+            canonicalSize = 0,
+            confirmedMapping = null,
+            selectedExtruder = 3,
+        )
+        assertEquals(listOf(3), result)
+    }
+
+    @Test
+    fun B106_stlNonCanonical_selectedE1_returnsNullIdentity() {
+        // E1 is slot 0 — T0→T0 is identity, no rewrite file needed → null.
+        val result = resolveCanonicalExportMapping(
+            canonicalSize = 0,
+            confirmedMapping = null,
+            selectedExtruder = 0,
+        )
+        assertNull("B106: E1 default on STL must stay null (identity)", result)
+    }
+
+    @Test
+    fun B106_stlNonCanonical_selectedE2_mapsT0ToE2() {
+        val result = resolveCanonicalExportMapping(
+            canonicalSize = 0,
+            confirmedMapping = null,
+            selectedExtruder = 1,
+        )
+        assertEquals(listOf(1), result)
     }
 
     @Test
