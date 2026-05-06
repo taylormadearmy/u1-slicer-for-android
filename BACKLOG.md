@@ -435,12 +435,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Edge cases: parts exceeding bed bounds rejected with warning; parse failures listed post-load; QEM budget fallback.
 - **Tests**: unit tests for multi-STL arrange + bed-bounds reject; instrumented test loading 3 STLs and asserting merged layout.
 
-### F76: Remove MakerWorld manual cookie support (GitHub #108)
-- Remove the manual cookie paste field, enable toggle, and `CookieInfoDialog` from Settings; remove `makerWorldCookies`/`makerWorldCookiesEnabled` from `SettingsRepository`, `SlicerViewModel`, and `SettingsBackup`.
-- Keep the browser-extracted cookie pipeline (`MakerWorldBrowserScreen`) as the sole auth path.
-- Old backup files carrying legacy cookie keys must still import cleanly (ignore unknown keys). Add regression test.
-- **Tests**: update `SettingsBackupTest` — drop cookie round-trip cases, add "ignore legacy cookie keys" test.
-
 ### F75: Prime tower should default to back of plate (GitHub #90)
 - Default auto-placed prime tower to back of bed instead of current default; prefer embedded 3MF position when present; user can still move freely.
 - **Source**: Discord user DC15, 2026-04-21
@@ -548,21 +542,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Long-term: QEM on original volume mesh with per-face colour preservation (centroid matching only recovers indices 0-3 currently)
 - Related to B48 interleaving fix; currently no decimation for MMU meshes
 
-### F72: Object skip UI on Printer page (GitHub #83)
-- During an active print, show a list of objects on the Printer page and let the user skip individual ones without aborting the job
-- Sends Moonraker `EXCLUDE_OBJECT NAME=<id>` via the existing `sendGcode` path
-- Object list sourced from `EXCLUDE_OBJECT_DEFINE` markers in the uploaded G-code
-- **Blocked on F71** — requires `exclude_object = true` in sliced G-code
-- U1 firmware v1.2.0 confirmed to support object skip (released early 2026); Moonraker `[exclude_object]` module enabled
-- Track: [`#83`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/83)
-
-### F71: Enable exclude_object G-code output for object skip support (GitHub #82)
-- OrcaSlicer defaults `exclude_object = false`; enabling it emits `EXCLUDE_OBJECT_DEFINE`, `EXCLUDE_OBJECT_START`, `EXCLUDE_OBJECT_END` markers in G-code
-- `gcode_label_objects` is already `true` (object comments present), so labelling groundwork is in place
-- Requires: add `exclude_object = 1` to `applyConfigToPrusa()` in `sapil_print.cpp` + native `.so` rebuild
-- **Prerequisite for F72**; U1 firmware v1.2.0 confirmed to support `EXCLUDE_OBJECT` commands (released early 2026)
-- Track: [`#82`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/82)
-
 ### D1: Document slicer engine upgrade process (GitHub #25)
 - Write a guide covering how to update the OrcaSlicer submodule to a new version (Snapmaker Orca or FullSpectrum fork)
 - Should document: submodule pin process, our Android-specific patches that must be re-applied (`#ifdef __ANDROID__` diagnostics, initializer fixes, build fixes for clipper.hpp/Brim.cpp/CutSurface.cpp), SAPIL JNI interface contract, config key differences, native rebuild workflow
@@ -571,6 +550,9 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **F76**: MakerWorld manual cookie paste UI removed — browser-capture path (WebView login) unchanged; `makerWorldCookiesEnabled` DataStore key removed; old backup keys ignored on import — DONE v2.1.0. Issue #108 closed.
+- **F72**: Object skip UI on Printer screen — bed canvas with polygon outlines + text list; `EXCLUDE_OBJECT` sent via `sendGcode`; skipped objects greyed in both views — DONE v2.1.0. Issue #83 closed.
+- **F71**: `exclude_object = true` added to `applyConfigToPrusa()` — `EXCLUDE_OBJECT_DEFINE/START/END` markers now emitted in all sliced G-code; also patched `GCode.cpp` to emit EXCLUDE_OBJECT_DEFINE syntax for Marlin flavor — DONE v2.1.0. Issue #82 closed.
 - **F74**: Finer model scaling — continuous scale slider + editable percentage text field replacing 10%-step buttons — DONE v1.6.8. Issue #87 closed.
 - **F73**: Multi-plate navigation — "Change plate" chip on Prepare screen returns to plate picker without reloading file; plate-switch race conditions fixed across v1.6.4–v1.6.8 — DONE v1.6.8. Issue #86 closed.
 - **C2**: Phase 1 review action items (Tier B fixture specs, PlateStateEnrichment consolidation, sapil_arrange AABB fix, auto-centre tolerance, coverage pin tests) — all items completed across v1.7.0-dev commits.
