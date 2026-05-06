@@ -4,6 +4,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B107: STL bed temp silently bumped +5°C above user setting (GitHub #123) — FIXED v2.1.2
+- **Symptom**: User sets bedTemp to 65°C, printer bed runs at 70°C for the entire print.
+- **Root cause**: `applyConfigToPrusa()` hardcoded `hot_plate_temp_initial_layer = bedTemp + 5`. The Snapmaker U1 `machine_start_gcode` uses `{bed_temperature_initial_layer_single}` which resolves to 70°C. No subsequent M190 drops the bed back to 65°C. Bambu 3MF files with embedded profiles were unaffected (profile_keys[] overrides the value).
+- **Fix**: Removed +5. Both `hot_plate_temp` and `hot_plate_temp_initial_layer` now use `config.bed_temp` exactly. Native `.so` rebuilt.
+- **Tests**: `SlicingIntegrationTest#b107_stlSlice_bedTemp65_initialLayerNotBumped`.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/123
+
 ### B106: STL print with non-E1 extruder selected sends wrong extruder + missing PRINT_START (GitHub #122) — FIXED v2.1.0
 - **Symptom 1**: Slicing an STL with E3 selected in Filament Mapping → G-code contains T0 (E1) tool changes instead of T2 (E3). Wrong extruder heats and prints. E4 temp anomaly reported on physical printer.
 - **Symptom 2**: STL G-code starts with bare `G28` instead of PRINT_START + SM_PRINT_AUTO_FEED + SM_PRINT_FLOW_CALIBRATE macros, causing print failure.

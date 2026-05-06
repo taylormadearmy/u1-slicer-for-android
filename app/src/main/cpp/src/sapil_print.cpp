@@ -311,11 +311,14 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     }
     // Bed temperature — OrcaSlicer resolves bed temp from the active plate type (curr_bed_type).
     // We set btPEI (textured PEI plate), so hot_plate_temp is the one that matters.
-    // Also set the initial layer variant (+5°C for better first layer adhesion, matching pla.json).
+    // B107: use the user's explicit bedTemp for BOTH layers. The previous +5 first-layer
+    // bump caused the printer to run at bedTemp+5 even when the user set a specific value.
+    // For embedded-profile 3MF files, profile_keys[] overrides these with the profile's own
+    // hot_plate_temp_initial_layer, which may include its own offset. For STL files the user's
+    // setting must be respected exactly.
     // Always written: U1 hardware default takes precedence over embed.
     dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(bed_temps));
-    std::vector<int> bed_temps_initial(n_ext, config.bed_temp + 5);
-    dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(bed_temps_initial));
+    dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(bed_temps));
 
     // Retraction (OrcaSlicer keys) — hardware-tuned, always written. The U1
     // direct-drive extruder requires ≤5mm retraction; Bambu Studio profiles

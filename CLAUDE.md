@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v2.1.1` (`versionCode 271`)
+Current release: `v2.1.2` (`versionCode 272`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -64,7 +64,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 1037 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 291 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 294 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -139,7 +139,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
 
-### Instrumented tests (`app/src/androidTest/`) - 291 tests across 33 classes
+### Instrumented tests (`app/src/androidTest/`) - 294 tests across 33 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -147,7 +147,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `native/NativeLibraryCorrectnessTest.kt` (14) — JNI correctness checks + Phase 1 sub-plan #1 accessors (`nativeGetObjectCount`, `nativeGetVolumeCount`, `nativeGetObjectModelId`, `nativeGetVolumeScalars`, `nativeGetPaintStateCounts` for both mmu and supports kinds) + sub-plan #5 accessor (`nativeGetProjectConfig` populated JSON + null on no-model) + sub-plan #2b `loadModelForPlate` smoke (single-plate match + plateIdx=-1 all-plates alias)
 - `native/NativePlateDataTest.kt` (5) — Phase 1 sub-plan #2 per-plate JNI accessors (`nativeGetPlateCount`, `nativeGetPlateData`): no-model null/zero, colored_3DBenchy single-plate shape, Buzz multi-plate positional sanity + OOR guard, flippy painted fixture customGcode non-empty
 - `native/NativeObjectExtruderMapTest.kt` (3) — Phase 1 sub-plan #4 full-objects JNI accessor (`nativeGetObjectExtruderMap`): no-model null, colored_3DBenchy merged component-ref objects, Flarewing array length matches `nativeGetObjectCount`
-- `slicing/SlicingIntegrationTest.kt` (44) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation, B55 slice cancel, v1.5.63 nozzle temp JNI path (PLA=220, PETG=235), B73 scale-down placement correctness, B75 parked extruder cooldown, B79 tree support type + filament type for STL, brim_type no_brim guard, resolveInto→JNI chain, B99 support/interface filament G-code guards including app-placed Benchy STL with PETG support E2/interface E3, F71 tetrahedron EXCLUDE_OBJECT_DEFINE in G-code
+- `slicing/SlicingIntegrationTest.kt` (47) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation, B55 slice cancel, v1.5.63 nozzle temp JNI path (PLA=220, PETG=235), B73 scale-down placement correctness, B75 parked extruder cooldown, B79 tree support type + filament type for STL, brim_type no_brim guard, resolveInto→JNI chain, B99 support/interface filament G-code guards including app-placed Benchy STL with PETG support E2/interface E3, F71 tetrahedron EXCLUDE_OBJECT_DEFINE in G-code, B107 bed temp no +5 bump, B106 machine_start_gcode injection, B106 send-time E3 remap T0→T2
 - `slicing/BambuPipelineIntegrationTest.kt` (40) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing, B54 modifier volume subtype preservation, B82 per-plate layer-tool chip count (standard + painted flippy all plates), B99 Leo support fixture support/interface PETG regression, B100 layer_height sentinel respects embedded profile (die-single-colour.3mf), B104 single-plate Bambu plate-filter regression (Oreo+Proj+1.3mf)
 - `slicing/SemmSlicingTest.kt` (8) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard, B64 Flarewing Dragon colour permutation remap, B99 support/interface PETG crash guards for colored and H2C Benchy
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code

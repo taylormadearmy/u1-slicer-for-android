@@ -9,6 +9,7 @@ import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.gcode.GcodeValidator
+import com.u1.slicer.gcode.applyPrintTimeRemap
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -1118,5 +1119,60 @@ class SlicingIntegrationTest {
             "G-code must contain EXCLUDE_OBJECT_DEFINE — rebuild native with exclude_object=true",
             gcode!!.contains("EXCLUDE_OBJECT_DEFINE")
         )
+    }
+
+    // B107: bed temp set by user must not be silently bumped +5 for the first layer.
+    // sapil_print.cpp previously hardcoded hot_plate_temp_initial_layer = bedTemp + 5,
+    // causing the printer to run at 70°C when the user set 65°C.
+    @Test
+    fun b107_stlSlice_bedTemp65_initialLayerNotBumped() {
+        val config = DEFAULT_CONFIG.copy(bedTemp = 65)
+        val (success, gcode) = sliceAsset("tetrahedron.stl", config)
+        assertTrue("Slice must succeed", success)
+        assertNotNull(gcode)
+        assertFalse(
+            "B107: first-layer bed temp must not be silently bumped to 70 when user set 65",
+            gcode!!.contains("; bed_temperature_initial_layer = 70")
+        )
+        assertTrue(
+            "B107: bed_temperature header must reflect user setting of 65",
+            gcode.contains("; bed_temperature = 65")
+        )
+    }
+
+    // B106 Bug 2 regression: slicing an STL must inject machine_start_gcode from the
+    // JNI config so the Snapmaker U1 PRINT_START macro (and SM_ preamble) runs.
+    // Pass a sentinel token; verify it appears in the G-code output.
+    @Test
+    fun b106_stlSlice_machineStartGcodeInjected() {
+        val config = DEFAULT_CONFIG.copy(machineStartGcode = "PRINT_START_SENTINEL")
+        val (success, gcode) = sliceAsset("tetrahedron.stl", config)
+        assertTrue("Slice must succeed", success)
+        assertNotNull(gcode)
+        assertTrue(
+            "B106: machine_start_gcode must appear in G-code when injected via SliceConfig",
+            gcode!!.contains("PRINT_START_SENTINEL")
+        )
+    }
+
+    // B106 Bug 1 regression: send-time T-index remap must rewrite T0 → T2 for an STL
+    // sliced with E3 (slot 2) selected. Before the fix, resolveCanonicalExportMapping
+    // returned null for canonicalSize=0 (raw STL), so T0 was never rewritten.
+    @Test
+    fun b106_stlSlice_e3SendTimeRemap_rewritesT0ToT2() {
+        val file = asset("tetrahedron.stl")
+        val loaded = lib.loadModel(file.absolutePath)
+        assertTrue("Model must load", loaded)
+        val result = lib.slice(DEFAULT_CONFIG)
+        assertTrue("Slice must succeed", result?.success == true)
+        val srcPath = result!!.gcodePath
+        assertTrue("Source G-code must contain T0", File(srcPath).readText().contains("T0"))
+
+        val outPath = "$srcPath.b106_remap_test"
+        applyPrintTimeRemap(srcPath, outPath, listOf(2))
+        val remapped = File(outPath).readText()
+
+        assertFalse("B106: T0 must not remain after remap to E3", remapped.contains("\nT0\n"))
+        assertTrue("B106: T2 must appear after remap to E3", remapped.contains("T2"))
     }
 }
