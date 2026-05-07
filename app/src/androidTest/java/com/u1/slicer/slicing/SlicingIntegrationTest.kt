@@ -1134,9 +1134,11 @@ class SlicingIntegrationTest {
             "B107: first-layer bed temp must not be silently bumped to 70 when user set 65",
             gcode!!.contains("; bed_temperature_initial_layer = 70")
         )
+        // OrcaSlicer emits hot_plate_temp in the header, not bed_temperature.
+        // The assertFalse above is the definitive guard; confirm 65 also appears.
         assertTrue(
-            "B107: bed_temperature header must reflect user setting of 65",
-            gcode.contains("; bed_temperature = 65")
+            "B107: hot_plate_temp header must reflect user setting of 65",
+            gcode.contains("; hot_plate_temp = 65")
         )
     }
 
@@ -1158,15 +1160,19 @@ class SlicingIntegrationTest {
     // B106 Bug 1 regression: send-time T-index remap must rewrite T0 → T2 for an STL
     // sliced with E3 (slot 2) selected. Before the fix, resolveCanonicalExportMapping
     // returned null for canonicalSize=0 (raw STL), so T0 was never rewritten.
+    // Single-extruder STL G-code has no implicit T0 line, so we inject one via
+    // machineStartGcode to give applyPrintTimeRemap something concrete to rewrite.
     @Test
     fun b106_stlSlice_e3SendTimeRemap_rewritesT0ToT2() {
+        val config = DEFAULT_CONFIG.copy(machineStartGcode = "T0")
         val file = asset("tetrahedron.stl")
         val loaded = lib.loadModel(file.absolutePath)
         assertTrue("Model must load", loaded)
-        val result = lib.slice(DEFAULT_CONFIG)
+        val result = lib.slice(config)
         assertTrue("Slice must succeed", result?.success == true)
         val srcPath = result!!.gcodePath
-        assertTrue("Source G-code must contain T0", File(srcPath).readText().contains("T0"))
+        assertTrue("Source G-code must contain T0 from injected start gcode",
+            File(srcPath).readText().contains("T0"))
 
         val outPath = "$srcPath.b106_remap_test"
         applyPrintTimeRemap(srcPath, outPath, listOf(2))

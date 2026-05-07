@@ -243,9 +243,9 @@ path that constructs the JNI `SliceConfig` for STL files.
 
 - **B107 — STL bed temp matches user setting:** Load `tetrahedron.stl`. Before slicing,
   confirm Print Setup shows bed temp = 65°C (the default). Slice. Pull the G-code and check:
-  `adb -s <device> shell "run-as com.u1.slicer.orca cat files/transient/<ts>/output.gcode" | grep "bed_temperature"`
-  **Pass**: `; bed_temperature = 65` and `; bed_temperature_initial_layer = 65` (both 65, not
-  70). **Fail**: `initial_layer` value is 70 — B107 regression (+5 hardcode reintroduced).
+  `adb -s <device> shell "run-as com.u1.slicer.orca cat files/transient/<ts>/output.gcode" | grep "hot_plate_temp"`
+  **Pass**: `; hot_plate_temp = 65` and `; hot_plate_temp_initial_layer = 65` (both 65, not
+  70). Note: OrcaSlicer uses `hot_plate_temp` in the header, not `bed_temperature`. **Fail**: either value is 70 — B107 regression (+5 hardcode reintroduced).
 
 - **B106 Bug 2 — STL G-code contains PRINT_START:** Same slice from above. Grep:
   `grep "PRINT_START" output.gcode` **Pass**: PRINT_START appears in the machine start
