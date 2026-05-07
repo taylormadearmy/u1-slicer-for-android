@@ -24,6 +24,7 @@ build_log*.txt
 CLAUDE.local.md
 E2E_TESTING.local.md
 AGENTS.local.md
+docs/*.local.md
 
 # Local-only Claude skills (Kevin's machine-specific device IDs / paths)
 .claude/skills/
