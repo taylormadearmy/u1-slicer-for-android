@@ -432,6 +432,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F82: Idle-state printer controls on Printer tab (GitHub #133)
+- The Printer tab today only exposes pause/resume/cancel during an active print, plus the LED toggle and filament sync card.  Add idle-state controls so the user can drive the printer without an active job.
+- **Likely scope**: set bed temp (with a "Cooldown" preset), set per-extruder nozzle temp, manual-move/home (G28, G0 X/Y/Z), undock / dock extruder, manual filament load/unload per slot, send custom G-code box.
+- The plumbing is mostly there — `PrinterRepository.sendGcode` is wired through both HTTP/Moonraker and LAN/WCP paths.  Most controls reduce to a single-line G-code script.
+- **UX**: gate behind `status.isConnected` (and `!isPrinting` for moves that would conflict with a running print).  Match desktop Snapmaker Orca's idle-state control panel layout where reasonable.
+- **Out of scope (for v1)**: bed leveling wizard, per-step calibration flows.
+
 ### F81: Add notifications for all loading stages (GitHub #120)
 - Notify when long-running background operations complete: model load, Bambu sanitize/embed pipeline, Prepare preview ready (large model QEM).
 - Only fire when app is backgrounded — use the existing `ProcessLifecycleOwner` foreground gate from F53.
