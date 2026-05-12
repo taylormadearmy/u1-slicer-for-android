@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.u1.slicer.aipaint.AiPaintProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -42,6 +43,8 @@ class SettingsRepository(private val context: Context) {
         val SLICING_OVERRIDES = stringPreferencesKey("slicing_overrides")
         val MAKERWORLD_COOKIES = stringPreferencesKey("makerworld_cookies")
         val PLATE_TYPE = stringPreferencesKey("plate_type")
+        val AI_PAINT_PROVIDER = stringPreferencesKey("ai_paint_provider")
+        val AI_PAINT_API_KEY = stringPreferencesKey("ai_paint_api_key")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.dataStore.data.map { prefs ->
@@ -91,6 +94,14 @@ class SettingsRepository(private val context: Context) {
 
     val plateType: Flow<PlateType> = context.dataStore.data.map { prefs ->
         PlateType.fromName(prefs[Keys.PLATE_TYPE])
+    }
+
+    val aiPaintProvider: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.AI_PAINT_PROVIDER] ?: AiPaintProvider.DEFAULT.name
+    }
+
+    val aiPaintApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.AI_PAINT_API_KEY] ?: ""
     }
 
     suspend fun saveExtruderPresets(presets: List<ExtruderPreset>) {
@@ -154,6 +165,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveMakerWorldCookies(cookies: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.MAKERWORLD_COOKIES] = cookies
+        }
+    }
+
+    suspend fun saveAiPaintSettings(provider: String, apiKey: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_PAINT_PROVIDER] = provider
+            prefs[Keys.AI_PAINT_API_KEY] = apiKey
         }
     }
 
