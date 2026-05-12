@@ -94,7 +94,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         regions = regions,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
-                        previewBitmap = bitmaps[0]
+                        previewBitmap = bitmaps[7]
                     )
                 )
             } catch (e: Exception) {
