@@ -77,7 +77,7 @@ object MeshSegmenter {
         val ix = (pos[offset]   * 1000).toInt()
         val iy = (pos[offset+1] * 1000).toInt()
         val iz = (pos[offset+2] * 1000).toInt()
-        return ix * 1_000_003 + iy * 1009 + iz
+        return (ix.toLong() * 1_000_003L + iy.toLong() * 1009L + iz.toLong()).toInt()
     }
 
     private fun mergeToTarget(
