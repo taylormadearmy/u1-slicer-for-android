@@ -17,6 +17,10 @@ import java.io.File
 
 class AiPaintViewModel(application: Application) : AndroidViewModel(application) {
 
+    companion object {
+        private const val SEG_MAX_TRIS = 8_000  // cap for BFS segmentation; expand back afterward
+    }
+
     private val app get() = getApplication<U1SlicerApplication>()
     private val settings get() = app.container.settingsRepository
 
@@ -38,17 +42,29 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Phase 1 — geometry segmentation (CPU-intensive: run on Default)
-                val (mesh, regionIds, fractions) = withContext(Dispatchers.Default) {
-                    val m = native.getPreparePreviewMesh(
-                        maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES
-                    ) ?: return@withContext null
-                    val ids = MeshSegmenter.segment(m.trianglePositions, targetRegions = 4)
-                    val fracs = MeshSegmenter.coverageFractions(ids, targetRegions = 4)
-                    Triple(m, ids, fracs)
-                } ?: run {
+                // Phase 1 — geometry segmentation
+                // Get full mesh on Main thread (JNI call), then segment on Default.
+                // Subsample to SEG_MAX_TRIS for fast BFS; expand regionIds back to full mesh.
+                val mesh = native.getPreparePreviewMesh(
+                    maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES
+                ) ?: run {
                     _uiState.value = AiPaintUiState.Error("Could not read model geometry.")
                     return@launch
+                }
+
+                val (regionIds, fractions) = withContext(Dispatchers.Default) {
+                    val positions = mesh.trianglePositions
+                    val nTri = positions.size / 9
+                    val stride = maxOf(1, nTri / SEG_MAX_TRIS)
+                    val sampleCount = (nTri + stride - 1) / stride
+                    val sampled = if (stride == 1) positions else FloatArray(sampleCount * 9) { i ->
+                        positions[(i / 9) * stride * 9 + (i % 9)]
+                    }
+                    val sampledIds = MeshSegmenter.segment(sampled, targetRegions = 4)
+                    val ids = if (stride == 1) sampledIds
+                              else IntArray(nTri) { sampledIds[it / stride] }
+                    val fracs = MeshSegmenter.coverageFractions(ids, targetRegions = 4)
+                    Pair(ids, fracs)
                 }
 
                 // Phase 2 — render thumbnails (CPU-intensive: run on Default)

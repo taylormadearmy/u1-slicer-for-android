@@ -16,6 +16,7 @@ object PaintedMeshWriter {
         val nTri = positions.size / 9
         val groups = Array(4) { mutableListOf<Int>() }
         for (i in 0 until nTri) groups[regionIds[i].coerceIn(0, 3)].add(i)
+        val nonEmptyIndices = groups.indices.filter { groups[it].isNotEmpty() }
 
         ZipOutputStream(outputFile.outputStream().buffered()).use { zip ->
             zip.putNextEntry(ZipEntry("_rels/.rels"))
@@ -23,11 +24,11 @@ object PaintedMeshWriter {
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("3D/3dmodel.model"))
-            zip.write(buildModelXml(positions, groups).toByteArray())
+            zip.write(buildModelXml(positions, groups, nonEmptyIndices).toByteArray())
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("Metadata/model_settings.config"))
-            zip.write(buildSettingsXml(groups.indices.toList()).toByteArray())
+            zip.write(buildSettingsXml(nonEmptyIndices).toByteArray())
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("[Content_Types].xml"))
@@ -36,14 +37,19 @@ object PaintedMeshWriter {
         }
     }
 
-    private fun buildModelXml(positions: FloatArray, groups: Array<MutableList<Int>>): String {
+    private fun buildModelXml(
+        positions: FloatArray,
+        groups: Array<MutableList<Int>>,
+        nonEmptyIndices: List<Int>
+    ): String {
         val sb = StringBuilder()
         sb.append("""<?xml version="1.0" encoding="UTF-8"?>""")
         sb.append("""<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">""")
         sb.append("<resources>")
 
-        groups.forEachIndexed { regionIdx, triIndices ->
-            val objectId = regionIdx + 1
+        nonEmptyIndices.forEachIndexed { slot, regionIdx ->
+            val objectId = slot + 1
+            val triIndices = groups[regionIdx]
             sb.append("""<object id="$objectId" type="model"><mesh>""")
 
             val vertexMap = LinkedHashMap<Triple<Float,Float,Float>, Int>()
@@ -72,7 +78,7 @@ object PaintedMeshWriter {
         }
 
         sb.append("</resources><build>")
-        groups.indices.forEach { i -> sb.append("""<item objectid="${i+1}"/>""") }
+        nonEmptyIndices.indices.forEach { i -> sb.append("""<item objectid="${i+1}"/>""") }
         sb.append("</build></model>")
         return sb.toString()
     }
@@ -80,8 +86,10 @@ object PaintedMeshWriter {
     private fun buildSettingsXml(regionIndices: List<Int>): String {
         val sb = StringBuilder()
         sb.append("""<?xml version="1.0" encoding="UTF-8"?><config>""")
-        regionIndices.forEach { i ->
-            sb.append("""<object id="${i+1}"><metadata key="extruder" value="${i+1}"/></object>""")
+        regionIndices.forEachIndexed { slot, regionIdx ->
+            val objectId = slot + 1
+            val extruder = regionIdx + 1
+            sb.append("""<object id="$objectId"><metadata type="object" key="extruder" value="$extruder"/></object>""")
         }
         sb.append("</config>")
         return sb.toString()

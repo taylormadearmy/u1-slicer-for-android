@@ -15,10 +15,10 @@ enum class CameraAngle {
     FRONT, BACK, LEFT_ISO, RIGHT_ISO;
 
     fun rotationMatrix(): FloatArray = when (this) {
-        FRONT     -> floatArrayOf( 1f, 0f, 0f,  0f, 0f, -1f,  0f, 1f, 0f)
+        FRONT     -> floatArrayOf( 1f, 0f, 0f,  0f, 0f,  1f,  0f, 1f, 0f)
         BACK      -> floatArrayOf(-1f, 0f, 0f,  0f, 0f,  1f,  0f, 1f, 0f)
-        LEFT_ISO  -> rot3(yDeg = -45f, xDeg = 30f)
-        RIGHT_ISO -> rot3(yDeg =  45f, xDeg = 30f)
+        LEFT_ISO  -> rot3(yDeg = -45f, xDeg = -30f)
+        RIGHT_ISO -> rot3(yDeg =  45f, xDeg = -30f)
     }
 }
 
