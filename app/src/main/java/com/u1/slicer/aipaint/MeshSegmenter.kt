@@ -2,26 +2,30 @@ package com.u1.slicer.aipaint
 
 object MeshSegmenter {
 
-    fun segment(positions: FloatArray, targetRegions: Int = 4): IntArray {
+    // boundaryPcts: N+1 boundary values for N regions, e.g. [0, 25, 50, 75, 100].
+    // Returns per-triangle region index 0..N-1 based on Z height (Z=up in 3D printing).
+    // Triangles are assigned to whichever band their Z centroid falls into.
+    fun segmentByBounds(positions: FloatArray, boundaryPcts: FloatArray): IntArray {
         val nTri = positions.size / 9
-        if (nTri == 0) return IntArray(0)
-        if (nTri < targetRegions) return IntArray(nTri) { 0 }
+        val nRegions = boundaryPcts.size - 1
+        if (nTri == 0 || nRegions <= 0) return IntArray(nTri) { 0 }
 
-        // Divide by Z-height (Z=up in 3D printing coordinate system) using
-        // rank-percentile banding so each region gets an equal share of triangles
-        // regardless of how geometry is distributed vertically.
-        // This produces semantically useful regions (head/body/legs/feet) for
-        // typical upright models.
         val zCentroids = FloatArray(nTri) { i ->
             val b = i * 9
             (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
         }
-        val sortedIndices = (0 until nTri).sortedBy { zCentroids[it] }.toIntArray()
-        val ids = IntArray(nTri)
-        sortedIndices.forEachIndexed { rank, triIdx ->
-            ids[triIdx] = rank * targetRegions / nTri
+        val minZ = zCentroids.minOrNull() ?: return IntArray(nTri) { 0 }
+        val maxZ = zCentroids.maxOrNull() ?: return IntArray(nTri) { 0 }
+        val zRange = maxZ - minZ
+
+        return IntArray(nTri) { i ->
+            val pct = if (zRange > 0f) (zCentroids[i] - minZ) / zRange * 100f else 50f
+            var region = nRegions - 1
+            for (r in 0 until nRegions) {
+                if (pct < boundaryPcts[r + 1]) { region = r; break }
+            }
+            region
         }
-        return ids
     }
 
     fun coverageFractions(regionIds: IntArray, targetRegions: Int): FloatArray {

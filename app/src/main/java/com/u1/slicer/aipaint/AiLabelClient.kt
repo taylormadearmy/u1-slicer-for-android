@@ -23,11 +23,14 @@ object AiLabelClient {
 
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
-    val PROMPT = """These images show a 3D model rendered from 4 angles. In each pair, the first image is a shaded render and the second shows the model pre-segmented into 4 coloured regions: red=region0, green=region1, cyan=region2, yellow=region3.
+    val PROMPT = """These 4 images show a 3D model from different angles (front, back, left isometric, right isometric).
 
-For each region: (1) identify what part of the model it represents (e.g. 'head', 'wings', 'armour', 'base'), (2) suggest a realistic hex filament colour that would look good when 3D printed.
+Identify exactly 4 distinct parts of this model that would each look good printed in a different filament colour — for example head/body/legs/base for a figure, or hull/cabin/wheels/bumper for a vehicle.
 
-Respond ONLY with JSON in exactly this format: {"regions": [{"id": 0, "label": "...", "colour": "#RRGGBB"}, {"id": 1, ...}, {"id": 2, ...}, {"id": 3, ...}]}"""
+For each part provide: a short label, a realistic filament colour as hex, and its vertical extent as percentages from the very bottom of the model (0%) to the very top (100%). The 4 regions must cover 0–100% with no gaps, ordered bottom to top so id=0 is the lowest part and id=3 is the highest.
+
+Respond ONLY with valid JSON:
+{"regions": [{"id": 0, "label": "...", "colour": "#RRGGBB", "bottomPct": 0, "topPct": 25}, {"id": 1, "label": "...", "colour": "#RRGGBB", "bottomPct": 25, "topPct": 55}, {"id": 2, "label": "...", "colour": "#RRGGBB", "bottomPct": 55, "topPct": 80}, {"id": 3, "label": "...", "colour": "#RRGGBB", "bottomPct": 80, "topPct": 100}]}"""
 
     suspend fun label(
         provider: AiPaintProvider,
@@ -201,9 +204,11 @@ Respond ONLY with JSON in exactly this format: {"regions": [{"id": 0, "label": "
                 AiRegion(
                     id = obj.getInt("id"),
                     label = obj.getString("label"),
-                    suggestedColour = obj.getString("colour")
+                    suggestedColour = obj.getString("colour"),
+                    bottomPct = obj.optDouble("bottomPct", 0.0).toFloat(),
+                    topPct = obj.optDouble("topPct", 100.0).toFloat()
                 )
-            }.sortedBy { it.id }
+            }.sortedBy { it.bottomPct }.mapIndexed { idx, r -> r.copy(id = idx) }
             if (regions.size != 4) fallbackRegions() else regions
         } catch (e: Exception) {
             fallbackRegions()
@@ -211,10 +216,10 @@ Respond ONLY with JSON in exactly this format: {"regions": [{"id": 0, "label": "
     }
 
     fun fallbackRegions(): List<AiRegion> = listOf(
-        AiRegion(0, "Region 1", "#E53935"),
-        AiRegion(1, "Region 2", "#1E88E5"),
-        AiRegion(2, "Region 3", "#43A047"),
-        AiRegion(3, "Region 4", "#FB8C00")
+        AiRegion(0, "Region 1", "#E53935", bottomPct = 0f,  topPct = 25f),
+        AiRegion(1, "Region 2", "#1E88E5", bottomPct = 25f, topPct = 50f),
+        AiRegion(2, "Region 3", "#43A047", bottomPct = 50f, topPct = 75f),
+        AiRegion(3, "Region 4", "#FB8C00", bottomPct = 75f, topPct = 100f)
     )
 
     private fun bitmapToJpeg(bmp: Bitmap): ByteArray {

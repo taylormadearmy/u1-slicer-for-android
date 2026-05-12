@@ -13,13 +13,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
 import java.io.File
 
 class AiPaintViewModel(application: Application) : AndroidViewModel(application) {
-
-    companion object {
-        private const val SEG_MAX_TRIS = 8_000  // cap for BFS segmentation; expand back afterward
-    }
 
     private val app get() = getApplication<U1SlicerApplication>()
     private val settings get() = app.container.settingsRepository
@@ -29,7 +26,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
     fun runPipeline(sourceModelPath: String, native: NativeLibrary) {
         viewModelScope.launch {
-            _uiState.value = AiPaintUiState.Running(1, "Analysing model shape…")
+            _uiState.value = AiPaintUiState.Running(1, "Rendering model views…")
             try {
                 // Pre-flight: check API key when required
                 val providerName = settings.aiPaintProvider.first()
@@ -42,9 +39,6 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Phase 1 — geometry segmentation
-                // Get full mesh on Main thread (JNI call), then segment on Default.
-                // Subsample to SEG_MAX_TRIS for fast BFS; expand regionIds back to full mesh.
                 val mesh = native.getPreparePreviewMesh(
                     maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES
                 ) ?: run {
@@ -52,49 +46,47 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                val (regionIds, fractions) = withContext(Dispatchers.Default) {
-                    val positions = mesh.trianglePositions
-                    val nTri = positions.size / 9
-                    val stride = maxOf(1, nTri / SEG_MAX_TRIS)
-                    val sampleCount = (nTri + stride - 1) / stride
-                    val sampled = if (stride == 1) positions else FloatArray(sampleCount * 9) { i ->
-                        positions[(i / 9) * stride * 9 + (i % 9)]
+                // Phase 1 — render shaded views for AI (no pre-segmentation)
+                val shadedBitmaps = withContext(Dispatchers.Default) {
+                    CameraAngle.entries.map { angle ->
+                        AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
                     }
-                    val sampledIds = MeshSegmenter.segment(sampled, targetRegions = 4)
-                    val ids = if (stride == 1) sampledIds
-                              else IntArray(nTri) { sampledIds[it / stride] }
-                    val fracs = MeshSegmenter.coverageFractions(ids, targetRegions = 4)
-                    Pair(ids, fracs)
                 }
 
-                // Phase 2 — render thumbnails (CPU-intensive: run on Default)
-                _uiState.value = AiPaintUiState.Running(2, "Rendering views…")
-                val bitmaps = withContext(Dispatchers.Default) {
-                    val list = mutableListOf<android.graphics.Bitmap>()
-                    CameraAngle.entries.forEach { angle ->
-                        list += AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
-                        list += AiPaintRenderer.renderRegions(mesh.trianglePositions, regionIds, 512, 512, angle)
-                    }
-                    list
-                }
+                // Phase 2 — AI identifies parts and their vertical boundaries
+                _uiState.value = AiPaintUiState.Running(2, "Asking AI to identify parts…")
+                val regions = AiLabelClient.label(provider, apiKey, shadedBitmaps)
 
-                // Phase 3 — AI labeling
-                _uiState.value = AiPaintUiState.Running(3, "Asking AI to identify regions…")
-                val regions = AiLabelClient.label(provider, apiKey, bitmaps).mapIndexed { i, r ->
+                // Phase 3 — apply AI boundaries to segment mesh, render colored preview
+                _uiState.value = AiPaintUiState.Running(3, "Applying regions to model…")
+                val (regionIds, previewBitmap) = withContext(Dispatchers.Default) {
+                    val sorted = regions.sortedBy { it.bottomPct }
+                    val boundaries = FloatArray(sorted.size + 1)
+                    boundaries[0] = 0f
+                    sorted.forEachIndexed { i, r -> boundaries[i + 1] = r.topPct }
+                    boundaries[sorted.size] = 100f  // clamp last boundary exactly
+                    val ids = MeshSegmenter.segmentByBounds(mesh.trianglePositions, boundaries)
+                    val preview = AiPaintRenderer.renderRegions(
+                        mesh.trianglePositions, ids, 512, 512, CameraAngle.RIGHT_ISO
+                    )
+                    Pair(ids, preview)
+                }
+                val fractions = MeshSegmenter.coverageFractions(regionIds, regions.size)
+                val regionsWithCoverage = regions.mapIndexed { i, r ->
                     r.copy(coverageFraction = fractions.getOrElse(i) { 0f })
                 }
 
                 // Phase 4 — write painted 3MF
                 _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
-                PaintedMeshWriter.write(mesh.trianglePositions, regionIds, regions, outFile)
+                PaintedMeshWriter.write(mesh.trianglePositions, regionIds, regionsWithCoverage, outFile)
 
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
-                        regions = regions,
+                        regions = regionsWithCoverage,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
-                        previewBitmap = bitmaps[7]
+                        previewBitmap = previewBitmap
                     )
                 )
             } catch (e: Exception) {
