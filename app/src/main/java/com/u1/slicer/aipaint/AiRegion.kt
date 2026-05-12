@@ -3,11 +3,12 @@ package com.u1.slicer.aipaint
 import android.graphics.Bitmap
 
 data class AiRegion(
-    val id: Int,                      // 0–3
+    val id: Int,
     val label: String,
-    val suggestedColour: String,      // hex "#RRGGBB"
+    val suggestedColour: String,       // hex "#RRGGBB"
     val userColour: String? = null,
-    val coverageFraction: Float = 0f  // 0.0–1.0
+    val coverageFraction: Float = 0f,  // 0.0–1.0
+    val componentIds: List<Int> = emptyList()  // topology components that map to this region
 ) {
     val effectiveColour: String get() = userColour ?: suggestedColour
 }

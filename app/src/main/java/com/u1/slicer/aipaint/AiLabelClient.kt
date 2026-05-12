@@ -1,6 +1,7 @@
 package com.u1.slicer.aipaint
 
 import android.graphics.Bitmap
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,6 +24,7 @@ object AiLabelClient {
 
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
+    // Kept for backward compat with existing tests that reference it directly
     val PROMPT = """These 8 images show a 3D model. The first 4 are shaded renders (front, back, left isometric, right isometric). The next 4 show the same views with 4 regions pre-coloured by geometry analysis: red=region 0, green=region 1, cyan=region 2, yellow=region 3.
 
 Based on the coloured regions you can see on the model, give each region a short descriptive label (e.g. "Legs", "Body", "Head", "Base") and suggest a realistic filament colour for that part.
@@ -30,21 +32,36 @@ Based on the coloured regions you can see on the model, give each region a short
 Respond ONLY with valid JSON:
 {"regions": [{"id": 0, "label": "...", "colour": "#RRGGBB"}, {"id": 1, "label": "...", "colour": "#RRGGBB"}, {"id": 2, "label": "...", "colour": "#RRGGBB"}, {"id": 3, "label": "...", "colour": "#RRGGBB"}]}"""
 
+    fun buildGroupPrompt(numComponents: Int, targetColours: Int): String =
+        "These 8 images show a 3D model (front, back, left-iso, right-iso views). " +
+        "The first 4 are shaded renders. The next 4 show $numComponents surface regions coloured by topology — " +
+        "each colour is a connected surface region numbered 0 to ${numComponents - 1}.\n\n" +
+        "Group these $numComponents regions into exactly $targetColours semantic groups (e.g. \"Legs\", \"Body\", \"Head\", \"Base\"). " +
+        "Choose contrasting, realistic filament colours so adjacent groups look visually distinct.\n\n" +
+        "Respond ONLY with valid JSON:\n" +
+        "{\"groups\": [{\"component_ids\": [0, 2], \"label\": \"...\", \"colour\": \"#RRGGBB\"}, ...]}\n" +
+        "Rules: exactly $targetColours groups, every integer 0..${numComponents - 1} used exactly once."
+
     suspend fun label(
         provider: AiPaintProvider,
         apiKey: String,
-        bitmaps: List<Bitmap>
+        shadedBitmaps: List<Bitmap>,
+        componentBitmaps: List<Bitmap>,
+        numComponents: Int,
+        targetColours: Int
     ): List<AiRegion> = withContext(Dispatchers.IO) {
         try {
-            val jpegBytes = bitmaps.map { bitmapToJpeg(it) }
-            val request = buildRequest(provider, apiKey, PROMPT, jpegBytes)
+            val prompt = buildGroupPrompt(numComponents, targetColours)
+            val jpegBytes = (shadedBitmaps + componentBitmaps).map { bitmapToJpeg(it) }
+            val request = buildRequest(provider, apiKey, prompt, jpegBytes)
             val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: return@withContext fallbackRegions()
-            if (!response.isSuccessful) return@withContext fallbackRegions()
+            val body = response.body?.string()
+                ?: return@withContext fallbackGrouping(numComponents, targetColours)
+            if (!response.isSuccessful) return@withContext fallbackGrouping(numComponents, targetColours)
             val text = extractTextFromResponse(provider, body)
-            parseRegionJson(text)
+            parseGroupJson(text, numComponents, targetColours)
         } catch (e: Exception) {
-            fallbackRegions()
+            fallbackGrouping(numComponents, targetColours)
         }
     }
 
@@ -105,7 +122,7 @@ Respond ONLY with valid JSON:
                     JSONObject().put("role", "user").put("content", content)
                 )
             )
-            .put("max_tokens", 300)
+            .put("max_tokens", 512)
             .toString().toRequestBody(JSON_TYPE)
         val builder = Request.Builder().url(url).post(body)
         if (apiKey != null) builder.header("Authorization", "Bearer $apiKey")
@@ -159,7 +176,7 @@ Respond ONLY with valid JSON:
         }
         val body = JSONObject()
             .put("model", "claude-haiku-4-5-20251001")
-            .put("max_tokens", 300)
+            .put("max_tokens", 512)
             .put(
                 "messages", JSONArray().put(
                     JSONObject().put("role", "user").put("content", content)
@@ -191,6 +208,74 @@ Respond ONLY with valid JSON:
         } catch (e: Exception) {
             body
         }
+    }
+
+    fun parseGroupJson(raw: String, numComponents: Int, targetColours: Int): List<AiRegion> {
+        val jsonStr = Regex("""\{[\s\S]*"groups"[\s\S]*\}""").find(raw)?.value ?: raw
+        return try {
+            val arr = JSONObject(jsonStr).getJSONArray("groups")
+            if (arr.length() != targetColours) return fallbackGrouping(numComponents, targetColours)
+            val seen = mutableSetOf<Int>()
+            val regions = (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                val ja = obj.getJSONArray("component_ids")
+                val compIds = (0 until ja.length()).map { ja.getInt(it) }
+                if (compIds.isEmpty()) return fallbackGrouping(numComponents, targetColours)
+                if (compIds.any { it in seen }) return fallbackGrouping(numComponents, targetColours)
+                seen.addAll(compIds)
+                AiRegion(
+                    id = i,
+                    label = obj.getString("label"),
+                    suggestedColour = obj.getString("colour"),
+                    componentIds = compIds
+                )
+            }
+            if (seen.size != numComponents || seen.any { it < 0 || it >= numComponents }) {
+                return fallbackGrouping(numComponents, targetColours)
+            }
+            regions
+        } catch (e: Exception) {
+            fallbackGrouping(numComponents, targetColours)
+        }
+    }
+
+    fun fallbackGrouping(numComponents: Int, targetColours: Int): List<AiRegion> {
+        val tc = targetColours.coerceAtLeast(1)
+        val groups = Array(tc) { mutableListOf<Int>() }
+        for (c in 0 until numComponents) groups[c % tc].add(c)
+        val palette = listOf("#E53935", "#1E88E5", "#43A047", "#FB8C00",
+                             "#8E24AA", "#00ACC1", "#F4511E", "#6D4C41")
+        return (0 until tc).map { i ->
+            AiRegion(
+                id = i,
+                label = "Region ${i + 1}",
+                suggestedColour = palette.getOrElse(i) { "#888888" },
+                componentIds = groups[i].toList()
+            )
+        }
+    }
+
+    fun componentDisplayColors(n: Int): IntArray {
+        if (n <= 0) return IntArray(0)
+        return IntArray(n) { i -> hsvToArgb(i * 360f / n, 0.9f, 0.95f) }
+    }
+
+    private fun hsvToArgb(h: Float, s: Float, v: Float): Int {
+        val c = v * s
+        val x = c * (1f - abs(h / 60f % 2f - 1f))
+        val m = v - c
+        val (r, g, b) = when (((h / 60f).toInt()).coerceIn(0, 5)) {
+            0 -> Triple(c, x, 0f)
+            1 -> Triple(x, c, 0f)
+            2 -> Triple(0f, c, x)
+            3 -> Triple(0f, x, c)
+            4 -> Triple(x, 0f, c)
+            else -> Triple(c, 0f, x)
+        }
+        val ri = ((r + m) * 255).toInt().coerceIn(0, 255)
+        val gi = ((g + m) * 255).toInt().coerceIn(0, 255)
+        val bi = ((b + m) * 255).toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (ri shl 16) or (gi shl 8) or bi
     }
 
     fun parseRegionJson(raw: String): List<AiRegion> {

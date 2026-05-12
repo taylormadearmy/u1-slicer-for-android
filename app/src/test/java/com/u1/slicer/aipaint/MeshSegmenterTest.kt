@@ -124,6 +124,50 @@ class MeshSegmenterTest {
         assertEquals(1f, fractions.sum(), 0.001f)
     }
 
+    // ---- segmentByTopology tests ----
+
+    @Test
+    fun `segmentByTopology flat quad produces single component`() {
+        val (ids, numComps) = MeshSegmenter.segmentByTopology(flatQuadPositions())
+        assertEquals(1, numComps)
+        assertEquals(1, ids.toSet().size)
+    }
+
+    @Test
+    fun `segmentByTopology output size matches triangle count`() {
+        val positions = cubePositions()
+        val (ids, _) = MeshSegmenter.segmentByTopology(positions)
+        assertEquals(positions.size / 9, ids.size)
+    }
+
+    @Test
+    fun `segmentByTopology cube produces 6 components`() {
+        val (_, numComps) = MeshSegmenter.segmentByTopology(cubePositions())
+        assertEquals("each face of a unit cube is a separate component", 6, numComps)
+    }
+
+    @Test
+    fun `segmentByTopology all component ids are in valid range`() {
+        val (ids, numComps) = MeshSegmenter.segmentByTopology(cubePositions())
+        ids.forEach { assertTrue("id $it out of range 0..$numComps", it in 0 until numComps) }
+    }
+
+    @Test
+    fun `segmentByTopology merges to maxComponents when specified`() {
+        val (ids, numComps) = MeshSegmenter.segmentByTopology(cubePositions(), maxComponents = 2)
+        assertEquals(2, numComps)
+        assertEquals(2, ids.toSet().size)
+    }
+
+    @Test
+    fun `segmentByTopology merged result covers all triangles`() {
+        val positions = cubePositions()
+        val (ids, numComps) = MeshSegmenter.segmentByTopology(positions, maxComponents = 3)
+        assertEquals(positions.size / 9, ids.size)
+        assertEquals(3, numComps)
+        ids.forEach { assertTrue(it in 0 until numComps) }
+    }
+
     @Test
     fun `narrow top band gets only high-z triangles`() {
         // bounds: region 0 = 0-90%, region 1 = 90-100%

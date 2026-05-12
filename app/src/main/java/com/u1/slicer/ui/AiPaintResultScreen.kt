@@ -93,7 +93,7 @@ fun AiPaintResultScreen(
                             shape = MaterialTheme.shapes.small,
                             color = MaterialTheme.colorScheme.primaryContainer
                         ) {
-                            Text("4 regions", modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            Text("${localRegions.size} regions", modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall)
                         }
                     }

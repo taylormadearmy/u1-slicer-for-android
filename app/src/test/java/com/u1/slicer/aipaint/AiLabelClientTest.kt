@@ -67,4 +67,109 @@ Hope that helps."""
         val req = AiLabelClient.buildRequest(AiPaintProvider.CLAUDE, "sk-ant-test", "prompt", emptyList())
         assertEquals("sk-ant-test", req.header("x-api-key"))
     }
+
+    // ---- parseGroupJson tests ----
+
+    @Test
+    fun `parseGroupJson parses valid response`() {
+        val json = """{"groups": [
+            {"component_ids": [0, 1], "label": "Legs", "colour": "#8B4513"},
+            {"component_ids": [2], "label": "Body", "colour": "#C62828"},
+            {"component_ids": [3, 4], "label": "Head", "colour": "#1565C0"},
+            {"component_ids": [5], "label": "Base", "colour": "#FFCC00"}
+        ]}"""
+        val regions = AiLabelClient.parseGroupJson(json, numComponents = 6, targetColours = 4)
+        assertEquals(4, regions.size)
+        assertEquals("Legs", regions[0].label)
+        assertEquals("#8B4513", regions[0].suggestedColour)
+        assertEquals(listOf(0, 1), regions[0].componentIds)
+        assertEquals(listOf(5), regions[3].componentIds)
+    }
+
+    @Test
+    fun `parseGroupJson returns fallback on malformed JSON`() {
+        val regions = AiLabelClient.parseGroupJson("not json at all", numComponents = 4, targetColours = 4)
+        assertEquals(4, regions.size)
+        regions.forEachIndexed { i, r ->
+            assertEquals(i, r.id)
+            assertTrue(r.label.startsWith("Region"))
+        }
+    }
+
+    @Test
+    fun `parseGroupJson returns fallback on wrong group count`() {
+        val json = """{"groups": [{"component_ids": [0], "label": "A", "colour": "#FF0000"}]}"""
+        val regions = AiLabelClient.parseGroupJson(json, numComponents = 4, targetColours = 4)
+        assertEquals(4, regions.size)
+    }
+
+    @Test
+    fun `parseGroupJson extracts JSON embedded in prose`() {
+        val response = """Sure! Here is my grouping:
+{"groups": [{"component_ids": [0, 1], "label": "Body", "colour": "#FF0000"},{"component_ids": [2], "label": "Legs", "colour": "#0000FF"},{"component_ids": [3], "label": "Head", "colour": "#00FF00"},{"component_ids": [4], "label": "Base", "colour": "#888888"}]}
+Hope that helps."""
+        val regions = AiLabelClient.parseGroupJson(response, numComponents = 5, targetColours = 4)
+        assertEquals(4, regions.size)
+        assertEquals("Body", regions[0].label)
+        assertEquals(listOf(0, 1), regions[0].componentIds)
+    }
+
+    @Test
+    fun `parseGroupJson returns fallback on duplicate component ids`() {
+        val json = """{"groups": [
+            {"component_ids": [0, 1], "label": "A", "colour": "#FF0000"},
+            {"component_ids": [1, 2], "label": "B", "colour": "#00FF00"},
+            {"component_ids": [3], "label": "C", "colour": "#0000FF"},
+            {"component_ids": [4], "label": "D", "colour": "#FFFF00"}
+        ]}"""
+        val regions = AiLabelClient.parseGroupJson(json, numComponents = 5, targetColours = 4)
+        assertEquals(4, regions.size)
+        // Should fall back because component 1 is used twice
+        assertTrue(regions.all { it.label.startsWith("Region") })
+    }
+
+    // ---- componentDisplayColors tests ----
+
+    @Test
+    fun `componentDisplayColors returns n distinct ARGB values`() {
+        val colors = AiLabelClient.componentDisplayColors(8)
+        assertEquals(8, colors.size)
+        assertEquals(8, colors.toSet().size)
+        colors.forEach { c ->
+            assertEquals("alpha should be 255", 255, (c ushr 24) and 0xFF)
+        }
+    }
+
+    @Test
+    fun `componentDisplayColors returns empty array for 0`() {
+        assertEquals(0, AiLabelClient.componentDisplayColors(0).size)
+    }
+
+    @Test
+    fun `componentDisplayColors 4 colors are evenly hue-spaced`() {
+        // With n=4, hues are 0°, 90°, 180°, 270°: red, lime, cyan, blue-ish
+        val colors = AiLabelClient.componentDisplayColors(4)
+        assertEquals(4, colors.size)
+        assertEquals(4, colors.toSet().size)
+    }
+
+    // ---- fallbackGrouping tests ----
+
+    @Test
+    fun `fallbackGrouping distributes all components`() {
+        val regions = AiLabelClient.fallbackGrouping(numComponents = 7, targetColours = 4)
+        assertEquals(4, regions.size)
+        val allIds = regions.flatMap { it.componentIds }
+        assertEquals(7, allIds.size)
+        assertEquals((0..6).toSet(), allIds.toSet())
+    }
+
+    @Test
+    fun `fallbackGrouping with fewer components than colours`() {
+        val regions = AiLabelClient.fallbackGrouping(numComponents = 2, targetColours = 4)
+        assertEquals(4, regions.size)
+        val allIds = regions.flatMap { it.componentIds }
+        assertEquals(2, allIds.size)
+        assertEquals(setOf(0, 1), allIds.toSet())
+    }
 }

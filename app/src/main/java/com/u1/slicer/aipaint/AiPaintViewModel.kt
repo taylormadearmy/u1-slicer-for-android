@@ -18,6 +18,11 @@ import java.io.File
 
 class AiPaintViewModel(application: Application) : AndroidViewModel(application) {
 
+    companion object {
+        // Hardwired at 4 for Snapmaker U1's 4 extruders; change to 8 when fullspectrum lands
+        const val TARGET_COLOURS = 4
+    }
+
     private val app get() = getApplication<U1SlicerApplication>()
     private val settings get() = app.container.settingsRepository
 
@@ -26,7 +31,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
     fun runPipeline(sourceModelPath: String, native: NativeLibrary) {
         viewModelScope.launch {
-            _uiState.value = AiPaintUiState.Running(1, "Analysing model geometry…")
+            _uiState.value = AiPaintUiState.Running(1, "Analysing model topology…")
             try {
                 // Pre-flight: check API key when required
                 val providerName = settings.aiPaintProvider.first()
@@ -46,29 +51,44 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Phase 1 — geometry-driven segmentation: BVH thickness + Z → k-means
-                val regionIds = withContext(Dispatchers.Default) {
-                    MeshSegmenter.segmentByThickness(mesh.trianglePositions)
+                // Phase 1 — topology segmentation: dihedral flood fill → ≤16 components
+                val (componentIds, numComponents) = withContext(Dispatchers.Default) {
+                    MeshSegmenter.segmentByTopology(mesh.trianglePositions)
                 }
 
-                // Phase 2 — render 4 shaded + 4 coloured-region views for AI
+                // Phase 2 — render 4 shaded + 4 component-coloured views for AI
                 _uiState.value = AiPaintUiState.Running(2, "Rendering model views…")
-                val (shadedBitmaps, coloredBitmaps) = withContext(Dispatchers.Default) {
+                val componentColors = AiLabelClient.componentDisplayColors(numComponents)
+                val (shadedBitmaps, componentBitmaps) = withContext(Dispatchers.Default) {
                     val shaded = CameraAngle.entries.map { angle ->
                         AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
                     }
-                    val colored = CameraAngle.entries.map { angle ->
-                        AiPaintRenderer.renderRegions(mesh.trianglePositions, regionIds, 512, 512, angle)
+                    val comps = CameraAngle.entries.map { angle ->
+                        AiPaintRenderer.renderRegions(
+                            mesh.trianglePositions, componentIds, componentColors, 512, 512, angle
+                        )
                     }
-                    Pair(shaded, colored)
+                    Pair(shaded, comps)
                 }
 
-                // Phase 3 — AI labels each pre-coloured region
+                // Phase 3 — AI groups components into TARGET_COLOURS semantic regions
                 _uiState.value = AiPaintUiState.Running(3, "Asking AI to label parts…")
-                val regions = AiLabelClient.label(provider, apiKey, shadedBitmaps + coloredBitmaps)
+                val regions = AiLabelClient.label(
+                    provider, apiKey,
+                    shadedBitmaps, componentBitmaps,
+                    numComponents, TARGET_COLOURS
+                )
 
-                // Phase 4 — compute coverage fractions and write painted 3MF
+                // Phase 4 — map components → region ids, write painted 3MF
                 _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
+                val componentToRegion = IntArray(numComponents)
+                regions.forEachIndexed { regionIdx, region ->
+                    region.componentIds.forEach { c ->
+                        if (c in 0 until numComponents) componentToRegion[c] = regionIdx
+                    }
+                }
+                val regionIds = IntArray(componentIds.size) { componentToRegion[componentIds[it]] }
+
                 val fractions = MeshSegmenter.coverageFractions(regionIds, regions.size)
                 val regionsWithCoverage = regions.mapIndexed { i, r ->
                     r.copy(coverageFraction = fractions.getOrElse(i) { 0f })
@@ -76,12 +96,23 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
                 PaintedMeshWriter.write(mesh.trianglePositions, regionIds, regionsWithCoverage, outFile)
 
+                // Render final preview with AI-assigned colours
+                val regionColors = regionsWithCoverage.map { r ->
+                    runCatching { android.graphics.Color.parseColor(r.effectiveColour) }
+                        .getOrDefault(android.graphics.Color.GRAY)
+                }.toIntArray()
+                val previewBitmap = withContext(Dispatchers.Default) {
+                    AiPaintRenderer.renderRegions(
+                        mesh.trianglePositions, regionIds, regionColors, 512, 512, CameraAngle.RIGHT_ISO
+                    )
+                }
+
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         regions = regionsWithCoverage,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
-                        previewBitmap = coloredBitmaps.last() // RIGHT_ISO coloured regions
+                        previewBitmap = previewBitmap
                     )
                 )
             } catch (e: Exception) {

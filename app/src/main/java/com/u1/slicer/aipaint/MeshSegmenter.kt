@@ -1,6 +1,141 @@
 package com.u1.slicer.aipaint
 
+import kotlin.math.sqrt
+
 object MeshSegmenter {
+
+    private const val MAX_INTERMEDIATE_COMPONENTS = 16
+    private const val CREASE_DOT = 0.7071f // cos(45°) — dihedral angles sharper than 45° are treated as creases
+
+    /**
+     * Segments a mesh by surface topology using dihedral-angle flood fill.
+     * Triangles separated by crease edges (angle > 45°) form separate components.
+     * Merges small components until at most [maxComponents] remain.
+     *
+     * Returns (componentIdPerTriangle, numComponents).
+     */
+    fun segmentByTopology(
+        positions: FloatArray,
+        maxComponents: Int = MAX_INTERMEDIATE_COMPONENTS
+    ): Pair<IntArray, Int> {
+        val nTri = positions.size / 9
+        if (nTri == 0) return Pair(IntArray(0), 0)
+
+        val normals = Array(nTri) { i -> triNormal(positions, i * 9) }
+
+        // Build edge → triangle list (all manifold edges only)
+        val edgeMap = HashMap<Long, MutableList<Int>>(nTri * 2)
+        for (i in 0 until nTri) {
+            val b = i * 9
+            for (e in 0..2) {
+                val va = b + e * 3
+                val vb = b + (e + 1) % 3 * 3
+                edgeMap.getOrPut(edgeKey(positions, va, vb)) { mutableListOf() }.add(i)
+            }
+        }
+
+        // Smooth adjacency for flood fill; all-edge adjacency for component merging
+        val smoothAdj = Array(nTri) { mutableListOf<Int>() }
+        val allAdj    = Array(nTri) { mutableListOf<Int>() }
+        for ((_, tris) in edgeMap) {
+            if (tris.size != 2) continue
+            val a = tris[0]; val b = tris[1]
+            allAdj[a].add(b); allAdj[b].add(a)
+            val na = normals[a]; val nb = normals[b]
+            if (na[0]*nb[0] + na[1]*nb[1] + na[2]*nb[2] >= CREASE_DOT) {
+                smoothAdj[a].add(b); smoothAdj[b].add(a)
+            }
+        }
+
+        // BFS flood fill → connected components
+        val compId = IntArray(nTri) { -1 }
+        var numComps = 0
+        for (start in 0 until nTri) {
+            if (compId[start] != -1) continue
+            val q = ArrayDeque<Int>()
+            q.add(start); compId[start] = numComps
+            while (q.isNotEmpty()) {
+                val tri = q.removeFirst()
+                for (nb in smoothAdj[tri]) {
+                    if (compId[nb] == -1) { compId[nb] = numComps; q.add(nb) }
+                }
+            }
+            numComps++
+        }
+
+        return mergeComponents(compId, numComps, allAdj, maxComponents)
+    }
+
+    private fun mergeComponents(
+        compId: IntArray,
+        numComps: Int,
+        allAdj: Array<MutableList<Int>>,
+        maxComps: Int
+    ): Pair<IntArray, Int> {
+        val ids = compId.copyOf()
+        var n = numComps
+
+        while (n > maxComps) {
+            val size = IntArray(n)
+            for (id in ids) size[id]++
+
+            val smallest = (0 until n).minByOrNull { size[it] } ?: break
+
+            // Find the adjacent component sharing the most boundary triangles
+            val adjCount = HashMap<Int, Int>()
+            for (i in ids.indices) {
+                if (ids[i] != smallest) continue
+                for (nb in allAdj[i]) {
+                    val nc = ids[nb]
+                    if (nc != smallest) adjCount[nc] = (adjCount[nc] ?: 0) + 1
+                }
+            }
+            val mergeInto = adjCount.maxByOrNull { it.value }?.key
+                ?: (0 until n).filter { it != smallest }.maxByOrNull { size[it] }
+                ?: break
+
+            // Merge smallest → mergeInto; keep id space dense by renaming n-1 → smallest
+            for (i in ids.indices) if (ids[i] == smallest) ids[i] = mergeInto
+            if (smallest != n - 1) {
+                for (i in ids.indices) if (ids[i] == n - 1) ids[i] = smallest
+            }
+            n--
+        }
+
+        return Pair(ids, n)
+    }
+
+    private fun triNormal(positions: FloatArray, base: Int): FloatArray {
+        val ax = positions[base + 3] - positions[base]
+        val ay = positions[base + 4] - positions[base + 1]
+        val az = positions[base + 5] - positions[base + 2]
+        val bx = positions[base + 6] - positions[base]
+        val by = positions[base + 7] - positions[base + 1]
+        val bz = positions[base + 8] - positions[base + 2]
+        val nx = ay * bz - az * by
+        val ny = az * bx - ax * bz
+        val nz = ax * by - ay * bx
+        val len = sqrt(nx * nx + ny * ny + nz * nz).coerceAtLeast(1e-9f)
+        return floatArrayOf(nx / len, ny / len, nz / len)
+    }
+
+    private fun vertexKey(positions: FloatArray, base: Int): Long {
+        // 20-bit per axis (±524mm at 1mm/1000 precision): 3×20 = 60 bits, fits in positive Long
+        val x = Math.round(positions[base]     * 1000f).toLong().coerceIn(-524_288, 524_287)
+        val y = Math.round(positions[base + 1] * 1000f).toLong().coerceIn(-524_288, 524_287)
+        val z = Math.round(positions[base + 2] * 1000f).toLong().coerceIn(-524_288, 524_287)
+        return ((x + 524_288L) shl 40) or ((y + 524_288L) shl 20) or (z + 524_288L)
+    }
+
+    private fun edgeKey(positions: FloatArray, va: Int, vb: Int): Long {
+        val k1 = vertexKey(positions, va)
+        val k2 = vertexKey(positions, vb)
+        // Canonical: min * PRIME + max — same for either edge direction
+        // 6364136223846793005L is Knuth's multiplicative hash constant (fits in positive Long)
+        return if (k1 <= k2) k1 * 6364136223846793005L + k2
+        else k2 * 6364136223846793005L + k1
+    }
+
 
     /**
      * Segments a mesh into [targetRegions] regions using BVH-based thickness detection

@@ -24,13 +24,6 @@ enum class CameraAngle {
 
 object AiPaintRenderer {
 
-    private val REGION_COLOURS = intArrayOf(
-        Color.rgb(255, 0, 0),     // region 0 = red
-        Color.rgb(0, 255, 0),     // region 1 = green
-        Color.rgb(0, 255, 255),   // region 2 = cyan
-        Color.rgb(255, 255, 0)    // region 3 = yellow
-    )
-
     fun renderShaded(positions: FloatArray, w: Int, h: Int, angle: CameraAngle): Bitmap =
         render(positions, w, h, angle) { _, nx, ny, nz ->
             val intensity = max(0.15f, 0.6f * nx + 0.7f * ny + 0.5f * nz)
@@ -38,10 +31,16 @@ object AiPaintRenderer {
             Color.rgb(v + 15, v + 10, v)
         }
 
-    fun renderRegions(positions: FloatArray, regionIds: IntArray, w: Int, h: Int, angle: CameraAngle): Bitmap =
-        render(positions, w, h, angle) { triIdx, _, _, _ ->
-            REGION_COLOURS[regionIds[triIdx].coerceIn(0, 3)]
-        }
+    fun renderRegions(
+        positions: FloatArray,
+        regionIds: IntArray,
+        regionColors: IntArray,
+        w: Int,
+        h: Int,
+        angle: CameraAngle
+    ): Bitmap = render(positions, w, h, angle) { triIdx, _, _, _ ->
+        regionColors[regionIds[triIdx].coerceIn(0, regionColors.size - 1)]
+    }
 
     private fun render(
         positions: FloatArray, w: Int, h: Int, angle: CameraAngle,
