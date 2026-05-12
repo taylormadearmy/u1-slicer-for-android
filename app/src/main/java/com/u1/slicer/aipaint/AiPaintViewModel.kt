@@ -6,11 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.u1.slicer.NativeLibrary
 import com.u1.slicer.U1SlicerApplication
 import com.u1.slicer.viewer.NativePreviewMesh
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class AiPaintViewModel(application: Application) : AndroidViewModel(application) {
@@ -36,22 +38,28 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Phase 1 — geometry segmentation
-                val mesh = native.getPreparePreviewMesh(
-                    maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES
-                ) ?: run {
+                // Phase 1 — geometry segmentation (CPU-intensive: run on Default)
+                val (mesh, regionIds, fractions) = withContext(Dispatchers.Default) {
+                    val m = native.getPreparePreviewMesh(
+                        maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES
+                    ) ?: return@withContext null
+                    val ids = MeshSegmenter.segment(m.trianglePositions, targetRegions = 4)
+                    val fracs = MeshSegmenter.coverageFractions(ids, targetRegions = 4)
+                    Triple(m, ids, fracs)
+                } ?: run {
                     _uiState.value = AiPaintUiState.Error("Could not read model geometry.")
                     return@launch
                 }
-                val regionIds = MeshSegmenter.segment(mesh.trianglePositions, targetRegions = 4)
-                val fractions = MeshSegmenter.coverageFractions(regionIds, targetRegions = 4)
 
-                // Phase 2 — render thumbnails
+                // Phase 2 — render thumbnails (CPU-intensive: run on Default)
                 _uiState.value = AiPaintUiState.Running(2, "Rendering views…")
-                val bitmaps = mutableListOf<android.graphics.Bitmap>()
-                CameraAngle.entries.forEach { angle ->
-                    bitmaps += AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
-                    bitmaps += AiPaintRenderer.renderRegions(mesh.trianglePositions, regionIds, 512, 512, angle)
+                val bitmaps = withContext(Dispatchers.Default) {
+                    val list = mutableListOf<android.graphics.Bitmap>()
+                    CameraAngle.entries.forEach { angle ->
+                        list += AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
+                        list += AiPaintRenderer.renderRegions(mesh.trianglePositions, regionIds, 512, 512, angle)
+                    }
+                    list
                 }
 
                 // Phase 3 — AI labeling
