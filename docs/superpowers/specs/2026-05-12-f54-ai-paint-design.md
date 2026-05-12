@@ -34,9 +34,9 @@ The feature also applies to already-painted multi-colour models, letting the use
 3. Tapping it runs the same pipeline and navigates to the same AI Paint Result screen.
 4. "Use this painting" replaces the previous colour assignment.
 
-### 2c. Error / no API key
+### 2c. Error handling
 
-If no API key is configured, tapping AI Paint opens a bottom sheet explaining the feature requires a Claude or OpenAI API key, with a link to Settings. Settings has an "AI Paint API key" field (Claude API preferred; OpenAI as alternative).
+The default provider (Pollinations.ai) requires no key, so the feature works out of the box. If a paid provider is selected and no key is configured, tapping AI Paint opens a bottom sheet with a link to Settings. If any provider call fails (network error, rate limit, bad response), the app shows an inline error with a "Try again" button and a suggestion to switch provider in Settings.
 
 ---
 
@@ -126,7 +126,20 @@ Populate the `AiPaintResultState` and navigate to the Result screen.
 
 ### Settings screen addition
 
-- New "AI Paint" section with a single "API key" text field. Stored encrypted in DataStore. Accepts Claude or OpenAI keys (detected by prefix: `sk-ant-` = Claude, `sk-` = OpenAI).
+- New "AI Paint" section in Settings with a **provider selector** and optional API key field.
+- Provider options (in order shown to user):
+
+| Provider | Cost | Key required |
+|---|---|---|
+| Pollinations.ai | Free, no sign-up | None — works out of the box |
+| Google Gemini | Free (1,000 req/day) | Gemini API key (no credit card) |
+| OpenRouter | Free (200 req/day) + paid | OpenRouter key |
+| Claude (Anthropic) | Paid | Anthropic key (`sk-ant-…`) |
+| OpenAI | Paid | OpenAI key (`sk-…`) |
+
+- Default provider is **Pollinations.ai** so the feature works immediately with no setup.
+- When a paid/key-required provider is selected, a text field appears for the key. Keys stored encrypted in DataStore.
+- Provider detection from key prefix when user pastes a key: `sk-ant-` → Claude, `sk-` → OpenAI, `AIzaSy` → Gemini, `sk-or-` → OpenRouter.
 
 ---
 
@@ -159,7 +172,7 @@ data class AiPaintResultState(
 - Multi-colour model → Recolour with AI → same flow
 - Colour swap per region (from loaded filaments or colour picker)
 - Redo (re-run pipeline)
-- API key in Settings (Claude primary, OpenAI fallback)
+- Multi-provider support in Settings: Pollinations.ai (free, no key), Gemini (free 1k/day), OpenRouter, Claude, OpenAI
 - Error state when no API key or call fails
 - Single-plate models only
 
