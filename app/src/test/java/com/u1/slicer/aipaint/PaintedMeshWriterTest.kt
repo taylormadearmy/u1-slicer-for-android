@@ -47,22 +47,42 @@ class PaintedMeshWriterTest {
     }
 
     @Test
-    fun `model XML contains 4 object elements`() {
+    fun `model XML contains single painted object with paint_color on every triangle`() {
         val out = tmp.newFile("painted.3mf")
         PaintedMeshWriter.write(fourRegionPositions(), fourRegionIds(), regions(), out)
         ZipFile(out).use { zip ->
             val xml = zip.getInputStream(zip.getEntry("3D/3dmodel.model")).reader().readText()
-            assertEquals(4, Regex("""<object """).findAll(xml).count())
+            // Single object (paint_color approach replaces 4-object approach)
+            assertEquals(1, Regex("""<object """).findAll(xml).count())
+            // Every triangle has a paint_color attribute
+            val triCount = Regex("""<triangle """).findAll(xml).count()
+            val paintCount = Regex("""paint_color=""").findAll(xml).count()
+            assertEquals(triCount, paintCount)
         }
     }
 
     @Test
-    fun `model settings config assigns extruders 1 to 4`() {
+    fun `paint_color encodes correct states for each region`() {
+        val out = tmp.newFile("painted.3mf")
+        PaintedMeshWriter.write(fourRegionPositions(), fourRegionIds(), regions(), out)
+        ZipFile(out).use { zip ->
+            val xml = zip.getInputStream(zip.getEntry("3D/3dmodel.model")).reader().readText()
+            // fourRegionIds() = [0,0, 1,1, 2,2, 3,3] → 2 tris per region
+            // Leaf-triangle encoding: state1="4", state2="8", state3="0C", state4="1C"
+            assertTrue("Missing state1 paint", xml.contains("""paint_color="4""""))
+            assertTrue("Missing state2 paint", xml.contains("""paint_color="8""""))
+            assertTrue("Missing state3 paint", xml.contains("""paint_color="0C""""))
+            assertTrue("Missing state4 paint", xml.contains("""paint_color="1C""""))
+        }
+    }
+
+    @Test
+    fun `model settings config has minimal BBS trigger entry`() {
         val out = tmp.newFile("painted.3mf")
         PaintedMeshWriter.write(fourRegionPositions(), fourRegionIds(), regions(), out)
         ZipFile(out).use { zip ->
             val xml = zip.getInputStream(zip.getEntry("Metadata/model_settings.config")).reader().readText()
-            for (e in 1..4) assertTrue("Missing extruder $e", xml.contains("value=\"$e\""))
+            assertTrue("Must have object id=1 to trigger BBS parser", xml.contains("""id="1""""))
         }
     }
 }
