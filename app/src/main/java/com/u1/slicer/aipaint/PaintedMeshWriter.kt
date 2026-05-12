@@ -44,8 +44,14 @@ object PaintedMeshWriter {
         val nTri = positions.size / 9
         val sb = StringBuilder(nTri * 120)
         sb.append("""<?xml version="1.0" encoding="UTF-8"?>""")
-        sb.append("""<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">""")
+        sb.append("\n")
+        // xmlns:BambuStudio namespace + Application metadata set m_is_bbl_3mf=true in the
+        // native BBS parser so paint_color attributes are fully honoured.
+        sb.append("""<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">""")
+        sb.append("""<metadata name="Application">BambuStudio-2.2.4</metadata>""")
+        sb.append("\n")
         sb.append("""<resources><object id="1" type="model"><mesh>""")
+        sb.append("\n")
 
         val vertexMap = LinkedHashMap<Triple<Float, Float, Float>, Int>(nTri * 2)
         val triVerts = Array(nTri) { i ->
@@ -62,14 +68,17 @@ object PaintedMeshWriter {
 
         sb.append("<vertices>")
         vertexMap.keys.forEach { (x, y, z) ->
+            sb.append("\n  ")
             sb.append("""<vertex x="${"%.4f".format(x)}" y="${"%.4f".format(y)}" z="${"%.4f".format(z)}"/>""")
         }
-        sb.append("</vertices><triangles>")
+        sb.append("\n</vertices>\n<triangles>")
         triVerts.forEachIndexed { i, (a, b, c) ->
             val paint = PAINT_COLOR[regionIds[i].coerceIn(0, 3)]
+            sb.append("\n  ")
             sb.append("""<triangle v1="$a" v2="$b" v3="$c" paint_color="$paint"/>""")
         }
-        sb.append("</triangles></mesh></object></resources>")
+        sb.append("\n</triangles></mesh></object></resources>")
+        sb.append("\n")
         sb.append("""<build><item objectid="1"/></build></model>""")
         return sb.toString()
     }

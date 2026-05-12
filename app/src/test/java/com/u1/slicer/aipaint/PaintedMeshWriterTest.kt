@@ -77,6 +77,24 @@ class PaintedMeshWriterTest {
     }
 
     @Test
+    fun `each paint state is findable by line-by-line scan matching ThreeMfParser behaviour`() {
+        // ThreeMfParser.streamCollectPaintSpecs reads the model line-by-line and extracts
+        // one paint_color value per line.  If all triangles are on a single line only the
+        // first state is detected, giving detectedExtruderCount=1 and a single-colour preview.
+        // This test guards against regression to single-line XML output.
+        val out = tmp.newFile("painted.3mf")
+        PaintedMeshWriter.write(fourRegionPositions(), fourRegionIds(), regions(), out)
+        ZipFile(out).use { zip ->
+            val xml = zip.getInputStream(zip.getEntry("3D/3dmodel.model")).reader().readText()
+            val regex = Regex("""paint_color="([^"]+)"""")
+            val statesPerLine = xml.lines()
+                .mapNotNull { regex.find(it)?.groupValues?.getOrNull(1) }
+                .toSet()
+            assertEquals(setOf("4", "8", "0C", "1C"), statesPerLine)
+        }
+    }
+
+    @Test
     fun `model settings config has minimal BBS trigger entry`() {
         val out = tmp.newFile("painted.3mf")
         PaintedMeshWriter.write(fourRegionPositions(), fourRegionIds(), regions(), out)
