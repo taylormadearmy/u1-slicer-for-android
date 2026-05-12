@@ -579,6 +579,7 @@ class MainActivity : ComponentActivity() {
                             sharedPreviewCameraState = sharedPreviewCameraState,
                             onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it },
                             onResetPreviewCamera = { sharedPreviewCameraState = null },
+                            onNavigateAiPaint = { navController.navigate(Routes.AI_PAINT) },
                         )
                     },
                     previewContent = {
@@ -1090,6 +1091,7 @@ fun PrepareScreen(
     sharedPreviewCameraState: com.u1.slicer.viewer.CameraViewState?,
     onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit,
     onResetPreviewCamera: (() -> Unit)? = null,
+    onNavigateAiPaint: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
     val config by viewModel.config.collectAsState()
@@ -1368,6 +1370,20 @@ fun PrepareScreen(
                                 viewModel.setFilamentColorOverride(idx, color)
                             },
                         )
+                        // Recolour with AI button for multi-colour / painted models
+                        if (colorMapping != null && state is SlicerViewModel.SlicerState.ModelLoaded) {
+                            TextButton(
+                                onClick = {
+                                    val path = viewModel.currentModelPath ?: return@TextButton
+                                    val container = (context.applicationContext as U1SlicerApplication).container
+                                    container.aiPaintViewModel.runPipeline(path, viewModel.nativeLib)
+                                    onNavigateAiPaint()
+                                },
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                Text("✨ Recolour with AI")
+                            }
+                        }
                         // Scale & copies controls
                         ScaleSection(
                             scale = modelScale,
@@ -1397,6 +1413,21 @@ fun PrepareScreen(
                                 },
                                 filamentOverrides = filamentOverrides,
                             )
+                        }
+                        // AI Paint button for single-colour models
+                        if (colorMapping == null && state is SlicerViewModel.SlicerState.ModelLoaded) {
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val path = viewModel.currentModelPath ?: return@OutlinedButton
+                                    val container = (context.applicationContext as U1SlicerApplication).container
+                                    container.aiPaintViewModel.runPipeline(path, viewModel.nativeLib)
+                                    onNavigateAiPaint()
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                            ) {
+                                Text("✨ AI Paint")
+                            }
                         }
                         ConfigCard(
                             config, viewModel::updateConfig,
