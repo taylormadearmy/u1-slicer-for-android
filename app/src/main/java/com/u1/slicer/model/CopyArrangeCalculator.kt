@@ -1,5 +1,8 @@
 package com.u1.slicer.model
 
+import kotlin.math.cos
+import kotlin.math.sin
+
 /**
  * Computes grid positions for multiple copies of an object on the print bed.
  *
@@ -167,5 +170,62 @@ object CopyArrangeCalculator {
         }
 
         return bestCandidate
+    }
+
+    /**
+     * Computes the axis-aligned XY footprint (width × height) of a box after applying
+     * ZYX Euler rotation (same convention as setModelRotation in native code).
+     *
+     * Used by B109 fix: drag placement bounds must use the rotated footprint, not the
+     * load-time bounding box, so the model can be placed across the full bed after rotation.
+     *
+     * @param sizeX load-time model width (mm)
+     * @param sizeY load-time model depth (mm)
+     * @param sizeZ load-time model height (mm)
+     * @param rxDeg rotation around X axis in degrees
+     * @param ryDeg rotation around Y axis in degrees
+     * @param rzDeg rotation around Z axis in degrees
+     * @return Pair(effectiveWidth, effectiveDepth) after rotation
+     */
+    fun computeRotatedFootprint(
+        sizeX: Float, sizeY: Float, sizeZ: Float,
+        rxDeg: Float, ryDeg: Float, rzDeg: Float
+    ): Pair<Float, Float> {
+        if (rxDeg == 0f && ryDeg == 0f && rzDeg == 0f) return Pair(sizeX, sizeY)
+
+        val rx = rxDeg * Math.PI / 180.0
+        val ry = ryDeg * Math.PI / 180.0
+        val rz = rzDeg * Math.PI / 180.0
+
+        val cxR = cos(rx); val sxR = sin(rx)
+        val cyR = cos(ry); val syR = sin(ry)
+        val czR = cos(rz); val szR = sin(rz)
+
+        // ZYX rotation matrix: R = Rz * Ry * Rx (matches native setModelRotation convention)
+        val r00 = cyR * czR
+        val r01 = czR * sxR * syR - cxR * szR
+        val r02 = cxR * czR * syR + sxR * szR
+        val r10 = cyR * szR
+        val r11 = cxR * czR + sxR * syR * szR
+        val r12 = cxR * syR * szR - czR * sxR
+
+        // AABB of the 8 corners of the centered box
+        val hw = sizeX / 2.0; val hh = sizeY / 2.0; val hd = sizeZ / 2.0
+        var minX = Double.MAX_VALUE; var maxX = -Double.MAX_VALUE
+        var minY = Double.MAX_VALUE; var maxY = -Double.MAX_VALUE
+
+        for (bx in doubleArrayOf(-hw, hw)) {
+            for (by in doubleArrayOf(-hh, hh)) {
+                for (bz in doubleArrayOf(-hd, hd)) {
+                    val nx = r00 * bx + r01 * by + r02 * bz
+                    val ny = r10 * bx + r11 * by + r12 * bz
+                    if (nx < minX) minX = nx
+                    if (nx > maxX) maxX = nx
+                    if (ny < minY) minY = ny
+                    if (ny > maxY) maxY = ny
+                }
+            }
+        }
+        return Pair((maxX - minX).toFloat(), (maxY - minY).toFloat())
     }
 }

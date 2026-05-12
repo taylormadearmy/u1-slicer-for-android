@@ -278,6 +278,42 @@ class CopyArrangeCalculatorTest {
         assertEquals(expectedMaxY, maxY, 0.01f)
     }
 
+    // --- B109: computeRotatedFootprint tests ---
+
+    @Test fun `b109 zero rotation returns original size`() {
+        val (w, h) = CopyArrangeCalculator.computeRotatedFootprint(200f, 100f, 50f, 0f, 0f, 0f)
+        assertEquals(200f, w, 0.01f)
+        assertEquals(100f, h, 0.01f)
+    }
+
+    @Test fun `b109 90deg z rotation swaps xy footprint`() {
+        // A 200x100mm model rotated 90° on bed becomes ~100x200mm footprint
+        val (w, h) = CopyArrangeCalculator.computeRotatedFootprint(200f, 100f, 50f, 0f, 0f, 90f)
+        assertEquals(100f, w, 0.5f)
+        assertEquals(200f, h, 0.5f)
+    }
+
+    @Test fun `b109 45deg z rotation produces larger footprint`() {
+        // |cos(45°)| * 200 + |sin(45°)| * 100 = 0.707 * 300 ≈ 212.1
+        val (w, h) = CopyArrangeCalculator.computeRotatedFootprint(200f, 100f, 50f, 0f, 0f, 45f)
+        val expected = ((200f + 100f) * Math.sqrt(2.0) / 2.0).toFloat()
+        assertEquals(expected, w, 1.0f)
+        assertEquals(expected, h, 1.0f)
+    }
+
+    @Test fun `b109 symmetry plus and minus rotation same footprint`() {
+        val (w1, h1) = CopyArrangeCalculator.computeRotatedFootprint(200f, 100f, 50f, 0f, 0f, 45f)
+        val (w2, h2) = CopyArrangeCalculator.computeRotatedFootprint(200f, 100f, 50f, 0f, 0f, -45f)
+        assertEquals(w1, w2, 0.01f)
+        assertEquals(h1, h2, 0.01f)
+    }
+
+    @Test fun `b109 180deg rotation returns original size`() {
+        val (w, h) = CopyArrangeCalculator.computeRotatedFootprint(200f, 100f, 50f, 0f, 0f, 180f)
+        assertEquals(200f, w, 0.5f)
+        assertEquals(100f, h, 0.5f)
+    }
+
     // --- B65: Copy bed warning tests ---
 
     @Test

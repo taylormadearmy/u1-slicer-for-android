@@ -2085,12 +2085,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setCopyCount(count: Int) {
         _copyCount.value = count.coerceIn(1, 16)
-        // B65: use scaled dimensions for bed warning, don't hard-block
+        // B65: use scaled + rotated dimensions for bed warning
         val mi = lastModelInfo
         val s = _modelScale.value
-        _copyBedWarning.value = if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f)
-            CopyArrangeCalculator.copyBedWarning(mi.sizeX * s.x, mi.sizeY * s.y, _copyCount.value)
-        else null
+        val rot = _modelRotation.value
+        _copyBedWarning.value = if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
+            val (rotW, rotH) = CopyArrangeCalculator.computeRotatedFootprint(
+                mi.sizeX * s.x, mi.sizeY * s.y, mi.sizeZ * s.z, rot.x, rot.y, rot.z
+            )
+            CopyArrangeCalculator.copyBedWarning(rotW, rotH, _copyCount.value)
+        } else null
         customObjectPositions = null // reset custom positions when count changes
         _sliceStale.value = true
     }
@@ -2108,12 +2112,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** Returns initial positions for inline 3D placement (custom or auto-calculated).
-     *  Uses scaled model size so the preview positions match the visual footprint on the bed. */
+     *  Uses rotated + scaled model footprint so the model centers correctly after rotation (B109). */
     fun getPlacementPositions(): FloatArray {
         customObjectPositions?.let { return it }
         val mi = lastModelInfo ?: return floatArrayOf(135f, 135f)
         val s = _modelScale.value
-        return CopyArrangeCalculator.calculate(mi.sizeX * s.x, mi.sizeY * s.y, _copyCount.value)
+        val rot = _modelRotation.value
+        val (rotW, rotH) = CopyArrangeCalculator.computeRotatedFootprint(
+            mi.sizeX * s.x, mi.sizeY * s.y, mi.sizeZ * s.z, rot.x, rot.y, rot.z
+        )
+        return CopyArrangeCalculator.calculate(rotW, rotH, _copyCount.value)
     }
 
     fun updateConfig(updater: (SliceConfig) -> SliceConfig) {

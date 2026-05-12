@@ -1269,6 +1269,7 @@ fun PrepareScreen(
                                 objectPositions = positions,
                                 modelSizeX = loadedInfo?.sizeX ?: 0f,
                                 modelSizeY = loadedInfo?.sizeY ?: 0f,
+                                modelSizeZ = loadedInfo?.sizeZ ?: 0f,
                                 wipeTowerEnabled = config.wipeTowerEnabled,
                                 wipeTowerX = config.wipeTowerX,
                                 wipeTowerY = config.wipeTowerY,
@@ -2706,6 +2707,7 @@ fun InlineModelPreview(
     objectPositions: FloatArray? = null,
     modelSizeX: Float = 0f,
     modelSizeY: Float = 0f,
+    modelSizeZ: Float = 0f,
     wipeTowerEnabled: Boolean = false,
     wipeTowerX: Float = 0f,
     wipeTowerY: Float = 0f,
@@ -2778,6 +2780,16 @@ fun InlineModelPreview(
     }
     var towerX by remember(wipeTowerX) { mutableFloatStateOf(wipeTowerX) }
     var towerY by remember(wipeTowerY) { mutableFloatStateOf(wipeTowerY) }
+
+    // B109: compute effective placement footprint after rotation+scale so drag bounds
+    // allow the model to reach the far edge of the bed after any rotation.
+    val (effPlaceSizeX, effPlaceSizeY) = remember(modelSizeX, modelSizeY, modelSizeZ, modelScale, modelRotation) {
+        val (rotW, rotH) = com.u1.slicer.model.CopyArrangeCalculator.computeRotatedFootprint(
+            modelSizeX, modelSizeY, modelSizeZ,
+            modelRotation.x, modelRotation.y, modelRotation.z
+        )
+        Pair(rotW * modelScale.x, rotH * modelScale.y)
+    }
 
     LaunchedEffect(modelFilePath, extruderMap, colorMapping?.size) {
         val requestId = parseRequestId + 1
@@ -2995,12 +3007,10 @@ fun InlineModelPreview(
             v.onObjectMoved = { index, dx, dy ->
                 val count = objPositions.size / 2
                 if (index < count) {
-                    // Move object — use scaled size for bed bounds
+                    // Move object — use rotated+scaled footprint for correct bed bounds (B109)
                     val i = index
-                    val scaledSizeX = modelSizeX * modelScale.x
-                    val scaledSizeY = modelSizeY * modelScale.y
-                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - scaledSizeX))
-                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - scaledSizeY))
+                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - effPlaceSizeX))
+                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - effPlaceSizeY))
                     v.renderer.instancePositions = objPositions.copyOf()
                     onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY))
                 } else {
@@ -3122,8 +3132,8 @@ fun InlineModelPreview(
             if (previewTooLarge) {
                 LargePreviewFallback(
                     triangleCount = modelTriangleCount,
-                    modelSizeX = modelSizeX * modelScale.x,
-                    modelSizeY = modelSizeY * modelScale.y,
+                    modelSizeX = effPlaceSizeX,
+                    modelSizeY = effPlaceSizeY,
                     wipeTowerDepth = wipeTowerDepth,
                     objectPositions = objPositions.copyOf(),
                     wipeTowerVisible = placementConfig.wipeTowerVisible,

@@ -4,10 +4,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B109: Rotated model can't be placed across the full bed — constrained to pre-rotation footprint (GitHub #135)
+### B109: Rotated model can't be placed across the full bed — constrained to pre-rotation footprint (GitHub #135) — FIXED v2.1.3
 - **Symptom**: After rotating a model (e.g. Dragon Scale 90°), the drag placement is constrained to a smaller area than the bed — the model cannot be moved to the right-hand side or other edges. More pronounced when the model is also scaled up.
 - **Reported by**: Kevin (Discord), v2.1.2 (versionCode 272).
-- **Likely cause**: `CopyArrangeCalculator.calculate()` and drag-placement bounds use the pre-rotation model dimensions (`sizeX × sizeY` from `ModelInfo`). After rotation the actual footprint changes (e.g. 200×100mm rotated 90° → 100×200mm footprint) but bounds are still computed from the original dimensions.
+- **Root cause**: `InlineModelPreview` drag clamping used `modelSizeX/Y * scale` (load-time AABB) for `coerceIn` bounds. After rotation the footprint changes (e.g. 200×100mm rotated 90° → 100×200mm) but bounds stayed at original values. Same issue in `getPlacementPositions()` / `setCopyCount()` which fed stale dimensions to `CopyArrangeCalculator.calculate()` and `copyBedWarning()`.
+- **Fix**: Added `CopyArrangeCalculator.computeRotatedFootprint(sizeX, sizeY, sizeZ, rxDeg, ryDeg, rzDeg)` — computes AABB of the 8 box corners after ZYX rotation (matching native convention). Used in: `InlineModelPreview` drag clamping and `LargePreviewFallback`, `getPlacementPositions()`, `setCopyCount()`. Added `modelSizeZ` parameter to `InlineModelPreview` for complete tilt-axis support.
+- **Tests**: 5 new unit tests in `CopyArrangeCalculatorTest` (zero/90°/45°/symmetry/180° rotation cases).
 
 ### B108: Scale-down doesn't re-anchor model to bed — empty initial layer / model floats in air (GitHub #134) — FIXED v2.1.3
 - **Symptom**: Scaling a model to 60–90% before slicing triggered *"One object has empty initial layer and can't be printed. Please Cut the bottom or enable supports."* Model also appeared way too small (embedded 5.083× scale was being overwritten by user scale instead of multiplied).
