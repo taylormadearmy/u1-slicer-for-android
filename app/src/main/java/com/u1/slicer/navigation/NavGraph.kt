@@ -7,7 +7,9 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.u1.slicer.SlicerViewModel
+import com.u1.slicer.U1SlicerApplication
 import com.u1.slicer.printer.PrinterViewModel
+import com.u1.slicer.ui.AiPaintResultScreen
 import com.u1.slicer.ui.FilamentScreen
 import com.u1.slicer.ui.GcodeViewer3DScreen
 import com.u1.slicer.ui.MakerWorldBrowserScreen
@@ -23,6 +25,7 @@ object Routes {
     const val GCODE_VIEWER_3D = "gcode_viewer_3d"
     const val MODEL_VIEWER = "model_viewer"
     const val MAKERWORLD_BROWSER = "makerworld_browser"
+    const val AI_PAINT = "ai_paint"
 }
 
 @Composable
@@ -120,6 +123,30 @@ fun U1NavGraph(
                     navController.popBackStack(Routes.PREPARE, inclusive = false)
                 },
                 onBack = { navController.popBackStack() }
+            )
+        }
+        composable(Routes.AI_PAINT) {
+            val container = (navController.context.applicationContext as U1SlicerApplication).container
+            val aiVm = container.aiPaintViewModel
+            val uiState by aiVm.uiState.collectAsState()
+            val filamentColours = viewModel.activeExtruderColors.collectAsState().value
+
+            AiPaintResultScreen(
+                uiState = uiState,
+                filamentColours = filamentColours,
+                onUsePainting = { paintedPath ->
+                    viewModel.loadModelFromFile(java.io.File(paintedPath))
+                    navController.popBackStack(Routes.PREPARE, inclusive = false)
+                },
+                onRedo = {
+                    val sourcePath = viewModel.currentModelPath ?: return@AiPaintResultScreen
+                    aiVm.redo(sourcePath, viewModel.nativeLib)
+                },
+                onBack = {
+                    aiVm.reset()
+                    navController.popBackStack()
+                },
+                onNavigateSettings = { navController.navigate(Routes.SETTINGS) }
             )
         }
     }

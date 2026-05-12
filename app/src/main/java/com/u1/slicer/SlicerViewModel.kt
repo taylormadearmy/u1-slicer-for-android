@@ -153,6 +153,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private val native = NativeLibrary()
+    internal val nativeLib: NativeLibrary get() = native
     private val diagnostics = DiagnosticsStore(application)
     private val container = (application as U1SlicerApplication).container
     private val settingsRepo = container.settingsRepository
