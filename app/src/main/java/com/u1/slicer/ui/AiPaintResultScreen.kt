@@ -77,7 +77,7 @@ fun AiPaintResultScreen(
 
                     // Preview image (front shaded render from Phase 2)
                     Box(
-                        Modifier.fillMaxWidth().fillMaxHeight(0.55f)
+                        Modifier.fillMaxWidth().fillMaxHeight(0.42f)
                             .background(Color(0xFF111118))
                     ) {
                         result.previewBitmap?.let { bmp ->
