@@ -283,6 +283,7 @@ bool SlicerEngine::loadModel(const std::string& filepath, int plate_id) {
         g_rotation_base_positions.clear();
         g_rotation_base_rotations.clear();
         { extern void resetLastRotation(); resetLastRotation(); }
+        { extern void resetLoadTimeScaleFactors(); resetLoadTimeScaleFactors(); }
 
         SAPIL_LOGI("Model loaded: %s (%s) — %.1f x %.1f x %.1f mm, %d triangles",
             g_model_info.filename.c_str(), ext.c_str(),
@@ -625,6 +626,7 @@ void SlicerEngine::clearModel() {
     g_rotation_base_positions.clear();
     g_rotation_base_rotations.clear();
     { extern void resetLastRotation(); resetLastRotation(); }
+    { extern void resetLoadTimeScaleFactors(); resetLoadTimeScaleFactors(); }
     g_files_dir.clear();
     std::ostringstream payload;
     payload << "{"

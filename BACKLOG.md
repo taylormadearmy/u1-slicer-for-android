@@ -4,6 +4,19 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B109: Rotated model can't be placed across the full bed — constrained to pre-rotation footprint (GitHub #135)
+- **Symptom**: After rotating a model (e.g. Dragon Scale 90°), the drag placement is constrained to a smaller area than the bed — the model cannot be moved to the right-hand side or other edges. More pronounced when the model is also scaled up.
+- **Reported by**: Kevin (Discord), v2.1.2 (versionCode 272).
+- **Likely cause**: `CopyArrangeCalculator.calculate()` and drag-placement bounds use the pre-rotation model dimensions (`sizeX × sizeY` from `ModelInfo`). After rotation the actual footprint changes (e.g. 200×100mm rotated 90° → 100×200mm footprint) but bounds are still computed from the original dimensions.
+
+### B108: Scale-down doesn't re-anchor model to bed — empty initial layer / model floats in air (GitHub #134) — FIXED v2.1.3
+- **Symptom**: Scaling a model to 60–90% before slicing triggered *"One object has empty initial layer and can't be printed. Please Cut the bottom or enable supports."* Model also appeared way too small (embedded 5.083× scale was being overwritten by user scale instead of multiplied).
+- **Reported by**: DC15 (Discord), v2.1.2 (versionCode 272). Model: `Articulated+Fish+(3).3mf` (MakerWorld, 2.21 MB).
+- **Root cause**: `setModelScale()` called `inst->set_scaling_factor(user_scale)` absolutely, overwriting the file's embedded 5.083× scale with 0.6 (producing a 4mm model instead of 21mm). The Z offset (17.5mm) was then unchanged, so world-space bottom = −3.44 × 0.6 + 17.5 = 15.4mm above bed. The multi-object `setModelInstances` path sets `delta.z = 0` (no Z correction for multi-object groups), leaving the model floating.
+- **Fix** (`sapil_arrange.cpp`): (1) Snapshot per-instance load-time scaling factors on the first `setModelScale()` call after model load; apply user scale multiplicatively (`effective_sf = loadtime_sf × user_scale`). (2) After updating all instances, recompute the world AABB and apply a Z correction so the group bottom lands at z=0. Reset the snapshot in `sapil_model.cpp` on both `loadModel` and `clearModel`.
+- **Tests**: `SlicingIntegrationTest#b108_articulatedFish_scaledTo60pct_slicesWithModelOnBed`; B73 scale-placement regression still passes.
+- **Related**: distinct from B73 (fixed v1.5.65, XY drift on scale); this is Z re-snap + multiplicative scale from embedded file transform.
+
 ### B107: STL bed temp silently bumped +5°C above user setting (GitHub #123) — FIXED v2.1.2
 - **Symptom**: User sets bedTemp to 65°C, printer bed runs at 70°C for the entire print.
 - **Root cause**: `applyConfigToPrusa()` hardcoded `hot_plate_temp_initial_layer = bedTemp + 5`. The Snapmaker U1 `machine_start_gcode` uses `{bed_temperature_initial_layer_single}` which resolves to 70°C. No subsequent M190 drops the bed back to 65°C. Bambu 3MF files with embedded profiles were unaffected (profile_keys[] overrides the value).

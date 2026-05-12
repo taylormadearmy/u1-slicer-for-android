@@ -18,6 +18,14 @@ extern void invalidatePreviewMeshCache();
 extern std::vector<Slic3r::Vec3d>& getRotationBasePositions();
 extern std::vector<Slic3r::Vec3d>& getRotationBaseRotations();
 
+// Per-instance scaling factors snapshotted the first time setModelScale() is called
+// after a model load. See setModelScale() and resetLoadTimeScaleFactors() for details.
+static std::vector<Slic3r::Vec3d> g_loadtime_scale_factors;
+
+void resetLoadTimeScaleFactors() {
+    g_loadtime_scale_factors.clear();
+}
+
 bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>& positions) {
     if (!isModelLoaded()) {
         SAPIL_LOGE("setModelInstances: no model loaded");
@@ -155,24 +163,24 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
     }
     Slic3r::Model& model = getGlobalModel();
 
-    // For multi-object models, scale around the combined center so gaps between
-    // objects scale proportionally (e.g. calicube cubes stay evenly spaced).
-    // 1. Compute the combined bounding box center of all instances.
-    //
-    // The previous formulation called `obj->raw_bounding_box()` (cached
-    // behind `m_raw_bounding_box_valid`) and re-applied the full instance
-    // matrix on top via `transform_bounding_box`. On a second `setModelScale`
-    // call this double-applied scale: the cached unit-scale `raw_bounding_box`
-    // already reflected the prior scale via per-volume matrices in some code
-    // paths, and applying the new instance trafo on top placed the group
-    // centre off by `(currentScale - 1) * meshHalfSize`. Same cache-staleness
-    // shape as the offset bug fixed in ea420ea for `setModelInstances`
-    // (Review 1 nit).
-    //
-    // Inline-compute the world AABB across all (instance × volume) by
-    // applying `inst_full * volume_matrix` to each volume's mesh and
-    // unioning. Bypasses both `raw_bounding_box()` and
-    // `bounding_box_exact()` caches.
+    // Snapshot the per-instance scaling factors on first call after a model load.
+    // This preserves the file's embedded scale (e.g. 5.083× in BambuStudio exports where
+    // geometry is stored at reduced scale with a large build-item transform). Subsequent
+    // calls apply the user scale multiplicatively from this base, so user scale=0.6 means
+    // 60% of the natural world size rather than 60% of the raw mesh-vertex coordinates.
+    // B108: without this snapshot, setModelScale(0.6) overwrote the embedded 5.083× with
+    // 0.6, producing a model ≈5× too small and floating off the bed.
+    if (g_loadtime_scale_factors.empty()) {
+        for (auto* obj : model.objects) {
+            for (auto* inst : obj->instances) {
+                g_loadtime_scale_factors.push_back(inst->get_scaling_factor());
+            }
+        }
+    }
+
+    // Inline-compute the world AABB across all (instance × volume).
+    // Bypasses both raw_bounding_box() and bounding_box_exact() caches, which
+    // Slic3r does not invalidate when set_scaling_factor() is called.
     Slic3r::BoundingBoxf3 worldBB;
     for (auto* obj : model.objects) {
         for (auto* inst : obj->instances) {
@@ -193,24 +201,59 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
     }
     const Slic3r::Vec3d center = worldBB.center();
 
-    // 2. Scale each instance's mesh AND adjust its position relative to center.
+    // Apply scale to each instance.
+    // XY offset: scale around the group XY center so multi-copy gaps stay proportional.
+    // Effective sf = loadtime_sf × user_scale (multiplicative from file's natural scale).
+    size_t sfIdx = 0;
     for (auto* obj : model.objects) {
         for (auto* inst : obj->instances) {
-            // Current world position of this instance's object origin
             const Slic3r::Vec3d pos = inst->get_offset();
-            // Scale the offset from the group center
             inst->set_offset(Slic3r::Vec3d(
                 center.x() + (pos.x() - center.x()) * static_cast<double>(x),
                 center.y() + (pos.y() - center.y()) * static_cast<double>(y),
-                center.z() + (pos.z() - center.z()) * static_cast<double>(z)
+                pos.z()   // Z will be corrected by the bed-snap pass below
             ));
+            const Slic3r::Vec3d base_sf = (sfIdx < g_loadtime_scale_factors.size())
+                ? g_loadtime_scale_factors[sfIdx]
+                : Slic3r::Vec3d(1.0, 1.0, 1.0);
             inst->set_scaling_factor(Slic3r::Vec3d(
-                static_cast<double>(x),
-                static_cast<double>(y),
-                static_cast<double>(z)
+                base_sf.x() * static_cast<double>(x),
+                base_sf.y() * static_cast<double>(y),
+                base_sf.z() * static_cast<double>(z)
             ));
+            ++sfIdx;
         }
     }
+
+    // Bed-snap: recompute the world AABB after the scale change and shift all instance
+    // Z offsets so the group bottom lands at z=0. This is required because the Z
+    // translation embedded in the build-item transform is not proportional to the user
+    // scale — without the snap, models whose geometry is centred at the origin (with a
+    // large embedded Z offset to compensate) float above the bed after scale-down (B108).
+    Slic3r::BoundingBoxf3 postScaleBB;
+    for (auto* obj : model.objects) {
+        for (auto* inst : obj->instances) {
+            const Slic3r::Transform3d inst_full =
+                inst->get_transformation().get_matrix();
+            for (const auto* v : obj->volumes) {
+                if (v->is_model_part()) {
+                    postScaleBB.merge(
+                        v->mesh().transformed_bounding_box(inst_full * v->get_matrix())
+                    );
+                }
+            }
+        }
+    }
+    if (postScaleBB.defined && postScaleBB.min.z() != 0.0) {
+        const double z_correction = -postScaleBB.min.z();
+        for (auto* obj : model.objects) {
+            for (auto* inst : obj->instances) {
+                const Slic3r::Vec3d off = inst->get_offset();
+                inst->set_offset(Slic3r::Vec3d(off.x(), off.y(), off.z() + z_correction));
+            }
+        }
+    }
+
     invalidatePreviewMeshCache();
     SAPIL_LOGI("Set model scale: %.3f, %.3f, %.3f (center: %.1f, %.1f, %.1f)",
         x, y, z, center.x(), center.y(), center.z());

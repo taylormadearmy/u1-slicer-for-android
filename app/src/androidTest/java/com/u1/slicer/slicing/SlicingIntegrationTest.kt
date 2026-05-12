@@ -1181,4 +1181,35 @@ class SlicingIntegrationTest {
         assertFalse("B106: T0 must not remain after remap to E3", remapped.contains("\nT0\n"))
         assertTrue("B106: T2 must appear after remap to E3", remapped.contains("T2"))
     }
+
+    // B108: 3MF files where the build-item transform has a large embedded scale (e.g. 5.083×)
+    // and a Z translation that places the bottom at exactly z=0 at 100% scale must continue
+    // to sit on the bed when the user scales down. Previously, setModelScale() set the
+    // scaling_factor absolutely (overwriting the file's 5.083× with 0.6), and did not
+    // re-snap Z, so the model floated ~15mm above the bed and produced an empty-initial-layer
+    // slice error.
+    @Test
+    fun b108_articulatedFish_scaledTo60pct_slicesWithModelOnBed() {
+        val file = asset("Articulated+Fish+(3).3mf")
+        assertTrue("B108: model must load", lib.loadModel(file.absolutePath))
+
+        lib.setModelScale(0.6f, 0.6f, 0.6f)
+
+        val info = lib.getModelInfo()
+        assertNotNull("B108: model info must be available after load", info)
+        info!!
+        val s = 0.6f
+        val cx = (270f - info.sizeX * s) / 2f
+        val cy = (270f - info.sizeY * s) / 2f
+        lib.setModelInstances(floatArrayOf(cx, cy))
+
+        val result = lib.slice(DEFAULT_CONFIG)
+        assertNotNull("B108: slice at 60% must not crash — model may be floating above bed", result)
+        result!!
+        assertTrue(
+            "B108: scale-down must not produce empty initial layer (model must sit on bed); " +
+                "error: ${result.errorMessage}",
+            result.success
+        )
+    }
 }
