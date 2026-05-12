@@ -47,7 +47,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import com.u1.slicer.BMAC_URL
 import com.u1.slicer.BuildConfig
 import com.u1.slicer.GITHUB_URL
@@ -685,6 +692,72 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
+            }
+
+            // ---- AI Paint ----
+            SettingsSection("AI Paint") {
+                val aiProviderName by viewModel.aiPaintProvider.collectAsState()
+                val aiApiKey by viewModel.aiPaintApiKey.collectAsState()
+                val currentProvider = com.u1.slicer.aipaint.AiPaintProvider.fromId(aiProviderName)
+
+                // Provider dropdown
+                var providerExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = providerExpanded,
+                    onExpandedChange = { providerExpanded = it },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = currentProvider.displayName,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("AI Paint provider") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(providerExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = providerExpanded,
+                        onDismissRequest = { providerExpanded = false }
+                    ) {
+                        com.u1.slicer.aipaint.AiPaintProvider.entries.forEach { provider ->
+                            DropdownMenuItem(
+                                text = { Text(provider.displayName) },
+                                onClick = {
+                                    providerExpanded = false
+                                    scope.launch {
+                                        viewModel.saveAiPaintSettings(provider.name, aiApiKey)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // API key field — shown only when provider requires a key
+                if (currentProvider.requiresKey) {
+                    Spacer(Modifier.height(8.dp))
+                    var keyVisible by remember { mutableStateOf(false) }
+                    OutlinedTextField(
+                        value = aiApiKey,
+                        onValueChange = { newKey ->
+                            scope.launch {
+                                viewModel.saveAiPaintSettings(currentProvider.name, newKey)
+                            }
+                        },
+                        label = { Text("API key") },
+                        visualTransformation = if (keyVisible) VisualTransformation.None
+                                               else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { keyVisible = !keyVisible }) {
+                                Icon(
+                                    if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (keyVisible) "Hide key" else "Show key"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
 
             // ---- About ----

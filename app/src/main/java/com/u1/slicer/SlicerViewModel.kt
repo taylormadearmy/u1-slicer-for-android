@@ -698,6 +698,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveMakerWorldCookies(cookies) }
     }
 
+    // AI Paint provider + API key
+    val aiPaintProvider: StateFlow<String> = settingsRepo.aiPaintProvider
+        .stateIn(viewModelScope, SharingStarted.Eagerly, com.u1.slicer.aipaint.AiPaintProvider.DEFAULT.name)
+
+    val aiPaintApiKey: StateFlow<String> = settingsRepo.aiPaintApiKey
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    fun saveAiPaintSettings(provider: String, apiKey: String) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintSettings(provider, apiKey) }
+    }
+
     // Track the current working file (may be sanitized copy)
     private var _currentModelFile: File? = null
     private var currentModelFile: File?
