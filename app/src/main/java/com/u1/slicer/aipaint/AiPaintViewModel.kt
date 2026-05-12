@@ -26,7 +26,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
     fun runPipeline(sourceModelPath: String, native: NativeLibrary) {
         viewModelScope.launch {
-            _uiState.value = AiPaintUiState.Running(1, "Rendering model views…")
+            _uiState.value = AiPaintUiState.Running(1, "Analysing model geometry…")
             try {
                 // Pre-flight: check API key when required
                 val providerName = settings.aiPaintProvider.first()
@@ -46,38 +46,33 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Phase 1 — render shaded views for AI (no pre-segmentation)
-                val shadedBitmaps = withContext(Dispatchers.Default) {
-                    CameraAngle.entries.map { angle ->
+                // Phase 1 — geometry-driven segmentation: BVH thickness + Z → k-means
+                val regionIds = withContext(Dispatchers.Default) {
+                    MeshSegmenter.segmentByThickness(mesh.trianglePositions)
+                }
+
+                // Phase 2 — render 4 shaded + 4 coloured-region views for AI
+                _uiState.value = AiPaintUiState.Running(2, "Rendering model views…")
+                val (shadedBitmaps, coloredBitmaps) = withContext(Dispatchers.Default) {
+                    val shaded = CameraAngle.entries.map { angle ->
                         AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
                     }
+                    val colored = CameraAngle.entries.map { angle ->
+                        AiPaintRenderer.renderRegions(mesh.trianglePositions, regionIds, 512, 512, angle)
+                    }
+                    Pair(shaded, colored)
                 }
 
-                // Phase 2 — AI identifies parts and their vertical boundaries
-                _uiState.value = AiPaintUiState.Running(2, "Asking AI to identify parts…")
-                val regions = AiLabelClient.label(provider, apiKey, shadedBitmaps)
+                // Phase 3 — AI labels each pre-coloured region
+                _uiState.value = AiPaintUiState.Running(3, "Asking AI to label parts…")
+                val regions = AiLabelClient.label(provider, apiKey, shadedBitmaps + coloredBitmaps)
 
-                // Phase 3 — apply AI boundaries to segment mesh, render colored preview
-                _uiState.value = AiPaintUiState.Running(3, "Applying regions to model…")
-                val (regionIds, previewBitmap) = withContext(Dispatchers.Default) {
-                    val sorted = regions.sortedBy { it.bottomPct }
-                    val boundaries = FloatArray(sorted.size + 1)
-                    boundaries[0] = 0f
-                    sorted.forEachIndexed { i, r -> boundaries[i + 1] = r.topPct }
-                    boundaries[sorted.size] = 100f  // clamp last boundary exactly
-                    val ids = MeshSegmenter.segmentByBounds(mesh.trianglePositions, boundaries)
-                    val preview = AiPaintRenderer.renderRegions(
-                        mesh.trianglePositions, ids, 512, 512, CameraAngle.RIGHT_ISO
-                    )
-                    Pair(ids, preview)
-                }
+                // Phase 4 — compute coverage fractions and write painted 3MF
+                _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
                 val fractions = MeshSegmenter.coverageFractions(regionIds, regions.size)
                 val regionsWithCoverage = regions.mapIndexed { i, r ->
                     r.copy(coverageFraction = fractions.getOrElse(i) { 0f })
                 }
-
-                // Phase 4 — write painted 3MF
-                _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
                 PaintedMeshWriter.write(mesh.trianglePositions, regionIds, regionsWithCoverage, outFile)
 
@@ -86,7 +81,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         regions = regionsWithCoverage,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
-                        previewBitmap = previewBitmap
+                        previewBitmap = coloredBitmaps.last() // RIGHT_ISO coloured regions
                     )
                 )
             } catch (e: Exception) {

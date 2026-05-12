@@ -80,6 +80,50 @@ class MeshSegmenterTest {
         assertEquals(1f, fractions.sum(), 0.001f)
     }
 
+    // ---- segmentByThickness tests ----
+
+    @Test
+    fun `segmentByThickness output size matches triangle count`() {
+        val positions = cubePositions()
+        val ids = MeshSegmenter.segmentByThickness(positions, 4)
+        assertEquals(positions.size / 9, ids.size)
+    }
+
+    @Test
+    fun `segmentByThickness on cube produces 4 distinct regions`() {
+        val ids = MeshSegmenter.segmentByThickness(cubePositions(), 4)
+        assertEquals(4, ids.toSet().size)
+    }
+
+    @Test
+    fun `segmentByThickness all ids in range 0 to 3`() {
+        val ids = MeshSegmenter.segmentByThickness(cubePositions(), 4)
+        ids.forEach { assertTrue("region id $it out of range", it in 0..3) }
+    }
+
+    @Test
+    fun `segmentByThickness cube bottom face is region 0 top face is region 3`() {
+        // Cube bottom face (first 2 tris, z=0) should be the lowest region.
+        // Cube top face (tris 2-3, z=1) should be the highest region.
+        val ids = MeshSegmenter.segmentByThickness(cubePositions(), 4)
+        assertTrue("bottom face in region 0", ids.take(2).all { it == 0 })
+        assertTrue("top face in region 3",    ids.slice(2..3).all { it == 3 })
+    }
+
+    @Test
+    fun `segmentByThickness fewer triangles than regions returns single region`() {
+        val ids = MeshSegmenter.segmentByThickness(flatQuadPositions(), 4)
+        assertEquals(2, ids.size)
+        assertTrue("all in region 0", ids.all { it == 0 })
+    }
+
+    @Test
+    fun `segmentByThickness coverage fractions sum to 1`() {
+        val ids = MeshSegmenter.segmentByThickness(cubePositions(), 4)
+        val fractions = MeshSegmenter.coverageFractions(ids, 4)
+        assertEquals(1f, fractions.sum(), 0.001f)
+    }
+
     @Test
     fun `narrow top band gets only high-z triangles`() {
         // bounds: region 0 = 0-90%, region 1 = 90-100%

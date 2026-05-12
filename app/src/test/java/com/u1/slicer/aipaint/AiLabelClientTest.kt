@@ -6,20 +6,18 @@ import org.junit.Test
 class AiLabelClientTest {
 
     @Test
-    fun `parseRegionJson parses valid response with boundaries`() {
+    fun `parseRegionJson parses valid response`() {
         val json = """{"regions":[
-            {"id":0,"label":"Hooves","colour":"#8B4513","bottomPct":0,"topPct":20},
-            {"id":1,"label":"Legs","colour":"#C62828","bottomPct":20,"topPct":55},
-            {"id":2,"label":"Body","colour":"#1565C0","bottomPct":55,"topPct":80},
-            {"id":3,"label":"Head","colour":"#FFCC00","bottomPct":80,"topPct":100}
+            {"id":0,"label":"Hooves","colour":"#8B4513"},
+            {"id":1,"label":"Legs","colour":"#C62828"},
+            {"id":2,"label":"Body","colour":"#1565C0"},
+            {"id":3,"label":"Head","colour":"#FFCC00"}
         ]}"""
         val regions = AiLabelClient.parseRegionJson(json)
         assertEquals(4, regions.size)
         assertEquals("Hooves", regions[0].label)
-        assertEquals(0f, regions[0].bottomPct, 0.01f)
-        assertEquals(20f, regions[0].topPct, 0.01f)
+        assertEquals("#8B4513", regions[0].suggestedColour)
         assertEquals("Head", regions[3].label)
-        assertEquals(80f, regions[3].bottomPct, 0.01f)
         assertEquals(3, regions[3].id)
     }
 
