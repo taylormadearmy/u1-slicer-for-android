@@ -275,8 +275,11 @@ fun AiPaintResultScreen(
             componentId = componentId,
             currentRegion = currentRegion,
             regions = regions,
-            onMove = { toRegion ->
-                onMoveComponent(componentId, toRegion)
+            onMoveToSlot = { toSlot ->
+                // componentId IS the segment index in the post-fix32 pipeline (numComponents =
+                // TARGET_SEGMENTS, componentToRegion is identity). Reusing setSegmentSlot keeps
+                // the slot reassignment in one code path.
+                onSetSegmentSlot(componentId, toSlot)
                 onHighlightComponent(null)
                 moveSheetComponent = null
             },
@@ -686,34 +689,66 @@ private fun MoveComponentSheet(
     componentId: Int,
     currentRegion: Int?,
     regions: List<AiRegion>,
-    onMove: (Int) -> Unit,
-    onDismiss: () -> Unit
+    onMoveToSlot: (slot: Int) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    val currentLabel = currentRegion?.let { regions.getOrNull(it)?.label } ?: "—"
+    val currentRegionObj = currentRegion?.let { regions.getOrNull(it) }
+    val currentSlot = currentRegionObj?.slot
+    val currentLabel = currentRegionObj?.label ?: "—"
+    // The 4 physical filament slots and their canonical colours (from regions[0..3]).
+    val slotColours = regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS).map { r ->
+        runCatching { android.graphics.Color.parseColor(r.effectiveColour) }
+            .getOrDefault(android.graphics.Color.GRAY)
+    }
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.padding(16.dp).navigationBarsPadding()) {
-            Text("Move part #${componentId + 1}", style = MaterialTheme.typography.titleMedium)
-            Text("Currently in: $currentLabel",
+        Column(Modifier.padding(20.dp).navigationBarsPadding()) {
+            Text(
+                "Move \"$currentLabel\" to a different slot",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Currently in Slot ${(currentSlot ?: 0) + 1}",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(12.dp))
-            regions.forEachIndexed { idx, region ->
-                if (idx == currentRegion) return@forEachIndexed
-                val colour = runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
-                    .getOrDefault(android.graphics.Color.GRAY)
-                ListItem(
-                    headlineContent = { Text("Move to ${region.label}") },
-                    leadingContent = {
-                        Box(Modifier.size(24.dp).background(Color(colour), MaterialTheme.shapes.small))
-                    },
-                    modifier = Modifier.clickable { onMove(idx) }
-                )
-                HorizontalDivider()
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "TAP A FILAMENT SLOT",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                slotColours.forEachIndexed { slot, argb ->
+                    val isCurrent = slot == currentSlot
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            Modifier
+                                .size(if (isCurrent) 56.dp else 52.dp)
+                                .background(Color(argb), MaterialTheme.shapes.medium)
+                                .clickable(enabled = !isCurrent) { onMoveToSlot(slot) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (isCurrent) {
+                                Text("✓", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Slot ${slot + 1}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isCurrent) MaterialTheme.colorScheme.onSurfaceVariant
+                                    else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(20.dp))
             TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                 Text("Cancel")
             }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }

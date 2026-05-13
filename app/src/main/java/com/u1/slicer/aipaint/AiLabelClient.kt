@@ -51,11 +51,17 @@ object AiLabelClient {
     )
 
     fun buildLabelPrompt(bandCount: Int): String =
-        "This 3D model has been split into $bandCount horizontal bands from base (bottom) to " +
-        "top, each rendered in a different colour. Look at the colours in the image and name " +
-        "each band based on what part of the object it covers — e.g. \"Hooves\", \"Belly\", " +
-        "\"Head\", \"Crown\". Then suggest a realistic filament colour for each part so the " +
-        "printed model looks natural.\n\n" +
+        "You are looking at two views of the SAME 3D model from the same angle:\n" +
+        "  • Image 1: plain shaded render — use this to identify what the object IS " +
+        "(e.g. boat, dragon, vase, figurine).\n" +
+        "  • Image 2: the same model split into $bandCount horizontal bands from bottom to top, " +
+        "each band rendered in a different colour.\n\n" +
+        "First identify the object from image 1, then for image 2 name each colour band based " +
+        "on which part of THAT specific object it covers. For a boat the bands might be " +
+        "\"Hull\", \"Deck\", \"Cabin\", \"Roof\"; for a dragon \"Tail\", \"Body\", \"Neck\", " +
+        "\"Head\". Use real names from the object you identified — NOT generic terms like " +
+        "\"Band 1\". Also suggest a realistic filament colour for each band so the printed " +
+        "result looks natural.\n\n" +
         "Bands are numbered 0..${bandCount - 1} from bottom to top. Return exactly $bandCount " +
         "entries in band-index order.\n\n" +
         "Respond ONLY with valid JSON:\n" +
@@ -65,17 +71,19 @@ object AiLabelClient {
         "]}"
 
     /**
-     * Ask the AI to name each band in [bandedImage] and suggest a realistic filament colour.
+     * Ask the AI to name each band in [images] and suggest a realistic filament colour.
+     * [images] is expected to be `[shadedReference, bandedColours]` from the same camera angle —
+     * the shaded reference helps the AI identify the object before naming its parts.
      * Returns the parsed list, or null if every attempt failed (caller falls back to defaults).
      */
     suspend fun labelSegments(
         provider: AiPaintProvider,
         apiKey: String,
-        bandedImage: Bitmap,
+        images: List<Bitmap>,
         bandCount: Int,
     ): List<NamedColour>? = withContext(Dispatchers.IO) {
         val prompt = buildLabelPrompt(bandCount)
-        val jpegBytes = listOf(bitmapToJpeg(bandedImage))
+        val jpegBytes = images.map { bitmapToJpeg(it) }
         // For Gemini we walk the model chain; everything else is a single attempt.
         val attempts: List<Pair<String, () -> Request>> =
             if (provider == AiPaintProvider.GEMINI) {
@@ -282,5 +290,136 @@ object AiLabelClient {
         val out = ByteArrayOutputStream()
         bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
         return out.toByteArray()
+    }
+
+    // ===================================================================================
+    // Topology-grouping path (fix33 restoration). For models that have multiple connected
+    // surface components — figurines, dragons, goats — we colour each topology component
+    // in a distinct hue, render shaded + coloured views, and ask the AI to GROUP the
+    // components into N semantic regions (legs, body, head, ...). This is a text-only
+    // task: the AI doesn't need to draw bounding boxes, it just decides which numbered
+    // components belong together. Much more reliable than visual grounding.
+    // ===================================================================================
+
+    fun buildGroupPrompt(numComponents: Int, targetColours: Int): String =
+        "You are looking at two views of the SAME 3D model from the same camera angle:\n" +
+        "  • Image 1: plain shaded render — use this to identify what the object IS " +
+        "(e.g. goat, dragon, figurine, boat).\n" +
+        "  • Image 2: the same model with $numComponents surface regions each shown in a " +
+        "different colour. Component IDs are 0..${numComponents - 1}.\n\n" +
+        "First identify the object from image 1, then group the $numComponents components " +
+        "into exactly $targetColours semantic groups (\"Legs\", \"Horns\", \"Body\", \"Tail\", " +
+        "\"Head\", \"Hooves\", \"Mane\", \"Eyes\"). Use real names from the identified object — " +
+        "NOT generic terms like \"Region 1\". Choose contrasting realistic filament colours so " +
+        "adjacent groups look visually distinct.\n\n" +
+        "IMPORTANT — symmetry rule: bilaterally symmetric features MUST share a group. Left + " +
+        "right eyes go together, left + right legs go together, pairs of horns / ears / wings " +
+        "/ arms / hooves — anything that comes in mirrored copies belongs in the same group.\n\n" +
+        "Respond ONLY with valid JSON:\n" +
+        "{\"groups\": [\n" +
+        "  {\"component_ids\": [0, 2], \"label\": \"...\", \"colour\": \"#RRGGBB\"},\n" +
+        "  ...\n" +
+        "]}\n" +
+        "Rules: exactly $targetColours groups; every integer 0..${numComponents - 1} appears " +
+        "exactly once across all groups."
+
+    /** Topology-grouping AI call. Returns a list of AiRegion (one per group) with
+     *  `componentIds` populated, or null if every model in the chain failed to parse. */
+    suspend fun labelGroups(
+        provider: AiPaintProvider,
+        apiKey: String,
+        shadedImage: Bitmap,
+        componentImage: Bitmap,
+        numComponents: Int,
+        targetColours: Int,
+    ): List<AiRegion>? = withContext(Dispatchers.IO) {
+        val prompt = buildGroupPrompt(numComponents, targetColours)
+        val jpegBytes = listOf(bitmapToJpeg(shadedImage), bitmapToJpeg(componentImage))
+        val attempts: List<Pair<String, () -> Request>> =
+            if (provider == AiPaintProvider.GEMINI) {
+                GEMINI_MODELS.map { model ->
+                    model to { buildGeminiRequest(apiKey, prompt, jpegBytes, model) }
+                }
+            } else {
+                listOf(provider.name to { buildRequest(provider, apiKey, prompt, jpegBytes) })
+            }
+        var lastErr = ""
+        for ((modelLabel, build) in attempts) {
+            try {
+                val response = client.newCall(build()).execute()
+                val body = response.body?.string()
+                if (body == null || !response.isSuccessful) {
+                    lastErr = "$modelLabel: HTTP ${response.code} — ${body?.take(300)}"
+                    continue
+                }
+                val text = extractTextFromResponse(provider, body)
+                val parsed = parseGroupJson(text, numComponents, targetColours)
+                if (parsed != null) {
+                    lastRaw = "[$modelLabel] ${text.take(2000)}"
+                    lastModel = modelLabel
+                    return@withContext parsed
+                }
+                lastErr = "$modelLabel: parse-fail — ${text.take(300)}"
+            } catch (e: Exception) {
+                lastErr = "$modelLabel: ${e.message}"
+            }
+        }
+        lastRaw = "All attempts failed; last: $lastErr"
+        lastModel = null
+        null
+    }
+
+    /** Strict parse: returns null on malformed JSON, mismatched group count, duplicate ids,
+     *  or component ids out of range. Caller falls back to Z-band labelling on null. */
+    internal fun parseGroupJson(raw: String, numComponents: Int, targetColours: Int): List<AiRegion>? {
+        val jsonStr = Regex("""\{[\s\S]*"groups"[\s\S]*\}""").find(raw)?.value ?: return null
+        return try {
+            val arr = JSONObject(jsonStr).getJSONArray("groups")
+            if (arr.length() != targetColours) return null
+            val seen = mutableSetOf<Int>()
+            val regions = (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                val ja = obj.getJSONArray("component_ids")
+                val compIds = (0 until ja.length()).map { ja.getInt(it) }
+                if (compIds.isEmpty()) return null
+                if (compIds.any { it in seen }) return null
+                seen.addAll(compIds)
+                AiRegion(
+                    id = i,
+                    label = obj.optString("label", "Region ${i + 1}"),
+                    suggestedColour = obj.optString("colour", "#888888"),
+                    componentIds = compIds,
+                )
+            }
+            if (seen.size != numComponents || seen.any { it < 0 || it >= numComponents }) return null
+            regions
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** N evenly-spaced ARGB hues — used by the topology image so each component gets a
+     *  visually distinct colour for the AI to refer to by index. */
+    fun componentDisplayColors(n: Int): IntArray {
+        if (n <= 0) return IntArray(0)
+        return IntArray(n) { i -> hsvToArgb(i * 360f / n, 0.9f, 0.95f) }
+    }
+
+    private fun hsvToArgb(h: Float, s: Float, v: Float): Int {
+        val c = v * s
+        val x = c * (1f - abs(h / 60f % 2f - 1f))
+        val m = v - c
+        val (r, g, b) = when (((h / 60f).toInt()).coerceIn(0, 5)) {
+            0 -> Triple(c, x, 0f)
+            1 -> Triple(x, c, 0f)
+            2 -> Triple(0f, c, x)
+            3 -> Triple(0f, x, c)
+            4 -> Triple(x, 0f, c)
+            else -> Triple(c, 0f, x)
+        }
+        val ri = ((r + m) * 255).toInt().coerceIn(0, 255)
+        val gi = ((g + m) * 255).toInt().coerceIn(0, 255)
+        val bi = ((b + m) * 255).toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (ri shl 16) or (gi shl 8) or bi
     }
 }

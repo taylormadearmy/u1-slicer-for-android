@@ -40,14 +40,10 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         // bands fold onto the 4 physical slots — the slot picker row lets users remap.
         const val TARGET_SEGMENTS = 12
 
-        // Default labels + colours for Z-bands when AI is unavailable. Sized to TARGET_SEGMENTS.
-        // Biased toward upright figurines (the most common AI Paint use case); colours are
-        // visually distinct so the segment list reads at a glance.
-        internal val ZBAND_LABELS = listOf(
-            "Base", "Hooves", "Lower legs", "Upper legs", "Belly",
-            "Lower body", "Upper body", "Neck", "Head", "Crown",
-            "Top", "Tip",
-        )
+        // Default labels for Z-bands when AI is unavailable. Generic — model-agnostic — so a
+        // boat doesn't show up labelled "Hooves". AI fills these with real semantic names when
+        // it succeeds. Sized to TARGET_SEGMENTS; "Band N" is fine as a placeholder.
+        internal val ZBAND_LABELS = List(TARGET_SEGMENTS) { i -> "Band ${i + 1}" }
         internal val ZBAND_COLOURS = listOf(
             "#37474F", "#5D4037", "#795548", "#1E88E5", "#43A047",
             "#00ACC1", "#FB8C00", "#8E24AA", "#E53935", "#EC407A",
@@ -150,7 +146,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         printerColours: List<String>?,
     ) {
         viewModelScope.launch {
-            _uiState.value = AiPaintUiState.Running(1, "Reading model geometry…")
+            _uiState.value = AiPaintUiState.Running(1, "Analysing model geometry…")
             try {
                 val providerName = settings.aiPaintProvider.first()
                 val apiKey = settings.aiPaintApiKeyFor(providerName).first()
@@ -163,77 +159,59 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Phase 2 — Z-band segmentation. Per-triangle band index (0..N-1) based on the
-                // triangle's mean Z position relative to the full Z span. Bands are equal-width
-                // in world Z (not equal-population) so a 12-band split naturally distributes
-                // along upright models.
-                _uiState.value = AiPaintUiState.Running(2, "Splitting by height…")
-                val triangleBands = withContext(Dispatchers.Default) {
-                    assignTriangleBands(mesh.trianglePositions, TARGET_SEGMENTS)
+                val canCallAi = !provider.requiresKey || apiKey.isNotBlank()
+
+                // Phase 2 — topology segmentation. Dihedral flood-fill gives N connected
+                // surface components for figurines / dragons / goats; the dispatcher falls
+                // back to spatial K-means for smooth single-shell models (cat pots, vases).
+                _uiState.value = AiPaintUiState.Running(2, "Finding parts of the model…")
+                val (componentIds, numComponents) = withContext(Dispatchers.Default) {
+                    MeshSegmenter.segmentByTopologyOrSpatial(mesh.trianglePositions)
                 }
                 Log.i(
                     "AiPaint",
-                    "Phase 2 → $TARGET_SEGMENTS bands across ${triangleBands.size} triangles"
+                    "Phase 2 → $numComponents components across ${componentIds.size} triangles"
                 )
 
-                // Phase 3 — optional AI labelling. Render the banded model in one ISO view and
-                // ask the AI to name each band + suggest a colour. AI is text-only (no spatial
-                // grounding) so it's reliable; failure falls back silently to default labels.
-                var bandLabels: List<String> = ZBAND_LABELS.take(TARGET_SEGMENTS)
-                var bandColours: List<String> = ZBAND_COLOURS.take(TARGET_SEGMENTS)
-                val canCallAi = !provider.requiresKey || apiKey.isNotBlank()
-                if (canCallAi) {
-                    _uiState.value = AiPaintUiState.Running(3, "Asking AI to label the bands…")
-                    val bandedImage = withContext(Dispatchers.Default) {
-                        val colorInts = bandColours.map {
-                            runCatching { Color.parseColor(it) }.getOrDefault(Color.GRAY)
-                        }.toIntArray()
-                        AiPaintRenderer.renderRegions(
-                            mesh.trianglePositions, triangleBands, colorInts,
-                            512, 512, CameraAngle.RIGHT_ISO,
+                // Phase 3 — pick a labelling strategy.
+                //   • If we got ENOUGH topology components AND we can call AI: ask AI to group
+                //     them into TARGET_SEGMENTS semantic regions (legs, body, head, ...). This
+                //     is the path that worked well on figurines pre-fix32 — semantic groups.
+                //   • Otherwise fall back to Z-bands (equal-width horizontal slices) with the
+                //     AI optionally naming each band based on a shaded reference + banded view.
+                val pipelineState = withContext(Dispatchers.Default) {
+                    val topologyOk = numComponents >= 4
+                    if (topologyOk && canCallAi) {
+                        runTopologyGroupingPath(
+                            mesh.trianglePositions, componentIds, numComponents, provider, apiKey
                         )
-                    }
-                    val labelled = AiLabelClient.labelSegments(
-                        provider, apiKey, bandedImage, TARGET_SEGMENTS
+                    } else null
+                } ?: withContext(Dispatchers.Default) {
+                    runZBandPath(
+                        mesh.trianglePositions, provider, apiKey, canCallAi
                     )
-                    if (labelled != null && labelled.size == TARGET_SEGMENTS) {
-                        bandLabels = labelled.map { it.label }
-                        bandColours = labelled.map { it.colour }
-                        Log.i("AiPaint", "Phase 3 ← AI labels: ${bandLabels.joinToString()}")
-                    } else {
-                        Log.w("AiPaint", "Phase 3 — AI failed; using default Z-band labels.")
-                    }
                 }
 
                 _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
 
-                // Build N AiRegion entries with round-robin slot mapping.
-                val segmentIds = triangleBands
-                val fractions = computeCoverageFractions(segmentIds, TARGET_SEGMENTS)
-                val regions = (0 until TARGET_SEGMENTS).map { segIdx ->
-                    val members = (0 until TARGET_SEGMENTS).filter { it == segIdx }
-                    val slot = segIdx % TARGET_SLOTS
+                // Apply printer colours as userColour overrides on each region (drives the 3D
+                // viewer palette + paint flow). Round-robin slot mapping.
+                val regions = pipelineState.regions.mapIndexed { idx, r ->
+                    val slot = idx % TARGET_SLOTS
                     val printerHex = printerColours?.getOrNull(slot)?.takeIf(::isValidHex)
-                    AiRegion(
-                        id = segIdx,
-                        label = bandLabels.getOrElse(segIdx) { "Band ${segIdx + 1}" },
-                        suggestedColour = bandColours.getOrElse(segIdx) { "#888888" },
-                        userColour = printerHex,
-                        coverageFraction = fractions.getOrElse(segIdx) { 0f },
-                        componentIds = members,
-                        slot = slot,
-                    )
+                    r.copy(slot = slot, userColour = printerHex)
                 }
 
-                // Per-triangle segment + slot maps.
-                val triangleSegments = ByteArray(segmentIds.size) { segmentIds[it].toByte() }
-                val triangleRegions = ByteArray(segmentIds.size) { i ->
-                    regions[segmentIds[i]].slot.toByte()
+                // Per-triangle segment + slot maps. triangleSegments comes from the chosen
+                // strategy (topology group index or Z-band index). triangleRegions = slot.
+                val triangleSegments = pipelineState.triangleSegments
+                val triangleRegions = ByteArray(triangleSegments.size) { i ->
+                    val seg = triangleSegments[i].toInt() and 0xFF
+                    regions.getOrNull(seg)?.slot?.toByte() ?: 0
                 }
-                val slotIdsForFile = IntArray(segmentIds.size) { i ->
-                    regions[segmentIds[i]].slot
+                val slotIdsForFile = IntArray(triangleSegments.size) { i ->
+                    triangleRegions[i].toInt() and 0xFF
                 }
-                // 4-entry "slots view" for PaintedMeshWriter — one entry per physical slot.
                 val slotsView = (0 until TARGET_SLOTS).map { s ->
                     AiRegion(
                         id = s,
@@ -249,12 +227,6 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     printerColours = printerColours
                 )
 
-                // componentIds[t] = its band index; numComponents = TARGET_SEGMENTS;
-                // componentToRegion = identity. This keeps the tap-to-move sheet working: tap a
-                // triangle, identify its band, offer to remap.
-                val numComponents = TARGET_SEGMENTS
-                val componentToRegion = IntArray(numComponents) { it }
-
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         regions = regions,
@@ -262,9 +234,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         sourceModelPath = sourceModelPath,
                         previewBitmap = null,
                         trianglePositions = mesh.trianglePositions,
-                        componentIds = segmentIds,
-                        numComponents = numComponents,
-                        componentToRegion = componentToRegion,
+                        componentIds = pipelineState.componentIds,
+                        numComponents = pipelineState.numComponents,
+                        componentToRegion = pipelineState.componentToRegion,
                         triangleRegions = triangleRegions,
                         triangleSegments = triangleSegments,
                     )
@@ -273,6 +245,119 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 _uiState.value = AiPaintUiState.Error(e.message ?: "Unknown error")
             }
         }
+    }
+
+    /** Per-pipeline shape: enough to drive the result-state construction. */
+    private data class PipelineState(
+        val regions: List<AiRegion>,
+        val triangleSegments: ByteArray,
+        val componentIds: IntArray,
+        val numComponents: Int,
+        val componentToRegion: IntArray,
+    )
+
+    /** Topology → AI grouping. Returns null when AI fails so the caller falls back. */
+    private suspend fun runTopologyGroupingPath(
+        positions: FloatArray,
+        componentIds: IntArray,
+        numComponents: Int,
+        provider: AiPaintProvider,
+        apiKey: String,
+    ): PipelineState? {
+        // Target group count: clamp to numComponents (AI can't make more groups than
+        // components since each group needs at least one).
+        val targetGroups = TARGET_SEGMENTS.coerceAtMost(numComponents)
+        // Render shaded + component-coloured views from the same isometric angle.
+        val shaded = AiPaintRenderer.renderShaded(
+            positions, 512, 512, CameraAngle.RIGHT_ISO
+        )
+        val displayColours = AiLabelClient.componentDisplayColors(numComponents)
+        val banded = AiPaintRenderer.renderRegions(
+            positions, componentIds, displayColours, 512, 512, CameraAngle.RIGHT_ISO
+        )
+        _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
+        val grouped = AiLabelClient.labelGroups(
+            provider, apiKey, shaded, banded, numComponents, targetGroups
+        ) ?: return null
+
+        // componentToRegion: each component to its group index.
+        val componentToGroup = IntArray(numComponents) { c ->
+            val g = grouped.indexOfFirst { it.componentIds.contains(c) }
+            if (g >= 0) g else 0
+        }
+        // triangleSegments: per-triangle group index.
+        val triangleSegments = ByteArray(componentIds.size) { t ->
+            componentToGroup[componentIds[t]].toByte()
+        }
+        val segmentIds = IntArray(triangleSegments.size) { triangleSegments[it].toInt() and 0xFF }
+        val fractions = computeCoverageFractions(segmentIds, targetGroups)
+        val regions = grouped.mapIndexed { i, g ->
+            g.copy(
+                coverageFraction = fractions.getOrElse(i) { 0f },
+            )
+        }
+        Log.i("AiPaint", "Topology+AI path: ${regions.size} groups: ${regions.joinToString { it.label }}")
+        return PipelineState(
+            regions = regions,
+            triangleSegments = triangleSegments,
+            componentIds = componentIds,
+            numComponents = numComponents,
+            componentToRegion = componentToGroup,
+        )
+    }
+
+    /** Z-band fallback. Equal-width horizontal slices. AI optionally names the bands when
+     *  available; otherwise generic "Band N" labels are used. Always succeeds. */
+    private suspend fun runZBandPath(
+        positions: FloatArray,
+        provider: AiPaintProvider,
+        apiKey: String,
+        canCallAi: Boolean,
+    ): PipelineState {
+        val triangleBands = assignTriangleBands(positions, TARGET_SEGMENTS)
+        var bandLabels: List<String> = ZBAND_LABELS.take(TARGET_SEGMENTS)
+        var bandColours: List<String> = ZBAND_COLOURS.take(TARGET_SEGMENTS)
+        if (canCallAi) {
+            _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the bands…")
+            val colorInts = bandColours.map {
+                runCatching { Color.parseColor(it) }.getOrDefault(Color.GRAY)
+            }.toIntArray()
+            val banded = AiPaintRenderer.renderRegions(
+                positions, triangleBands, colorInts, 512, 512, CameraAngle.RIGHT_ISO,
+            )
+            val shaded = AiPaintRenderer.renderShaded(
+                positions, 512, 512, CameraAngle.RIGHT_ISO,
+            )
+            val labelled = AiLabelClient.labelSegments(
+                provider, apiKey, listOf(shaded, banded), TARGET_SEGMENTS
+            )
+            if (labelled != null && labelled.size == TARGET_SEGMENTS) {
+                bandLabels = labelled.map { it.label }
+                bandColours = labelled.map { it.colour }
+                Log.i("AiPaint", "Z-band path: AI labels: ${bandLabels.joinToString()}")
+            } else {
+                Log.w("AiPaint", "Z-band path: AI failed; using default labels.")
+            }
+        }
+        val fractions = computeCoverageFractions(triangleBands, TARGET_SEGMENTS)
+        val regions = (0 until TARGET_SEGMENTS).map { i ->
+            AiRegion(
+                id = i,
+                label = bandLabels.getOrElse(i) { "Band ${i + 1}" },
+                suggestedColour = bandColours.getOrElse(i) { "#888888" },
+                coverageFraction = fractions.getOrElse(i) { 0f },
+                componentIds = listOf(i),
+            )
+        }
+        val triangleSegments = ByteArray(triangleBands.size) { triangleBands[it].toByte() }
+        val componentToRegion = IntArray(TARGET_SEGMENTS) { it }
+        return PipelineState(
+            regions = regions,
+            triangleSegments = triangleSegments,
+            componentIds = triangleBands,
+            numComponents = TARGET_SEGMENTS,
+            componentToRegion = componentToRegion,
+        )
     }
 
     fun updateRegionColour(regionId: Int, hexColour: String) {
