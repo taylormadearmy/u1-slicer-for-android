@@ -13,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.aipaint.*
@@ -31,6 +33,8 @@ fun AiPaintResultScreen(
     onHighlightComponent: (componentId: Int?) -> Unit = {},
     onUpdateRegionColour: (regionId: Int, hex: String) -> Unit = { _, _ -> },
     onPaintTriangles: (triangleIds: List<Int>, toRegion: Int) -> Unit = { _, _ -> },
+    onBrushStrokeStart: () -> Unit = {},
+    onUndo: () -> Unit = {},
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
@@ -128,8 +132,10 @@ fun AiPaintResultScreen(
                         },
                         paintMode = paintMode,
                         brushRadiusWorld = brushRadiusWorld,
+                        brushPct = brushPct,
                         activeRegion = paintActiveRegion,
                         onPaintTriangles = onPaintTriangles,
+                        onBrushStrokeStart = onBrushStrokeStart,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f)
                             .background(Color(0xFF111118))
                     )
@@ -174,6 +180,13 @@ fun AiPaintResultScreen(
                         Modifier.fillMaxWidth().padding(12.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        OutlinedButton(
+                            onClick = onUndo,
+                            enabled = result.canUndo,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("↶ Undo")
+                        }
                         OutlinedButton(onClick = onRedo, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
@@ -232,11 +245,16 @@ private fun AiPaintViewer(
     onTriangleTapped: (Int) -> Unit,
     paintMode: Boolean,
     brushRadiusWorld: Float,
+    brushPct: Float,
     activeRegion: Int,
     onPaintTriangles: (List<Int>, Int) -> Unit,
-    modifier: Modifier = Modifier
+    onBrushStrokeStart: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var viewerView by remember { mutableStateOf<ModelViewerView?>(null) }
+    // Latest brush touch position in viewer-local pixels, or null when the finger is up.
+    var brushTouchPx by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var viewerSizePx by remember { mutableStateOf(IntSize.Zero) }
 
     // The mesh is built ONCE per pipeline run. Subsequent paints mutate extruderIndices in
     // place via ModelViewerView.updateExtruderIndices — far cheaper than rebuilding the VBO.
@@ -258,16 +276,35 @@ private fun AiPaintViewer(
         }
     }
 
-    AndroidView(
-        factory = { ctx ->
-            ModelViewerView(ctx).also { view ->
-                viewerView = view
-                mesh?.let { view.setMesh(it) }
-                view.setTrianglePickingPositions(state.trianglePositions)
+    Box(modifier = modifier.onSizeChanged { viewerSizePx = it }) {
+        AndroidView(
+            factory = { ctx ->
+                ModelViewerView(ctx).also { view ->
+                    viewerView = view
+                    mesh?.let { view.setMesh(it) }
+                    view.setTrianglePickingPositions(state.trianglePositions)
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        // Brush ring overlay — drawn on top of the GL surface at the latest touch position.
+        // Radius is brushPct * 85% of the smaller viewer dimension (mirroring the renderer's
+        // 0.85 model-fill factor) so the on-screen circle matches the actual painted area.
+        val touch = brushTouchPx
+        if (paintMode && touch != null && viewerSizePx.width > 0) {
+            val px = touch.first
+            val py = touch.second
+            val ringRadius = brushPct * 0.85f * minOf(viewerSizePx.width, viewerSizePx.height)
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.85f),
+                    radius = ringRadius.coerceAtLeast(4f),
+                    center = androidx.compose.ui.geometry.Offset(px, py),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+                )
             }
-        },
-        modifier = modifier
-    )
+        }
+    }
 
     // Wire up the tap callbacks every time the mode flips. Paint mode → onBrushPaint, default
     // mode → onTriangleTapped (for the move-component sheet).
@@ -276,10 +313,17 @@ private fun AiPaintViewer(
         v.brushRadiusWorld = brushRadiusWorld
         if (paintMode) {
             v.onBrushPaint = { tris -> onPaintTriangles(tris, activeRegion) }
+            v.onBrushStrokeStart = { onBrushStrokeStart() }
+            v.onBrushTouchAt = { x, y ->
+                brushTouchPx = if (x < 0f) null else x to y
+            }
             v.onTriangleTapped = null
         } else {
             v.onBrushPaint = null
+            v.onBrushStrokeStart = null
+            v.onBrushTouchAt = null
             v.onTriangleTapped = onTriangleTapped
+            brushTouchPx = null
         }
     }
 
@@ -290,13 +334,29 @@ private fun AiPaintViewer(
         v.setTrianglePickingPositions(state.trianglePositions)
     }
 
-    // Whenever the per-triangle regions or the palette changes, update the VBO indices in place
-    // and trigger a recolor. No mesh rebuild → no perceptible lag.
-    LaunchedEffect(viewerView, state.triangleRegions, regionPalette) {
+    // Whenever the per-triangle regions, palette, or highlight target changes: update extruder
+    // indices in place and recolor. When a component is highlighted (tap-to-move's "selected
+    // part" feedback), we overlay it with a yellow palette entry and dim everything else, so
+    // the user can see exactly what they're about to reassign.
+    LaunchedEffect(viewerView, state.triangleRegions, state.componentIds, state.highlightComponentId, regionPalette) {
         val v = viewerView ?: return@LaunchedEffect
         if (state.triangleRegions.isEmpty()) return@LaunchedEffect
-        v.updateExtruderIndices(state.triangleRegions)
-        v.recolorMesh(AiPaintMeshBuilder.regionPalette(regionPalette))
+        val highlight = state.highlightComponentId
+        if (highlight != null && state.componentIds.size == state.triangleRegions.size) {
+            // Indices: 4 = bright highlight, 5 = dimmed background.
+            val overlay = ByteArray(state.triangleRegions.size) { i ->
+                if (state.componentIds[i] == highlight) 4.toByte() else 5.toByte()
+            }
+            val extended = regionPalette + listOf(
+                floatArrayOf(1f, 0.92f, 0.20f, 1f),   // highlight = yellow
+                floatArrayOf(0.20f, 0.20f, 0.22f, 1f) // dim = near-black grey
+            )
+            v.updateExtruderIndices(overlay)
+            v.recolorMesh(extended)
+        } else {
+            v.updateExtruderIndices(state.triangleRegions)
+            v.recolorMesh(AiPaintMeshBuilder.regionPalette(regionPalette))
+        }
     }
 }
 

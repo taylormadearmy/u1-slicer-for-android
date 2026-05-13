@@ -82,6 +82,38 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     private val HEX_REGEX = Regex("^#[0-9A-Fa-f]{6}$")
     private fun isValidHex(s: String): Boolean = HEX_REGEX.matches(s)
 
+    // Undo: deque of triangleRegions snapshots, capped to 50 entries. One snapshot per stroke
+    // (paint by tap stroke or tap-to-move action), not per intermediate frame, so a single
+    // brush sweep is a single undo.
+    private val undoStack = ArrayDeque<ByteArray>()
+    private fun pushUndo(snapshot: ByteArray) {
+        undoStack.addLast(snapshot.copyOf())
+        while (undoStack.size > 50) undoStack.removeFirst()
+    }
+
+    /** Save the current triangle-region state to the undo stack. Called from the screen at the
+     *  start of a brush stroke (ACTION_DOWN) and from moveComponent on each tap-to-move. */
+    fun beginUndoCheckpoint() {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        pushUndo(current.state.triangleRegions)
+        if (!current.state.canUndo) {
+            _uiState.value = AiPaintUiState.Result(current.state.copy(canUndo = true))
+        }
+    }
+
+    /** Pop the last undo snapshot. No-op if the stack is empty. */
+    fun undo() {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val state = current.state
+        val prev = undoStack.removeLastOrNull() ?: return
+        if (prev.size != state.triangleRegions.size) return
+        val newCompMap = computeMajorityRegions(state, prev)
+        val nextState = applyTriangleRegions(state, prev, newCompMap).copy(
+            canUndo = undoStack.isNotEmpty()
+        )
+        _uiState.value = AiPaintUiState.Result(nextState)
+    }
+
     private fun runPipelineInternal(
         sourceModelPath: String,
         native: NativeLibrary,
@@ -321,13 +353,16 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         if (componentId !in 0 until state.numComponents) return
         if (toRegion !in state.regions.indices) return
 
+        pushUndo(state.triangleRegions)
         val newTriRegions = state.triangleRegions.copyOf()
         for (t in state.componentIds.indices) {
             if (state.componentIds[t] == componentId) newTriRegions[t] = toRegion.toByte()
         }
         val newCompMap = state.componentToRegion.copyOf()
         newCompMap[componentId] = toRegion
-        _uiState.value = AiPaintUiState.Result(applyTriangleRegions(state, newTriRegions, newCompMap))
+        _uiState.value = AiPaintUiState.Result(
+            applyTriangleRegions(state, newTriRegions, newCompMap).copy(canUndo = true)
+        )
     }
 
     /**

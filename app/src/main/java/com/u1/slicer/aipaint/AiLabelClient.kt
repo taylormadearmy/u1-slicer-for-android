@@ -81,7 +81,7 @@ Respond ONLY with valid JSON:
             }
             val text = extractTextFromResponse(provider, body)
             lastBoxesRaw = text.take(2000)
-            val parsed = tryParseBoxes(text, targetColours)
+            val parsed = parseBoxesJsonOrNull(text, targetColours)
             lastBoxesFellBack = parsed == null
             parsed ?: fallbackBoxes(targetColours)
         } catch (e: Exception) {
@@ -91,23 +91,42 @@ Respond ONLY with valid JSON:
         }
     }
 
-    /** Returns null when the AI response does not parse as a valid regions+boxes JSON, so the
-     *  caller can distinguish "AI succeeded" from "AI refused / returned plain text". */
-    private fun tryParseBoxes(raw: String, targetColours: Int): List<AiRegionBoxes>? {
-        if (!raw.contains("\"regions\"")) return null
-        val parsed = parseBoxesJson(raw, targetColours)
-        // parseBoxesJson silently falls back too; detect by checking whether all boxes are the
-        // boring full-stripe fallback. If every region's areas across views are exactly equal,
-        // it's the stripe fallback — treat as failure.
-        val stripeFallback = parsed.all { r ->
-            val areas = r.boxes.values.map {
-                val w = (it[2] - it[0]).coerceAtLeast(0f)
-                val h = (it[3] - it[1]).coerceAtLeast(0f)
-                w * h
+    /** Strict parse: returns null when the AI response doesn't carry a valid regions+boxes
+     *  payload, so the caller can distinguish "AI succeeded" from "AI refused / returned plain
+     *  text / returned partial JSON". Replaces the earlier fingerprint-based detection which
+     *  false-positived on legitimate AI responses that happened to draw evenly-sized boxes. */
+    internal fun parseBoxesJsonOrNull(raw: String, targetColours: Int): List<AiRegionBoxes>? {
+        val jsonStr = Regex("""\{[\s\S]*"regions"[\s\S]*\}""").find(raw)?.value ?: return null
+        return try {
+            val arr = JSONObject(jsonStr).getJSONArray("regions")
+            if (arr.length() != targetColours) return null
+            (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                val boxesObj = obj.optJSONObject("boxes") ?: return null
+                val boxes = mutableMapOf<CameraAngle, FloatArray>()
+                for (angle in CameraAngle.entries) {
+                    val key = angle.name.lowercase()
+                    val arrBox = boxesObj.optJSONArray(key)
+                    boxes[angle] = if (arrBox != null && arrBox.length() == 4) {
+                        floatArrayOf(
+                            arrBox.getDouble(0).toFloat().coerceIn(0f, 1f),
+                            arrBox.getDouble(1).toFloat().coerceIn(0f, 1f),
+                            arrBox.getDouble(2).toFloat().coerceIn(0f, 1f),
+                            arrBox.getDouble(3).toFloat().coerceIn(0f, 1f),
+                        )
+                    } else {
+                        floatArrayOf(0f, 0f, 0f, 0f)
+                    }
+                }
+                AiRegionBoxes(
+                    label = obj.optString("label", "Region ${i + 1}"),
+                    suggestedColour = obj.optString("colour", "#888888"),
+                    boxes = boxes,
+                )
             }
-            areas.distinct().size == 1
+        } catch (e: Exception) {
+            null
         }
-        return if (stripeFallback) null else parsed
     }
 
     fun parseBoxesJson(raw: String, targetColours: Int): List<AiRegionBoxes> {

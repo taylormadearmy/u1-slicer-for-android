@@ -157,6 +157,8 @@ fun U1NavGraph(
                 onHighlightComponent = { componentId -> aiVm.highlightComponent(componentId) },
                 onUpdateRegionColour = { regionId, hex -> aiVm.updateRegionColour(regionId, hex) },
                 onPaintTriangles = { triIds, toRegion -> aiVm.paintTriangles(triIds, toRegion) },
+                onBrushStrokeStart = { aiVm.beginUndoCheckpoint() },
+                onUndo = { aiVm.undo() },
             )
         }
     }

@@ -43,6 +43,15 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     // within that world-space radius of the hit triangle's centroid and emit them as a list.
     // The list is what the AI Paint screen passes to AiPaintViewModel.paintTriangles.
     var onBrushPaint: ((List<Int>) -> Unit)? = null
+
+    // Fired once at ACTION_DOWN of every brush touch sequence so the consumer can snapshot
+    // for undo before the stroke modifies anything.
+    var onBrushStrokeStart: (() -> Unit)? = null
+
+    // Fired continuously while a brush touch is dragging — gives the consumer the current
+    // touch screen coordinates so it can draw a brush ring overlay. (-1f, -1f) on lift.
+    var onBrushTouchAt: ((Float, Float) -> Unit)? = null
+
     var brushRadiusWorld: Float = 0f
 
     // Positions used for triangle picking. Separate from the mesh VBO so callers don't have to
@@ -60,6 +69,11 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     private var tapDownTime = 0L
     private var tapMovedTooFar = false
     private val tapSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+
+    // Brush stroke state — tracks whether we've already emitted onBrushStrokeStart for this
+    // touch sequence, and throttles per-frame paint emissions to ~30 Hz.
+    private var brushStrokeActive = false
+    private var lastBrushEmitMs = 0L
 
     init {
         setEGLContextClientVersion(3)
@@ -139,6 +153,19 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         tapDownY = event.y
         tapDownTime = event.eventTime
         tapMovedTooFar = false
+        brushStrokeActive = false
+        // Brush mode: start the stroke immediately on DOWN — emit a stroke-start callback
+        // (used to snapshot for undo) and paint the touch point. Subsequent MOVE events
+        // continue the stroke. Suppresses orbit by setting onActionDownHandled.
+        if (onBrushPaint != null) {
+            brushStrokeActive = true
+            onBrushStrokeStart?.invoke()
+            val tris = pickTrianglesWithinRadius(event.x, event.y, brushRadiusWorld)
+            if (tris.isNotEmpty()) onBrushPaint?.invoke(tris)
+            onBrushTouchAt?.invoke(event.x, event.y)
+            lastBrushEmitMs = event.eventTime
+            onActionDownHandled = true
+        }
         if (placementMode) {
             // Use Z=scaledSizeZ/2 for hit detection so tap lands on visible model face, not Z=0 shadow.
             val halfZ = (renderer.meshData?.sizeZ ?: 0f) * renderer.modelScale[2] / 2f
@@ -174,6 +201,18 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             val mdy = event.y - tapDownY
             if (mdx * mdx + mdy * mdy > tapSlopPx * tapSlopPx) tapMovedTooFar = true
         }
+        // Brush mode: continue painting along the drag, throttled to ~30 Hz so we don't flood
+        // the viewmodel. The screen receives one paintTriangles call per emit and the GL view
+        // recolors in the same frame thanks to fix19's deferred-write pipeline.
+        if (brushStrokeActive && event.pointerCount == 1) {
+            onBrushTouchAt?.invoke(event.x, event.y)
+            if (event.eventTime - lastBrushEmitMs >= 30L) {
+                val tris = pickTrianglesWithinRadius(event.x, event.y, brushRadiusWorld)
+                if (tris.isNotEmpty()) onBrushPaint?.invoke(tris)
+                lastBrushEmitMs = event.eventTime
+            }
+            return true
+        }
         if (placementMode && draggingIndex >= 0 && event.pointerCount == 1) {
             val bed = renderer.screenToBed(event.x, event.y) ?: return true
             val dx = bed[0] - lastBedX
@@ -194,19 +233,15 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             renderer.highlightIndex = -1
             requestRender()
         }
-        if (!wasDragging && !tapMovedTooFar) {
+        if (brushStrokeActive) {
+            // Brush already painted on DOWN and during MOVE; just clear the touch-indicator.
+            brushStrokeActive = false
+            onBrushTouchAt?.invoke(-1f, -1f)
+        } else if (!wasDragging && !tapMovedTooFar && onTriangleTapped != null) {
             val dt = event.eventTime - tapDownTime
             if (dt < 300L) {
-                // Brush mode takes precedence: gather all triangles within brushRadiusWorld of
-                // the hit triangle's centroid and emit as a list. Falls through to the legacy
-                // single-triangle tap callback for tap-to-move.
-                if (onBrushPaint != null) {
-                    val tris = pickTrianglesWithinRadius(event.x, event.y, brushRadiusWorld)
-                    if (tris.isNotEmpty()) onBrushPaint?.invoke(tris)
-                } else if (onTriangleTapped != null) {
-                    val triIdx = pickTriangle(event.x, event.y)
-                    if (triIdx >= 0) onTriangleTapped?.invoke(triIdx)
-                }
+                val triIdx = pickTriangle(event.x, event.y)
+                if (triIdx >= 0) onTriangleTapped?.invoke(triIdx)
             }
         }
     }
@@ -249,6 +284,10 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     override fun handleActionCancel() {
         draggingIndex = -1
         renderer.highlightIndex = -1
+        if (brushStrokeActive) {
+            brushStrokeActive = false
+            onBrushTouchAt?.invoke(-1f, -1f)
+        }
     }
 
     /**
