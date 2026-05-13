@@ -75,24 +75,40 @@ object MeshSegmenter {
         val ids = compId.copyOf()
         var n = numComps
 
+        // Components that are geometrically disconnected mesh islands (zero shared edges with any
+        // other component) are preserved untouched. Otherwise the merge step would collapse e.g.
+        // a goat's free-floating eye disc into the body just because it's small — and the user
+        // would no longer be able to tap the eye to assign it its own colour. We always keep
+        // true islands as their own component, even at the cost of exceeding [maxComps].
         while (n > maxComps) {
             val size = IntArray(n)
             for (id in ids) size[id]++
 
-            val smallest = (0 until n).minByOrNull { size[it] } ?: break
-
-            // Find the adjacent component sharing the most boundary triangles
-            val adjCount = HashMap<Int, Int>()
-            for (i in ids.indices) {
-                if (ids[i] != smallest) continue
-                for (nb in allAdj[i]) {
-                    val nc = ids[nb]
-                    if (nc != smallest) adjCount[nc] = (adjCount[nc] ?: 0) + 1
+            val skip = BooleanArray(n) // components with no edge-shared neighbour
+            val candidates = (0 until n).sortedBy { size[it] }
+            var smallest = -1
+            var mergeInto = -1
+            for (cand in candidates) {
+                if (skip[cand]) continue
+                val adjCount = HashMap<Int, Int>()
+                for (i in ids.indices) {
+                    if (ids[i] != cand) continue
+                    for (nb in allAdj[i]) {
+                        val nc = ids[nb]
+                        if (nc != cand) adjCount[nc] = (adjCount[nc] ?: 0) + 1
+                    }
                 }
+                val pick = adjCount.maxByOrNull { it.value }?.key
+                if (pick == null) {
+                    // No edge-shared neighbour — true mesh island. Never merge it.
+                    skip[cand] = true
+                    continue
+                }
+                smallest = cand
+                mergeInto = pick
+                break
             }
-            val mergeInto = adjCount.maxByOrNull { it.value }?.key
-                ?: (0 until n).filter { it != smallest }.maxByOrNull { size[it] }
-                ?: break
+            if (smallest < 0) break  // all remaining components are islands
 
             // Merge smallest → mergeInto; keep id space dense by renaming n-1 → smallest
             for (i in ids.indices) if (ids[i] == smallest) ids[i] = mergeInto

@@ -168,6 +168,44 @@ class MeshSegmenterTest {
         ids.forEach { assertTrue(it in 0 until numComps) }
     }
 
+    /**
+     * Body: 2 coplanar triangles sharing an edge → one connected mesh component.
+     * Eye:  2 free-floating triangles far away, NOT touching the body → second mesh component.
+     * Even with maxComponents = 1, the merge step must preserve the island as its own
+     * component. Pre-fix behaviour fell back to "merge into the largest other component"
+     * because adjCount was empty, which collapsed the eye into the body. Regression guard for
+     * free-floating features like eyes / loose detail meshes.
+     */
+    @Test
+    fun `disconnected mesh island stays its own component even when cap forces merge`() {
+        val body = floatArrayOf(
+            0f,0f,0f,  1f,0f,0f,  0f,1f,0f,
+            1f,0f,0f,  1f,1f,0f,  0f,1f,0f,
+        )
+        val eye = floatArrayOf(
+            10f,10f,5f,  11f,10f,5f,  10f,11f,5f,
+            11f,10f,5f,  11f,11f,5f,  10f,11f,5f,
+        )
+        val positions = body + eye
+        val (ids, n) = MeshSegmenter.segmentByTopology(positions, maxComponents = 1)
+        assertEquals("two mesh components must survive", 2, n)
+        assertEquals("both body triangles share one id", 1, ids.toList().subList(0, 2).toSet().size)
+        assertEquals("both eye triangles share one id", 1, ids.toList().subList(2, 4).toSet().size)
+        assertNotEquals("body and eye must have different component ids", ids[0], ids[2])
+    }
+
+    @Test
+    fun `multiple islands all survive even with very low cap`() {
+        // 3 separate single-triangle islands far apart → 3 components even with cap = 1.
+        val positions = floatArrayOf(
+            0f,  0f, 0f,   1f,  0f, 0f,   0f,  1f, 0f,
+            10f, 0f, 0f,  11f,  0f, 0f,  10f,  1f, 0f,
+            20f, 0f, 0f,  21f,  0f, 0f,  20f,  1f, 0f,
+        )
+        val (_, n) = MeshSegmenter.segmentByTopology(positions, maxComponents = 1)
+        assertEquals(3, n)
+    }
+
     @Test
     fun `narrow top band gets only high-z triangles`() {
         // bounds: region 0 = 0-90%, region 1 = 90-100%
