@@ -24,7 +24,10 @@ class AiPaintRendererTest {
     @Test
     fun renderRegions_returnsCorrectDimensions() {
         val regionIds = intArrayOf(0)
-        val bitmap = AiPaintRenderer.renderRegions(singleTriangle(), regionIds, 256, 256, CameraAngle.FRONT)
+        val regionColors = intArrayOf(Color.RED)
+        val bitmap = AiPaintRenderer.renderRegions(
+            singleTriangle(), regionIds, regionColors, 256, 256, CameraAngle.FRONT
+        )
         assertEquals(256, bitmap.width)
         assertEquals(256, bitmap.height)
     }

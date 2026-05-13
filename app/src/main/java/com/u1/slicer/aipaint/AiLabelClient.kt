@@ -14,6 +14,17 @@ import java.io.ByteArrayOutputStream
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
+/**
+ * AI label client (post-fix32 pivot). The pipeline no longer asks the AI to spatially ground
+ * regions — it does Z-band segmentation locally, then sends a single rendered image of the
+ * banded model to the AI for naming + colour suggestion. This is purely a text task: the AI
+ * looks at the coloured model and returns `{"segments":[{"id":0,"label":"...","colour":"#..."}]}`.
+ *
+ * Reliability is higher because the AI doesn't need to draw bounding boxes — it just describes
+ * what it sees. Failure falls back silently to default labels (handled by the caller).
+ */
+data class NamedColour(val label: String, val colour: String)
+
 object AiLabelClient {
 
     private val client = OkHttpClient.Builder()
@@ -24,75 +35,47 @@ object AiLabelClient {
 
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
-    // Kept for backward compat with existing tests that reference it directly
-    val PROMPT = """These 8 images show a 3D model. The first 4 are shaded renders (front, back, left isometric, right isometric). The next 4 show the same views with 4 regions pre-coloured by geometry analysis: red=region 0, green=region 1, cyan=region 2, yellow=region 3.
+    /** Most recent raw AI text response (for diagnostic logging). */
+    @Volatile var lastRaw: String? = null
 
-Based on the coloured regions you can see on the model, give each region a short descriptive label (e.g. "Legs", "Body", "Head", "Base") and suggest a realistic filament colour for that part.
+    /** Which model in the chain actually returned a parseable answer, or null when none did. */
+    @Volatile var lastModel: String? = null
 
-Respond ONLY with valid JSON:
-{"regions": [{"id": 0, "label": "...", "colour": "#RRGGBB"}, {"id": 1, "label": "...", "colour": "#RRGGBB"}, {"id": 2, "label": "...", "colour": "#RRGGBB"}, {"id": 3, "label": "...", "colour": "#RRGGBB"}]}"""
-
-    fun buildBoxesPrompt(targetColours: Int): String =
-        "You are segmenting a 3D model for multi-colour 3D printing. " +
-        "These 4 images are renders of the SAME model from four angles: image 1 is the FRONT, " +
-        "image 2 is the BACK (viewed from behind), image 3 is the LEFT-ISOMETRIC (three-quarter " +
-        "from upper-left), image 4 is the RIGHT-ISOMETRIC (three-quarter from upper-right). " +
-        "Examine ALL FOUR views carefully — a leg or feature visible only from the back or in iso " +
-        "must still appear in your region list. Do not skip parts that are hidden in the front view.\n\n" +
-        "Identify exactly $targetColours visually distinct semantic regions. Be specific and granular — " +
-        "for an animal think \"Head, Horns, Eyes, Ears, Snout, Neck, Body, Tail, Front legs, Back legs, " +
-        "Hooves, Base\"; for a vessel think \"Lid, Neck, Spout, Handle, Body, Belt, Foot, Base, Inner rim, " +
-        "Outer rim, Lower body, Upper body\". Avoid duplicate / overlapping regions; each part should be " +
-        "DISTINCT. " +
-        "For each region, give a label, a realistic filament colour, and a bounding box in EACH view in " +
-        "normalised screen coordinates [0..1] where (0,0) is the top-left of the image and (1,1) is the " +
-        "bottom-right. If a region is genuinely not visible in a view (e.g. front legs from the back), " +
-        "use [0, 0, 0, 0] for that view's box — don't guess.\n\n" +
-        "IMPORTANT: be generous with your boxes — slightly oversize them to cover all visible region pixels. " +
-        "For bilaterally symmetric features (eyes, ears, legs, arms) draw ONE box that encloses both sides together. " +
-        "If a region isn't visible in a given view, use the empty box [0, 0, 0, 0].\n\n" +
-        "Respond ONLY with valid JSON:\n" +
-        "{\"regions\": [\n" +
-        "  {\"label\": \"...\", \"colour\": \"#RRGGBB\", \"boxes\": {\n" +
-        "    \"front\":     [xMin, yMin, xMax, yMax],\n" +
-        "    \"back\":      [xMin, yMin, xMax, yMax],\n" +
-        "    \"left_iso\":  [xMin, yMin, xMax, yMax],\n" +
-        "    \"right_iso\": [xMin, yMin, xMax, yMax]\n" +
-        "  }},\n" +
-        "  ...\n" +
-        "]}\n" +
-        "Rules: exactly $targetColours regions; every coordinate in [0, 1]; xMax > xMin and yMax > yMin for visible regions."
-
-    /** Last raw AI text response from labelByBoxes — for diagnostic logging. */
-    @Volatile var lastBoxesRaw: String? = null
-
-    /** True when the most recent labelByBoxes call had to fall back because the AI refused or
-     *  returned malformed JSON. Consumers use this to surface the error and switch to a
-     *  non-AI fallback segmentation. */
-    @Volatile var lastBoxesFellBack: Boolean = false
-
-    /** Which model actually succeeded on the most recent labelByBoxes call. For Gemini this is
-     *  one of GEMINI_MODELS; for the others it's a fixed string. Surfaced in the result screen
-     *  via fallbackReason / diagnostics. */
-    @Volatile var lastBoxesModel: String? = null
-
-    // Gemini free-tier model chain. 2.5 Pro is highest quality on visual grounding but has the
-    // tightest RPM/RPD quota; 2.5 Flash is the daily-quota workhorse; 1.5 Flash is the legacy
-    // safety net. We try them in order and return the first successful parse.
+    // Gemini free-tier model chain. 2.5 Pro is highest quality but has the tightest RPM/RPD
+    // quota; 2.5 Flash is the daily-quota workhorse; 1.5 Flash is the legacy safety net. We try
+    // them in order and return the first successful parse.
     private val GEMINI_MODELS = listOf(
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-1.5-flash",
     )
 
-    suspend fun labelByBoxes(
+    fun buildLabelPrompt(bandCount: Int): String =
+        "This 3D model has been split into $bandCount horizontal bands from base (bottom) to " +
+        "top, each rendered in a different colour. Look at the colours in the image and name " +
+        "each band based on what part of the object it covers — e.g. \"Hooves\", \"Belly\", " +
+        "\"Head\", \"Crown\". Then suggest a realistic filament colour for each part so the " +
+        "printed model looks natural.\n\n" +
+        "Bands are numbered 0..${bandCount - 1} from bottom to top. Return exactly $bandCount " +
+        "entries in band-index order.\n\n" +
+        "Respond ONLY with valid JSON:\n" +
+        "{\"segments\": [\n" +
+        "  {\"id\": 0, \"label\": \"...\", \"colour\": \"#RRGGBB\"},\n" +
+        "  ...\n" +
+        "]}"
+
+    /**
+     * Ask the AI to name each band in [bandedImage] and suggest a realistic filament colour.
+     * Returns the parsed list, or null if every attempt failed (caller falls back to defaults).
+     */
+    suspend fun labelSegments(
         provider: AiPaintProvider,
         apiKey: String,
-        shadedBitmaps: List<Bitmap>,   // ordered: FRONT, BACK, LEFT_ISO, RIGHT_ISO
-        targetColours: Int,
-    ): List<AiRegionBoxes> = withContext(Dispatchers.IO) {
-        val prompt = buildBoxesPrompt(targetColours)
-        val jpegBytes = shadedBitmaps.map { bitmapToJpeg(it) }
+        bandedImage: Bitmap,
+        bandCount: Int,
+    ): List<NamedColour>? = withContext(Dispatchers.IO) {
+        val prompt = buildLabelPrompt(bandCount)
+        val jpegBytes = listOf(bitmapToJpeg(bandedImage))
         // For Gemini we walk the model chain; everything else is a single attempt.
         val attempts: List<Pair<String, () -> Request>> =
             if (provider == AiPaintProvider.GEMINI) {
@@ -112,11 +95,10 @@ Respond ONLY with valid JSON:
                     continue
                 }
                 val text = extractTextFromResponse(provider, body)
-                val parsed = parseBoxesJsonOrNull(text, targetColours)
+                val parsed = parseLabelJson(text, bandCount)
                 if (parsed != null) {
-                    lastBoxesRaw = "[$modelLabel] ${text.take(2000)}"
-                    lastBoxesModel = modelLabel
-                    lastBoxesFellBack = false
+                    lastRaw = "[$modelLabel] ${text.take(2000)}"
+                    lastModel = modelLabel
                     return@withContext parsed
                 }
                 lastErr = "$modelLabel: parse-fail — ${text.take(300)}"
@@ -124,43 +106,22 @@ Respond ONLY with valid JSON:
                 lastErr = "$modelLabel: ${e.message}"
             }
         }
-        lastBoxesRaw = "All attempts failed; last: $lastErr"
-        lastBoxesModel = null
-        lastBoxesFellBack = true
-        fallbackBoxes(targetColours)
+        lastRaw = "All attempts failed; last: $lastErr"
+        lastModel = null
+        null
     }
 
-    /** Strict parse: returns null when the AI response doesn't carry a valid regions+boxes
-     *  payload, so the caller can distinguish "AI succeeded" from "AI refused / returned plain
-     *  text / returned partial JSON". Replaces the earlier fingerprint-based detection which
-     *  false-positived on legitimate AI responses that happened to draw evenly-sized boxes. */
-    internal fun parseBoxesJsonOrNull(raw: String, targetColours: Int): List<AiRegionBoxes>? {
-        val jsonStr = Regex("""\{[\s\S]*"regions"[\s\S]*\}""").find(raw)?.value ?: return null
+    /** Strict parse: returns null when the AI response doesn't carry a valid segments payload. */
+    internal fun parseLabelJson(raw: String, bandCount: Int): List<NamedColour>? {
+        val jsonStr = Regex("""\{[\s\S]*"segments"[\s\S]*\}""").find(raw)?.value ?: return null
         return try {
-            val arr = JSONObject(jsonStr).getJSONArray("regions")
-            if (arr.length() != targetColours) return null
+            val arr = JSONObject(jsonStr).getJSONArray("segments")
+            if (arr.length() != bandCount) return null
             (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
-                val boxesObj = obj.optJSONObject("boxes") ?: return null
-                val boxes = mutableMapOf<CameraAngle, FloatArray>()
-                for (angle in CameraAngle.entries) {
-                    val key = angle.name.lowercase()
-                    val arrBox = boxesObj.optJSONArray(key)
-                    boxes[angle] = if (arrBox != null && arrBox.length() == 4) {
-                        floatArrayOf(
-                            arrBox.getDouble(0).toFloat().coerceIn(0f, 1f),
-                            arrBox.getDouble(1).toFloat().coerceIn(0f, 1f),
-                            arrBox.getDouble(2).toFloat().coerceIn(0f, 1f),
-                            arrBox.getDouble(3).toFloat().coerceIn(0f, 1f),
-                        )
-                    } else {
-                        floatArrayOf(0f, 0f, 0f, 0f)
-                    }
-                }
-                AiRegionBoxes(
-                    label = obj.optString("label", "Region ${i + 1}"),
-                    suggestedColour = obj.optString("colour", "#888888"),
-                    boxes = boxes,
+                NamedColour(
+                    label = obj.optString("label", "Band ${i + 1}"),
+                    colour = obj.optString("colour", "#888888"),
                 )
             }
         } catch (e: Exception) {
@@ -168,97 +129,7 @@ Respond ONLY with valid JSON:
         }
     }
 
-    fun parseBoxesJson(raw: String, targetColours: Int): List<AiRegionBoxes> {
-        val jsonStr = Regex("""\{[\s\S]*"regions"[\s\S]*\}""").find(raw)?.value ?: raw
-        return try {
-            val arr = JSONObject(jsonStr).getJSONArray("regions")
-            if (arr.length() != targetColours) return fallbackBoxes(targetColours)
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                val boxesObj = obj.getJSONObject("boxes")
-                val boxes = mutableMapOf<CameraAngle, FloatArray>()
-                for (angle in CameraAngle.entries) {
-                    val key = angle.name.lowercase()
-                    val arrBox = boxesObj.optJSONArray(key)
-                    if (arrBox != null && arrBox.length() == 4) {
-                        boxes[angle] = floatArrayOf(
-                            arrBox.getDouble(0).toFloat().coerceIn(0f, 1f),
-                            arrBox.getDouble(1).toFloat().coerceIn(0f, 1f),
-                            arrBox.getDouble(2).toFloat().coerceIn(0f, 1f),
-                            arrBox.getDouble(3).toFloat().coerceIn(0f, 1f),
-                        )
-                    } else {
-                        boxes[angle] = floatArrayOf(0f, 0f, 0f, 0f)
-                    }
-                }
-                AiRegionBoxes(
-                    label = obj.optString("label", "Region ${i + 1}"),
-                    suggestedColour = obj.optString("colour", "#888888"),
-                    boxes = boxes,
-                )
-            }
-        } catch (e: Exception) {
-            fallbackBoxes(targetColours)
-        }
-    }
-
-    /** Fallback when the AI fails: equal-area horizontal stripes (top, upper, lower, bottom). */
-    fun fallbackBoxes(targetColours: Int): List<AiRegionBoxes> {
-        val palette = listOf("#E53935", "#1E88E5", "#43A047", "#FB8C00",
-                             "#8E24AA", "#00ACC1", "#F4511E", "#6D4C41")
-        val labels = listOf("Top", "Upper", "Lower", "Bottom")
-        return (0 until targetColours).map { i ->
-            // Image Y: 0 = top of image, 1 = bottom. Stripe i goes from i/N to (i+1)/N,
-            // so region 0 ("Top") = top of image, region N-1 ("Bottom") = bottom.
-            val yMin = i.toFloat() / targetColours
-            val yMax = (i + 1).toFloat() / targetColours
-            val full = floatArrayOf(0f, yMin, 1f, yMax)
-            AiRegionBoxes(
-                label = labels.getOrElse(i) { "Region ${i + 1}" },
-                suggestedColour = palette.getOrElse(i) { "#888888" },
-                boxes = CameraAngle.entries.associateWith { full },
-            )
-        }
-    }
-
-    fun buildGroupPrompt(numComponents: Int, targetColours: Int): String =
-        "These 8 images show a 3D model (front, back, left-iso, right-iso views). " +
-        "The first 4 are shaded renders. The next 4 show $numComponents surface regions coloured by topology — " +
-        "each colour is a connected surface region numbered 0 to ${numComponents - 1}.\n\n" +
-        "Group these $numComponents regions into exactly $targetColours semantic groups (e.g. \"Legs\", \"Body\", \"Head\", \"Base\"). " +
-        "Choose contrasting, realistic filament colours so adjacent groups look visually distinct.\n\n" +
-        "IMPORTANT — symmetry rule: bilaterally symmetric features MUST be in the same group. " +
-        "If the model has a left eye and a right eye, both eye component-ids must go in one group. " +
-        "Same for pairs/sets of legs, ears, horns, wings, arms, hooves — anything that comes in mirrored copies " +
-        "or as a repeating set belongs together. Look across the front, back, left-iso and right-iso views to spot these pairs.\n\n" +
-        "Respond ONLY with valid JSON:\n" +
-        "{\"groups\": [{\"component_ids\": [0, 2], \"label\": \"...\", \"colour\": \"#RRGGBB\"}, ...]}\n" +
-        "Rules: exactly $targetColours groups, every integer 0..${numComponents - 1} used exactly once."
-
-    suspend fun label(
-        provider: AiPaintProvider,
-        apiKey: String,
-        shadedBitmaps: List<Bitmap>,
-        componentBitmaps: List<Bitmap>,
-        numComponents: Int,
-        targetColours: Int
-    ): List<AiRegion> = withContext(Dispatchers.IO) {
-        try {
-            val prompt = buildGroupPrompt(numComponents, targetColours)
-            val jpegBytes = (shadedBitmaps + componentBitmaps).map { bitmapToJpeg(it) }
-            val request = buildRequest(provider, apiKey, prompt, jpegBytes)
-            val response = client.newCall(request).execute()
-            val body = response.body?.string()
-                ?: return@withContext fallbackGrouping(numComponents, targetColours)
-            if (!response.isSuccessful) return@withContext fallbackGrouping(numComponents, targetColours)
-            val text = extractTextFromResponse(provider, body)
-            parseGroupJson(text, numComponents, targetColours)
-        } catch (e: Exception) {
-            fallbackGrouping(numComponents, targetColours)
-        }
-    }
-
-    fun buildRequest(
+    private fun buildRequest(
         provider: AiPaintProvider,
         apiKey: String,
         prompt: String,
@@ -276,8 +147,7 @@ Respond ONLY with valid JSON:
         AiPaintProvider.OPENROUTER -> buildOpenAiStyleRequest(
             url = "https://openrouter.ai/api/v1/chat/completions",
             // OpenRouter delisted the previous llama-3.2-11b-vision free endpoint. Qwen 2.5 VL
-            // 72B is currently their best free vision model — bigger and more capable for the
-            // bounding-box task than what we had before.
+            // 72B is currently their best free vision model.
             model = "qwen/qwen-2.5-vl-72b-instruct:free",
             apiKey = apiKey,
             prompt = prompt,
@@ -292,7 +162,6 @@ Respond ONLY with valid JSON:
         )
         AiPaintProvider.GEMINI -> buildGeminiRequest(apiKey, prompt, jpegBytes)
         AiPaintProvider.CLAUDE -> buildClaudeRequest(apiKey, prompt, jpegBytes)
-        AiPaintProvider.FIND3D -> error("FIND3D doesn't use the 2D vision request path; runPipeline branches on provider.isFind3D")
     }
 
     private fun buildOpenAiStyleRequest(
@@ -408,99 +277,6 @@ Respond ONLY with valid JSON:
             body
         }
     }
-
-    fun parseGroupJson(raw: String, numComponents: Int, targetColours: Int): List<AiRegion> {
-        val jsonStr = Regex("""\{[\s\S]*"groups"[\s\S]*\}""").find(raw)?.value ?: raw
-        return try {
-            val arr = JSONObject(jsonStr).getJSONArray("groups")
-            if (arr.length() != targetColours) return fallbackGrouping(numComponents, targetColours)
-            val seen = mutableSetOf<Int>()
-            val regions = (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                val ja = obj.getJSONArray("component_ids")
-                val compIds = (0 until ja.length()).map { ja.getInt(it) }
-                if (compIds.isEmpty()) return fallbackGrouping(numComponents, targetColours)
-                if (compIds.any { it in seen }) return fallbackGrouping(numComponents, targetColours)
-                seen.addAll(compIds)
-                AiRegion(
-                    id = i,
-                    label = obj.getString("label"),
-                    suggestedColour = obj.getString("colour"),
-                    componentIds = compIds
-                )
-            }
-            if (seen.size != numComponents || seen.any { it < 0 || it >= numComponents }) {
-                return fallbackGrouping(numComponents, targetColours)
-            }
-            regions
-        } catch (e: Exception) {
-            fallbackGrouping(numComponents, targetColours)
-        }
-    }
-
-    fun fallbackGrouping(numComponents: Int, targetColours: Int): List<AiRegion> {
-        val tc = targetColours.coerceAtLeast(1)
-        val groups = Array(tc) { mutableListOf<Int>() }
-        for (c in 0 until numComponents) groups[c % tc].add(c)
-        val palette = listOf("#E53935", "#1E88E5", "#43A047", "#FB8C00",
-                             "#8E24AA", "#00ACC1", "#F4511E", "#6D4C41")
-        return (0 until tc).map { i ->
-            AiRegion(
-                id = i,
-                label = "Region ${i + 1}",
-                suggestedColour = palette.getOrElse(i) { "#888888" },
-                componentIds = groups[i].toList()
-            )
-        }
-    }
-
-    fun componentDisplayColors(n: Int): IntArray {
-        if (n <= 0) return IntArray(0)
-        return IntArray(n) { i -> hsvToArgb(i * 360f / n, 0.9f, 0.95f) }
-    }
-
-    private fun hsvToArgb(h: Float, s: Float, v: Float): Int {
-        val c = v * s
-        val x = c * (1f - abs(h / 60f % 2f - 1f))
-        val m = v - c
-        val (r, g, b) = when (((h / 60f).toInt()).coerceIn(0, 5)) {
-            0 -> Triple(c, x, 0f)
-            1 -> Triple(x, c, 0f)
-            2 -> Triple(0f, c, x)
-            3 -> Triple(0f, x, c)
-            4 -> Triple(x, 0f, c)
-            else -> Triple(c, 0f, x)
-        }
-        val ri = ((r + m) * 255).toInt().coerceIn(0, 255)
-        val gi = ((g + m) * 255).toInt().coerceIn(0, 255)
-        val bi = ((b + m) * 255).toInt().coerceIn(0, 255)
-        return (0xFF shl 24) or (ri shl 16) or (gi shl 8) or bi
-    }
-
-    fun parseRegionJson(raw: String): List<AiRegion> {
-        val jsonStr = Regex("""\{[\s\S]*"regions"[\s\S]*\}""").find(raw)?.value ?: raw
-        return try {
-            val arr = JSONObject(jsonStr).getJSONArray("regions")
-            val regions = (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                AiRegion(
-                    id = obj.getInt("id"),
-                    label = obj.getString("label"),
-                    suggestedColour = obj.getString("colour")
-                )
-            }.sortedBy { it.id }.mapIndexed { idx, r -> r.copy(id = idx) }
-            if (regions.size != 4) fallbackRegions() else regions
-        } catch (e: Exception) {
-            fallbackRegions()
-        }
-    }
-
-    fun fallbackRegions(): List<AiRegion> = listOf(
-        AiRegion(0, "Region 1", "#E53935"),
-        AiRegion(1, "Region 2", "#1E88E5"),
-        AiRegion(2, "Region 3", "#43A047"),
-        AiRegion(3, "Region 4", "#FB8C00")
-    )
 
     private fun bitmapToJpeg(bmp: Bitmap): ByteArray {
         val out = ByteArrayOutputStream()
