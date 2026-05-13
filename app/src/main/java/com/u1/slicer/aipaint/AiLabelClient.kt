@@ -32,6 +32,102 @@ Based on the coloured regions you can see on the model, give each region a short
 Respond ONLY with valid JSON:
 {"regions": [{"id": 0, "label": "...", "colour": "#RRGGBB"}, {"id": 1, "label": "...", "colour": "#RRGGBB"}, {"id": 2, "label": "...", "colour": "#RRGGBB"}, {"id": 3, "label": "...", "colour": "#RRGGBB"}]}"""
 
+    fun buildBoxesPrompt(targetColours: Int): String =
+        "You are segmenting a 3D model for multi-colour 3D printing. " +
+        "These 4 images are renders of the model from front, back, left-iso and right-iso angles. " +
+        "Identify exactly $targetColours visually distinct semantic regions (e.g. \"Head\", \"Body\", \"Legs\", \"Base\"; " +
+        "or for an object: \"Lid\", \"Body\", \"Handle\", \"Base\"). For each region, give a label, " +
+        "a realistic filament colour, and a bounding box in EACH view in normalised screen coordinates [0..1] " +
+        "where (0,0) is the top-left of the image and (1,1) is the bottom-right.\n\n" +
+        "IMPORTANT: be generous with your boxes — slightly oversize them to cover all visible region pixels. " +
+        "For bilaterally symmetric features (eyes, ears, legs, arms) draw ONE box that encloses both sides together. " +
+        "If a region isn't visible in a given view, use the empty box [0, 0, 0, 0].\n\n" +
+        "Respond ONLY with valid JSON:\n" +
+        "{\"regions\": [\n" +
+        "  {\"label\": \"...\", \"colour\": \"#RRGGBB\", \"boxes\": {\n" +
+        "    \"front\":     [xMin, yMin, xMax, yMax],\n" +
+        "    \"back\":      [xMin, yMin, xMax, yMax],\n" +
+        "    \"left_iso\":  [xMin, yMin, xMax, yMax],\n" +
+        "    \"right_iso\": [xMin, yMin, xMax, yMax]\n" +
+        "  }},\n" +
+        "  ...\n" +
+        "]}\n" +
+        "Rules: exactly $targetColours regions; every coordinate in [0, 1]; xMax > xMin and yMax > yMin for visible regions."
+
+    suspend fun labelByBoxes(
+        provider: AiPaintProvider,
+        apiKey: String,
+        shadedBitmaps: List<Bitmap>,   // ordered: FRONT, BACK, LEFT_ISO, RIGHT_ISO
+        targetColours: Int,
+    ): List<AiRegionBoxes> = withContext(Dispatchers.IO) {
+        try {
+            val prompt = buildBoxesPrompt(targetColours)
+            val jpegBytes = shadedBitmaps.map { bitmapToJpeg(it) }
+            val request = buildRequest(provider, apiKey, prompt, jpegBytes)
+            val response = client.newCall(request).execute()
+            val body = response.body?.string()
+                ?: return@withContext fallbackBoxes(targetColours)
+            if (!response.isSuccessful) return@withContext fallbackBoxes(targetColours)
+            val text = extractTextFromResponse(provider, body)
+            parseBoxesJson(text, targetColours)
+        } catch (e: Exception) {
+            fallbackBoxes(targetColours)
+        }
+    }
+
+    fun parseBoxesJson(raw: String, targetColours: Int): List<AiRegionBoxes> {
+        val jsonStr = Regex("""\{[\s\S]*"regions"[\s\S]*\}""").find(raw)?.value ?: raw
+        return try {
+            val arr = JSONObject(jsonStr).getJSONArray("regions")
+            if (arr.length() != targetColours) return fallbackBoxes(targetColours)
+            (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                val boxesObj = obj.getJSONObject("boxes")
+                val boxes = mutableMapOf<CameraAngle, FloatArray>()
+                for (angle in CameraAngle.entries) {
+                    val key = angle.name.lowercase()
+                    val arrBox = boxesObj.optJSONArray(key)
+                    if (arrBox != null && arrBox.length() == 4) {
+                        boxes[angle] = floatArrayOf(
+                            arrBox.getDouble(0).toFloat().coerceIn(0f, 1f),
+                            arrBox.getDouble(1).toFloat().coerceIn(0f, 1f),
+                            arrBox.getDouble(2).toFloat().coerceIn(0f, 1f),
+                            arrBox.getDouble(3).toFloat().coerceIn(0f, 1f),
+                        )
+                    } else {
+                        boxes[angle] = floatArrayOf(0f, 0f, 0f, 0f)
+                    }
+                }
+                AiRegionBoxes(
+                    label = obj.optString("label", "Region ${i + 1}"),
+                    suggestedColour = obj.optString("colour", "#888888"),
+                    boxes = boxes,
+                )
+            }
+        } catch (e: Exception) {
+            fallbackBoxes(targetColours)
+        }
+    }
+
+    /** Fallback when the AI fails: equal-area horizontal stripes (top, upper, lower, bottom). */
+    fun fallbackBoxes(targetColours: Int): List<AiRegionBoxes> {
+        val palette = listOf("#E53935", "#1E88E5", "#43A047", "#FB8C00",
+                             "#8E24AA", "#00ACC1", "#F4511E", "#6D4C41")
+        val labels = listOf("Top", "Upper", "Lower", "Bottom")
+        return (0 until targetColours).map { i ->
+            // Image Y: 0 = top of image, 1 = bottom. Stripe i goes from i/N to (i+1)/N,
+            // so region 0 ("Top") = top of image, region N-1 ("Bottom") = bottom.
+            val yMin = i.toFloat() / targetColours
+            val yMax = (i + 1).toFloat() / targetColours
+            val full = floatArrayOf(0f, yMin, 1f, yMax)
+            AiRegionBoxes(
+                label = labels.getOrElse(i) { "Region ${i + 1}" },
+                suggestedColour = palette.getOrElse(i) { "#888888" },
+                boxes = CameraAngle.entries.associateWith { full },
+            )
+        }
+    }
+
     fun buildGroupPrompt(numComponents: Int, targetColours: Int): String =
         "These 8 images show a 3D model (front, back, left-iso, right-iso views). " +
         "The first 4 are shaded renders. The next 4 show $numComponents surface regions coloured by topology — " +
