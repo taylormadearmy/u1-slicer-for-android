@@ -78,6 +78,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
     private var lastPrinterColours: List<String>? = null
 
+    private val HEX_REGEX = Regex("^#[0-9A-Fa-f]{6}$")
+    private fun isValidHex(s: String): Boolean = HEX_REGEX.matches(s)
+
     private fun runPipelineInternal(
         sourceModelPath: String,
         native: NativeLibrary,
@@ -144,7 +147,15 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
                 val fractions = MeshSegmenter.coverageFractions(regionIds, regions.size)
                 val regionsWithCoverage = regions.mapIndexed { i, r ->
-                    r.copy(coverageFraction = fractions.getOrElse(i) { 0f })
+                    // Default each region's userColour to the matching printer slot so the result
+                    // screen and the painted 3MF render in the user's loaded filament palette from
+                    // the first frame, not in the AI's suggested palette. The AI's suggestion
+                    // remains visible as the small caption inside the colour-swap sheet.
+                    val printerHex = printerColours?.getOrNull(i)?.takeIf(::isValidHex)
+                    r.copy(
+                        coverageFraction = fractions.getOrElse(i) { 0f },
+                        userColour = printerHex
+                    )
                 }
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
                 PaintedMeshWriter.write(
