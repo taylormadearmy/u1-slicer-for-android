@@ -107,41 +107,69 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Phase 1 — topology segmentation: dihedral flood fill → ≤16 components
+                // Phase 1 — topology segmentation: dihedral flood fill → ≤32 components.
                 val (componentIds, numComponents) = withContext(Dispatchers.Default) {
                     MeshSegmenter.segmentByTopology(mesh.trianglePositions)
                 }
 
-                // Phase 2 — render 4 shaded + 4 component-coloured views for AI
+                // Phase 1b — geometric symmetry pre-pairing. Mirror each component's centroid
+                // across the model's X-centre and identify left/right pairs (eyes, ears, legs,
+                // wings…). Paired components are fused into a single "AI component" before the
+                // AI sees them, so the AI literally cannot split a symmetric pair across two
+                // groups. After the AI groups N visual components into 4, each AI component is
+                // expanded back to its constituent original components.
+                val rep = withContext(Dispatchers.Default) {
+                    SymmetryDetector.detectPairsByX(mesh.trianglePositions, componentIds, numComponents)
+                }
+                val (aiIdOf, origForAi) = SymmetryDetector.buildAiComponentMap(rep)
+                val aiComponentCount = origForAi.size
+                val aiComponentIds = IntArray(componentIds.size) { aiIdOf[componentIds[it]] }
+
+                // Phase 2 — render 4 shaded + 4 component-coloured views for AI. The component-
+                // coloured views use the paired (AI) component ids so symmetric pairs share one
+                // visible hue.
                 _uiState.value = AiPaintUiState.Running(2, "Rendering model views…")
-                val componentColors = AiLabelClient.componentDisplayColors(numComponents)
+                val componentColors = AiLabelClient.componentDisplayColors(aiComponentCount)
                 val (shadedBitmaps, componentBitmaps) = withContext(Dispatchers.Default) {
                     val shaded = CameraAngle.entries.map { angle ->
                         AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
                     }
                     val comps = CameraAngle.entries.map { angle ->
                         AiPaintRenderer.renderRegions(
-                            mesh.trianglePositions, componentIds, componentColors, 512, 512, angle
+                            mesh.trianglePositions, aiComponentIds, componentColors, 512, 512, angle
                         )
                     }
                     Pair(shaded, comps)
                 }
 
-                // Phase 3 — AI groups components into TARGET_COLOURS semantic regions
+                // Phase 3 — AI groups AI-components into TARGET_COLOURS semantic regions.
                 _uiState.value = AiPaintUiState.Running(3, "Asking AI to label parts…")
-                val regions = AiLabelClient.label(
+                val aiRegions = AiLabelClient.label(
                     provider, apiKey,
                     shadedBitmaps, componentBitmaps,
-                    numComponents, TARGET_COLOURS
+                    aiComponentCount, TARGET_COLOURS
                 )
 
-                // Phase 4 — map components → region ids, write painted 3MF
+                // Phase 4 — map original components → region ids, write painted 3MF.
                 _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
                 val componentToRegion = IntArray(numComponents)
-                regions.forEachIndexed { regionIdx, region ->
-                    region.componentIds.forEach { c ->
-                        if (c in 0 until numComponents) componentToRegion[c] = regionIdx
+                aiRegions.forEachIndexed { regionIdx, region ->
+                    region.componentIds.forEach { aiC ->
+                        if (aiC in 0 until aiComponentCount) {
+                            for (origC in origForAi[aiC]) {
+                                componentToRegion[origC] = regionIdx
+                            }
+                        }
                     }
+                }
+                // Re-build each region's componentIds field with the expanded original ids so the
+                // result-screen "N parts" label and the move-component flow operate on real
+                // tap-targets, not AI-collapsed virtual components.
+                val regions = aiRegions.map { r ->
+                    val expanded = r.componentIds.flatMap { aiC ->
+                        if (aiC in 0 until aiComponentCount) origForAi[aiC] else emptyList()
+                    }
+                    r.copy(componentIds = expanded)
                 }
                 val regionIds = IntArray(componentIds.size) { componentToRegion[componentIds[it]] }
 
