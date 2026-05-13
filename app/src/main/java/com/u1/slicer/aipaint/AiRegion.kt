@@ -8,7 +8,11 @@ data class AiRegion(
     val suggestedColour: String,       // hex "#RRGGBB"
     val userColour: String? = null,
     val coverageFraction: Float = 0f,  // 0.0–1.0
-    val componentIds: List<Int> = emptyList()  // topology components that map to this region
+    val componentIds: List<Int> = emptyList(),  // topology components that map to this region
+    // Which physical filament slot (0..3) this AI segment is currently assigned to. With N>4
+    // segments multiple semantic regions fold onto 4 U1 slots; the slot picker on each row
+    // lets the user change this. Default = `id % 4` (round-robin).
+    val slot: Int = 0,
 ) {
     val effectiveColour: String get() = userColour ?: suggestedColour
 }
@@ -23,10 +27,15 @@ data class AiPaintResultState(
     val componentIds: IntArray = IntArray(0),
     val numComponents: Int = 0,
     val componentToRegion: IntArray = IntArray(0),
-    // Per-triangle region assignment (0..3). Initially derived from componentToRegion via
-    // componentToRegion[componentIds[t]]; the brush mutates it directly so individual triangles
-    // can have different regions to their topology neighbours.
+    // Per-triangle SLOT assignment (0..TARGET_SLOTS-1). This is what gets written to the
+    // painted 3MF as paint_color. Initially derived from segments[triangleSegments[t]].slot;
+    // the brush mutates it directly so individual triangles can override their segment's slot.
     val triangleRegions: ByteArray = ByteArray(0),
+    // Per-triangle SEGMENT assignment (0..TARGET_SEGMENTS-1). Immutable after pipeline run.
+    // Each segment is one row in the result list and has its own slot mapping (see
+    // `regions[i].slot`). Mass-updating a segment's slot rewrites triangleRegions for every
+    // triangle in that segment.
+    val triangleSegments: ByteArray = ByteArray(0),
     // When non-null, the 3D view highlights this single component and dims the rest.
     val highlightComponentId: Int? = null,
     // True when the AI didn't return usable region boxes and the Z-band fallback was used.

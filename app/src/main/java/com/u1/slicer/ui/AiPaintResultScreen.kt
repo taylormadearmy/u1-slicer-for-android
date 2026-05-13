@@ -407,7 +407,11 @@ private fun PaintModeBar(
             )
             if (paintMode) {
                 Spacer(Modifier.width(4.dp))
-                regions.forEachIndexed { idx, region ->
+                // Chips represent PHYSICAL extruder slots (TARGET_SLOTS=4), not AI segments.
+                // With round-robin slot folding, regions[0..3] carry the canonical slot
+                // colours — iterate just those to render one chip per physical filament.
+                val slotChips = regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS)
+                slotChips.forEachIndexed { idx, region ->
                     val argb = remember(region.effectiveColour) {
                         runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
                             .getOrDefault(android.graphics.Color.GRAY)

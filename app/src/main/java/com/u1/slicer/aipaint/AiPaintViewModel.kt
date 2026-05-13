@@ -20,8 +20,27 @@ import java.io.File
 class AiPaintViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
-        // Hardwired at 4 for Snapmaker U1's 4 extruders; change to 8 when fullspectrum lands
-        const val TARGET_COLOURS = 4
+        // Snapmaker U1 has 4 physical extruder slots — paint_color in the painted 3MF uses
+        // states 1..4 (region indices 0..3). This is the SLOT count.
+        const val TARGET_SLOTS = 4
+        // The number of SEGMENTS we ask the AI (or Z-band fallback) for. With N > 4, multiple
+        // semantic segments fold onto the 4 physical slots — fix27 makes this user-controllable
+        // via a slot picker per segment row; for now defaults to round-robin (segment i → slot
+        // i % TARGET_SLOTS).
+        const val TARGET_SEGMENTS = 8
+        // Legacy alias kept ONLY so any leftover call-site reads the segment count. Anywhere we
+        // need the physical-slot count we use TARGET_SLOTS explicitly.
+        const val TARGET_COLOURS = TARGET_SEGMENTS
+
+        // Z-band fallback labels + colours sized to TARGET_SEGMENTS. Labels are biased toward
+        // upright figurines (the most common AI Paint use case); colours are visually distinct
+        // so the segment list reads at a glance.
+        internal val ZBAND_LABELS_8 = listOf(
+            "Base", "Lower legs", "Upper legs", "Belly", "Lower body", "Upper body", "Neck", "Top",
+        )
+        internal val ZBAND_COLOURS_8 = listOf(
+            "#37474F", "#5D4037", "#1E88E5", "#43A047", "#FB8C00", "#8E24AA", "#E53935", "#FFEB3B",
+        )
 
         /**
          * Painted 3MFs are written by [PaintedMeshWriter] as `ai_paint_<timestamp>.3mf`. After
@@ -188,8 +207,8 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         componentToRegion = withContext(Dispatchers.Default) {
                             assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_COLOURS)
                         }
-                        regionLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
-                        regionColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
+                        regionLabels = ZBAND_LABELS_8.take(TARGET_COLOURS)
+                        regionColours = ZBAND_COLOURS_8.take(TARGET_COLOURS)
                     }
                 } else {
                     // Phase 2 — render 4 plain shaded views for the 2D vision AI to look at.
@@ -225,8 +244,8 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         componentToRegion = withContext(Dispatchers.Default) {
                             assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_COLOURS)
                         }
-                        regionLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
-                        regionColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
+                        regionLabels = ZBAND_LABELS_8.take(TARGET_COLOURS)
+                        regionColours = ZBAND_COLOURS_8.take(TARGET_COLOURS)
                     } else {
                         // Per-triangle assignment — preserves Gemini's small-region intent even
                         // when most of a topology component sits outside the box. We aggregate
@@ -251,74 +270,98 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 }
                 Log.i("AiPaint", "Phase 4 component→region distribution: ${regionCounts.toList()} (sum ${regionCounts.sum()}/$numComponents)")
 
-                // Convert region labels/colours into AiRegion + per-region component lists.
-                val regions = (0 until TARGET_COLOURS).map { regionIdx ->
-                    val members = (0 until numComponents).filter { componentToRegion[it] == regionIdx }
+                // Build N=TARGET_SEGMENTS AiRegion entries with round-robin slot mapping
+                // (segment i → physical slot i % TARGET_SLOTS). The slot picker UI (fix27b) will
+                // allow user-driven remapping.
+                val regions = (0 until TARGET_SEGMENTS).map { segIdx ->
+                    val members = (0 until numComponents).filter { componentToRegion[it] == segIdx }
                     AiRegion(
-                        id = regionIdx,
-                        label = regionLabels.getOrElse(regionIdx) { "Region ${regionIdx + 1}" },
-                        suggestedColour = regionColours.getOrElse(regionIdx) { "#888888" },
+                        id = segIdx,
+                        label = regionLabels.getOrElse(segIdx) { "Region ${segIdx + 1}" },
+                        suggestedColour = regionColours.getOrElse(segIdx) { "#888888" },
                         componentIds = members,
+                        slot = segIdx % TARGET_SLOTS,
                     )
                 }
-                // Per-triangle region indices. Find3D's per-triangle labels override the
-                // component-level flatten when present (preserving its finer granularity).
-                val regionIds = if (find3DTriangleLabels != null) {
+                // Per-triangle SEGMENT indices (0..TARGET_SEGMENTS-1). Find3D's per-triangle
+                // labels override the component-level flatten when present.
+                val segmentIds = if (find3DTriangleLabels != null) {
                     IntArray(find3DTriangleLabels!!.size) { i ->
-                        find3DTriangleLabels!![i].coerceIn(0, TARGET_COLOURS - 1)
+                        find3DTriangleLabels!![i].coerceIn(0, TARGET_SEGMENTS - 1)
                     }
                 } else {
                     IntArray(componentIds.size) { componentToRegion[componentIds[it]] }
                 }
 
-                val fractions = MeshSegmenter.coverageFractions(regionIds, regions.size)
+                val fractions = MeshSegmenter.coverageFractions(segmentIds, regions.size)
                 val regionsWithCoverage = regions.mapIndexed { i, r ->
-                    // Default each region's userColour to the matching printer slot so the result
-                    // screen and the painted 3MF render in the user's loaded filament palette from
-                    // the first frame, not in the AI's suggested palette. The AI's suggestion
-                    // remains visible as the small caption inside the colour-swap sheet.
-                    val printerHex = printerColours?.getOrNull(i)?.takeIf(::isValidHex)
+                    // Slot's printer-filament colour (per-segment .slot already set above).
+                    val printerHex = printerColours?.getOrNull(r.slot)?.takeIf(::isValidHex)
                     r.copy(
                         coverageFraction = fractions.getOrElse(i) { 0f },
-                        userColour = printerHex
+                        userColour = printerHex,
+                    )
+                }
+
+                // Per-triangle segment + slot maps. triangleSegments is immutable after this
+                // point (drives the segment-row colour and slot-picker grouping). triangleRegions
+                // is the per-triangle SLOT that the brush mutates and the painted 3MF reads.
+                val triangleSegments = ByteArray(segmentIds.size) { segmentIds[it].toByte() }
+                val triangleRegions = ByteArray(segmentIds.size) { i ->
+                    regionsWithCoverage[segmentIds[i]].slot.toByte()
+                }
+                // Slot IDs for the painted 3MF (0..TARGET_SLOTS-1) — map segments through .slot.
+                val slotIdsForFile = IntArray(segmentIds.size) { i ->
+                    regionsWithCoverage[segmentIds[i]].slot
+                }
+                // Build a 4-entry "slots view" for PaintedMeshWriter's project_settings.config —
+                // one entry per physical extruder slot, using the user's printer filament colour.
+                val slotsView = (0 until TARGET_SLOTS).map { s ->
+                    AiRegion(
+                        id = s,
+                        label = "Slot ${s + 1}",
+                        suggestedColour = printerColours?.getOrNull(s) ?: "#888888",
+                        userColour = printerColours?.getOrNull(s)?.takeIf(::isValidHex),
+                        slot = s,
                     )
                 }
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
                 PaintedMeshWriter.write(
-                    mesh.trianglePositions, regionIds, regionsWithCoverage, outFile,
+                    mesh.trianglePositions, slotIdsForFile, slotsView, outFile,
                     printerColours = printerColours
                 )
-
-                // Per-triangle region map — Find3D's labels feed this directly; otherwise we
-                // derive it from the component-level map (uniform within each component).
-                val triangleRegions = ByteArray(regionIds.size) { regionIds[it].toByte() }
 
                 // Also compute the Z-band variant — even when the AI succeeded — so the user
                 // can flip between "🤖 AI" and "📏 Height-based" on the result screen for a
                 // direct visual comparison. Cheap (one pass over centroids) and the toggle is
                 // load-bearing for diagnosing AI mistakes.
                 val zBandCompToRegion = withContext(Dispatchers.Default) {
-                    assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_COLOURS)
+                    assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_SEGMENTS)
                 }
-                val zBandTriRegions = ByteArray(componentIds.size) {
+                val zBandSegmentBytes = ByteArray(componentIds.size) {
                     zBandCompToRegion[componentIds[it]].toByte()
                 }
-                val zBandLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
-                val zBandColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
                 val zBandFractions = MeshSegmenter.coverageFractions(
-                    IntArray(zBandTriRegions.size) { zBandTriRegions[it].toInt() },
-                    TARGET_COLOURS,
+                    IntArray(zBandSegmentBytes.size) { zBandSegmentBytes[it].toInt() },
+                    TARGET_SEGMENTS,
                 )
-                val zBandRegions = (0 until TARGET_COLOURS).map { i ->
+                val zBandRegions = (0 until TARGET_SEGMENTS).map { i ->
+                    val slot = i % TARGET_SLOTS
                     val members = (0 until numComponents).filter { zBandCompToRegion[it] == i }
                     AiRegion(
                         id = i,
-                        label = zBandLabels.getOrElse(i) { "Region ${i + 1}" },
-                        suggestedColour = zBandColours.getOrElse(i) { "#888888" },
-                        userColour = printerColours?.getOrNull(i)?.takeIf(::isValidHex),
+                        label = ZBAND_LABELS_8.getOrElse(i) { "Band ${i + 1}" },
+                        suggestedColour = ZBAND_COLOURS_8.getOrElse(i) { "#888888" },
+                        userColour = printerColours?.getOrNull(slot)?.takeIf(::isValidHex),
                         coverageFraction = zBandFractions.getOrElse(i) { 0f },
                         componentIds = members,
+                        slot = slot,
                     )
+                }
+                // Slot bytes for the Z-band variant (what the brush / 3MF sees when this view
+                // is active). Derived through the segment → slot mapping.
+                val zBandTriRegions = ByteArray(zBandSegmentBytes.size) { i ->
+                    zBandRegions[zBandSegmentBytes[i].toInt() and 0xFF].slot.toByte()
                 }
                 val fallbackReason = when {
                     find3DFellBack -> "Find3D is currently unavailable — its HuggingFace Space is failing for all inputs right now (including the project's own example files). Split by height instead. Try Gemini or Claude in Settings while Find3D recovers."
@@ -349,7 +392,8 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         componentIds = componentIds,
                         numComponents = numComponents,
                         componentToRegion = componentToRegion,
-                        triangleRegions = triangleRegions,
+                        triangleRegions = if (fellBack) zBandTriRegions else triangleRegions,
+                        triangleSegments = if (fellBack) zBandSegmentBytes else triangleSegments,
                     )
                 )
             } catch (e: Exception) {
@@ -399,7 +443,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** Move a single topology component from its current region to [toRegion]. */
+    /** Move a single topology component to a target SEGMENT. The target's `.slot` field tells
+     *  us which physical slot the triangles end up in (per-triangle write to triangleRegions),
+     *  while triangleSegments records the new semantic segment for the "Currently in: X" UI. */
     fun moveComponent(componentId: Int, toRegion: Int) {
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         val state = current.state
@@ -407,14 +453,20 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         if (toRegion !in state.regions.indices) return
 
         pushUndo(state.triangleRegions)
+        val targetSlot = state.regions[toRegion].slot.toByte()
+        val targetSegment = toRegion.toByte()
         val newTriRegions = state.triangleRegions.copyOf()
+        val newTriSegments = state.triangleSegments.copyOf()
         for (t in state.componentIds.indices) {
-            if (state.componentIds[t] == componentId) newTriRegions[t] = toRegion.toByte()
+            if (state.componentIds[t] == componentId) {
+                newTriRegions[t] = targetSlot
+                if (t in newTriSegments.indices) newTriSegments[t] = targetSegment
+            }
         }
         val newCompMap = state.componentToRegion.copyOf()
         newCompMap[componentId] = toRegion
         _uiState.value = AiPaintUiState.Result(
-            applyTriangleRegions(state, newTriRegions, newCompMap).copy(canUndo = true)
+            applyTriangleRegions(state, newTriRegions, newCompMap, newTriSegments).copy(canUndo = true)
         )
     }
 
@@ -424,18 +476,23 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
      * sheet still shows the user's intent when paint mode is off), and refreshes per-region
      * coverage fractions. No disk I/O — fast enough for a tight tap-loop on the result screen.
      */
+    /** Brush: each triangle is mapped to a target SLOT (0..TARGET_SLOTS-1). triangleSegments
+     *  is left alone — a painted triangle keeps its original segment for display purposes
+     *  but its physical slot is overridden. */
     fun paintTriangles(triangleIndices: List<Int>, toRegion: Int) {
         if (triangleIndices.isEmpty()) return
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         val state = current.state
-        if (toRegion !in state.regions.indices) return
+        if (toRegion !in 0 until TARGET_SLOTS) return
 
         val newTriRegions = state.triangleRegions.copyOf()
-        val target = toRegion.toByte()
+        val targetSlot = toRegion.toByte()
         for (t in triangleIndices) {
-            if (t in newTriRegions.indices) newTriRegions[t] = target
+            if (t in newTriRegions.indices) newTriRegions[t] = targetSlot
         }
-        val newCompMap = computeMajorityRegions(state, newTriRegions)
+        // componentToRegion is per-segment (for the move sheet) — recompute from segment data,
+        // unchanged by the brush stroke.
+        val newCompMap = computeMajorityRegions(state, state.triangleSegments)
         _uiState.value = AiPaintUiState.Result(applyTriangleRegions(state, newTriRegions, newCompMap))
     }
 
@@ -447,10 +504,22 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     fun finalizePainting(): String? {
         val current = _uiState.value as? AiPaintUiState.Result ?: return null
         val state = current.state
+        // triangleRegions already stores SLOT (0..TARGET_SLOTS-1) after fix27. Build a
+        // 4-entry "slots view" for PaintedMeshWriter's project_settings.config so it writes
+        // filament_colour with one entry per physical extruder slot — not one per AI segment.
         val regionIds = IntArray(state.triangleRegions.size) { state.triangleRegions[it].toInt() }
+        val slotsView = (0 until TARGET_SLOTS).map { s ->
+            AiRegion(
+                id = s,
+                label = "Slot ${s + 1}",
+                suggestedColour = lastPrinterColours?.getOrNull(s) ?: "#888888",
+                userColour = lastPrinterColours?.getOrNull(s)?.takeIf(::isValidHex),
+                slot = s,
+            )
+        }
         val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
         PaintedMeshWriter.write(
-            state.trianglePositions, regionIds, state.regions, outFile,
+            state.trianglePositions, regionIds, slotsView, outFile,
             printerColours = lastPrinterColours
         )
         _uiState.value = AiPaintUiState.Result(state.copy(paintedModelPath = outFile.absolutePath))
@@ -461,9 +530,13 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         state: AiPaintResultState,
         newTriRegions: ByteArray,
         newCompMap: IntArray,
+        newTriSegments: ByteArray = state.triangleSegments,
     ): AiPaintResultState {
-        val regionIds = IntArray(newTriRegions.size) { newTriRegions[it].toInt() }
-        val fractions = MeshSegmenter.coverageFractions(regionIds, state.regions.size)
+        // Fractions are computed over SEGMENTS (matches state.regions.size) so the per-row
+        // "X% of model" stays meaningful even with slot folding. We tally triangleSegments,
+        // not triangleRegions, because triangleRegions is per-slot (0..3).
+        val segmentIds = IntArray(newTriSegments.size) { newTriSegments[it].toInt() and 0xFF }
+        val fractions = MeshSegmenter.coverageFractions(segmentIds, state.regions.size)
         val updatedRegions = state.regions.mapIndexed { i, r ->
             val members = (0 until state.numComponents).filter { newCompMap[it] == i }
             r.copy(
@@ -474,6 +547,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         return state.copy(
             regions = updatedRegions,
             triangleRegions = newTriRegions,
+            triangleSegments = newTriSegments,
             componentToRegion = newCompMap,
         )
     }
@@ -499,18 +573,19 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** Per-component winning region via majority vote across its triangles. */
-    private fun computeMajorityRegions(state: AiPaintResultState, triRegions: ByteArray): IntArray {
-        val numRegions = state.regions.size
-        val tallies = Array(state.numComponents) { IntArray(numRegions) }
+    /** Per-component winning SEGMENT via majority vote across its triangles. Used by the
+     *  move-component sheet's "Currently in: X" affordance, where X is a segment label. */
+    private fun computeMajorityRegions(state: AiPaintResultState, triSegments: ByteArray): IntArray {
+        val numSegments = state.regions.size
+        val tallies = Array(state.numComponents) { IntArray(numSegments) }
         for (t in state.componentIds.indices) {
             val c = state.componentIds[t]
-            val r = triRegions[t].toInt() and 0xFF
-            if (c in tallies.indices && r in 0 until numRegions) tallies[c][r]++
+            val s = triSegments[t].toInt() and 0xFF
+            if (c in tallies.indices && s in 0 until numSegments) tallies[c][s]++
         }
         return IntArray(state.numComponents) { c ->
             var best = 0; var bestCount = -1
-            for (r in 0 until numRegions) if (tallies[c][r] > bestCount) { bestCount = tallies[c][r]; best = r }
+            for (s in 0 until numSegments) if (tallies[c][s] > bestCount) { bestCount = tallies[c][s]; best = s }
             best
         }
     }

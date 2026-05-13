@@ -35,10 +35,13 @@ Respond ONLY with valid JSON:
     fun buildBoxesPrompt(targetColours: Int): String =
         "You are segmenting a 3D model for multi-colour 3D printing. " +
         "These 4 images are renders of the model from front, back, left-iso and right-iso angles. " +
-        "Identify exactly $targetColours visually distinct semantic regions (e.g. \"Head\", \"Body\", \"Legs\", \"Base\"; " +
-        "or for an object: \"Lid\", \"Body\", \"Handle\", \"Base\"). For each region, give a label, " +
-        "a realistic filament colour, and a bounding box in EACH view in normalised screen coordinates [0..1] " +
-        "where (0,0) is the top-left of the image and (1,1) is the bottom-right.\n\n" +
+        "Identify exactly $targetColours visually distinct semantic regions. Be specific and granular — " +
+        "for an animal think \"Head, Horns, Ears, Eyes, Body, Front legs, Back legs, Base\"; " +
+        "for a vessel think \"Lid, Neck, Body, Handle, Spout, Base, Top, Bottom\". The point is to identify " +
+        "all major parts that a 3D printer user might want as a separate colour. " +
+        "For each region, give a label, a realistic filament colour, and a bounding box in EACH view in " +
+        "normalised screen coordinates [0..1] where (0,0) is the top-left of the image and (1,1) is the " +
+        "bottom-right.\n\n" +
         "IMPORTANT: be generous with your boxes — slightly oversize them to cover all visible region pixels. " +
         "For bilaterally symmetric features (eyes, ears, legs, arms) draw ONE box that encloses both sides together. " +
         "If a region isn't visible in a given view, use the empty box [0, 0, 0, 0].\n\n" +
