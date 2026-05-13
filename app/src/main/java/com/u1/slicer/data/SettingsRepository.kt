@@ -104,13 +104,11 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.AI_PAINT_API_KEY] ?: ""
     }
 
-    /** Per-provider API key with a fallback to the legacy single-key slot. Each provider
-     *  (Pollinations, Gemini, OpenRouter, Claude, OpenAI, Find3D) has its own key now —
-     *  switching providers no longer loses or leaks the previous key. */
+    /** Per-provider API key. Reads ONLY from the provider's own slot — no fallback to the
+     *  legacy single-key slot, because that fallback caused every provider to inherit the
+     *  same key (the leak fix23 was supposed to fix). Blank when nothing's been entered. */
     fun aiPaintApiKeyFor(providerName: String): Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[stringPreferencesKey("ai_paint_key_$providerName")]
-            ?: prefs[Keys.AI_PAINT_API_KEY]   // legacy single-key fallback for first-launch migration
-            ?: ""
+        prefs[stringPreferencesKey("ai_paint_key_$providerName")] ?: ""
     }
 
     suspend fun saveExtruderPresets(presets: List<ExtruderPreset>) {
@@ -177,13 +175,28 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** Save just the selected provider, without touching any API keys. Called when the user
+     *  picks a different provider in the dropdown — the key field should then auto-load that
+     *  provider's stored key (or be blank if none). */
+    suspend fun saveAiPaintProvider(provider: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_PAINT_PROVIDER] = provider
+        }
+    }
+
+    /** Save just the API key for a specific provider. Each provider's key is independent. */
+    suspend fun saveAiPaintKey(provider: String, apiKey: String) {
+        context.dataStore.edit { prefs ->
+            prefs[stringPreferencesKey("ai_paint_key_$provider")] = apiKey
+        }
+    }
+
+    @Deprecated("Bundled save leaks the key across providers; use saveAiPaintProvider and " +
+        "saveAiPaintKey separately so switching providers doesn't copy the visible key.")
     suspend fun saveAiPaintSettings(provider: String, apiKey: String) {
-        // Per-provider write: stores under ai_paint_key_<provider>. We KEEP writing to the
-        // legacy AI_PAINT_API_KEY too so a downgraded build can still read it; this is cheap.
         context.dataStore.edit { prefs ->
             prefs[Keys.AI_PAINT_PROVIDER] = provider
             prefs[stringPreferencesKey("ai_paint_key_$provider")] = apiKey
-            prefs[Keys.AI_PAINT_API_KEY] = apiKey
         }
     }
 

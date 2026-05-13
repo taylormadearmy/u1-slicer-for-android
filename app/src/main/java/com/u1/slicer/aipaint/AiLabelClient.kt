@@ -307,7 +307,9 @@ Respond ONLY with valid JSON:
             .put("contents", JSONArray().put(JSONObject().put("parts", parts)))
             .toString().toRequestBody(JSON_TYPE)
         val url =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=$apiKey"
+            // Bumped from gemini-2.5-flash-lite — Flash has noticeably better visual grounding
+            // (returning correct image coordinates for bounding boxes) at the same free tier.
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
         return Request.Builder().url(url).post(body).build()
     }
 

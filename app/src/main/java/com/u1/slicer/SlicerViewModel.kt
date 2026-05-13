@@ -715,6 +715,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintSettings(provider, apiKey) }
     }
 
+    fun saveAiPaintProvider(provider: String) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintProvider(provider) }
+    }
+
+    fun saveAiPaintKey(provider: String, apiKey: String) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintKey(provider, apiKey) }
+    }
+
     // Track the current working file (may be sanitized copy)
     private var _currentModelFile: File? = null
     private var currentModelFile: File?

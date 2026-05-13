@@ -727,9 +727,11 @@ fun SettingsScreen(
                                 text = { Text(provider.displayName) },
                                 onClick = {
                                     providerExpanded = false
-                                    scope.launch {
-                                        viewModel.saveAiPaintSettings(provider.name, aiApiKey)
-                                    }
+                                    // Only save the provider selection — NOT the key. The key
+                                    // field auto-reloads that provider's stored key (blank if
+                                    // none). Without this split, switching providers was
+                                    // copying the previous provider's key into the new slot.
+                                    viewModel.saveAiPaintProvider(provider.name)
                                 }
                             )
                         }
@@ -743,9 +745,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = aiApiKey,
                         onValueChange = { newKey ->
-                            scope.launch {
-                                viewModel.saveAiPaintSettings(currentProvider.name, newKey)
-                            }
+                            viewModel.saveAiPaintKey(currentProvider.name, newKey)
                         },
                         label = {
                             Text(if (currentProvider.requiresKey) "API key" else "API key (optional)")
