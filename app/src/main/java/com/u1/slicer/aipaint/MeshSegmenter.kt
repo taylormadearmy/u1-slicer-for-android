@@ -321,7 +321,9 @@ object MeshSegmenter {
     fun segmentByTopologyOrSpatial(
         positions: FloatArray,
         topologyCap: Int = 32,
-        targetSpatial: Int = 16,
+        // 32 spatial clusters gives the user a usable granularity for the manual paint mode
+        // — each cluster is roughly one "tap-target" on a smooth shell like the cat pot.
+        targetSpatial: Int = 32,
         dominantThreshold: Float = 0.7f
     ): Pair<IntArray, Int> {
         val triCount = positions.size / 9

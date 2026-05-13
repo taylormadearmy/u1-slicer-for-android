@@ -33,6 +33,8 @@ fun AiPaintResultScreen(
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
+    var paintMode by remember { mutableStateOf(false) }
+    var paintActiveRegion by remember { mutableStateOf(0) }
 
     Scaffold(
         topBar = {
@@ -94,18 +96,33 @@ fun AiPaintResultScreen(
                         state = result,
                         onTriangleTapped = { triangleIdx ->
                             val comp = result.componentIds.getOrNull(triangleIdx) ?: return@AiPaintViewer
-                            moveSheetComponent = comp
-                            onHighlightComponent(comp)
+                            if (paintMode) {
+                                // Direct-paint: tapped component jumps to active region. No sheet.
+                                onMoveComponent(comp, paintActiveRegion)
+                            } else {
+                                moveSheetComponent = comp
+                                onHighlightComponent(comp)
+                            }
                         },
-                        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.5f)
+                        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f)
                             .background(Color(0xFF111118))
                     )
 
+                    // Paint mode toolbar — appears between viewer and region list.
+                    PaintModeBar(
+                        paintMode = paintMode,
+                        regions = result.regions,
+                        activeRegion = paintActiveRegion,
+                        onTogglePaintMode = { paintMode = !paintMode },
+                        onSelectRegion = { paintActiveRegion = it },
+                    )
+
                     Text(
-                        "REGIONS — tap a colour swatch to change",
+                        if (paintMode) "PAINT MODE — tap a part of the 3D model to paint it with the selected colour"
+                        else "REGIONS — tap a colour swatch to change",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)
+                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
                     )
                     LazyColumn(Modifier.weight(1f)) {
                         items(result.regions) { region ->
@@ -116,12 +133,14 @@ fun AiPaintResultScreen(
                         }
                     }
 
-                    Text(
-                        "Tip: tap a part of the 3D model to move it to a different region.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                    )
+                    if (!paintMode) {
+                        Text(
+                            "Tip: tap a part of the 3D model to move it to a different region.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+                    }
 
                     Row(
                         Modifier.fillMaxWidth().padding(12.dp),
@@ -234,6 +253,48 @@ private fun AiPaintViewer(
             highlightComponentId = state.highlightComponentId
         )
         v.recolorMesh(palette)
+    }
+}
+
+@Composable
+private fun PaintModeBar(
+    paintMode: Boolean,
+    regions: List<AiRegion>,
+    activeRegion: Int,
+    onTogglePaintMode: () -> Unit,
+    onSelectRegion: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = paintMode,
+            onClick = onTogglePaintMode,
+            label = { Text(if (paintMode) "🖌 Painting" else "🖌 Paint by tap") },
+        )
+        if (paintMode) {
+            Spacer(Modifier.width(4.dp))
+            regions.forEachIndexed { idx, region ->
+                val argb = remember(region.effectiveColour) {
+                    runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
+                        .getOrDefault(android.graphics.Color.GRAY)
+                }
+                val isActive = idx == activeRegion
+                Box(
+                    Modifier
+                        .size(if (isActive) 36.dp else 28.dp)
+                        .background(Color(argb), MaterialTheme.shapes.small)
+                        .clickable { onSelectRegion(idx) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isActive) {
+                        Text("✓", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        }
     }
 }
 
