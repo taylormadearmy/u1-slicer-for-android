@@ -107,9 +107,13 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     return@launch
                 }
 
-                // Phase 1 — topology segmentation: dihedral flood fill → ≤32 components.
+                // Phase 1 — topology segmentation (dihedral flood fill, cap 32) with automatic
+                // fallback to spatial K-means when the model is a single smooth-connected shell
+                // (cat pots, vases, organic figures with no sharp creases). Topology alone would
+                // return one giant component covering 99%+ of the mesh in those cases and the AI
+                // would have nothing to label.
                 val (componentIds, numComponents) = withContext(Dispatchers.Default) {
-                    MeshSegmenter.segmentByTopology(mesh.trianglePositions)
+                    MeshSegmenter.segmentByTopologyOrSpatial(mesh.trianglePositions)
                 }
 
                 // Phase 1b — geometric symmetry pre-pairing. Mirror each component's centroid

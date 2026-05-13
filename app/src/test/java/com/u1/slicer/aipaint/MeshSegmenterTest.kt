@@ -124,6 +124,69 @@ class MeshSegmenterTest {
         assertEquals(1f, fractions.sum(), 0.001f)
     }
 
+    // ---- segmentBySpatialKMeans tests ----
+
+    @Test
+    fun `spatial kMeans returns exactly k components for adequately sized meshes`() {
+        val (ids, n) = MeshSegmenter.segmentBySpatialKMeans(cubePositions(), k = 4)
+        assertEquals(4, n)
+        assertEquals(cubePositions().size / 9, ids.size)
+        ids.forEach { assertTrue(it in 0..3) }
+    }
+
+    @Test
+    fun `spatial kMeans separates spatially distinct point clouds`() {
+        // 3 separate single-triangle clusters at (0,0,0), (10,0,0), (20,0,0) — K=3 must separate them.
+        val positions = floatArrayOf(
+            0f, 0f, 0f,  0.1f, 0f, 0f,  0f, 0.1f, 0f,
+            10f, 0f, 0f, 10.1f, 0f, 0f, 10f, 0.1f, 0f,
+            20f, 0f, 0f, 20.1f, 0f, 0f, 20f, 0.1f, 0f,
+        )
+        val (ids, _) = MeshSegmenter.segmentBySpatialKMeans(positions, k = 3)
+        assertEquals(3, ids.toSet().size)
+    }
+
+    // ---- segmentByTopologyOrSpatial dispatch ----
+
+    @Test
+    fun `topologyOrSpatial uses topology for cleanly segmentable cube`() {
+        // Cube has 6 face components → no single one dominates → topology path is fine.
+        val (_, n) = MeshSegmenter.segmentByTopologyOrSpatial(cubePositions())
+        assertTrue("expected topology result (small N), got $n", n in 2..6)
+    }
+
+    @Test
+    fun `topologyOrSpatial falls back to spatial K-means for a single-shell smooth mesh`() {
+        // Build a smooth-walled "pot" approximation: a tessellated cylinder whose dihedral angles
+        // are all below the 45° crease threshold → segmentByTopology returns ONE component.
+        // segmentByTopologyOrSpatial must spot that and split via spatial K-means instead.
+        val sides = 48
+        val height = 40f
+        val radius = 20f
+        val tris = mutableListOf<Float>()
+        for (i in 0 until sides) {
+            val a0 = (i.toDouble() / sides) * 2 * Math.PI
+            val a1 = ((i + 1).toDouble() / sides) * 2 * Math.PI
+            val x0 = (radius * Math.cos(a0)).toFloat(); val y0 = (radius * Math.sin(a0)).toFloat()
+            val x1 = (radius * Math.cos(a1)).toFloat(); val y1 = (radius * Math.sin(a1)).toFloat()
+            tris.addAll(listOf(x0, y0, 0f,  x1, y1, 0f,  x1, y1, height))
+            tris.addAll(listOf(x0, y0, 0f,  x1, y1, height,  x0, y0, height))
+        }
+        val positions = tris.toFloatArray()
+        val (topoIds, topoN) = MeshSegmenter.segmentByTopology(positions, maxComponents = 32)
+        // Sanity: the smooth-walled cylinder collapses into ≤ 2 topology components.
+        // (Two if the dihedral at the side-seam crosses the 45° threshold for that vertex
+        // discretisation; one otherwise. Either way the dominant component is huge.)
+        val sizes = IntArray(topoN)
+        for (id in topoIds) sizes[id]++
+        val dom = sizes.maxOrNull()!!.toFloat() / positions.size * 9f
+        assertTrue("expected a degenerate topology result, got sizes=${sizes.toList()}",
+            dom > 0.7f)
+
+        val (_, n) = MeshSegmenter.segmentByTopologyOrSpatial(positions, targetSpatial = 6)
+        assertEquals("expected spatial fallback to produce K components", 6, n)
+    }
+
     // ---- segmentByTopology tests ----
 
     @Test

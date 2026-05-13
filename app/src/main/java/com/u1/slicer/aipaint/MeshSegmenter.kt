@@ -235,6 +235,109 @@ object MeshSegmenter {
         return IntArray(nTri) { remap[assignments[it]] }
     }
 
+    /**
+     * Spatial K-means clustering on per-triangle centroids. Produces exactly [k] components
+     * that partition the model into 3D spatial regions, regardless of mesh topology. Used as
+     * the fallback path when [segmentByTopology] returns a degenerate result (one component
+     * covers almost everything because the model is a single smooth-connected surface — cat
+     * pots, vases, organic blobs).
+     *
+     * Deterministic via farthest-point seeding from the first triangle. Runs [iterations]
+     * Lloyd updates; 15 is usually enough for spatial convergence on decimated previews
+     * (≤50k triangles).
+     */
+    fun segmentBySpatialKMeans(positions: FloatArray, k: Int, iterations: Int = 15): Pair<IntArray, Int> {
+        val triCount = positions.size / 9
+        if (triCount == 0 || k <= 0) return Pair(IntArray(triCount) { 0 }, 0)
+        if (triCount <= k) return Pair(IntArray(triCount) { it.coerceAtMost(k - 1) }, minOf(triCount, k))
+
+        val cents = Array(triCount) { i ->
+            val b = i * 9
+            floatArrayOf(
+                (positions[b]     + positions[b + 3] + positions[b + 6]) / 3f,
+                (positions[b + 1] + positions[b + 4] + positions[b + 7]) / 3f,
+                (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
+            )
+        }
+
+        val seeds = Array(k) { FloatArray(3) }
+        seeds[0] = cents[0].copyOf()
+        for (s in 1 until k) {
+            var bestDist = -1f
+            var bestIdx = 0
+            for (i in 0 until triCount) {
+                var minD = Float.MAX_VALUE
+                for (j in 0 until s) {
+                    val dx = cents[i][0] - seeds[j][0]
+                    val dy = cents[i][1] - seeds[j][1]
+                    val dz = cents[i][2] - seeds[j][2]
+                    val d = dx * dx + dy * dy + dz * dz
+                    if (d < minD) minD = d
+                }
+                if (minD > bestDist) { bestDist = minD; bestIdx = i }
+            }
+            seeds[s] = cents[bestIdx].copyOf()
+        }
+
+        val assignments = IntArray(triCount)
+        repeat(iterations) {
+            for (i in 0 until triCount) {
+                var bestD = Float.MAX_VALUE
+                var best = 0
+                for (j in 0 until k) {
+                    val dx = cents[i][0] - seeds[j][0]
+                    val dy = cents[i][1] - seeds[j][1]
+                    val dz = cents[i][2] - seeds[j][2]
+                    val d = dx * dx + dy * dy + dz * dz
+                    if (d < bestD) { bestD = d; best = j }
+                }
+                assignments[i] = best
+            }
+            val sumX = FloatArray(k); val sumY = FloatArray(k); val sumZ = FloatArray(k); val cnt = IntArray(k)
+            for (i in 0 until triCount) {
+                val a = assignments[i]
+                sumX[a] += cents[i][0]; sumY[a] += cents[i][1]; sumZ[a] += cents[i][2]; cnt[a]++
+            }
+            for (j in 0 until k) {
+                if (cnt[j] > 0) {
+                    seeds[j][0] = sumX[j] / cnt[j]
+                    seeds[j][1] = sumY[j] / cnt[j]
+                    seeds[j][2] = sumZ[j] / cnt[j]
+                }
+            }
+        }
+        return Pair(assignments, k)
+    }
+
+    /**
+     * Adaptive segmentation entry point used by AI Paint. Tries [segmentByTopology] first;
+     * if the result is "degenerate" — one component covers more than [dominantThreshold] of
+     * the mesh — replaces it with a spatial K-means clustering of [targetSpatial] components
+     * so the AI has visibly distinct regions to label.
+     *
+     * Catches the common case of single-shell organic prints (cat pots, vases, character
+     * busts) where topology can't find creases to split on.
+     */
+    fun segmentByTopologyOrSpatial(
+        positions: FloatArray,
+        topologyCap: Int = 32,
+        targetSpatial: Int = 16,
+        dominantThreshold: Float = 0.7f
+    ): Pair<IntArray, Int> {
+        val triCount = positions.size / 9
+        if (triCount == 0) return Pair(IntArray(0), 0)
+
+        val (topoIds, topoN) = segmentByTopology(positions, maxComponents = topologyCap)
+        if (topoN <= 1) return segmentBySpatialKMeans(positions, targetSpatial)
+
+        val sizes = IntArray(topoN)
+        for (id in topoIds) sizes[id]++
+        val dominantId = sizes.indices.maxByOrNull { sizes[it] } ?: return Pair(topoIds, topoN)
+        val dominantPct = sizes[dominantId].toFloat() / triCount
+        return if (dominantPct < dominantThreshold) Pair(topoIds, topoN)
+        else segmentBySpatialKMeans(positions, targetSpatial)
+    }
+
     // boundaryPcts: N+1 boundary values for N regions, e.g. [0, 25, 50, 75, 100].
     // Returns per-triangle region index 0..N-1 based on Z height (Z=up in 3D printing).
     // Triangles are assigned to whichever band their Z centroid falls into.
