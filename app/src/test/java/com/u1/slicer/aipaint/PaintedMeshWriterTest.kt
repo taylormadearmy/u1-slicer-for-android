@@ -141,6 +141,44 @@ class PaintedMeshWriterTest {
     }
 
     @Test
+    fun `printerColours override the AI's suggested filament_colour when provided`() {
+        // User loads E1=Black, E2=Red, E3=Blue, E4=Green. AI suggests Yellow/Crimson/Cyan/Slate.
+        // We want the print to use the printer's loaded colours, not the AI's suggestions.
+        val printer = listOf("#000000", "#FF0000", "#0000FF", "#00FF00")
+        val out = tmp.newFile("painted.3mf")
+        PaintedMeshWriter.write(
+            fourRegionPositions(), fourRegionIds(), regions(), out,
+            printerColours = printer
+        )
+        ZipFile(out).use { zip ->
+            val json = zip.getInputStream(zip.getEntry("Metadata/project_settings.config"))
+                .reader().readText()
+            val colours = org.json.JSONObject(json).getJSONArray("filament_colour")
+            assertEquals(printer[0], colours.getString(0))
+            assertEquals(printer[1], colours.getString(1))
+            assertEquals(printer[2], colours.getString(2))
+            assertEquals(printer[3], colours.getString(3))
+            // None of the AI's region suggestions should leak through.
+            val all = (0 until colours.length()).map { colours.getString(it) }
+            assertFalse("Yellow leaked through", all.contains("#FFCC00"))
+        }
+    }
+
+    @Test
+    fun `printerColours falls back to AI hex when entry is missing or malformed`() {
+        // Only 3 valid printer slots; the 4th region falls back to AI's effectiveColour.
+        val printer = listOf("#111111", "not a hex", "#333333")
+        val json = org.json.JSONObject(
+            PaintedMeshWriter.buildProjectSettings(regions(), printer)
+        )
+        val colours = json.getJSONArray("filament_colour")
+        assertEquals("#111111", colours.getString(0))
+        assertEquals("#C62828", colours.getString(1))   // AI fallback (malformed printer entry)
+        assertEquals("#333333", colours.getString(2))
+        assertEquals("#37474F", colours.getString(3))   // AI fallback (printer entry missing)
+    }
+
+    @Test
     fun `buildProjectSettings sanitises malformed hex to grey`() {
         val regions = listOf(
             AiRegion(0, "A", "not a hex"),

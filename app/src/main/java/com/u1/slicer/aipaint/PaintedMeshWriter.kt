@@ -14,11 +14,19 @@ object PaintedMeshWriter {
     //   State 4 (extended):   nibble1=0xC, nibble2=1 → rightmost hex='C', next='1' → "1C"
     private val PAINT_COLOR = arrayOf("4", "8", "0C", "1C")  // index = region 0..3
 
+    /**
+     * @param printerColours when provided, used verbatim for the painted 3MF's `filament_colour`
+     *   array. This is what the slicer pipeline reads to populate its canonical filament list,
+     *   so passing the user's loaded extruder slot colours makes the Prepare / Preview viewers
+     *   render the print in the user's physical filament colours, NOT the AI's suggestions.
+     *   When null, the AI region's effectiveColour values are used (legacy / test path).
+     */
     fun write(
         positions: FloatArray,
         regionIds: IntArray,
         regions: List<AiRegion>,
-        outputFile: File
+        outputFile: File,
+        printerColours: List<String>? = null
     ) {
         ZipOutputStream(outputFile.outputStream().buffered()).use { zip ->
             zip.putNextEntry(ZipEntry("_rels/.rels"))
@@ -39,7 +47,7 @@ object PaintedMeshWriter {
             // project_settings.config ends up with filament_colour size 1 → the
             // native paint segmentation collapses to a single tool.
             zip.putNextEntry(ZipEntry("Metadata/project_settings.config"))
-            zip.write(buildProjectSettings(regions).toByteArray())
+            zip.write(buildProjectSettings(regions, printerColours).toByteArray())
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("[Content_Types].xml"))
@@ -95,10 +103,18 @@ object PaintedMeshWriter {
      * Builds the Bambu-format JSON used by [bambuCanonicalList][com.u1.slicer.bambu.bambuCanonicalList].
      * We only need filament_colour for canonical-list extraction; filament_type, _settings_id, and
      * filament_count are included so the embedder has sensible defaults to merge user overrides into.
+     *
+     * When [printerColours] is supplied, the i-th entry in `filament_colour` is taken from
+     * `printerColours[i]` (the user's loaded slot colour). Slots with an invalid / missing hex
+     * fall back to the AI's effectiveColour for the corresponding region.
      */
-    internal fun buildProjectSettings(regions: List<AiRegion>): String {
-        val coloursJson = regions.joinToString(", ") { r ->
-            val hex = sanitizeHex(r.effectiveColour)
+    internal fun buildProjectSettings(
+        regions: List<AiRegion>,
+        printerColours: List<String>? = null
+    ): String {
+        val coloursJson = regions.indices.joinToString(", ") { i ->
+            val printerHex = printerColours?.getOrNull(i)?.let { sanitizeOrNull(it) }
+            val hex = printerHex ?: sanitizeHex(regions[i].effectiveColour)
             "\"$hex\""
         }
         val typesJson = regions.joinToString(", ") { "\"PLA\"" }
@@ -111,6 +127,9 @@ object PaintedMeshWriter {
   "filament_count": "$n"
 }"""
     }
+
+    private fun sanitizeOrNull(hex: String): String? =
+        if (HEX_REGEX.matches(hex)) hex else null
 
     private val HEX_REGEX = Regex("^#[0-9A-Fa-f]{6}$")
     private fun sanitizeHex(hex: String): String =

@@ -61,7 +61,28 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow<AiPaintUiState>(AiPaintUiState.Idle)
     val uiState: StateFlow<AiPaintUiState> = _uiState.asStateFlow()
 
-    fun runPipeline(sourceModelPath: String, native: NativeLibrary) {
+    /**
+     * @param printerColours hex colours of the user's loaded extruder slots (E1..E4). When
+     *   provided, these are written into the painted 3MF's filament_colour array so the slicer's
+     *   Prepare / Preview viewers render the print in the user's physical filament colours
+     *   instead of the AI's suggested region colours.
+     */
+    fun runPipeline(
+        sourceModelPath: String,
+        native: NativeLibrary,
+        printerColours: List<String>? = null
+    ) {
+        lastPrinterColours = printerColours
+        runPipelineInternal(sourceModelPath, native, printerColours)
+    }
+
+    private var lastPrinterColours: List<String>? = null
+
+    private fun runPipelineInternal(
+        sourceModelPath: String,
+        native: NativeLibrary,
+        printerColours: List<String>?,
+    ) {
         viewModelScope.launch {
             _uiState.value = AiPaintUiState.Running(1, "Analysing model topology…")
             try {
@@ -126,7 +147,10 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     r.copy(coverageFraction = fractions.getOrElse(i) { 0f })
                 }
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
-                PaintedMeshWriter.write(mesh.trianglePositions, regionIds, regionsWithCoverage, outFile)
+                PaintedMeshWriter.write(
+                    mesh.trianglePositions, regionIds, regionsWithCoverage, outFile,
+                    printerColours = printerColours
+                )
 
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
@@ -188,7 +212,10 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
             )
         }
         val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
-        PaintedMeshWriter.write(state.trianglePositions, regionIds, updatedRegions, outFile)
+        PaintedMeshWriter.write(
+            state.trianglePositions, regionIds, updatedRegions, outFile,
+            printerColours = lastPrinterColours
+        )
         return state.copy(
             regions = updatedRegions,
             paintedModelPath = outFile.absolutePath,
@@ -198,7 +225,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
     fun redo(sourceModelPath: String, native: NativeLibrary) {
         _uiState.value = AiPaintUiState.Idle
-        runPipeline(sourceModelPath, native)
+        // Reuse the printer colours captured from the most recent runPipeline call so a Redo
+        // doesn't silently switch back to the AI's suggestion palette.
+        runPipeline(sourceModelPath, native, lastPrinterColours)
     }
 
     fun reset() { _uiState.value = AiPaintUiState.Idle }

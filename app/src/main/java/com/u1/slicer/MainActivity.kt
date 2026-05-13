@@ -1393,7 +1393,12 @@ fun PrepareScreen(
                                     if (isReeditAvailable) {
                                         onNavigateAiPaint()
                                     } else {
-                                        container.aiPaintViewModel.runPipeline(path, viewModel.nativeLib)
+                                        container.aiPaintViewModel.runPipeline(
+                                            path,
+                                            viewModel.nativeLib,
+                                            printerColours = viewModel.activeExtruderColors.value
+                                                .takeIf { it.isNotEmpty() }
+                                        )
                                         onNavigateAiPaint()
                                     }
                                 },
@@ -1452,7 +1457,12 @@ fun PrepareScreen(
                                     if (isReeditAvailable) {
                                         onNavigateAiPaint()
                                     } else {
-                                        container.aiPaintViewModel.runPipeline(path, viewModel.nativeLib)
+                                        container.aiPaintViewModel.runPipeline(
+                                            path,
+                                            viewModel.nativeLib,
+                                            printerColours = viewModel.activeExtruderColors.value
+                                                .takeIf { it.isNotEmpty() }
+                                        )
                                         onNavigateAiPaint()
                                     }
                                 },
