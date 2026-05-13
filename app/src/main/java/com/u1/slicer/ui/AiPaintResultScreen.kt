@@ -217,6 +217,7 @@ fun AiPaintResultScreen(
                                 paintActiveRegion = newSlot
                             }
                         },
+                        onEditSlotColour = { slot -> editSlotColour = slot },
                         onBrushSizeChange = { brushPct = it },
                         onClearSelection = { lassoSelection = emptySet() },
                         selectionSize = lassoSelection.size,
@@ -363,11 +364,20 @@ private fun AiPaintViewer(
     var brushTouchPx by remember { mutableStateOf<Pair<Float, Float>?>(null) }
     var viewerSizePx by remember { mutableStateOf(IntSize.Zero) }
 
+    // Recenter the mesh on the U1 build plate so it sits in frame. The pipeline retains
+    // file-space coordinates (which may be far from the bed origin for raw STLs); the viewer
+    // draws a 270×270 plate at (0..270, 0..270) and would render those models in the corner
+    // or off-plate entirely. We translate XY so the bounding box is centred at (135, 135) and
+    // Z so the bottom rests on the plate.
+    val recenteredPositions = remember(state.trianglePositions) {
+        recenterForBed(state.trianglePositions)
+    }
+
     // The mesh is built ONCE per pipeline run. Subsequent paints mutate extruderIndices in
     // place via ModelViewerView.updateExtruderIndices — far cheaper than rebuilding the VBO.
-    val mesh = remember(state.trianglePositions) {
+    val mesh = remember(recenteredPositions) {
         if (state.triangleRegions.isEmpty()) null
-        else AiPaintMeshBuilder.build(state.trianglePositions, state.triangleRegions)
+        else AiPaintMeshBuilder.build(recenteredPositions, state.triangleRegions)
     }
 
     val regionPalette = remember(state.regions) {
@@ -389,7 +399,7 @@ private fun AiPaintViewer(
                 ModelViewerView(ctx).also { view ->
                     viewerView = view
                     mesh?.let { view.setMesh(it) }
-                    view.setTrianglePickingPositions(state.trianglePositions)
+                    view.setTrianglePickingPositions(recenteredPositions)
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -438,7 +448,7 @@ private fun AiPaintViewer(
         val v = viewerView ?: return@LaunchedEffect
         val m = mesh ?: return@LaunchedEffect
         v.setMesh(m)
-        v.setTrianglePickingPositions(state.trianglePositions)
+        v.setTrianglePickingPositions(recenteredPositions)
     }
 
     // Whenever the per-triangle regions, palette, highlight target, or lasso selection changes:
@@ -494,6 +504,7 @@ private fun PaintModeBar(
     onTogglePaintMode: () -> Unit,
     onToggleLassoMode: () -> Unit,
     onSelectRegion: (Int) -> Unit,
+    onEditSlotColour: (Int) -> Unit,
     onBrushSizeChange: (Float) -> Unit,
     onClearSelection: () -> Unit,
     selectionSize: Int,
@@ -528,43 +539,56 @@ private fun PaintModeBar(
                 }
             }
         }
-        // Row 2 — slot swatches. ALWAYS shown when a mode is active so chips stay visible no
-        // matter the screen width (previously the swatches were on the same row as the chips
-        // and could overflow off-screen on narrow devices).
-        if (paintMode || lassoMode) {
-            Spacer(Modifier.height(6.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    if (lassoMode) "Apply to →" else "Active →",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                // One chip per PHYSICAL filament slot (TARGET_SLOTS=4).
-                val slotChips = regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS)
-                slotChips.forEachIndexed { idx, region ->
-                    val argb = remember(region.effectiveColour) {
-                        runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
-                            .getOrDefault(android.graphics.Color.GRAY)
-                    }
-                    val isActive = paintMode && idx == activeRegion
-                    Box(
-                        Modifier
-                            .size(if (isActive) 40.dp else 36.dp)
-                            .background(Color(argb), MaterialTheme.shapes.small)
-                            .clickable { onSelectRegion(idx) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (isActive) {
-                            Text("✓", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                        }
+        // Row 2 — slot swatches. ALWAYS shown (not gated on paint/lasso mode) so users can
+        // see and edit slot colours straight from the result screen. Tap behaviour depends on
+        // current mode: paint=select-active, lasso=commit-selection, neither=open-picker.
+        Spacer(Modifier.height(6.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                when {
+                    lassoMode -> "Apply to →"
+                    paintMode -> "Active →"
+                    else -> "Slots →"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // One swatch per PHYSICAL filament slot (TARGET_SLOTS=4). Swatch shows the
+            // canonical slot colour from regions[slot]. Tap = mode-dependent action; the ✎
+            // hint reveals when neither mode is on so users discover the picker.
+            val slotChips = regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS)
+            slotChips.forEachIndexed { idx, region ->
+                val argb = remember(region.effectiveColour) {
+                    runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
+                        .getOrDefault(android.graphics.Color.GRAY)
+                }
+                val isActive = paintMode && idx == activeRegion
+                Box(
+                    Modifier
+                        .size(if (isActive) 44.dp else 40.dp)
+                        .background(Color(argb), MaterialTheme.shapes.small)
+                        .clickable {
+                            // Neither mode = colour picker. Paint mode = select active.
+                            // Lasso mode = commit (handled by parent's onSelectRegion).
+                            if (!paintMode && !lassoMode) onEditSlotColour(idx)
+                            else onSelectRegion(idx)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when {
+                        isActive -> Text("✓", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        !paintMode && !lassoMode -> Text("✎", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        else -> {}
                     }
                 }
             }
-            // Row 3 — brush size slider.
+        }
+        // Row 3 — brush size slider (only meaningful when painting / lassoing).
+        if (paintMode || lassoMode) {
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -731,4 +755,38 @@ private fun MoveComponentSheet(
             }
         }
     }
+}
+
+/** Translate raw triangle positions onto the U1 bed (270×270 plate origin at corner). The
+ *  bounding box is centred at (135, 135) in XY and the lowest Z lands at 0. Output array has
+ *  the same length as input. */
+private fun recenterForBed(positions: FloatArray): FloatArray {
+    if (positions.isEmpty()) return positions
+    var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY
+    var minY = Float.POSITIVE_INFINITY; var maxY = Float.NEGATIVE_INFINITY
+    var minZ = Float.POSITIVE_INFINITY
+    var i = 0
+    while (i < positions.size) {
+        val x = positions[i]; val y = positions[i + 1]; val z = positions[i + 2]
+        if (x < minX) minX = x; if (x > maxX) maxX = x
+        if (y < minY) minY = y; if (y > maxY) maxY = y
+        if (z < minZ) minZ = z
+        i += 3
+    }
+    val targetCx = 135f
+    val targetCy = 135f
+    val cx = (minX + maxX) / 2f
+    val cy = (minY + maxY) / 2f
+    val dx = targetCx - cx
+    val dy = targetCy - cy
+    val dz = -minZ
+    val out = FloatArray(positions.size)
+    var j = 0
+    while (j < positions.size) {
+        out[j]     = positions[j] + dx
+        out[j + 1] = positions[j + 1] + dy
+        out[j + 2] = positions[j + 2] + dz
+        j += 3
+    }
+    return out
 }
