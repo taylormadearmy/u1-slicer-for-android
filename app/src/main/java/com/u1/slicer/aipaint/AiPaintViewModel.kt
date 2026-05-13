@@ -116,62 +116,93 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     MeshSegmenter.segmentByTopologyOrSpatial(mesh.trianglePositions)
                 }
 
-                // Phase 2 — render 4 plain shaded views for the AI to look at. The AI defines
-                // semantic regions directly from these images (no component-coloured hints), so
-                // it can recognise "ears", "face", "body" etc. on smooth shells where topology
-                // can't see any creases.
-                _uiState.value = AiPaintUiState.Running(2, "Rendering model views…")
-                val shadedBitmaps = withContext(Dispatchers.Default) {
-                    CameraAngle.entries.map { angle ->
-                        AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
-                    }
-                }
-
-                // Phase 3 — AI returns a list of regions, each with a label, a suggested colour,
-                // and a bounding box in each view (normalised [0..1] screen coordinates).
-                _uiState.value = AiPaintUiState.Running(3, "Asking AI to label regions…")
                 Log.i("AiPaint", "Phase 1 → $numComponents components from ${mesh.trianglePositions.size / 9} triangles")
-                val regionBoxes = AiLabelClient.labelByBoxes(provider, apiKey, shadedBitmaps, TARGET_COLOURS)
-                Log.i("AiPaint", "Phase 3 raw AI text: ${AiLabelClient.lastBoxesRaw?.replace('\n', ' ')?.take(1500)}")
-                regionBoxes.forEachIndexed { i, r ->
-                    val areas = r.boxes.entries.joinToString(", ") { (a, b) ->
-                        val w = (b[2] - b[0]).coerceAtLeast(0f)
-                        val h = (b[3] - b[1]).coerceAtLeast(0f)
-                        "${a.name.lowercase()}=${"%.2f".format(w * h)}"
-                    }
-                    Log.i("AiPaint", "  region $i \"${r.label}\" colour=${r.suggestedColour} areas: $areas")
-                }
 
-                // Phase 4 — back-project each component's triangles into all 4 views and vote
-                // by box membership. A component's region = the box it lands inside in the most
-                // views; ties go to the region with the smaller summed box area (so detail
-                // regions like "eyes" win over the broader "body" they sit inside).
-                _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
-                val projectors = CameraAngle.entries.associateWith { angle ->
-                    AiPaintProjector.build(mesh.trianglePositions, angle, 512, 512)
-                }
                 val componentToRegion: IntArray
                 val regionLabels: List<String>
                 val regionColours: List<String>
-                if (AiLabelClient.lastBoxesFellBack) {
-                    // AI refused or returned non-JSON. Generic stripe boxes always collapse all
-                    // components to two adjacent screen-Y bands which is useless. Use Z-height
-                    // bands on the actual 3D coordinates instead: for an upright print this
-                    // splits into base / lower / upper / top — a sensible default.
-                    Log.w("AiPaint", "AI fell back — using Z-band 3D fallback. Raw: ${AiLabelClient.lastBoxesRaw?.take(200)}")
-                    componentToRegion = withContext(Dispatchers.Default) {
-                        assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_COLOURS)
-                    }
-                    regionLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
-                    regionColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
-                } else {
-                    componentToRegion = withContext(Dispatchers.Default) {
-                        AiPaintRegionAssigner.assign(
-                            mesh.trianglePositions, componentIds, numComponents, regionBoxes, projectors
+                var find3DFellBack = false
+                // When non-null, Find3D returned a per-triangle label and we use it directly as
+                // the per-triangle region map — no need to flatten through componentToRegion,
+                // so triangles within the same topology component can land in different regions.
+                var find3DTriangleLabels: IntArray? = null
+
+                if (provider.isFind3D) {
+                    // Phase 2/3 — Find3D path. Skip the 2D render step; talk directly to the
+                    // Find3D HuggingFace Space with our mesh as a point cloud and text queries
+                    // for the 4 part names.
+                    _uiState.value = AiPaintUiState.Running(2, "Sending mesh to Find3D…")
+                    val queries = listOf("head", "body", "legs", "base")  // TODO: editable on result screen
+                    val find3DLabels = Find3DClient.segmentByCentroid(
+                        trianglePositions = mesh.trianglePositions,
+                        queries = queries,
+                        hfToken = apiKey.takeIf { it.isNotBlank() },
+                    )
+                    if (find3DLabels != null) {
+                        _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
+                        find3DTriangleLabels = find3DLabels
+                        // Aggregate to per-component via majority for tap-to-move compatibility.
+                        componentToRegion = aggregateLabelsToComponents(
+                            find3DLabels, componentIds, numComponents, queries.size
                         )
+                        regionLabels = queries.map { it.replaceFirstChar(Char::titlecase) }
+                        regionColours = listOf("#E53935", "#1E88E5", "#43A047", "#FB8C00")
+                        Log.i("AiPaint", "Find3D returned ${find3DLabels.size} per-triangle labels")
+                    } else {
+                        Log.w("AiPaint", "Find3D failed (${Find3DClient.lastError}) — Z-band fallback")
+                        find3DFellBack = true
+                        _uiState.value = AiPaintUiState.Running(4, "Find3D unavailable — falling back…")
+                        componentToRegion = withContext(Dispatchers.Default) {
+                            assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_COLOURS)
+                        }
+                        regionLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
+                        regionColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
                     }
-                    regionLabels = regionBoxes.map { it.label }
-                    regionColours = regionBoxes.map { it.suggestedColour }
+                } else {
+                    // Phase 2 — render 4 plain shaded views for the 2D vision AI to look at.
+                    _uiState.value = AiPaintUiState.Running(2, "Rendering model views…")
+                    val shadedBitmaps = withContext(Dispatchers.Default) {
+                        CameraAngle.entries.map { angle ->
+                            AiPaintRenderer.renderShaded(mesh.trianglePositions, 512, 512, angle)
+                        }
+                    }
+
+                    // Phase 3 — AI returns a list of regions, each with a label, a suggested colour,
+                    // and a bounding box in each view (normalised [0..1] screen coordinates).
+                    _uiState.value = AiPaintUiState.Running(3, "Asking AI to label regions…")
+                    val regionBoxes = AiLabelClient.labelByBoxes(provider, apiKey, shadedBitmaps, TARGET_COLOURS)
+                    Log.i("AiPaint", "Phase 3 raw AI text: ${AiLabelClient.lastBoxesRaw?.replace('\n', ' ')?.take(1500)}")
+                    regionBoxes.forEachIndexed { i, r ->
+                        val areas = r.boxes.entries.joinToString(", ") { (a, b) ->
+                            val w = (b[2] - b[0]).coerceAtLeast(0f)
+                            val h = (b[3] - b[1]).coerceAtLeast(0f)
+                            "${a.name.lowercase()}=${"%.2f".format(w * h)}"
+                        }
+                        Log.i("AiPaint", "  region $i \"${r.label}\" colour=${r.suggestedColour} areas: $areas")
+                    }
+
+                    // Phase 4 — back-project each component's triangles into all 4 views and vote
+                    // by box membership.
+                    _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
+                    val projectors = CameraAngle.entries.associateWith { angle ->
+                        AiPaintProjector.build(mesh.trianglePositions, angle, 512, 512)
+                    }
+                    if (AiLabelClient.lastBoxesFellBack) {
+                        Log.w("AiPaint", "AI fell back — using Z-band 3D fallback. Raw: ${AiLabelClient.lastBoxesRaw?.take(200)}")
+                        componentToRegion = withContext(Dispatchers.Default) {
+                            assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_COLOURS)
+                        }
+                        regionLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
+                        regionColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
+                    } else {
+                        componentToRegion = withContext(Dispatchers.Default) {
+                            AiPaintRegionAssigner.assign(
+                                mesh.trianglePositions, componentIds, numComponents, regionBoxes, projectors
+                            )
+                        }
+                        regionLabels = regionBoxes.map { it.label }
+                        regionColours = regionBoxes.map { it.suggestedColour }
+                    }
                 }
                 // Diagnostic: how did the assignment distribute components across regions?
                 val regionCounts = IntArray(TARGET_COLOURS)
@@ -191,7 +222,15 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         componentIds = members,
                     )
                 }
-                val regionIds = IntArray(componentIds.size) { componentToRegion[componentIds[it]] }
+                // Per-triangle region indices. Find3D's per-triangle labels override the
+                // component-level flatten when present (preserving its finer granularity).
+                val regionIds = if (find3DTriangleLabels != null) {
+                    IntArray(find3DTriangleLabels!!.size) { i ->
+                        find3DTriangleLabels!![i].coerceIn(0, TARGET_COLOURS - 1)
+                    }
+                } else {
+                    IntArray(componentIds.size) { componentToRegion[componentIds[it]] }
+                }
 
                 val fractions = MeshSegmenter.coverageFractions(regionIds, regions.size)
                 val regionsWithCoverage = regions.mapIndexed { i, r ->
@@ -211,16 +250,13 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     printerColours = printerColours
                 )
 
-                // Per-triangle region map — initial state derived from componentToRegion;
-                // brush mode mutates this directly so individual triangles can diverge from
-                // their topology component's group.
-                val triangleRegions = ByteArray(componentIds.size) {
-                    componentToRegion[componentIds[it]].toByte()
-                }
+                // Per-triangle region map — Find3D's labels feed this directly; otherwise we
+                // derive it from the component-level map (uniform within each component).
+                val triangleRegions = ByteArray(regionIds.size) { regionIds[it].toByte() }
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         regions = regionsWithCoverage,
-                        usedAiFallback = AiLabelClient.lastBoxesFellBack,
+                        usedAiFallback = AiLabelClient.lastBoxesFellBack || find3DFellBack,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
                         previewBitmap = null,
@@ -352,6 +388,27 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
             triangleRegions = newTriRegions,
             componentToRegion = newCompMap,
         )
+    }
+
+    /** Per-component majority vote across an IntArray of per-triangle labels (used by the
+     *  Find3D path during the initial pipeline, before the result state exists). */
+    private fun aggregateLabelsToComponents(
+        triangleLabels: IntArray,
+        componentIds: IntArray,
+        numComponents: Int,
+        numRegions: Int,
+    ): IntArray {
+        val tally = Array(numComponents) { IntArray(numRegions) }
+        for (t in triangleLabels.indices) {
+            val c = if (t < componentIds.size) componentIds[t] else continue
+            val r = triangleLabels[t]
+            if (c in tally.indices && r in 0 until numRegions) tally[c][r]++
+        }
+        return IntArray(numComponents) { c ->
+            var best = 0; var bestCount = -1
+            for (r in 0 until numRegions) if (tally[c][r] > bestCount) { bestCount = tally[c][r]; best = r }
+            best
+        }
     }
 
     /** Per-component winning region via majority vote across its triangles. */

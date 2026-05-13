@@ -231,6 +231,7 @@ Respond ONLY with valid JSON:
         )
         AiPaintProvider.GEMINI -> buildGeminiRequest(apiKey, prompt, jpegBytes)
         AiPaintProvider.CLAUDE -> buildClaudeRequest(apiKey, prompt, jpegBytes)
+        AiPaintProvider.FIND3D -> error("FIND3D doesn't use the 2D vision request path; runPipeline branches on provider.isFind3D")
     }
 
     private fun buildOpenAiStyleRequest(

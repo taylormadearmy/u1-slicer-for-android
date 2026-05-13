@@ -46,12 +46,16 @@ enum class AiPaintProvider(
      *  `requiresKey = false` but `acceptsKey = true` work anonymously but accept a key to lift
      *  rate limits or unlock priority routing — Pollinations is the current example. */
     val acceptsKey: Boolean = requiresKey,
+    /** When true this provider operates on raw 3D point clouds via the Find3D HuggingFace
+     *  Space, not on 2D rendered images. Bypasses the bounding-box-prompt path entirely. */
+    val isFind3D: Boolean = false,
 ) {
     POLLINATIONS("Pollinations.ai (free; key optional, lifts rate limits)", false, acceptsKey = true),
     GEMINI("Google Gemini (free 1k/day)", true),
     OPENROUTER("OpenRouter", true),
     CLAUDE("Claude (Anthropic)", true),
-    OPENAI("OpenAI", true);
+    OPENAI("OpenAI", true),
+    FIND3D("Find3D (3D-native; best for figurines)", requiresKey = false, acceptsKey = true, isFind3D = true);
 
     companion object {
         val DEFAULT = POLLINATIONS
