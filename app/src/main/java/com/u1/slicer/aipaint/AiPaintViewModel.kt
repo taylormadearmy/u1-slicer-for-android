@@ -122,9 +122,10 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _uiState.value = AiPaintUiState.Running(1, "Analysing model topology…")
             try {
-                // Pre-flight: check API key when required
+                // Pre-flight: check API key when required. Per-provider key store — switching
+                // providers no longer drags one provider's key into another.
                 val providerName = settings.aiPaintProvider.first()
-                val apiKey = settings.aiPaintApiKey.first()
+                val apiKey = settings.aiPaintApiKeyFor(providerName).first()
                 val provider = AiPaintProvider.fromId(providerName)
                 if (provider.requiresKey && apiKey.isBlank()) {
                     _uiState.value = AiPaintUiState.Error(
@@ -227,11 +228,17 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         regionLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
                         regionColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
                     } else {
-                        componentToRegion = withContext(Dispatchers.Default) {
-                            AiPaintRegionAssigner.assign(
-                                mesh.trianglePositions, componentIds, numComponents, regionBoxes, projectors
-                            )
+                        // Per-triangle assignment — preserves Gemini's small-region intent even
+                        // when most of a topology component sits outside the box. We aggregate
+                        // to componentToRegion via majority afterwards so the tap-to-move sheet
+                        // still has a coherent per-component map.
+                        val perTri = withContext(Dispatchers.Default) {
+                            AiPaintRegionAssigner.assign(mesh.trianglePositions, regionBoxes, projectors)
                         }
+                        find3DTriangleLabels = perTri
+                        componentToRegion = aggregateLabelsToComponents(
+                            perTri, componentIds, numComponents, TARGET_COLOURS
+                        )
                         regionLabels = regionBoxes.map { it.label }
                         regionColours = regionBoxes.map { it.suggestedColour }
                     }

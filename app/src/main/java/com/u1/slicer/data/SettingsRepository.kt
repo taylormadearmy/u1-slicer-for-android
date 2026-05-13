@@ -104,6 +104,15 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.AI_PAINT_API_KEY] ?: ""
     }
 
+    /** Per-provider API key with a fallback to the legacy single-key slot. Each provider
+     *  (Pollinations, Gemini, OpenRouter, Claude, OpenAI, Find3D) has its own key now —
+     *  switching providers no longer loses or leaks the previous key. */
+    fun aiPaintApiKeyFor(providerName: String): Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[stringPreferencesKey("ai_paint_key_$providerName")]
+            ?: prefs[Keys.AI_PAINT_API_KEY]   // legacy single-key fallback for first-launch migration
+            ?: ""
+    }
+
     suspend fun saveExtruderPresets(presets: List<ExtruderPreset>) {
         context.dataStore.edit { prefs ->
             prefs[Keys.EXTRUDER_PRESETS] = serializeExtruderPresets(presets)
@@ -169,8 +178,11 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun saveAiPaintSettings(provider: String, apiKey: String) {
+        // Per-provider write: stores under ai_paint_key_<provider>. We KEEP writing to the
+        // legacy AI_PAINT_API_KEY too so a downgraded build can still read it; this is cheap.
         context.dataStore.edit { prefs ->
             prefs[Keys.AI_PAINT_PROVIDER] = provider
+            prefs[stringPreferencesKey("ai_paint_key_$provider")] = apiKey
             prefs[Keys.AI_PAINT_API_KEY] = apiKey
         }
     }

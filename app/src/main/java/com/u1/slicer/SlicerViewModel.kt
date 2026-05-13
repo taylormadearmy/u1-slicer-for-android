@@ -45,6 +45,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -705,6 +706,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     val aiPaintApiKey: StateFlow<String> = settingsRepo.aiPaintApiKey
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    /** Per-provider API key flow. Each provider's key is stored independently so switching
+     *  providers in Settings doesn't leak / overwrite a different provider's key. */
+    fun aiPaintApiKeyFor(provider: String): Flow<String> = settingsRepo.aiPaintApiKeyFor(provider)
 
     fun saveAiPaintSettings(provider: String, apiKey: String) {
         viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintSettings(provider, apiKey) }

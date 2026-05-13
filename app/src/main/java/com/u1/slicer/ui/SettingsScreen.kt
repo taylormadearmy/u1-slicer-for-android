@@ -697,7 +697,10 @@ fun SettingsScreen(
             // ---- AI Paint ----
             SettingsSection("AI Paint") {
                 val aiProviderName by viewModel.aiPaintProvider.collectAsState()
-                val aiApiKey by viewModel.aiPaintApiKey.collectAsState()
+                // Per-provider key — re-derived whenever the selected provider changes so each
+                // provider keeps its own key independently.
+                val keyFlow = remember(aiProviderName) { viewModel.aiPaintApiKeyFor(aiProviderName) }
+                val aiApiKey by keyFlow.collectAsState(initial = "")
                 val currentProvider = com.u1.slicer.aipaint.AiPaintProvider.fromId(aiProviderName)
 
                 // Provider dropdown

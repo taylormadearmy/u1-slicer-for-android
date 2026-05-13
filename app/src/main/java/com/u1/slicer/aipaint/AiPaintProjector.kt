@@ -94,57 +94,55 @@ data class AiRegionBoxes(
 object AiPaintRegionAssigner {
 
     /**
-     * Assigns each topology component to the region whose bounding boxes contain the most of
-     * its triangles across all 4 views. Ties are broken by preferring the region with the
-     * smaller total box area (so a small "eyes" region wins over a large "body" region that
-     * happens to overlap).
+     * Per-triangle region assignment. Each triangle independently votes across all 4 views: it
+     * scores 1 for each region whose bounding box (in that view) contains the triangle's
+     * projected centroid. Highest score wins; ties go to the region with the smaller total box
+     * area (so a small "Horns" box wins over the large "Body" box it sits inside).
      *
-     * Triangles that aren't inside any region's box in any view default to the largest region
-     * (region 0 by convention) — typically "Body" / background.
+     * Returns IntArray of length triCount with per-triangle region indices. Triangles that
+     * aren't inside any box in any view default to [defaultRegion].
+     *
+     * Per-triangle granularity is critical: a "Horns" box covering only 5 % of a view might
+     * contain hundreds of triangles, but if those triangles belong to topology components that
+     * mostly sit elsewhere, a per-component majority vote would drop them. Painting per
+     * triangle preserves Gemini's small-region intent.
      */
     fun assign(
         trianglePositions: FloatArray,
-        componentIds: IntArray,
-        numComponents: Int,
         regions: List<AiRegionBoxes>,
         projectors: Map<CameraAngle, AiPaintProjector>,
         defaultRegion: Int = 0,
     ): IntArray {
-        if (regions.isEmpty()) return IntArray(numComponents) { defaultRegion }
+        val triCount = trianglePositions.size / 9
+        if (regions.isEmpty()) return IntArray(triCount) { defaultRegion }
 
-        // Per-(component, region) vote count.
-        val votes = Array(numComponents) { IntArray(regions.size) }
-        val triCount = componentIds.size
+        val areas = FloatArray(regions.size) { regions[it].summedArea() }
+        val perTriRegion = IntArray(triCount) { defaultRegion }
+
         for (t in 0 until triCount) {
             val b = t * 9
             val centroidX = (trianglePositions[b]     + trianglePositions[b + 3] + trianglePositions[b + 6]) / 3f
             val centroidY = (trianglePositions[b + 1] + trianglePositions[b + 4] + trianglePositions[b + 7]) / 3f
             val centroidZ = (trianglePositions[b + 2] + trianglePositions[b + 5] + trianglePositions[b + 8]) / 3f
-            val comp = componentIds[t]
 
+            val scores = IntArray(regions.size)
             for ((angle, projector) in projectors) {
                 val (sx, sy) = projector.project(centroidX, centroidY, centroidZ)
                 regions.forEachIndexed { regionIdx, region ->
-                    if (region.isInBox(angle, sx, sy)) votes[comp][regionIdx]++
+                    if (region.isInBox(angle, sx, sy)) scores[regionIdx]++
                 }
             }
-        }
 
-        // Resolve each component's winning region.
-        val componentToRegion = IntArray(numComponents) { defaultRegion }
-        val areas = FloatArray(regions.size) { regions[it].summedArea() }
-        for (c in 0 until numComponents) {
-            val row = votes[c]
             var bestRegion = -1
-            var bestVotes = 0
-            for (r in row.indices) {
-                if (row[r] > bestVotes || (row[r] == bestVotes && row[r] > 0 && bestRegion >= 0 && areas[r] < areas[bestRegion])) {
-                    bestVotes = row[r]
-                    bestRegion = r
+            var bestScore = 0
+            for (r in scores.indices) {
+                val s = scores[r]
+                if (s > bestScore || (s == bestScore && s > 0 && bestRegion >= 0 && areas[r] < areas[bestRegion])) {
+                    bestScore = s; bestRegion = r
                 }
             }
-            componentToRegion[c] = if (bestVotes > 0) bestRegion else defaultRegion
+            perTriRegion[t] = if (bestScore > 0) bestRegion else defaultRegion
         }
-        return componentToRegion
+        return perTriRegion
     }
 }
