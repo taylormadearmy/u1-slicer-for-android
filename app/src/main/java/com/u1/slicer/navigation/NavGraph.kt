@@ -134,9 +134,15 @@ fun U1NavGraph(
             AiPaintResultScreen(
                 uiState = uiState,
                 filamentColours = filamentColours,
-                onUsePainting = { paintedPath ->
-                    viewModel.loadModelFromFile(java.io.File(paintedPath))
-                    navController.popBackStack(Routes.PREPARE, inclusive = false)
+                onUsePainting = {
+                    // The painted 3MF is written ON DEMAND at this point — every paint stroke
+                    // up to now has been an in-memory update only, so the result screen stays
+                    // snappy. Block briefly while we serialise the final mesh and then load it.
+                    val finalPath = aiVm.finalizePainting()
+                    if (finalPath != null) {
+                        viewModel.loadModelFromFile(java.io.File(finalPath))
+                        navController.popBackStack(Routes.PREPARE, inclusive = false)
+                    }
                 },
                 onRedo = {
                     val sourcePath = viewModel.currentModelPath ?: return@AiPaintResultScreen
@@ -149,7 +155,8 @@ fun U1NavGraph(
                 onNavigateSettings = { navController.navigate(Routes.SETTINGS) },
                 onMoveComponent = { componentId, toRegion -> aiVm.moveComponent(componentId, toRegion) },
                 onHighlightComponent = { componentId -> aiVm.highlightComponent(componentId) },
-                onUpdateRegionColour = { regionId, hex -> aiVm.updateRegionColour(regionId, hex) }
+                onUpdateRegionColour = { regionId, hex -> aiVm.updateRegionColour(regionId, hex) },
+                onPaintTriangles = { triIds, toRegion -> aiVm.paintTriangles(triIds, toRegion) },
             )
         }
     }

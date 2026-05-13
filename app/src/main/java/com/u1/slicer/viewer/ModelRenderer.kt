@@ -74,6 +74,12 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingClearMesh = false
 
+    /** Pending per-triangle extruder index update. When set, the next [onDrawFrame] copies the
+     *  bytes into [MeshData.extruderIndices] in place. Used by the AI Paint brush so we can
+     *  repaint individual triangles without rebuilding the whole mesh. */
+    @Volatile
+    var pendingExtruderUpdate: ByteArray? = null
+
     @Volatile
     var preserveCameraOnNextMeshUpload = false
 
@@ -164,6 +170,19 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             pendingCameraReset = !preserveCameraOnNextMeshUpload
             preserveCameraOnNextMeshUpload = false
             pendingContentReadyDispatch = true
+        }
+
+        // Process pending per-triangle extruder index update BEFORE recolor, so the recolor
+        // step picks up the new indices when it looks up palette[index].
+        if (pendingExtruderUpdate != null) {
+            meshData?.extruderIndices?.let { existing ->
+                pendingExtruderUpdate?.let { update ->
+                    if (update.size == existing.size) {
+                        System.arraycopy(update, 0, existing, 0, update.size)
+                    }
+                    pendingExtruderUpdate = null
+                }
+            }
         }
 
         // Process pending recolor for existing mesh (no new mesh upload)

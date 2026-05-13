@@ -4,23 +4,22 @@ import com.u1.slicer.viewer.MeshData
 import kotlin.math.sqrt
 
 /**
- * Builds a [MeshData] from raw triangle positions plus per-triangle component IDs.
- * The component ID is stored in `extruderIndices` so [MeshData.recolor] paints each
- * component from the palette entry at `palette[componentId]`.
- *
- * Component IDs must fit in an unsigned byte (0..255). The AI Paint pipeline caps
- * the intermediate component count at 32 (see [MeshSegmenter.MAX_INTERMEDIATE_COMPONENTS]).
+ * Builds a [MeshData] from raw triangle positions plus a per-triangle key array (region IDs
+ * 0..3 in the AI Paint pipeline). Keys are stored in `extruderIndices` so [MeshData.recolor]
+ * paints each triangle from the palette entry at `palette[key]`. The renderer's
+ * `pendingExtruderUpdate` lets us mutate these indices in place when the user paints, so we
+ * never have to rebuild the mesh on a brush stroke.
  */
 object AiPaintMeshBuilder {
 
-    fun build(trianglePositions: FloatArray, componentIds: IntArray): MeshData {
-        val triCount = componentIds.size
+    fun build(trianglePositions: FloatArray, triangleKeys: ByteArray): MeshData {
+        val triCount = triangleKeys.size
         require(trianglePositions.size == triCount * 9) {
             "trianglePositions length ${trianglePositions.size} does not match $triCount triangles × 9 floats"
         }
 
         val buf = MeshData.allocateBuffer(triCount)
-        val byteIndices = ByteArray(triCount) { componentIds[it].toByte() }
+        val byteIndices = triangleKeys.copyOf()
 
         var minX = Float.POSITIVE_INFINITY
         var minY = Float.POSITIVE_INFINITY
@@ -66,28 +65,13 @@ object AiPaintMeshBuilder {
     }
 
     /**
-     * Builds an RGBA palette where palette[componentId] is the colour of the region that
-     * component is currently assigned to. If [highlightComponentId] is set, that one
-     * component is rendered bright yellow and all others are dimmed to gray, useful for
-     * "show me which part this chip refers to" previews.
+     * Region palette: one RGBA entry per region. The mesh's extruderIndices contains per-
+     * triangle region keys (0..3), so [MeshData.recolor] will look up palette[regionId] for
+     * each triangle.
      */
-    fun buildPalette(
-        numComponents: Int,
-        componentToRegion: IntArray,
-        regionColours: List<FloatArray>,
-        highlightComponentId: Int? = null
-    ): List<FloatArray> {
+    fun regionPalette(regionColours: List<FloatArray>): List<FloatArray> {
         val fallback = floatArrayOf(0.55f, 0.55f, 0.55f, 1f)
-        val highlight = floatArrayOf(1f, 0.92f, 0.20f, 1f)
-        val dim       = floatArrayOf(0.25f, 0.25f, 0.27f, 1f)
-        return List(numComponents) { c ->
-            if (highlightComponentId != null) {
-                if (c == highlightComponentId) highlight else dim
-            } else {
-                val region = componentToRegion.getOrNull(c) ?: -1
-                regionColours.getOrNull(region) ?: fallback
-            }
-        }
+        return regionColours.ifEmpty { listOf(fallback) }
     }
 
     private fun putVertex(

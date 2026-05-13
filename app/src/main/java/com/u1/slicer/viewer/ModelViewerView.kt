@@ -39,6 +39,12 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     // into the FloatArray supplied to setTrianglePickingPositions. Disabled when null.
     var onTriangleTapped: ((Int) -> Unit)? = null
 
+    // Brush mode: when [brushRadiusWorld] > 0 AND [onBrushPaint] is set, taps find ALL triangles
+    // within that world-space radius of the hit triangle's centroid and emit them as a list.
+    // The list is what the AI Paint screen passes to AiPaintViewModel.paintTriangles.
+    var onBrushPaint: ((List<Int>) -> Unit)? = null
+    var brushRadiusWorld: Float = 0f
+
     // Positions used for triangle picking. Separate from the mesh VBO so callers don't have to
     // rebuild the picking data when only colours change.
     private var pickingPositions: FloatArray? = null
@@ -90,6 +96,14 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     /** Supply the per-triangle world-space positions used by [onTriangleTapped] ray picking. */
     fun setTrianglePickingPositions(positions: FloatArray) {
         pickingPositions = positions
+    }
+
+    /** Replace the per-triangle extruder-index byte array used by the renderer's recolor step.
+     *  Thread-safe: queues the update; the GL thread copies it into MeshData.extruderIndices on
+     *  the next frame. Triggers a render. */
+    fun updateExtruderIndices(indices: ByteArray) {
+        renderer.pendingExtruderUpdate = indices.copyOf()
+        requestRender()
     }
 
     fun setExtruderColors(hexColors: List<String>) {
@@ -180,13 +194,46 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             renderer.highlightIndex = -1
             requestRender()
         }
-        if (!wasDragging && !tapMovedTooFar && onTriangleTapped != null) {
+        if (!wasDragging && !tapMovedTooFar) {
             val dt = event.eventTime - tapDownTime
             if (dt < 300L) {
-                val triIdx = pickTriangle(event.x, event.y)
-                if (triIdx >= 0) onTriangleTapped?.invoke(triIdx)
+                // Brush mode takes precedence: gather all triangles within brushRadiusWorld of
+                // the hit triangle's centroid and emit as a list. Falls through to the legacy
+                // single-triangle tap callback for tap-to-move.
+                if (onBrushPaint != null) {
+                    val tris = pickTrianglesWithinRadius(event.x, event.y, brushRadiusWorld)
+                    if (tris.isNotEmpty()) onBrushPaint?.invoke(tris)
+                } else if (onTriangleTapped != null) {
+                    val triIdx = pickTriangle(event.x, event.y)
+                    if (triIdx >= 0) onTriangleTapped?.invoke(triIdx)
+                }
             }
         }
+    }
+
+    /** Pick the hit triangle and gather every triangle whose centroid is within [radiusWorld]
+     *  units of the hit centroid. radiusWorld = 0 returns just the hit triangle. */
+    private fun pickTrianglesWithinRadius(screenX: Float, screenY: Float, radiusWorld: Float): List<Int> {
+        val positions = pickingPositions ?: return emptyList()
+        val hit = pickTriangle(screenX, screenY)
+        if (hit < 0) return emptyList()
+        if (radiusWorld <= 0f) return listOf(hit)
+        val b0 = hit * 9
+        val hx = (positions[b0]     + positions[b0 + 3] + positions[b0 + 6]) / 3f
+        val hy = (positions[b0 + 1] + positions[b0 + 4] + positions[b0 + 7]) / 3f
+        val hz = (positions[b0 + 2] + positions[b0 + 5] + positions[b0 + 8]) / 3f
+        val r2 = radiusWorld * radiusWorld
+        val out = ArrayList<Int>(64)
+        val n = positions.size / 9
+        for (i in 0 until n) {
+            val b = i * 9
+            val cx = (positions[b]     + positions[b + 3] + positions[b + 6]) / 3f
+            val cy = (positions[b + 1] + positions[b + 4] + positions[b + 7]) / 3f
+            val cz = (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
+            val dx = cx - hx; val dy = cy - hy; val dz = cz - hz
+            if (dx * dx + dy * dy + dz * dz <= r2) out.add(i)
+        }
+        return out
     }
 
     private fun pickTriangle(screenX: Float, screenY: Float): Int {

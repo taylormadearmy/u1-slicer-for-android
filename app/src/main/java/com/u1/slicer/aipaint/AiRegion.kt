@@ -23,6 +23,10 @@ data class AiPaintResultState(
     val componentIds: IntArray = IntArray(0),
     val numComponents: Int = 0,
     val componentToRegion: IntArray = IntArray(0),
+    // Per-triangle region assignment (0..3). Initially derived from componentToRegion via
+    // componentToRegion[componentIds[t]]; the brush mutates it directly so individual triangles
+    // can have different regions to their topology neighbours.
+    val triangleRegions: ByteArray = ByteArray(0),
     // When non-null, the 3D view highlights this single component and dims the rest.
     val highlightComponentId: Int? = null,
     // True when the AI didn't return usable region boxes and the Z-band fallback was used.

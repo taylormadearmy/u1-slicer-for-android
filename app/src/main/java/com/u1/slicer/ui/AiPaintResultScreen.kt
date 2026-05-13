@@ -29,12 +29,15 @@ fun AiPaintResultScreen(
     filamentColours: List<String> = emptyList(),
     onMoveComponent: (componentId: Int, toRegion: Int) -> Unit = { _, _ -> },
     onHighlightComponent: (componentId: Int?) -> Unit = {},
-    onUpdateRegionColour: (regionId: Int, hex: String) -> Unit = { _, _ -> }
+    onUpdateRegionColour: (regionId: Int, hex: String) -> Unit = { _, _ -> },
+    onPaintTriangles: (triangleIds: List<Int>, toRegion: Int) -> Unit = { _, _ -> },
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
     var paintMode by remember { mutableStateOf(false) }
     var paintActiveRegion by remember { mutableStateOf(0) }
+    // Brush radius as a fraction of the model's bbox diagonal. 0 = single triangle.
+    var brushPct by remember { mutableStateOf(0.03f) }
 
     Scaffold(
         topBar = {
@@ -91,19 +94,42 @@ fun AiPaintResultScreen(
                         }
                     }
 
+                    // Compute the model's bounding-box diagonal once per pipeline run; the brush
+                    // radius slider expresses size as a fraction of that diagonal so behaviour
+                    // is consistent regardless of model scale.
+                    val modelDiagonal = remember(result.trianglePositions) {
+                        if (result.trianglePositions.isEmpty()) 1f
+                        else {
+                            var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY
+                            var minY = Float.POSITIVE_INFINITY; var maxY = Float.NEGATIVE_INFINITY
+                            var minZ = Float.POSITIVE_INFINITY; var maxZ = Float.NEGATIVE_INFINITY
+                            val p = result.trianglePositions
+                            var i = 0
+                            while (i < p.size) {
+                                val x = p[i]; val y = p[i + 1]; val z = p[i + 2]
+                                if (x < minX) minX = x; if (x > maxX) maxX = x
+                                if (y < minY) minY = y; if (y > maxY) maxY = y
+                                if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+                                i += 3
+                            }
+                            val dx = maxX - minX; val dy = maxY - minY; val dz = maxZ - minZ
+                            kotlin.math.sqrt(dx * dx + dy * dy + dz * dz).coerceAtLeast(1f)
+                        }
+                    }
+                    val brushRadiusWorld = brushPct * modelDiagonal
+
                     // Live 3D viewer — replaces the previous static iso bitmap.
                     AiPaintViewer(
                         state = result,
                         onTriangleTapped = { triangleIdx ->
                             val comp = result.componentIds.getOrNull(triangleIdx) ?: return@AiPaintViewer
-                            if (paintMode) {
-                                // Direct-paint: tapped component jumps to active region. No sheet.
-                                onMoveComponent(comp, paintActiveRegion)
-                            } else {
-                                moveSheetComponent = comp
-                                onHighlightComponent(comp)
-                            }
+                            moveSheetComponent = comp
+                            onHighlightComponent(comp)
                         },
+                        paintMode = paintMode,
+                        brushRadiusWorld = brushRadiusWorld,
+                        activeRegion = paintActiveRegion,
+                        onPaintTriangles = onPaintTriangles,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f)
                             .background(Color(0xFF111118))
                     )
@@ -113,8 +139,10 @@ fun AiPaintResultScreen(
                         paintMode = paintMode,
                         regions = result.regions,
                         activeRegion = paintActiveRegion,
+                        brushPct = brushPct,
                         onTogglePaintMode = { paintMode = !paintMode },
                         onSelectRegion = { paintActiveRegion = it },
+                        onBrushSizeChange = { brushPct = it },
                     )
 
                     Text(
@@ -202,13 +230,19 @@ fun AiPaintResultScreen(
 private fun AiPaintViewer(
     state: AiPaintResultState,
     onTriangleTapped: (Int) -> Unit,
+    paintMode: Boolean,
+    brushRadiusWorld: Float,
+    activeRegion: Int,
+    onPaintTriangles: (List<Int>, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var viewerView by remember { mutableStateOf<ModelViewerView?>(null) }
 
-    val mesh = remember(state.componentIds) {
-        if (state.numComponents == 0 || state.componentIds.isEmpty()) null
-        else AiPaintMeshBuilder.build(state.trianglePositions, state.componentIds)
+    // The mesh is built ONCE per pipeline run. Subsequent paints mutate extruderIndices in
+    // place via ModelViewerView.updateExtruderIndices — far cheaper than rebuilding the VBO.
+    val mesh = remember(state.trianglePositions) {
+        if (state.triangleRegions.isEmpty()) null
+        else AiPaintMeshBuilder.build(state.trianglePositions, state.triangleRegions)
     }
 
     val regionPalette = remember(state.regions) {
@@ -228,13 +262,26 @@ private fun AiPaintViewer(
         factory = { ctx ->
             ModelViewerView(ctx).also { view ->
                 viewerView = view
-                view.onTriangleTapped = onTriangleTapped
                 mesh?.let { view.setMesh(it) }
                 view.setTrianglePickingPositions(state.trianglePositions)
             }
         },
         modifier = modifier
     )
+
+    // Wire up the tap callbacks every time the mode flips. Paint mode → onBrushPaint, default
+    // mode → onTriangleTapped (for the move-component sheet).
+    LaunchedEffect(viewerView, paintMode, activeRegion, brushRadiusWorld) {
+        val v = viewerView ?: return@LaunchedEffect
+        v.brushRadiusWorld = brushRadiusWorld
+        if (paintMode) {
+            v.onBrushPaint = { tris -> onPaintTriangles(tris, activeRegion) }
+            v.onTriangleTapped = null
+        } else {
+            v.onBrushPaint = null
+            v.onTriangleTapped = onTriangleTapped
+        }
+    }
 
     LaunchedEffect(mesh, viewerView) {
         val v = viewerView ?: return@LaunchedEffect
@@ -243,16 +290,13 @@ private fun AiPaintViewer(
         v.setTrianglePickingPositions(state.trianglePositions)
     }
 
-    LaunchedEffect(viewerView, regionPalette, state.componentToRegion, state.highlightComponentId, state.numComponents) {
+    // Whenever the per-triangle regions or the palette changes, update the VBO indices in place
+    // and trigger a recolor. No mesh rebuild → no perceptible lag.
+    LaunchedEffect(viewerView, state.triangleRegions, regionPalette) {
         val v = viewerView ?: return@LaunchedEffect
-        if (state.numComponents == 0) return@LaunchedEffect
-        val palette = AiPaintMeshBuilder.buildPalette(
-            numComponents = state.numComponents,
-            componentToRegion = state.componentToRegion,
-            regionColours = regionPalette,
-            highlightComponentId = state.highlightComponentId
-        )
-        v.recolorMesh(palette)
+        if (state.triangleRegions.isEmpty()) return@LaunchedEffect
+        v.updateExtruderIndices(state.triangleRegions)
+        v.recolorMesh(AiPaintMeshBuilder.regionPalette(regionPalette))
     }
 }
 
@@ -261,38 +305,64 @@ private fun PaintModeBar(
     paintMode: Boolean,
     regions: List<AiRegion>,
     activeRegion: Int,
+    brushPct: Float,
     onTogglePaintMode: () -> Unit,
     onSelectRegion: (Int) -> Unit,
+    onBrushSizeChange: (Float) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        FilterChip(
-            selected = paintMode,
-            onClick = onTogglePaintMode,
-            label = { Text(if (paintMode) "🖌 Painting" else "🖌 Paint by tap") },
-        )
-        if (paintMode) {
-            Spacer(Modifier.width(4.dp))
-            regions.forEachIndexed { idx, region ->
-                val argb = remember(region.effectiveColour) {
-                    runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
-                        .getOrDefault(android.graphics.Color.GRAY)
-                }
-                val isActive = idx == activeRegion
-                Box(
-                    Modifier
-                        .size(if (isActive) 36.dp else 28.dp)
-                        .background(Color(argb), MaterialTheme.shapes.small)
-                        .clickable { onSelectRegion(idx) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isActive) {
-                        Text("✓", color = Color.White, style = MaterialTheme.typography.labelLarge)
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = paintMode,
+                onClick = onTogglePaintMode,
+                label = { Text(if (paintMode) "🖌 Painting" else "🖌 Paint by tap") },
+            )
+            if (paintMode) {
+                Spacer(Modifier.width(4.dp))
+                regions.forEachIndexed { idx, region ->
+                    val argb = remember(region.effectiveColour) {
+                        runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
+                            .getOrDefault(android.graphics.Color.GRAY)
+                    }
+                    val isActive = idx == activeRegion
+                    Box(
+                        Modifier
+                            .size(if (isActive) 36.dp else 28.dp)
+                            .background(Color(argb), MaterialTheme.shapes.small)
+                            .clickable { onSelectRegion(idx) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isActive) {
+                            Text("✓", color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        }
                     }
                 }
+            }
+        }
+        if (paintMode) {
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Brush",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Slider(
+                    value = brushPct,
+                    onValueChange = onBrushSizeChange,
+                    valueRange = 0f..0.25f,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "${"%.1f".format(brushPct * 100)}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 8.dp).widthIn(min = 36.dp)
+                )
             }
         }
     }
