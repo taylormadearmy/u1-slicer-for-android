@@ -622,6 +622,37 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         undoStack.clear()
     }
 
+    /** Reassign a single SEGMENT to a different physical slot. Mass-updates triangleRegions
+     *  for every triangle in that segment; overrides any brush edits in those triangles (the
+     *  user is explicitly bulk-remapping). Stack-pushed for undo. */
+    fun setSegmentSlot(segmentId: Int, newSlot: Int) {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val state = current.state
+        if (segmentId !in state.regions.indices) return
+        if (newSlot !in 0 until TARGET_SLOTS) return
+        if (state.regions[segmentId].slot == newSlot) return
+
+        pushUndo(state.triangleRegions)
+        val newRegions = state.regions.mapIndexed { i, r ->
+            if (i == segmentId) r.copy(
+                slot = newSlot,
+                userColour = lastPrinterColours?.getOrNull(newSlot)?.takeIf(::isValidHex),
+            ) else r
+        }
+        val newTriRegions = state.triangleRegions.copyOf()
+        val segByte = segmentId.toByte()
+        for (t in state.triangleSegments.indices) {
+            if (state.triangleSegments[t] == segByte) newTriRegions[t] = newSlot.toByte()
+        }
+        _uiState.value = AiPaintUiState.Result(
+            state.copy(
+                regions = newRegions,
+                triangleRegions = newTriRegions,
+                canUndo = true,
+            )
+        )
+    }
+
     /** Highlight a single component on the 3D view (others dimmed). Pass null to clear. */
     fun highlightComponent(componentId: Int?) {
         val current = _uiState.value as? AiPaintUiState.Result ?: return

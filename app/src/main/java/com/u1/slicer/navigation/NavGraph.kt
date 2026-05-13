@@ -160,6 +160,7 @@ fun U1NavGraph(
                 onBrushStrokeStart = { aiVm.beginUndoCheckpoint() },
                 onUndo = { aiVm.undo() },
                 onToggleZBands = { aiVm.toggleZBands() },
+                onSetSegmentSlot = { segmentId, newSlot -> aiVm.setSegmentSlot(segmentId, newSlot) },
             )
         }
     }

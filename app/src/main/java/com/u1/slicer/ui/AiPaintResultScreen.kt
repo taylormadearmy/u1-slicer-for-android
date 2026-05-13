@@ -36,6 +36,7 @@ fun AiPaintResultScreen(
     onBrushStrokeStart: () -> Unit = {},
     onUndo: () -> Unit = {},
     onToggleZBands: () -> Unit = {},
+    onSetSegmentSlot: (segmentId: Int, newSlot: Int) -> Unit = { _, _ -> },
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
@@ -178,16 +179,26 @@ fun AiPaintResultScreen(
 
                     Text(
                         if (paintMode) "PAINT MODE — tap a part of the 3D model to paint it with the selected colour"
-                        else "REGIONS — tap a colour swatch to change",
+                        else "REGIONS — tap a slot swatch on the right to remap a region",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
                     )
+                    // Pre-compute the 4 slot ARGB colours from regions[0..TARGET_SLOTS-1] so we
+                    // don't reparse them on every row recomposition.
+                    val slotColours = remember(result.regions) {
+                        result.regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS)
+                            .map { r ->
+                                runCatching { android.graphics.Color.parseColor(r.effectiveColour) }
+                                    .getOrDefault(android.graphics.Color.GRAY)
+                            }
+                    }
                     LazyColumn(Modifier.weight(1f)) {
                         items(result.regions) { region ->
                             RegionRow(
                                 region = region,
-                                onClick = { swapSheetRegion = region }
+                                slotColours = slotColours,
+                                onSetSlot = { newSlot -> onSetSegmentSlot(region.id, newSlot) },
                             )
                         }
                     }
@@ -458,11 +469,11 @@ private fun PaintModeBar(
 }
 
 @Composable
-private fun RegionRow(region: AiRegion, onClick: () -> Unit) {
-    val colour = remember(region.effectiveColour) {
-        runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
-            .getOrDefault(android.graphics.Color.GRAY)
-    }
+private fun RegionRow(
+    region: AiRegion,
+    slotColours: List<Int>,
+    onSetSlot: (Int) -> Unit,
+) {
     val partsLabel = if (region.componentIds.size == 1) "1 part" else "${region.componentIds.size} parts"
     ListItem(
         headlineContent = { Text(region.label) },
@@ -470,17 +481,36 @@ private fun RegionRow(region: AiRegion, onClick: () -> Unit) {
             Text(
                 "${"%.0f".format(region.coverageFraction * 100)}% of model · $partsLabel",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
         leadingContent = {
+            // Current slot's colour as a chunky swatch — visual cue for "what colour this
+            // segment is currently mapped to".
+            val argb = slotColours.getOrElse(region.slot) { android.graphics.Color.GRAY }
             Box(
-                Modifier.size(24.dp).background(Color(colour), shape = MaterialTheme.shapes.small)
+                Modifier.size(28.dp).background(Color(argb), shape = MaterialTheme.shapes.small)
             )
         },
-        trailingContent = { Text("›", style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.primary) },
-        modifier = Modifier.clickable(onClick = onClick)
+        trailingContent = {
+            // 4 small swatches — tap one to remap this segment to that physical slot.
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                slotColours.forEachIndexed { slot, argb ->
+                    val isActive = slot == region.slot
+                    Box(
+                        Modifier
+                            .size(if (isActive) 22.dp else 18.dp)
+                            .background(Color(argb), MaterialTheme.shapes.small)
+                            .clickable { onSetSlot(slot) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isActive) {
+                            Text("✓", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        },
     )
     HorizontalDivider()
 }
