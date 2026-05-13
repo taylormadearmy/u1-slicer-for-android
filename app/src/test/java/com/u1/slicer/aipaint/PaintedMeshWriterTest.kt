@@ -103,4 +103,56 @@ class PaintedMeshWriterTest {
             assertTrue("Must have object id=1 to trigger BBS parser", xml.contains("""id="1""""))
         }
     }
+
+    @Test
+    fun `ZIP contains project_settings_config with 4 filament_colour entries`() {
+        // Without this file bambuCanonicalList() returns null, getCanonicalFilamentList() falls
+        // back to a 1-entry STL list, and the slicer's embedded filament_colour ends up size 1 →
+        // multi_material_segmentation_by_painting collapses to a single tool. Guards F54 fix9.
+        val out = tmp.newFile("painted.3mf")
+        PaintedMeshWriter.write(fourRegionPositions(), fourRegionIds(), regions(), out)
+        ZipFile(out).use { zip ->
+            val entry = zip.getEntry("Metadata/project_settings.config")
+            assertNotNull("Missing Metadata/project_settings.config", entry)
+            val json = zip.getInputStream(entry).reader().readText()
+            val obj = org.json.JSONObject(json)
+            val colours = obj.getJSONArray("filament_colour")
+            assertEquals(4, colours.length())
+            // The 4 AI suggested region colours should be in the array (effectiveColour wins
+            // over suggestedColour when the user has overridden one, but in this test we use defaults).
+            assertEquals("#FFCC00", colours.getString(0))
+            assertEquals("#C62828", colours.getString(1))
+            assertEquals("#1565C0", colours.getString(2))
+            assertEquals("#37474F", colours.getString(3))
+        }
+    }
+
+    @Test
+    fun `project_settings_config includes filament_type and filament_count`() {
+        val out = tmp.newFile("painted.3mf")
+        PaintedMeshWriter.write(fourRegionPositions(), fourRegionIds(), regions(), out)
+        ZipFile(out).use { zip ->
+            val json = zip.getInputStream(zip.getEntry("Metadata/project_settings.config"))
+                .reader().readText()
+            val obj = org.json.JSONObject(json)
+            assertEquals(4, obj.getJSONArray("filament_type").length())
+            assertEquals("4", obj.getString("filament_count"))
+        }
+    }
+
+    @Test
+    fun `buildProjectSettings sanitises malformed hex to grey`() {
+        val regions = listOf(
+            AiRegion(0, "A", "not a hex"),
+            AiRegion(1, "B", "#ABC"),       // too short
+            AiRegion(2, "C", "#12345"),     // too short by one
+            AiRegion(3, "D", "#1A2B3C")     // valid
+        )
+        val json = org.json.JSONObject(PaintedMeshWriter.buildProjectSettings(regions))
+        val colours = json.getJSONArray("filament_colour")
+        assertEquals("#808080", colours.getString(0))
+        assertEquals("#808080", colours.getString(1))
+        assertEquals("#808080", colours.getString(2))
+        assertEquals("#1A2B3C", colours.getString(3))
+    }
 }

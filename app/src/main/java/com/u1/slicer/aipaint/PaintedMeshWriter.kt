@@ -17,7 +17,6 @@ object PaintedMeshWriter {
     fun write(
         positions: FloatArray,
         regionIds: IntArray,
-        @Suppress("UNUSED_PARAMETER")
         regions: List<AiRegion>,
         outputFile: File
     ) {
@@ -32,6 +31,15 @@ object PaintedMeshWriter {
 
             zip.putNextEntry(ZipEntry("Metadata/model_settings.config"))
             zip.write(SETTINGS_XML.toByteArray())
+            zip.closeEntry()
+
+            // Bambu/OrcaSlicer canonical filament metadata. Without this file
+            // bambuCanonicalList() returns null, getCanonicalFilamentList() falls
+            // back to the single-entry STL synthesiser, and the slicer's embedded
+            // project_settings.config ends up with filament_colour size 1 → the
+            // native paint segmentation collapses to a single tool.
+            zip.putNextEntry(ZipEntry("Metadata/project_settings.config"))
+            zip.write(buildProjectSettings(regions).toByteArray())
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("[Content_Types].xml"))
@@ -82,6 +90,31 @@ object PaintedMeshWriter {
         sb.append("""<build><item objectid="1"/></build></model>""")
         return sb.toString()
     }
+
+    /**
+     * Builds the Bambu-format JSON used by [bambuCanonicalList][com.u1.slicer.bambu.bambuCanonicalList].
+     * We only need filament_colour for canonical-list extraction; filament_type, _settings_id, and
+     * filament_count are included so the embedder has sensible defaults to merge user overrides into.
+     */
+    internal fun buildProjectSettings(regions: List<AiRegion>): String {
+        val coloursJson = regions.joinToString(", ") { r ->
+            val hex = sanitizeHex(r.effectiveColour)
+            "\"$hex\""
+        }
+        val typesJson = regions.joinToString(", ") { "\"PLA\"" }
+        val settingsIdJson = regions.joinToString(", ") { "\"Generic PLA\"" }
+        val n = regions.size
+        return """{
+  "filament_colour": [$coloursJson],
+  "filament_type": [$typesJson],
+  "filament_settings_id": [$settingsIdJson],
+  "filament_count": "$n"
+}"""
+    }
+
+    private val HEX_REGEX = Regex("^#[0-9A-Fa-f]{6}$")
+    private fun sanitizeHex(hex: String): String =
+        if (HEX_REGEX.matches(hex)) hex else "#808080"
 
     // Minimal settings to trigger the native BBS parser path (which reads paint_color).
     private val SETTINGS_XML =

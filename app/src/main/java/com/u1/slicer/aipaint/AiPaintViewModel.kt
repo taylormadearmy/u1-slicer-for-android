@@ -21,6 +21,38 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     companion object {
         // Hardwired at 4 for Snapmaker U1's 4 extruders; change to 8 when fullspectrum lands
         const val TARGET_COLOURS = 4
+
+        /**
+         * Painted 3MFs are written by [PaintedMeshWriter] as `ai_paint_<timestamp>.3mf`. After
+         * "Use this painting" calls `loadModelFromFile`, the working copy goes through the Bambu
+         * sanitizer (`sanitized_` prefix) and the profile embedder (`embedded_` prefix). We strip
+         * both prefixes in any order before comparing basenames so the "Edit AI Paint regions"
+         * button can still recognise the in-memory cached result for the currently loaded model.
+         */
+        fun isSamePainting(cachedPaintedPath: String?, currentModelPath: String?): Boolean {
+            if (cachedPaintedPath.isNullOrBlank() || currentModelPath.isNullOrBlank()) return false
+            val cachedName = stripPipelinePrefixes(java.io.File(cachedPaintedPath).name)
+            val currentName = stripPipelinePrefixes(java.io.File(currentModelPath).name)
+            return cachedName.isNotEmpty() && cachedName == currentName
+        }
+
+        private val PIPELINE_PREFIXES = listOf("embedded_", "sanitized_")
+
+        private fun stripPipelinePrefixes(name: String): String {
+            var out = name
+            // Strip repeatedly to handle either ordering and any nesting.
+            var changed = true
+            while (changed) {
+                changed = false
+                for (p in PIPELINE_PREFIXES) {
+                    if (out.startsWith(p)) {
+                        out = out.removePrefix(p)
+                        changed = true
+                    }
+                }
+            }
+            return out
+        }
     }
 
     private val app get() = getApplication<U1SlicerApplication>()

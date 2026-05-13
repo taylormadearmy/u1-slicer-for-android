@@ -1370,18 +1370,36 @@ fun PrepareScreen(
                                 viewModel.setFilamentColorOverride(idx, color)
                             },
                         )
-                        // Recolour with AI button for multi-colour / painted models
-                        if (colorMapping != null && state is SlicerViewModel.SlicerState.ModelLoaded) {
+                        // Recolour with AI / Edit AI Paint regions. Available both before slicing
+                        // (ModelLoaded) and after (SliceComplete), so the user can revisit and
+                        // tweak region assignments without losing their slice.
+                        if (colorMapping != null &&
+                            (state is SlicerViewModel.SlicerState.ModelLoaded ||
+                             state is SlicerViewModel.SlicerState.SliceComplete)) {
+                            val container = (context.applicationContext as U1SlicerApplication).container
+                            val aiUiState = container.aiPaintViewModel.uiState.collectAsState().value
+                            val currentPath = viewModel.currentModelPath
+                            val cachedResult = (aiUiState as? com.u1.slicer.aipaint.AiPaintUiState.Result)?.state
+                            // Compare by filename, not absolute path: loadModelFromFile copies the
+                            // painted 3MF into the workspace dir so paths differ but filenames
+                            // (ai_paint_<timestamp>.3mf) are unique and stable.
+                            val isReeditAvailable = cachedResult != null &&
+                                com.u1.slicer.aipaint.AiPaintViewModel.isSamePainting(
+                                    cachedResult.paintedModelPath, currentPath
+                                )
                             TextButton(
                                 onClick = {
-                                    val path = viewModel.currentModelPath ?: return@TextButton
-                                    val container = (context.applicationContext as U1SlicerApplication).container
-                                    container.aiPaintViewModel.runPipeline(path, viewModel.nativeLib)
-                                    onNavigateAiPaint()
+                                    val path = currentPath ?: return@TextButton
+                                    if (isReeditAvailable) {
+                                        onNavigateAiPaint()
+                                    } else {
+                                        container.aiPaintViewModel.runPipeline(path, viewModel.nativeLib)
+                                        onNavigateAiPaint()
+                                    }
                                 },
                                 modifier = Modifier.padding(horizontal = 8.dp)
                             ) {
-                                Text("✨ Recolour with AI")
+                                Text(if (isReeditAvailable) "✨ Edit AI Paint regions" else "✨ Recolour with AI")
                             }
                         }
                         // Scale & copies controls
@@ -1414,19 +1432,33 @@ fun PrepareScreen(
                                 filamentOverrides = filamentOverrides,
                             )
                         }
-                        // AI Paint button for single-colour models
-                        if (colorMapping == null && state is SlicerViewModel.SlicerState.ModelLoaded) {
+                        // AI Paint button for single-colour models. Available in ModelLoaded
+                        // and SliceComplete so the user can revisit AI Paint after a slice.
+                        if (colorMapping == null &&
+                            (state is SlicerViewModel.SlicerState.ModelLoaded ||
+                             state is SlicerViewModel.SlicerState.SliceComplete)) {
+                            val container = (context.applicationContext as U1SlicerApplication).container
+                            val aiUiState = container.aiPaintViewModel.uiState.collectAsState().value
+                            val currentPath = viewModel.currentModelPath
+                            val cachedResult = (aiUiState as? com.u1.slicer.aipaint.AiPaintUiState.Result)?.state
+                            val isReeditAvailable = cachedResult != null &&
+                                com.u1.slicer.aipaint.AiPaintViewModel.isSamePainting(
+                                    cachedResult.paintedModelPath, currentPath
+                                )
                             Spacer(Modifier.height(8.dp))
                             OutlinedButton(
                                 onClick = {
-                                    val path = viewModel.currentModelPath ?: return@OutlinedButton
-                                    val container = (context.applicationContext as U1SlicerApplication).container
-                                    container.aiPaintViewModel.runPipeline(path, viewModel.nativeLib)
-                                    onNavigateAiPaint()
+                                    val path = currentPath ?: return@OutlinedButton
+                                    if (isReeditAvailable) {
+                                        onNavigateAiPaint()
+                                    } else {
+                                        container.aiPaintViewModel.runPipeline(path, viewModel.nativeLib)
+                                        onNavigateAiPaint()
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                             ) {
-                                Text("✨ AI Paint")
+                                Text(if (isReeditAvailable) "✨ Edit AI Paint regions" else "✨ AI Paint")
                             }
                         }
                         ConfigCard(
