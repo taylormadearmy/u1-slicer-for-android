@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,13 +38,17 @@ fun AiPaintResultScreen(
     onUndo: () -> Unit = {},
     onToggleZBands: () -> Unit = {},
     onSetSegmentSlot: (segmentId: Int, newSlot: Int) -> Unit = { _, _ -> },
+    onCommitSelection: (triangleIds: List<Int>, toSlot: Int) -> Unit = { _, _ -> },
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
     var paintMode by remember { mutableStateOf(false) }
+    var lassoMode by remember { mutableStateOf(false) }
     var paintActiveRegion by remember { mutableStateOf(0) }
     // Brush radius as a fraction of the model's bbox diagonal. 0 = single triangle.
     var brushPct by remember { mutableStateOf(0.03f) }
+    // Lasso selection: per-triangle bitmask set. Drag adds to this; tapping a slot chip commits.
+    val lassoSelection = remember { mutableStateOf<MutableSet<Int>>(linkedSetOf()) }
 
     Scaffold(
         topBar = {
@@ -156,30 +161,69 @@ fun AiPaintResultScreen(
                             moveSheetComponent = comp
                             onHighlightComponent(comp)
                         },
-                        paintMode = paintMode,
+                        paintMode = paintMode || lassoMode,
                         brushRadiusWorld = brushRadiusWorld,
                         brushPct = brushPct,
                         activeRegion = paintActiveRegion,
-                        onPaintTriangles = onPaintTriangles,
-                        onBrushStrokeStart = onBrushStrokeStart,
+                        onPaintTriangles = { tris, slot ->
+                            if (lassoMode) {
+                                // Lasso: add to the screen-level selection set; commit deferred
+                                // until the user taps a slot chip below the model.
+                                val current = lassoSelection.value
+                                current.addAll(tris)
+                                lassoSelection.value = current
+                            } else {
+                                // Paint mode: apply immediately to active slot.
+                                onPaintTriangles(tris, slot)
+                            }
+                        },
+                        onBrushStrokeStart = {
+                            if (!lassoMode) onBrushStrokeStart()
+                        },
+                        lassoSelection = lassoSelection.value,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f)
                             .background(Color(0xFF111118))
                     )
 
-                    // Paint mode toolbar — appears between viewer and region list.
+                    // Mode toolbar — Paint and Lasso are mutually exclusive.
                     PaintModeBar(
                         paintMode = paintMode,
+                        lassoMode = lassoMode,
                         regions = result.regions,
                         activeRegion = paintActiveRegion,
                         brushPct = brushPct,
-                        onTogglePaintMode = { paintMode = !paintMode },
-                        onSelectRegion = { paintActiveRegion = it },
+                        onTogglePaintMode = {
+                            paintMode = !paintMode
+                            if (paintMode) lassoMode = false
+                            lassoSelection.value = linkedSetOf()
+                        },
+                        onToggleLassoMode = {
+                            lassoMode = !lassoMode
+                            if (lassoMode) paintMode = false
+                            lassoSelection.value = linkedSetOf()
+                        },
+                        onSelectRegion = { newSlot ->
+                            if (lassoMode && lassoSelection.value.isNotEmpty()) {
+                                // Tap a slot chip in Lasso mode = commit the selection.
+                                onCommitSelection(lassoSelection.value.toList(), newSlot)
+                                lassoSelection.value = linkedSetOf()
+                            } else {
+                                paintActiveRegion = newSlot
+                            }
+                        },
                         onBrushSizeChange = { brushPct = it },
+                        onClearSelection = { lassoSelection.value = linkedSetOf() },
+                        selectionSize = lassoSelection.value.size,
                     )
 
                     Text(
-                        if (paintMode) "PAINT MODE — tap a part of the 3D model to paint it with the selected colour"
-                        else "REGIONS — tap a slot swatch on the right to remap a region",
+                        when {
+                            lassoMode && lassoSelection.value.isEmpty() ->
+                                "LASSO — drag on the 3D model to highlight an area, then tap a slot colour"
+                            lassoMode -> "LASSO — tap a slot colour to apply, or × to clear"
+                            paintMode -> "PAINT — tap a slot colour, then drag to paint"
+                            else -> "REGIONS — tap a slot swatch on the right to remap a region"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
@@ -285,6 +329,7 @@ private fun AiPaintViewer(
     activeRegion: Int,
     onPaintTriangles: (List<Int>, Int) -> Unit,
     onBrushStrokeStart: () -> Unit,
+    lassoSelection: Set<Int> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
     var viewerView by remember { mutableStateOf<ModelViewerView?>(null) }
@@ -370,28 +415,45 @@ private fun AiPaintViewer(
         v.setTrianglePickingPositions(state.trianglePositions)
     }
 
-    // Whenever the per-triangle regions, palette, or highlight target changes: update extruder
-    // indices in place and recolor. When a component is highlighted (tap-to-move's "selected
-    // part" feedback), we overlay it with a yellow palette entry and dim everything else, so
-    // the user can see exactly what they're about to reassign.
-    LaunchedEffect(viewerView, state.triangleRegions, state.componentIds, state.highlightComponentId, regionPalette) {
+    // Whenever the per-triangle regions, palette, highlight target, or lasso selection changes:
+    // update extruder indices in place and recolor. Two overlay modes:
+    //   * tap-to-move highlight: selected component yellow, rest dimmed.
+    //   * lasso selection: selected triangles yellow, rest keep their slot colour.
+    LaunchedEffect(viewerView, state.triangleRegions, state.componentIds, state.highlightComponentId, regionPalette, lassoSelection) {
         val v = viewerView ?: return@LaunchedEffect
         if (state.triangleRegions.isEmpty()) return@LaunchedEffect
         val highlight = state.highlightComponentId
-        if (highlight != null && state.componentIds.size == state.triangleRegions.size) {
-            // Indices: 4 = bright highlight, 5 = dimmed background.
-            val overlay = ByteArray(state.triangleRegions.size) { i ->
-                if (state.componentIds[i] == highlight) 4.toByte() else 5.toByte()
+        when {
+            highlight != null && state.componentIds.size == state.triangleRegions.size -> {
+                // Indices: 4 = bright highlight, 5 = dimmed background.
+                val overlay = ByteArray(state.triangleRegions.size) { i ->
+                    if (state.componentIds[i] == highlight) 4.toByte() else 5.toByte()
+                }
+                val extended = regionPalette + listOf(
+                    floatArrayOf(1f, 0.92f, 0.20f, 1f),   // highlight = yellow
+                    floatArrayOf(0.20f, 0.20f, 0.22f, 1f) // dim = near-black grey
+                )
+                v.updateExtruderIndices(overlay)
+                v.recolorMesh(extended)
             }
-            val extended = regionPalette + listOf(
-                floatArrayOf(1f, 0.92f, 0.20f, 1f),   // highlight = yellow
-                floatArrayOf(0.20f, 0.20f, 0.22f, 1f) // dim = near-black grey
-            )
-            v.updateExtruderIndices(overlay)
-            v.recolorMesh(extended)
-        } else {
-            v.updateExtruderIndices(state.triangleRegions)
-            v.recolorMesh(AiPaintMeshBuilder.regionPalette(regionPalette))
+            lassoSelection.isNotEmpty() -> {
+                // Reserve a fresh palette index past whatever the regions need so we don't clash
+                // with any existing slot colour. Selected triangles get that index; the rest keep
+                // their current slot colour so the unselected paint stays visible.
+                val highlightIdx = regionPalette.size.coerceAtMost(254)
+                val overlay = ByteArray(state.triangleRegions.size) { i ->
+                    if (i in lassoSelection) highlightIdx.toByte() else state.triangleRegions[i]
+                }
+                val extended = regionPalette + listOf(
+                    floatArrayOf(1f, 0.92f, 0.20f, 1f) // lasso highlight = yellow
+                )
+                v.updateExtruderIndices(overlay)
+                v.recolorMesh(extended)
+            }
+            else -> {
+                v.updateExtruderIndices(state.triangleRegions)
+                v.recolorMesh(AiPaintMeshBuilder.regionPalette(regionPalette))
+            }
         }
     }
 }
@@ -399,12 +461,16 @@ private fun AiPaintViewer(
 @Composable
 private fun PaintModeBar(
     paintMode: Boolean,
+    lassoMode: Boolean,
     regions: List<AiRegion>,
     activeRegion: Int,
     brushPct: Float,
     onTogglePaintMode: () -> Unit,
+    onToggleLassoMode: () -> Unit,
     onSelectRegion: (Int) -> Unit,
     onBrushSizeChange: (Float) -> Unit,
+    onClearSelection: () -> Unit,
+    selectionSize: Int,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Row(
@@ -416,18 +482,38 @@ private fun PaintModeBar(
                 onClick = onTogglePaintMode,
                 label = { Text(if (paintMode) "🖌 Painting" else "🖌 Paint by tap") },
             )
-            if (paintMode) {
+            FilterChip(
+                selected = lassoMode,
+                onClick = onToggleLassoMode,
+                label = {
+                    Text(
+                        when {
+                            lassoMode && selectionSize > 0 -> "🪄 $selectionSize selected"
+                            lassoMode -> "🪄 Lasso (drag to select)"
+                            else -> "🪄 Lasso"
+                        }
+                    )
+                },
+            )
+            if (lassoMode && selectionSize > 0) {
+                IconButton(onClick = onClearSelection) {
+                    Icon(Icons.Default.Close, contentDescription = "Clear selection")
+                }
+            }
+            if (paintMode || lassoMode) {
                 Spacer(Modifier.width(4.dp))
                 // Chips represent PHYSICAL extruder slots (TARGET_SLOTS=4), not AI segments.
                 // With round-robin slot folding, regions[0..3] carry the canonical slot
                 // colours — iterate just those to render one chip per physical filament.
+                // In Paint mode: tap = set active region for next stroke.
+                // In Lasso mode: tap = commit current selection to that slot.
                 val slotChips = regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS)
                 slotChips.forEachIndexed { idx, region ->
                     val argb = remember(region.effectiveColour) {
                         runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
                             .getOrDefault(android.graphics.Color.GRAY)
                     }
-                    val isActive = idx == activeRegion
+                    val isActive = paintMode && idx == activeRegion
                     Box(
                         Modifier
                             .size(if (isActive) 36.dp else 28.dp)
@@ -442,7 +528,7 @@ private fun PaintModeBar(
                 }
             }
         }
-        if (paintMode) {
+        if (paintMode || lassoMode) {
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(

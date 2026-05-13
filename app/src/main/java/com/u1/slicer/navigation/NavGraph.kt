@@ -161,6 +161,7 @@ fun U1NavGraph(
                 onUndo = { aiVm.undo() },
                 onToggleZBands = { aiVm.toggleZBands() },
                 onSetSegmentSlot = { segmentId, newSlot -> aiVm.setSegmentSlot(segmentId, newSlot) },
+                onCommitSelection = { triIds, toSlot -> aiVm.commitSelection(triIds, toSlot) },
             )
         }
     }

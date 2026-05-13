@@ -626,6 +626,27 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         undoStack.clear()
     }
 
+    /** Lasso commit: apply a selected set of triangles to a target slot in one shot. The list
+     *  comes from the result screen's selection state (built up by drag strokes in Lasso mode).
+     *  Single undo step covers the whole selection. */
+    fun commitSelection(triangleIndices: List<Int>, toSlot: Int) {
+        if (triangleIndices.isEmpty()) return
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val state = current.state
+        if (toSlot !in 0 until TARGET_SLOTS) return
+
+        pushUndo(state.triangleRegions)
+        val newTriRegions = state.triangleRegions.copyOf()
+        val slotByte = toSlot.toByte()
+        for (t in triangleIndices) {
+            if (t in newTriRegions.indices) newTriRegions[t] = slotByte
+        }
+        val newCompMap = computeMajorityRegions(state, state.triangleSegments)
+        _uiState.value = AiPaintUiState.Result(
+            applyTriangleRegions(state, newTriRegions, newCompMap).copy(canUndo = true)
+        )
+    }
+
     /** Reassign a single SEGMENT to a different physical slot. Mass-updates triangleRegions
      *  for every triangle in that segment; overrides any brush edits in those triangles (the
      *  user is explicitly bulk-remapping). Stack-pushed for undo. */
