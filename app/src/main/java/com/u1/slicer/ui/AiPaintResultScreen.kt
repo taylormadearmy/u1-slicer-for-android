@@ -42,13 +42,19 @@ fun AiPaintResultScreen(
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
+    // Which slot the HSV colour picker is open for (or null when closed). Driven by tapping the
+    // leading swatch on a RegionRow — applies the new hex to the slot's canonical region so the
+    // 3D viewer palette updates too.
+    var editSlotColour by remember { mutableStateOf<Int?>(null) }
     var paintMode by remember { mutableStateOf(false) }
     var lassoMode by remember { mutableStateOf(false) }
     var paintActiveRegion by remember { mutableStateOf(0) }
     // Brush radius as a fraction of the model's bbox diagonal. 0 = single triangle.
     var brushPct by remember { mutableStateOf(0.03f) }
-    // Lasso selection: per-triangle bitmask set. Drag adds to this; tapping a slot chip commits.
-    val lassoSelection = remember { mutableStateOf<MutableSet<Int>>(linkedSetOf()) }
+    // Lasso selection: per-triangle index set. Drag adds to it; tapping a slot chip commits.
+    // Stored as an immutable Set and reassigned on each change so Compose actually recomposes
+    // (mutating a MutableSet in place and re-setting the same reference is a no-op for state).
+    var lassoSelection by remember { mutableStateOf<Set<Int>>(emptySet()) }
 
     Scaffold(
         topBar = {
@@ -167,11 +173,11 @@ fun AiPaintResultScreen(
                         activeRegion = paintActiveRegion,
                         onPaintTriangles = { tris, slot ->
                             if (lassoMode) {
-                                // Lasso: add to the screen-level selection set; commit deferred
-                                // until the user taps a slot chip below the model.
-                                val current = lassoSelection.value
-                                current.addAll(tris)
-                                lassoSelection.value = current
+                                // Lasso: union into a NEW set each call so Compose sees a state
+                                // change and the yellow overlay updates mid-drag.
+                                if (tris.isNotEmpty()) {
+                                    lassoSelection = lassoSelection + tris
+                                }
                             } else {
                                 // Paint mode: apply immediately to active slot.
                                 onPaintTriangles(tris, slot)
@@ -180,7 +186,7 @@ fun AiPaintResultScreen(
                         onBrushStrokeStart = {
                             if (!lassoMode) onBrushStrokeStart()
                         },
-                        lassoSelection = lassoSelection.value,
+                        lassoSelection = lassoSelection,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f)
                             .background(Color(0xFF111118))
                     )
@@ -195,30 +201,30 @@ fun AiPaintResultScreen(
                         onTogglePaintMode = {
                             paintMode = !paintMode
                             if (paintMode) lassoMode = false
-                            lassoSelection.value = linkedSetOf()
+                            lassoSelection = emptySet()
                         },
                         onToggleLassoMode = {
                             lassoMode = !lassoMode
                             if (lassoMode) paintMode = false
-                            lassoSelection.value = linkedSetOf()
+                            lassoSelection = emptySet()
                         },
                         onSelectRegion = { newSlot ->
-                            if (lassoMode && lassoSelection.value.isNotEmpty()) {
+                            if (lassoMode && lassoSelection.isNotEmpty()) {
                                 // Tap a slot chip in Lasso mode = commit the selection.
-                                onCommitSelection(lassoSelection.value.toList(), newSlot)
-                                lassoSelection.value = linkedSetOf()
+                                onCommitSelection(lassoSelection.toList(), newSlot)
+                                lassoSelection = emptySet()
                             } else {
                                 paintActiveRegion = newSlot
                             }
                         },
                         onBrushSizeChange = { brushPct = it },
-                        onClearSelection = { lassoSelection.value = linkedSetOf() },
-                        selectionSize = lassoSelection.value.size,
+                        onClearSelection = { lassoSelection = emptySet() },
+                        selectionSize = lassoSelection.size,
                     )
 
                     Text(
                         when {
-                            lassoMode && lassoSelection.value.isEmpty() ->
+                            lassoMode && lassoSelection.isEmpty() ->
                                 "LASSO — drag on the 3D model to highlight an area, then tap a slot colour"
                             lassoMode -> "LASSO — tap a slot colour to apply, or × to clear"
                             paintMode -> "PAINT — tap a slot colour, then drag to paint"
@@ -243,6 +249,7 @@ fun AiPaintResultScreen(
                                 region = region,
                                 slotColours = slotColours,
                                 onSetSlot = { newSlot -> onSetSegmentSlot(region.id, newSlot) },
+                                onEditSlotColour = { editSlotColour = region.slot },
                             )
                         }
                     }
@@ -316,6 +323,25 @@ fun AiPaintResultScreen(
                 moveSheetComponent = null
             }
         )
+    }
+
+    editSlotColour?.let { slot ->
+        val regions = (uiState as? AiPaintUiState.Result)?.state?.regions ?: emptyList()
+        // The canonical region for a slot is the one whose id matches the slot number — that's
+        // what the 3D viewer's palette pulls from (regions[0..3]).
+        val canonical = regions.firstOrNull { it.id == slot } ?: regions.getOrNull(slot)
+        if (canonical != null) {
+            FilamentColorEditDialog(
+                initialHex = canonical.effectiveColour,
+                onSave = { hex ->
+                    onUpdateRegionColour(canonical.id, hex)
+                    editSlotColour = null
+                },
+                onDismiss = { editSlotColour = null },
+            )
+        } else {
+            editSlotColour = null
+        }
     }
 }
 
@@ -473,14 +499,15 @@ private fun PaintModeBar(
     selectionSize: Int,
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        // Row 1 — the two mutually exclusive mode chips + (lasso only) clear button.
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             FilterChip(
                 selected = paintMode,
                 onClick = onTogglePaintMode,
-                label = { Text(if (paintMode) "🖌 Painting" else "🖌 Paint by tap") },
+                label = { Text(if (paintMode) "🖌 Painting" else "🖌 Paint") },
             )
             FilterChip(
                 selected = lassoMode,
@@ -489,24 +516,34 @@ private fun PaintModeBar(
                     Text(
                         when {
                             lassoMode && selectionSize > 0 -> "🪄 $selectionSize selected"
-                            lassoMode -> "🪄 Lasso (drag to select)"
+                            lassoMode -> "🪄 Lasso"
                             else -> "🪄 Lasso"
                         }
                     )
                 },
             )
             if (lassoMode && selectionSize > 0) {
-                IconButton(onClick = onClearSelection) {
+                IconButton(onClick = onClearSelection, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Close, contentDescription = "Clear selection")
                 }
             }
-            if (paintMode || lassoMode) {
-                Spacer(Modifier.width(4.dp))
-                // Chips represent PHYSICAL extruder slots (TARGET_SLOTS=4), not AI segments.
-                // With round-robin slot folding, regions[0..3] carry the canonical slot
-                // colours — iterate just those to render one chip per physical filament.
-                // In Paint mode: tap = set active region for next stroke.
-                // In Lasso mode: tap = commit current selection to that slot.
+        }
+        // Row 2 — slot swatches. ALWAYS shown when a mode is active so chips stay visible no
+        // matter the screen width (previously the swatches were on the same row as the chips
+        // and could overflow off-screen on narrow devices).
+        if (paintMode || lassoMode) {
+            Spacer(Modifier.height(6.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (lassoMode) "Apply to →" else "Active →",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // One chip per PHYSICAL filament slot (TARGET_SLOTS=4).
                 val slotChips = regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS)
                 slotChips.forEachIndexed { idx, region ->
                     val argb = remember(region.effectiveColour) {
@@ -516,10 +553,10 @@ private fun PaintModeBar(
                     val isActive = paintMode && idx == activeRegion
                     Box(
                         Modifier
-                            .size(if (isActive) 36.dp else 28.dp)
+                            .size(if (isActive) 40.dp else 36.dp)
                             .background(Color(argb), MaterialTheme.shapes.small)
                             .clickable { onSelectRegion(idx) },
-                        contentAlignment = Alignment.Center
+                        contentAlignment = Alignment.Center,
                     ) {
                         if (isActive) {
                             Text("✓", color = Color.White, style = MaterialTheme.typography.labelLarge)
@@ -527,8 +564,7 @@ private fun PaintModeBar(
                     }
                 }
             }
-        }
-        if (paintMode || lassoMode) {
+            // Row 3 — brush size slider.
             Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -559,6 +595,7 @@ private fun RegionRow(
     region: AiRegion,
     slotColours: List<Int>,
     onSetSlot: (Int) -> Unit,
+    onEditSlotColour: () -> Unit,
 ) {
     val partsLabel = if (region.componentIds.size == 1) "1 part" else "${region.componentIds.size} parts"
     ListItem(
@@ -571,12 +608,18 @@ private fun RegionRow(
             )
         },
         leadingContent = {
-            // Current slot's colour as a chunky swatch — visual cue for "what colour this
-            // segment is currently mapped to".
+            // Current slot's colour as a chunky swatch. Tap to open an HSV picker for that
+            // slot's filament colour — updates the 3D viewer palette and downstream slicing.
             val argb = slotColours.getOrElse(region.slot) { android.graphics.Color.GRAY }
             Box(
-                Modifier.size(28.dp).background(Color(argb), shape = MaterialTheme.shapes.small)
-            )
+                Modifier
+                    .size(36.dp)
+                    .background(Color(argb), shape = MaterialTheme.shapes.small)
+                    .clickable { onEditSlotColour() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("✎", color = Color.White, style = MaterialTheme.typography.labelSmall)
+            }
         },
         trailingContent = {
             // 4 small swatches — tap one to remap this segment to that physical slot.

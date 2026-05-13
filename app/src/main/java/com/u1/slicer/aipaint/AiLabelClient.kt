@@ -71,33 +71,63 @@ Respond ONLY with valid JSON:
      *  non-AI fallback segmentation. */
     @Volatile var lastBoxesFellBack: Boolean = false
 
+    /** Which model actually succeeded on the most recent labelByBoxes call. For Gemini this is
+     *  one of GEMINI_MODELS; for the others it's a fixed string. Surfaced in the result screen
+     *  via fallbackReason / diagnostics. */
+    @Volatile var lastBoxesModel: String? = null
+
+    // Gemini free-tier model chain. 2.5 Pro is highest quality on visual grounding but has the
+    // tightest RPM/RPD quota; 2.5 Flash is the daily-quota workhorse; 1.5 Flash is the legacy
+    // safety net. We try them in order and return the first successful parse.
+    private val GEMINI_MODELS = listOf(
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+    )
+
     suspend fun labelByBoxes(
         provider: AiPaintProvider,
         apiKey: String,
         shadedBitmaps: List<Bitmap>,   // ordered: FRONT, BACK, LEFT_ISO, RIGHT_ISO
         targetColours: Int,
     ): List<AiRegionBoxes> = withContext(Dispatchers.IO) {
-        try {
-            val prompt = buildBoxesPrompt(targetColours)
-            val jpegBytes = shadedBitmaps.map { bitmapToJpeg(it) }
-            val request = buildRequest(provider, apiKey, prompt, jpegBytes)
-            val response = client.newCall(request).execute()
-            val body = response.body?.string()
-            if (body == null || !response.isSuccessful) {
-                lastBoxesRaw = "HTTP ${response.code}: ${body?.take(800)}"
-                lastBoxesFellBack = true
-                return@withContext fallbackBoxes(targetColours)
+        val prompt = buildBoxesPrompt(targetColours)
+        val jpegBytes = shadedBitmaps.map { bitmapToJpeg(it) }
+        // For Gemini we walk the model chain; everything else is a single attempt.
+        val attempts: List<Pair<String, () -> Request>> =
+            if (provider == AiPaintProvider.GEMINI) {
+                GEMINI_MODELS.map { model ->
+                    model to { buildGeminiRequest(apiKey, prompt, jpegBytes, model) }
+                }
+            } else {
+                listOf(provider.name to { buildRequest(provider, apiKey, prompt, jpegBytes) })
             }
-            val text = extractTextFromResponse(provider, body)
-            lastBoxesRaw = text.take(2000)
-            val parsed = parseBoxesJsonOrNull(text, targetColours)
-            lastBoxesFellBack = parsed == null
-            parsed ?: fallbackBoxes(targetColours)
-        } catch (e: Exception) {
-            lastBoxesRaw = "exception: ${e.message}"
-            lastBoxesFellBack = true
-            fallbackBoxes(targetColours)
+        var lastErr = ""
+        for ((modelLabel, build) in attempts) {
+            try {
+                val response = client.newCall(build()).execute()
+                val body = response.body?.string()
+                if (body == null || !response.isSuccessful) {
+                    lastErr = "$modelLabel: HTTP ${response.code} — ${body?.take(300)}"
+                    continue
+                }
+                val text = extractTextFromResponse(provider, body)
+                val parsed = parseBoxesJsonOrNull(text, targetColours)
+                if (parsed != null) {
+                    lastBoxesRaw = "[$modelLabel] ${text.take(2000)}"
+                    lastBoxesModel = modelLabel
+                    lastBoxesFellBack = false
+                    return@withContext parsed
+                }
+                lastErr = "$modelLabel: parse-fail — ${text.take(300)}"
+            } catch (e: Exception) {
+                lastErr = "$modelLabel: ${e.message}"
+            }
         }
+        lastBoxesRaw = "All attempts failed; last: $lastErr"
+        lastBoxesModel = null
+        lastBoxesFellBack = true
+        fallbackBoxes(targetColours)
     }
 
     /** Strict parse: returns null when the AI response doesn't carry a valid regions+boxes
@@ -301,7 +331,8 @@ Respond ONLY with valid JSON:
     private fun buildGeminiRequest(
         apiKey: String,
         prompt: String,
-        jpegBytes: List<ByteArray>
+        jpegBytes: List<ByteArray>,
+        model: String = GEMINI_MODELS.first(),
     ): Request {
         val parts = JSONArray().apply {
             put(JSONObject().put("text", prompt))
@@ -318,13 +349,7 @@ Respond ONLY with valid JSON:
         val body = JSONObject()
             .put("contents", JSONArray().put(JSONObject().put("parts", parts)))
             .toString().toRequestBody(JSON_TYPE)
-        val url =
-            // Bumped from 2.5-flash to 2.5-pro — Pro is significantly better at visual
-            // grounding (placing bounding boxes at the right image coordinates) and correlating
-            // the same part across multiple views, which Flash was missing on (e.g. rear legs
-            // visible in the back/iso views but not labelled). Free tier covers Pro at a lower
-            // RPD limit than Flash — plenty for occasional AI Paint runs.
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=$apiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
         return Request.Builder().url(url).post(body).build()
     }
 
