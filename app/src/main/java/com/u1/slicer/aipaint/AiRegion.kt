@@ -24,7 +24,10 @@ data class AiPaintResultState(
     val numComponents: Int = 0,
     val componentToRegion: IntArray = IntArray(0),
     // When non-null, the 3D view highlights this single component and dims the rest.
-    val highlightComponentId: Int? = null
+    val highlightComponentId: Int? = null,
+    // True when the AI didn't return usable region boxes and the Z-band fallback was used.
+    // Surfaces in the result screen as a banner so the user knows to try a different provider.
+    val usedAiFallback: Boolean = false,
 ) {
     // data class equals/hashCode default would compare arrays by reference; we don't rely on
     // equality of result state beyond identity, so we override to suppress warnings.

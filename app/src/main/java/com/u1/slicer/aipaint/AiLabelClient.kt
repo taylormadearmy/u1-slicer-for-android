@@ -54,6 +54,14 @@ Respond ONLY with valid JSON:
         "]}\n" +
         "Rules: exactly $targetColours regions; every coordinate in [0, 1]; xMax > xMin and yMax > yMin for visible regions."
 
+    /** Last raw AI text response from labelByBoxes — for diagnostic logging. */
+    @Volatile var lastBoxesRaw: String? = null
+
+    /** True when the most recent labelByBoxes call had to fall back because the AI refused or
+     *  returned malformed JSON. Consumers use this to surface the error and switch to a
+     *  non-AI fallback segmentation. */
+    @Volatile var lastBoxesFellBack: Boolean = false
+
     suspend fun labelByBoxes(
         provider: AiPaintProvider,
         apiKey: String,
@@ -66,13 +74,40 @@ Respond ONLY with valid JSON:
             val request = buildRequest(provider, apiKey, prompt, jpegBytes)
             val response = client.newCall(request).execute()
             val body = response.body?.string()
-                ?: return@withContext fallbackBoxes(targetColours)
-            if (!response.isSuccessful) return@withContext fallbackBoxes(targetColours)
+            if (body == null || !response.isSuccessful) {
+                lastBoxesRaw = "HTTP ${response.code}: ${body?.take(800)}"
+                lastBoxesFellBack = true
+                return@withContext fallbackBoxes(targetColours)
+            }
             val text = extractTextFromResponse(provider, body)
-            parseBoxesJson(text, targetColours)
+            lastBoxesRaw = text.take(2000)
+            val parsed = tryParseBoxes(text, targetColours)
+            lastBoxesFellBack = parsed == null
+            parsed ?: fallbackBoxes(targetColours)
         } catch (e: Exception) {
+            lastBoxesRaw = "exception: ${e.message}"
+            lastBoxesFellBack = true
             fallbackBoxes(targetColours)
         }
+    }
+
+    /** Returns null when the AI response does not parse as a valid regions+boxes JSON, so the
+     *  caller can distinguish "AI succeeded" from "AI refused / returned plain text". */
+    private fun tryParseBoxes(raw: String, targetColours: Int): List<AiRegionBoxes>? {
+        if (!raw.contains("\"regions\"")) return null
+        val parsed = parseBoxesJson(raw, targetColours)
+        // parseBoxesJson silently falls back too; detect by checking whether all boxes are the
+        // boring full-stripe fallback. If every region's areas across views are exactly equal,
+        // it's the stripe fallback — treat as failure.
+        val stripeFallback = parsed.all { r ->
+            val areas = r.boxes.values.map {
+                val w = (it[2] - it[0]).coerceAtLeast(0f)
+                val h = (it[3] - it[1]).coerceAtLeast(0f)
+                w * h
+            }
+            areas.distinct().size == 1
+        }
+        return if (stripeFallback) null else parsed
     }
 
     fun parseBoxesJson(raw: String, targetColours: Int): List<AiRegionBoxes> {

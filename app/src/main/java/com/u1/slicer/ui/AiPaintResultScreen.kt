@@ -75,6 +75,20 @@ fun AiPaintResultScreen(
                 is AiPaintUiState.Result -> {
                     val result = uiState.state
 
+                    if (result.usedAiFallback) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth().padding(8.dp)
+                        ) {
+                            Text(
+                                "AI couldn't process this model. Used height-based fallback instead — open Settings → AI Paint and try Gemini or Claude for better results.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
+
                     // Live 3D viewer — replaces the previous static iso bitmap.
                     AiPaintViewer(
                         state = result,

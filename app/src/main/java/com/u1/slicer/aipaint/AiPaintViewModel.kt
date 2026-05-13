@@ -1,6 +1,7 @@
 package com.u1.slicer.aipaint
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.u1.slicer.NativeLibrary
@@ -129,7 +130,17 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 // Phase 3 — AI returns a list of regions, each with a label, a suggested colour,
                 // and a bounding box in each view (normalised [0..1] screen coordinates).
                 _uiState.value = AiPaintUiState.Running(3, "Asking AI to label regions…")
+                Log.i("AiPaint", "Phase 1 → $numComponents components from ${mesh.trianglePositions.size / 9} triangles")
                 val regionBoxes = AiLabelClient.labelByBoxes(provider, apiKey, shadedBitmaps, TARGET_COLOURS)
+                Log.i("AiPaint", "Phase 3 raw AI text: ${AiLabelClient.lastBoxesRaw?.replace('\n', ' ')?.take(1500)}")
+                regionBoxes.forEachIndexed { i, r ->
+                    val areas = r.boxes.entries.joinToString(", ") { (a, b) ->
+                        val w = (b[2] - b[0]).coerceAtLeast(0f)
+                        val h = (b[3] - b[1]).coerceAtLeast(0f)
+                        "${a.name.lowercase()}=${"%.2f".format(w * h)}"
+                    }
+                    Log.i("AiPaint", "  region $i \"${r.label}\" colour=${r.suggestedColour} areas: $areas")
+                }
 
                 // Phase 4 — back-project each component's triangles into all 4 views and vote
                 // by box membership. A component's region = the box it lands inside in the most
@@ -139,19 +150,44 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 val projectors = CameraAngle.entries.associateWith { angle ->
                     AiPaintProjector.build(mesh.trianglePositions, angle, 512, 512)
                 }
-                val componentToRegion = withContext(Dispatchers.Default) {
-                    AiPaintRegionAssigner.assign(
-                        mesh.trianglePositions, componentIds, numComponents, regionBoxes, projectors
-                    )
+                val componentToRegion: IntArray
+                val regionLabels: List<String>
+                val regionColours: List<String>
+                if (AiLabelClient.lastBoxesFellBack) {
+                    // AI refused or returned non-JSON. Generic stripe boxes always collapse all
+                    // components to two adjacent screen-Y bands which is useless. Use Z-height
+                    // bands on the actual 3D coordinates instead: for an upright print this
+                    // splits into base / lower / upper / top — a sensible default.
+                    Log.w("AiPaint", "AI fell back — using Z-band 3D fallback. Raw: ${AiLabelClient.lastBoxesRaw?.take(200)}")
+                    componentToRegion = withContext(Dispatchers.Default) {
+                        assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_COLOURS)
+                    }
+                    regionLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
+                    regionColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
+                } else {
+                    componentToRegion = withContext(Dispatchers.Default) {
+                        AiPaintRegionAssigner.assign(
+                            mesh.trianglePositions, componentIds, numComponents, regionBoxes, projectors
+                        )
+                    }
+                    regionLabels = regionBoxes.map { it.label }
+                    regionColours = regionBoxes.map { it.suggestedColour }
                 }
+                // Diagnostic: how did the assignment distribute components across regions?
+                val regionCounts = IntArray(TARGET_COLOURS)
+                for (c in 0 until numComponents) {
+                    val r = componentToRegion[c]
+                    if (r in regionCounts.indices) regionCounts[r]++
+                }
+                Log.i("AiPaint", "Phase 4 component→region distribution: ${regionCounts.toList()} (sum ${regionCounts.sum()}/$numComponents)")
 
-                // Convert AiRegionBoxes → AiRegion + per-region component lists.
-                val regions = regionBoxes.mapIndexed { regionIdx, rb ->
+                // Convert region labels/colours into AiRegion + per-region component lists.
+                val regions = (0 until TARGET_COLOURS).map { regionIdx ->
                     val members = (0 until numComponents).filter { componentToRegion[it] == regionIdx }
                     AiRegion(
                         id = regionIdx,
-                        label = rb.label,
-                        suggestedColour = rb.suggestedColour,
+                        label = regionLabels.getOrElse(regionIdx) { "Region ${regionIdx + 1}" },
+                        suggestedColour = regionColours.getOrElse(regionIdx) { "#888888" },
                         componentIds = members,
                     )
                 }
@@ -178,6 +214,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         regions = regionsWithCoverage,
+                        usedAiFallback = AiLabelClient.lastBoxesFellBack,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
                         previewBitmap = null,
@@ -199,6 +236,39 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
             if (r.id == regionId) r.copy(userColour = hexColour) else r
         }
         _uiState.value = AiPaintUiState.Result(current.state.copy(regions = updated))
+    }
+
+    /**
+     * Non-AI fallback used when the AI refuses or returns malformed JSON: split the mesh by Z
+     * height into equal-percentile bands and assign each component to whichever band contains
+     * its centroid. For upright prints this yields "base / lower body / upper body / top".
+     */
+    private fun assignByZBands(
+        positions: FloatArray,
+        componentIds: IntArray,
+        numComponents: Int,
+        bandCount: Int
+    ): IntArray {
+        if (numComponents == 0 || bandCount <= 0) return IntArray(numComponents)
+        // Per-component mean Z.
+        val sumZ = FloatArray(numComponents)
+        val cnt = IntArray(numComponents)
+        val triCount = componentIds.size
+        for (t in 0 until triCount) {
+            val b = t * 9
+            val cz = (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
+            val c = componentIds[t]
+            sumZ[c] += cz
+            cnt[c]++
+        }
+        val meanZ = FloatArray(numComponents) { if (cnt[it] > 0) sumZ[it] / cnt[it] else 0f }
+        val minZ = meanZ.min()
+        val maxZ = meanZ.max().coerceAtLeast(minZ + 1e-3f)
+        val span = maxZ - minZ
+        return IntArray(numComponents) { i ->
+            val pct = (meanZ[i] - minZ) / span        // 0..1
+            (pct * bandCount).toInt().coerceIn(0, bandCount - 1)
+        }
     }
 
     /** Move a single topology component from its current region to [toRegion]. Rewrites the painted 3MF. */
