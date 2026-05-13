@@ -733,8 +733,8 @@ fun SettingsScreen(
                     }
                 }
 
-                // API key field — shown only when provider requires a key
-                if (currentProvider.requiresKey) {
+                // API key field — shown when the provider accepts a key (required or optional).
+                if (currentProvider.acceptsKey) {
                     Spacer(Modifier.height(8.dp))
                     var keyVisible by remember { mutableStateOf(false) }
                     OutlinedTextField(
@@ -744,7 +744,12 @@ fun SettingsScreen(
                                 viewModel.saveAiPaintSettings(currentProvider.name, newKey)
                             }
                         },
-                        label = { Text("API key") },
+                        label = {
+                            Text(if (currentProvider.requiresKey) "API key" else "API key (optional)")
+                        },
+                        supportingText = if (!currentProvider.requiresKey) {
+                            { Text("Leave blank to use the free public tier.") }
+                        } else null,
                         visualTransformation = if (keyVisible) VisualTransformation.None
                                                else PasswordVisualTransformation(),
                         trailingIcon = {

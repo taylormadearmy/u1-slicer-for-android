@@ -32,8 +32,15 @@ data class AiPaintResultState(
     override fun hashCode(): Int = System.identityHashCode(this)
 }
 
-enum class AiPaintProvider(val displayName: String, val requiresKey: Boolean) {
-    POLLINATIONS("Pollinations.ai (free, no key)", false),
+enum class AiPaintProvider(
+    val displayName: String,
+    val requiresKey: Boolean,
+    /** When true the settings UI exposes an API key field for this provider. Providers where
+     *  `requiresKey = false` but `acceptsKey = true` work anonymously but accept a key to lift
+     *  rate limits or unlock priority routing — Pollinations is the current example. */
+    val acceptsKey: Boolean = requiresKey,
+) {
+    POLLINATIONS("Pollinations.ai (free; key optional, lifts rate limits)", false, acceptsKey = true),
     GEMINI("Google Gemini (free 1k/day)", true),
     OPENROUTER("OpenRouter", true),
     CLAUDE("Claude (Anthropic)", true),

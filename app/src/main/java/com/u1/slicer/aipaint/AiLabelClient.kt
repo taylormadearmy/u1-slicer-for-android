@@ -78,7 +78,9 @@ Respond ONLY with valid JSON:
         AiPaintProvider.POLLINATIONS -> buildOpenAiStyleRequest(
             url = "https://text.pollinations.ai/openai/chat/completions",
             model = "openai",
-            apiKey = null,
+            // Pollinations works anonymously but accepts an OpenAI-style Authorization header
+            // to lift the public-tier rate limits and prioritise routing.
+            apiKey = apiKey.takeIf { it.isNotBlank() },
             prompt = prompt,
             jpegBytes = jpegBytes
         )

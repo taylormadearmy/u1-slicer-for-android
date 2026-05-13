@@ -50,9 +50,31 @@ Hope that helps."""
     }
 
     @Test
-    fun `buildRequest for Pollinations does not include Authorization header`() {
+    fun `buildRequest for Pollinations with blank key does not include Authorization header`() {
         val req = AiLabelClient.buildRequest(AiPaintProvider.POLLINATIONS, "", "prompt", emptyList())
         assertNull(req.header("Authorization"))
+    }
+
+    @Test
+    fun `buildRequest for Pollinations with non-blank key includes Bearer Authorization`() {
+        // Optional Pollinations key lifts the public-tier rate limits via standard OpenAI-style auth.
+        val req = AiLabelClient.buildRequest(AiPaintProvider.POLLINATIONS, "pol-test-key", "prompt", emptyList())
+        assertEquals("Bearer pol-test-key", req.header("Authorization"))
+    }
+
+    @Test
+    fun `Pollinations provider accepts key but does not require it`() {
+        assertFalse(AiPaintProvider.POLLINATIONS.requiresKey)
+        assertTrue(AiPaintProvider.POLLINATIONS.acceptsKey)
+    }
+
+    @Test
+    fun `all other providers require and accept a key`() {
+        listOf(AiPaintProvider.GEMINI, AiPaintProvider.OPENROUTER, AiPaintProvider.CLAUDE, AiPaintProvider.OPENAI)
+            .forEach { p ->
+                assertTrue("${p.name} should require a key", p.requiresKey)
+                assertTrue("${p.name} should accept a key", p.acceptsKey)
+            }
     }
 
     @Test
