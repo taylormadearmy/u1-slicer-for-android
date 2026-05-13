@@ -38,6 +38,10 @@ Respond ONLY with valid JSON:
         "each colour is a connected surface region numbered 0 to ${numComponents - 1}.\n\n" +
         "Group these $numComponents regions into exactly $targetColours semantic groups (e.g. \"Legs\", \"Body\", \"Head\", \"Base\"). " +
         "Choose contrasting, realistic filament colours so adjacent groups look visually distinct.\n\n" +
+        "IMPORTANT — symmetry rule: bilaterally symmetric features MUST be in the same group. " +
+        "If the model has a left eye and a right eye, both eye component-ids must go in one group. " +
+        "Same for pairs/sets of legs, ears, horns, wings, arms, hooves — anything that comes in mirrored copies " +
+        "or as a repeating set belongs together. Look across the front, back, left-iso and right-iso views to spot these pairs.\n\n" +
         "Respond ONLY with valid JSON:\n" +
         "{\"groups\": [{\"component_ids\": [0, 2], \"label\": \"...\", \"colour\": \"#RRGGBB\"}, ...]}\n" +
         "Rules: exactly $targetColours groups, every integer 0..${numComponents - 1} used exactly once."

@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.PixelCopy
+import android.view.ViewConfiguration
 
 class ModelViewerView(context: Context) : BaseGLViewerView(context) {
 
@@ -34,10 +35,25 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     // Callback when an object/tower is moved: (index, deltaX, deltaY) in bed mm
     var onObjectMoved: ((Int, Float, Float) -> Unit)? = null
 
+    // Callback when the user taps a triangle (single tap, no drag). Receives the triangle index
+    // into the FloatArray supplied to setTrianglePickingPositions. Disabled when null.
+    var onTriangleTapped: ((Int) -> Unit)? = null
+
+    // Positions used for triangle picking. Separate from the mesh VBO so callers don't have to
+    // rebuild the picking data when only colours change.
+    private var pickingPositions: FloatArray? = null
+
     // Drag state
     private var draggingIndex = -1
     private var lastBedX = 0f
     private var lastBedY = 0f
+
+    // Tap detection state
+    private var tapDownX = 0f
+    private var tapDownY = 0f
+    private var tapDownTime = 0L
+    private var tapMovedTooFar = false
+    private val tapSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
 
     init {
         setEGLContextClientVersion(3)
@@ -71,6 +87,11 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
+    /** Supply the per-triangle world-space positions used by [onTriangleTapped] ray picking. */
+    fun setTrianglePickingPositions(positions: FloatArray) {
+        pickingPositions = positions
+    }
+
     fun setExtruderColors(hexColors: List<String>) {
         renderer.instanceColors = hexColors.map { hex ->
             try {
@@ -100,6 +121,10 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
 
     override fun handleActionDown(event: MotionEvent) {
         draggingIndex = -1
+        tapDownX = event.x
+        tapDownY = event.y
+        tapDownTime = event.eventTime
+        tapMovedTooFar = false
         if (placementMode) {
             // Use Z=scaledSizeZ/2 for hit detection so tap lands on visible model face, not Z=0 shadow.
             val halfZ = (renderer.meshData?.sizeZ ?: 0f) * renderer.modelScale[2] / 2f
@@ -130,6 +155,11 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     }
 
     override fun handleActionMove(event: MotionEvent): Boolean {
+        if (!tapMovedTooFar) {
+            val mdx = event.x - tapDownX
+            val mdy = event.y - tapDownY
+            if (mdx * mdx + mdy * mdy > tapSlopPx * tapSlopPx) tapMovedTooFar = true
+        }
         if (placementMode && draggingIndex >= 0 && event.pointerCount == 1) {
             val bed = renderer.screenToBed(event.x, event.y) ?: return true
             val dx = bed[0] - lastBedX
@@ -144,11 +174,29 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     }
 
     override fun handleActionUp(event: MotionEvent) {
-        if (draggingIndex >= 0) {
+        val wasDragging = draggingIndex >= 0
+        if (wasDragging) {
             draggingIndex = -1
             renderer.highlightIndex = -1
             requestRender()
         }
+        if (!wasDragging && !tapMovedTooFar && onTriangleTapped != null) {
+            val dt = event.eventTime - tapDownTime
+            if (dt < 300L) {
+                val triIdx = pickTriangle(event.x, event.y)
+                if (triIdx >= 0) onTriangleTapped?.invoke(triIdx)
+            }
+        }
+    }
+
+    private fun pickTriangle(screenX: Float, screenY: Float): Int {
+        val positions = pickingPositions ?: return -1
+        val ray = renderer.screenToRay(screenX, screenY) ?: return -1
+        return TrianglePicker.pick(
+            positions,
+            ray[0], ray[1], ray[2],
+            ray[3], ray[4], ray[5]
+        )
     }
 
     override fun handleActionCancel() {

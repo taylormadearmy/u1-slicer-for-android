@@ -146,7 +146,10 @@ fun U1NavGraph(
                     aiVm.reset()
                     navController.popBackStack()
                 },
-                onNavigateSettings = { navController.navigate(Routes.SETTINGS) }
+                onNavigateSettings = { navController.navigate(Routes.SETTINGS) },
+                onMoveComponent = { componentId, toRegion -> aiVm.moveComponent(componentId, toRegion) },
+                onHighlightComponent = { componentId -> aiVm.highlightComponent(componentId) },
+                onUpdateRegionColour = { regionId, hex -> aiVm.updateRegionColour(regionId, hex) }
             )
         }
     }

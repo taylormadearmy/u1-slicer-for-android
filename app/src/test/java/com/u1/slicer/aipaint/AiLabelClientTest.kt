@@ -68,6 +68,24 @@ Hope that helps."""
         assertEquals("sk-ant-test", req.header("x-api-key"))
     }
 
+    // ---- buildGroupPrompt tests ----
+
+    @Test
+    fun `buildGroupPrompt embeds component count and target colours`() {
+        val prompt = AiLabelClient.buildGroupPrompt(numComponents = 7, targetColours = 4)
+        assertTrue("prompt should mention 7 components", prompt.contains("7 surface regions"))
+        assertTrue("prompt should mention 4 groups", prompt.contains("exactly 4"))
+    }
+
+    @Test
+    fun `buildGroupPrompt instructs AI to keep symmetric features together`() {
+        // Without this rule, bilateral pairs (eyes, legs) end up split across groups.
+        val prompt = AiLabelClient.buildGroupPrompt(numComponents = 12, targetColours = 4)
+        assertTrue("prompt should mention symmetry", prompt.contains("symmetr", ignoreCase = true))
+        assertTrue("prompt should give concrete pair examples",
+            prompt.contains("eye", ignoreCase = true) && prompt.contains("leg", ignoreCase = true))
+    }
+
     // ---- parseGroupJson tests ----
 
     @Test

@@ -96,23 +96,16 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
                 PaintedMeshWriter.write(mesh.trianglePositions, regionIds, regionsWithCoverage, outFile)
 
-                // Render final preview with AI-assigned colours
-                val regionColors = regionsWithCoverage.map { r ->
-                    runCatching { android.graphics.Color.parseColor(r.effectiveColour) }
-                        .getOrDefault(android.graphics.Color.GRAY)
-                }.toIntArray()
-                val previewBitmap = withContext(Dispatchers.Default) {
-                    AiPaintRenderer.renderRegions(
-                        mesh.trianglePositions, regionIds, regionColors, 512, 512, CameraAngle.RIGHT_ISO
-                    )
-                }
-
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         regions = regionsWithCoverage,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
-                        previewBitmap = previewBitmap
+                        previewBitmap = null,
+                        trianglePositions = mesh.trianglePositions,
+                        componentIds = componentIds,
+                        numComponents = numComponents,
+                        componentToRegion = componentToRegion
                     )
                 )
             } catch (e: Exception) {
@@ -127,6 +120,48 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
             if (r.id == regionId) r.copy(userColour = hexColour) else r
         }
         _uiState.value = AiPaintUiState.Result(current.state.copy(regions = updated))
+    }
+
+    /** Move a single topology component from its current region to [toRegion]. Rewrites the painted 3MF. */
+    fun moveComponent(componentId: Int, toRegion: Int) {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val state = current.state
+        if (componentId !in 0 until state.numComponents) return
+        if (toRegion !in state.regions.indices) return
+        if (state.componentToRegion[componentId] == toRegion) return
+
+        val newMap = state.componentToRegion.copyOf()
+        newMap[componentId] = toRegion
+        val newState = applyComponentMap(state, newMap)
+        _uiState.value = AiPaintUiState.Result(newState)
+    }
+
+    /** Highlight a single component on the 3D view (others dimmed). Pass null to clear. */
+    fun highlightComponent(componentId: Int?) {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        if (current.state.highlightComponentId == componentId) return
+        _uiState.value = AiPaintUiState.Result(current.state.copy(highlightComponentId = componentId))
+    }
+
+    private fun applyComponentMap(state: AiPaintResultState, componentToRegion: IntArray): AiPaintResultState {
+        val regionIds = IntArray(state.componentIds.size) { i ->
+            componentToRegion[state.componentIds[i]]
+        }
+        val fractions = MeshSegmenter.coverageFractions(regionIds, state.regions.size)
+        val updatedRegions = state.regions.mapIndexed { i, r ->
+            val members = (0 until state.numComponents).filter { componentToRegion[it] == i }
+            r.copy(
+                coverageFraction = fractions.getOrElse(i) { 0f },
+                componentIds = members
+            )
+        }
+        val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
+        PaintedMeshWriter.write(state.trianglePositions, regionIds, updatedRegions, outFile)
+        return state.copy(
+            regions = updatedRegions,
+            paintedModelPath = outFile.absolutePath,
+            componentToRegion = componentToRegion
+        )
     }
 
     fun redo(sourceModelPath: String, native: NativeLibrary) {

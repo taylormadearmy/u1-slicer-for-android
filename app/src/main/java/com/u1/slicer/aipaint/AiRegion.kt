@@ -17,8 +17,20 @@ data class AiPaintResultState(
     val regions: List<AiRegion>,
     val paintedModelPath: String,
     val sourceModelPath: String,
-    val previewBitmap: Bitmap? = null // front shaded render for result screen
-)
+    val previewBitmap: Bitmap? = null, // legacy front shaded render; null when 3D viewer is used
+    // Persisted topology data so users can move components between regions interactively.
+    val trianglePositions: FloatArray = FloatArray(0),
+    val componentIds: IntArray = IntArray(0),
+    val numComponents: Int = 0,
+    val componentToRegion: IntArray = IntArray(0),
+    // When non-null, the 3D view highlights this single component and dims the rest.
+    val highlightComponentId: Int? = null
+) {
+    // data class equals/hashCode default would compare arrays by reference; we don't rely on
+    // equality of result state beyond identity, so we override to suppress warnings.
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
 
 enum class AiPaintProvider(val displayName: String, val requiresKey: Boolean) {
     POLLINATIONS("Pollinations.ai (free, no key)", false),

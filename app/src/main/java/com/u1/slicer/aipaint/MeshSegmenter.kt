@@ -4,7 +4,7 @@ import kotlin.math.sqrt
 
 object MeshSegmenter {
 
-    private const val MAX_INTERMEDIATE_COMPONENTS = 16
+    private const val MAX_INTERMEDIATE_COMPONENTS = 32
     private const val CREASE_DOT = 0.7071f // cos(45°) — dihedral angles sharper than 45° are treated as creases
 
     /**
