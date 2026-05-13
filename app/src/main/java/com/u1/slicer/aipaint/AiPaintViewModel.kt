@@ -285,10 +285,19 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 // Per-triangle region map — Find3D's labels feed this directly; otherwise we
                 // derive it from the component-level map (uniform within each component).
                 val triangleRegions = ByteArray(regionIds.size) { regionIds[it].toByte() }
+                val fallbackReason = when {
+                    find3DFellBack -> "Find3D is currently unavailable — its HuggingFace Space is failing for all inputs right now (including the project's own example files). Split by height instead. Try Gemini or Claude in Settings while Find3D recovers."
+                    AiLabelClient.lastBoxesFellBack && provider == AiPaintProvider.POLLINATIONS ->
+                        "Pollinations couldn't process this model (free tier returns a refusal for vision tasks). Split by height instead. Set a Pollinations key in Settings to lift rate limits, or try Gemini / Claude."
+                    AiLabelClient.lastBoxesFellBack ->
+                        "${provider.displayName} couldn't process this model. Split by height instead — try a different provider in Settings → AI Paint."
+                    else -> ""
+                }
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         regions = regionsWithCoverage,
                         usedAiFallback = AiLabelClient.lastBoxesFellBack || find3DFellBack,
+                        fallbackReason = fallbackReason,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
                         previewBitmap = null,

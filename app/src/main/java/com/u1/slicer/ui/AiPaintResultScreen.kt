@@ -90,7 +90,9 @@ fun AiPaintResultScreen(
                             modifier = Modifier.fillMaxWidth().padding(8.dp)
                         ) {
                             Text(
-                                "AI couldn't process this model. Used height-based fallback instead — open Settings → AI Paint and try Gemini or Claude for better results.",
+                                result.fallbackReason.ifEmpty {
+                                    "AI couldn't process this model. Used height-based fallback instead."
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.padding(12.dp)

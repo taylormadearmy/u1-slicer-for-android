@@ -32,6 +32,8 @@ data class AiPaintResultState(
     // True when the AI didn't return usable region boxes and the Z-band fallback was used.
     // Surfaces in the result screen as a banner so the user knows to try a different provider.
     val usedAiFallback: Boolean = false,
+    // Human-readable explanation when usedAiFallback = true. Empty string when no fallback.
+    val fallbackReason: String = "",
     // True when the undo stack has at least one snapshot to restore. Enables the Undo button.
     val canUndo: Boolean = false,
 ) {

@@ -178,28 +178,47 @@ object Find3DClient {
     }
 
     private fun streamResult(eventId: String, hfToken: String?): String? {
+        val url = "$BASE_URL/gradio_api/call/run_predict/$eventId"
         val builder = Request.Builder()
-            .url("$BASE_URL/gradio_api/call/run_predict/$eventId")
+            .url(url)
             .header("Accept", "text/event-stream")
         if (!hfToken.isNullOrBlank()) builder.header("Authorization", "Bearer $hfToken")
+        Log.i(TAG, "streamResult GET $url")
         client.newCall(builder.build()).execute().use { resp ->
+            Log.i(TAG, "streamResult resp code=${resp.code} headers=${resp.headers.toMultimap()}")
             if (!resp.isSuccessful) {
-                Log.w(TAG, "stream HTTP ${resp.code}")
+                Log.w(TAG, "stream HTTP ${resp.code}: body=${resp.body?.string()?.take(800)}")
                 return null
             }
-            val reader = resp.body?.byteStream()?.bufferedReader() ?: return null
+            val reader = resp.body?.byteStream()?.bufferedReader() ?: run {
+                Log.w(TAG, "stream body is null")
+                return null
+            }
             var lastDataLine: String? = null
             var eventName: String? = null
+            var lineCount = 0
+            var sawError = false
             while (true) {
                 val line = reader.readLine() ?: break
+                lineCount++
+                if (lineCount <= 20) Log.i(TAG, "  sse[$lineCount]: ${line.take(200)}")
                 when {
-                    line.startsWith("event:") -> eventName = line.removePrefix("event:").trim()
+                    line.startsWith("event:") -> {
+                        eventName = line.removePrefix("event:").trim()
+                        if (eventName == "error") sawError = true
+                    }
                     line.startsWith("data:")  -> {
                         val payload = line.removePrefix("data:").trim()
                         if (payload.isNotEmpty() && payload != "null") lastDataLine = payload
                     }
                     line.isEmpty() && eventName == "complete" -> break
                 }
+            }
+            Log.i(TAG, "streamResult done: $lineCount lines, lastEvent=$eventName, sawError=$sawError, dataLen=${lastDataLine?.length}")
+            if (sawError) {
+                lastError = "Find3D Space returned event:error (the HuggingFace Space is currently failing — likely an upstream bug; their own example PCDs also error)"
+                lastRaw = "event:error"
+                return null
             }
             lastRaw = lastDataLine?.take(500)
             return lastDataLine
