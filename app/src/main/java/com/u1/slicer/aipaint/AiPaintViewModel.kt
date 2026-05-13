@@ -292,6 +292,34 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 // Per-triangle region map — Find3D's labels feed this directly; otherwise we
                 // derive it from the component-level map (uniform within each component).
                 val triangleRegions = ByteArray(regionIds.size) { regionIds[it].toByte() }
+
+                // Also compute the Z-band variant — even when the AI succeeded — so the user
+                // can flip between "🤖 AI" and "📏 Height-based" on the result screen for a
+                // direct visual comparison. Cheap (one pass over centroids) and the toggle is
+                // load-bearing for diagnosing AI mistakes.
+                val zBandCompToRegion = withContext(Dispatchers.Default) {
+                    assignByZBands(mesh.trianglePositions, componentIds, numComponents, TARGET_COLOURS)
+                }
+                val zBandTriRegions = ByteArray(componentIds.size) {
+                    zBandCompToRegion[componentIds[it]].toByte()
+                }
+                val zBandLabels = listOf("Base", "Lower", "Upper", "Top").take(TARGET_COLOURS)
+                val zBandColours = listOf("#37474F", "#1E88E5", "#43A047", "#FB8C00").take(TARGET_COLOURS)
+                val zBandFractions = MeshSegmenter.coverageFractions(
+                    IntArray(zBandTriRegions.size) { zBandTriRegions[it].toInt() },
+                    TARGET_COLOURS,
+                )
+                val zBandRegions = (0 until TARGET_COLOURS).map { i ->
+                    val members = (0 until numComponents).filter { zBandCompToRegion[it] == i }
+                    AiRegion(
+                        id = i,
+                        label = zBandLabels.getOrElse(i) { "Region ${i + 1}" },
+                        suggestedColour = zBandColours.getOrElse(i) { "#888888" },
+                        userColour = printerColours?.getOrNull(i)?.takeIf(::isValidHex),
+                        coverageFraction = zBandFractions.getOrElse(i) { 0f },
+                        componentIds = members,
+                    )
+                }
                 val fallbackReason = when {
                     find3DFellBack -> "Find3D is currently unavailable — its HuggingFace Space is failing for all inputs right now (including the project's own example files). Split by height instead. Try Gemini or Claude in Settings while Find3D recovers."
                     AiLabelClient.lastBoxesFellBack && provider == AiPaintProvider.POLLINATIONS ->
@@ -300,11 +328,20 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         "${provider.displayName} couldn't process this model. Split by height instead — try a different provider in Settings → AI Paint."
                     else -> ""
                 }
+                val fellBack = AiLabelClient.lastBoxesFellBack || find3DFellBack
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         regions = regionsWithCoverage,
-                        usedAiFallback = AiLabelClient.lastBoxesFellBack || find3DFellBack,
+                        usedAiFallback = fellBack,
                         fallbackReason = fallbackReason,
+                        // Only snapshot an AI variant when the AI actually succeeded — when it
+                        // fell back, the working copy is already the Z-band and there's no
+                        // separate "AI result" to toggle back to.
+                        aiTriangleRegions = if (fellBack) null else triangleRegions.copyOf(),
+                        aiRegions = if (fellBack) emptyList() else regionsWithCoverage,
+                        zBandTriangleRegions = zBandTriRegions,
+                        zBandRegions = zBandRegions,
+                        showingZBands = fellBack,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
                         previewBitmap = null,
@@ -476,6 +513,38 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
             for (r in 0 until numRegions) if (tallies[c][r] > bestCount) { bestCount = tallies[c][r]; best = r }
             best
         }
+    }
+
+    /** Toggle between the AI segmentation and the always-computed Z-band variant so the user
+     *  can compare and pick whichever looks better. No-op if either snapshot is missing.
+     *  Swaps `regions` + `triangleRegions` to the other snapshot; the previous variant's brush
+     *  edits are lost (toggle is a comparison tool, not a workflow merge). Undo stack reset. */
+    fun toggleZBands() {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val state = current.state
+        val next = if (state.showingZBands) {
+            // → AI variant. Requires the AI snapshot to exist.
+            val ai = state.aiTriangleRegions ?: return
+            if (state.aiRegions.isEmpty()) return
+            state.copy(
+                regions = state.aiRegions,
+                triangleRegions = ai.copyOf(),
+                showingZBands = false,
+                canUndo = false,
+            )
+        } else {
+            // → Z-band variant.
+            val zb = state.zBandTriangleRegions ?: return
+            if (state.zBandRegions.isEmpty()) return
+            state.copy(
+                regions = state.zBandRegions,
+                triangleRegions = zb.copyOf(),
+                showingZBands = true,
+                canUndo = false,
+            )
+        }
+        _uiState.value = AiPaintUiState.Result(next)
+        undoStack.clear()
     }
 
     /** Highlight a single component on the 3D view (others dimmed). Pass null to clear. */

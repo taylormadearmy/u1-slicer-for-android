@@ -36,6 +36,17 @@ data class AiPaintResultState(
     val fallbackReason: String = "",
     // True when the undo stack has at least one snapshot to restore. Enables the Undo button.
     val canUndo: Boolean = false,
+    // Snapshots of both segmentation variants taken at pipeline-complete time. The result
+    // screen has an "🤖 AI / 📏 Height-based" toggle that swaps the working copy
+    // (regions + triangleRegions) to one of these snapshots. Brush / move edits live in
+    // the working copy and are lost on toggle (intentional — toggle is a comparison tool,
+    // not a workflow merge).
+    val aiTriangleRegions: ByteArray? = null,
+    val aiRegions: List<AiRegion> = emptyList(),
+    val zBandTriangleRegions: ByteArray? = null,
+    val zBandRegions: List<AiRegion> = emptyList(),
+    // True when the user has toggled the view to the Z-band variant. False = AI variant.
+    val showingZBands: Boolean = false,
 ) {
     // data class equals/hashCode default would compare arrays by reference; we don't rely on
     // equality of result state beyond identity, so we override to suppress warnings.

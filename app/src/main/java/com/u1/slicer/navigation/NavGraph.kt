@@ -159,6 +159,7 @@ fun U1NavGraph(
                 onPaintTriangles = { triIds, toRegion -> aiVm.paintTriangles(triIds, toRegion) },
                 onBrushStrokeStart = { aiVm.beginUndoCheckpoint() },
                 onUndo = { aiVm.undo() },
+                onToggleZBands = { aiVm.toggleZBands() },
             )
         }
     }

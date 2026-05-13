@@ -35,6 +35,7 @@ fun AiPaintResultScreen(
     onPaintTriangles: (triangleIds: List<Int>, toRegion: Int) -> Unit = { _, _ -> },
     onBrushStrokeStart: () -> Unit = {},
     onUndo: () -> Unit = {},
+    onToggleZBands: () -> Unit = {},
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
@@ -83,6 +84,28 @@ fun AiPaintResultScreen(
 
                 is AiPaintUiState.Result -> {
                     val result = uiState.state
+
+                    // Toggle chip — only shown when both snapshots exist (AI succeeded AND
+                    // Z-band was precomputed). Lets the user A/B compare without re-running.
+                    val canToggle = result.aiTriangleRegions != null && result.zBandTriangleRegions != null
+                    if (canToggle) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            FilterChip(
+                                selected = !result.showingZBands,
+                                onClick = { if (result.showingZBands) onToggleZBands() },
+                                label = { Text("🤖 AI result") },
+                                modifier = Modifier.padding(end = 6.dp),
+                            )
+                            FilterChip(
+                                selected = result.showingZBands,
+                                onClick = { if (!result.showingZBands) onToggleZBands() },
+                                label = { Text("📏 Height-based") },
+                            )
+                        }
+                    }
 
                     if (result.usedAiFallback) {
                         Surface(
