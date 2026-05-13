@@ -34,14 +34,20 @@ Respond ONLY with valid JSON:
 
     fun buildBoxesPrompt(targetColours: Int): String =
         "You are segmenting a 3D model for multi-colour 3D printing. " +
-        "These 4 images are renders of the model from front, back, left-iso and right-iso angles. " +
+        "These 4 images are renders of the SAME model from four angles: image 1 is the FRONT, " +
+        "image 2 is the BACK (viewed from behind), image 3 is the LEFT-ISOMETRIC (three-quarter " +
+        "from upper-left), image 4 is the RIGHT-ISOMETRIC (three-quarter from upper-right). " +
+        "Examine ALL FOUR views carefully — a leg or feature visible only from the back or in iso " +
+        "must still appear in your region list. Do not skip parts that are hidden in the front view.\n\n" +
         "Identify exactly $targetColours visually distinct semantic regions. Be specific and granular — " +
-        "for an animal think \"Head, Horns, Ears, Eyes, Body, Front legs, Back legs, Base\"; " +
-        "for a vessel think \"Lid, Neck, Body, Handle, Spout, Base, Top, Bottom\". The point is to identify " +
-        "all major parts that a 3D printer user might want as a separate colour. " +
+        "for an animal think \"Head, Horns, Eyes, Ears, Snout, Neck, Body, Tail, Front legs, Back legs, " +
+        "Hooves, Base\"; for a vessel think \"Lid, Neck, Spout, Handle, Body, Belt, Foot, Base, Inner rim, " +
+        "Outer rim, Lower body, Upper body\". Avoid duplicate / overlapping regions; each part should be " +
+        "DISTINCT. " +
         "For each region, give a label, a realistic filament colour, and a bounding box in EACH view in " +
         "normalised screen coordinates [0..1] where (0,0) is the top-left of the image and (1,1) is the " +
-        "bottom-right.\n\n" +
+        "bottom-right. If a region is genuinely not visible in a view (e.g. front legs from the back), " +
+        "use [0, 0, 0, 0] for that view's box — don't guess.\n\n" +
         "IMPORTANT: be generous with your boxes — slightly oversize them to cover all visible region pixels. " +
         "For bilaterally symmetric features (eyes, ears, legs, arms) draw ONE box that encloses both sides together. " +
         "If a region isn't visible in a given view, use the empty box [0, 0, 0, 0].\n\n" +
@@ -313,9 +319,12 @@ Respond ONLY with valid JSON:
             .put("contents", JSONArray().put(JSONObject().put("parts", parts)))
             .toString().toRequestBody(JSON_TYPE)
         val url =
-            // Bumped from gemini-2.5-flash-lite — Flash has noticeably better visual grounding
-            // (returning correct image coordinates for bounding boxes) at the same free tier.
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+            // Bumped from 2.5-flash to 2.5-pro — Pro is significantly better at visual
+            // grounding (placing bounding boxes at the right image coordinates) and correlating
+            // the same part across multiple views, which Flash was missing on (e.g. rear legs
+            // visible in the back/iso views but not labelled). Free tier covers Pro at a lower
+            // RPD limit than Flash — plenty for occasional AI Paint runs.
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=$apiKey"
         return Request.Builder().url(url).post(body).build()
     }
 

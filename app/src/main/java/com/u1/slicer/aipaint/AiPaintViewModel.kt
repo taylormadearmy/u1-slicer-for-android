@@ -27,7 +27,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         // semantic segments fold onto the 4 physical slots — fix27 makes this user-controllable
         // via a slot picker per segment row; for now defaults to round-robin (segment i → slot
         // i % TARGET_SLOTS).
-        const val TARGET_SEGMENTS = 8
+        const val TARGET_SEGMENTS = 12
         // Legacy alias kept ONLY so any leftover call-site reads the segment count. Anywhere we
         // need the physical-slot count we use TARGET_SLOTS explicitly.
         const val TARGET_COLOURS = TARGET_SEGMENTS
@@ -36,10 +36,14 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         // upright figurines (the most common AI Paint use case); colours are visually distinct
         // so the segment list reads at a glance.
         internal val ZBAND_LABELS_8 = listOf(
-            "Base", "Lower legs", "Upper legs", "Belly", "Lower body", "Upper body", "Neck", "Top",
+            "Base", "Hooves", "Lower legs", "Upper legs", "Belly",
+            "Lower body", "Upper body", "Neck", "Head", "Crown",
+            "Top", "Tip",
         )
         internal val ZBAND_COLOURS_8 = listOf(
-            "#37474F", "#5D4037", "#1E88E5", "#43A047", "#FB8C00", "#8E24AA", "#E53935", "#FFEB3B",
+            "#37474F", "#5D4037", "#795548", "#1E88E5", "#43A047",
+            "#00ACC1", "#FB8C00", "#8E24AA", "#E53935", "#EC407A",
+            "#FFEB3B", "#FFFFFF",
         )
 
         /**
