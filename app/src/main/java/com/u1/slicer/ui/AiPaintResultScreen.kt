@@ -236,16 +236,27 @@ fun AiPaintResultScreen(
                             paintMode = false
                             lassoMode = false
                             lassoSelection = emptySet()
+                            // Tapping Select also clears the region highlight — Select mode is
+                            // for browsing, not for committing edits.
+                            onHighlightComponent(null)
                         },
                         onTogglePaint = {
                             paintMode = !paintMode
                             if (paintMode) lassoMode = false
                             lassoSelection = emptySet()
+                            // fix41.1: arming Paint clears the yellow region highlight so the
+                            // user can actually see the model as they paint. The fade overlay
+                            // would otherwise leave everything-but-the-selected-region dimmed
+                            // throughout the paint stroke.
+                            if (paintMode) onHighlightComponent(null)
                         },
                         onToggleLasso = {
                             lassoMode = !lassoMode
                             if (lassoMode) paintMode = false
                             lassoSelection = emptySet()
+                            // fix41.1: same reason as Paint — clear the region highlight on arm
+                            // so the lasso drag isn't obscured by the existing fade.
+                            if (lassoMode) onHighlightComponent(null)
                         },
                         onBrushSizeChange = { brushPct = it },
                         onClearSelection = { lassoSelection = emptySet() },
