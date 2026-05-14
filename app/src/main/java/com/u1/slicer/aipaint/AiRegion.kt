@@ -46,6 +46,15 @@ data class AiPaintResultState(
 
     /** Brush / lasso commits accumulated in this session. Rendered as a root-level group. */
     val customSelections: List<CustomSelection> = emptyList(),
+
+    /** fix38: cached alternate view (typically topology) the user can switch to. Null when no
+     *  alternate is available for this model (e.g. cascade fired Branch E or F directly, so
+     *  there's nothing to toggle to). Switching swaps tree/source/triangleSegments with
+     *  alternate*; user edits (triangleRegions / customSelections / undo stack) are reset on
+     *  switch — the alternate is a fresh start, not a layered overlay. */
+    val alternateTree: List<AiRegionNode>? = null,
+    val alternateSource: SegmentationSource? = null,
+    val alternateTriangleSegments: ByteArray? = null,
 ) {
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = System.identityHashCode(this)

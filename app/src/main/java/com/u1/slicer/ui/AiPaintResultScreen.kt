@@ -40,6 +40,7 @@ fun AiPaintResultScreen(
     onUndo: () -> Unit = {},
     onSetSegmentSlot: (segmentId: Int, newSlot: Int) -> Unit = { _, _ -> },
     onCommitSelection: (triangleIds: List<Int>, toSlot: Int) -> Unit = { _, _ -> },
+    onSwitchToAlternate: () -> Unit = {},
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
@@ -281,6 +282,34 @@ fun AiPaintResultScreen(
                             modelTried = result.aiModelTried,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                         )
+                    }
+
+                    // fix38: Parts ⇄ Regions toggle when an alternate view is available.
+                    if (result.alternateSource != null) {
+                        val (partsSource, regionsSource) = when (result.source) {
+                            com.u1.slicer.aipaint.SegmentationSource.TOPOLOGY,
+                            com.u1.slicer.aipaint.SegmentationSource.TOPOLOGY_RECURSIVE ->
+                                result.alternateSource to result.source
+                            else -> result.source to result.alternateSource
+                        }
+                        val isPartsActive = result.source == partsSource
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            FilterChip(
+                                selected = isPartsActive,
+                                onClick = { if (!isPartsActive) onSwitchToAlternate() },
+                                label = { Text(viewLabelFor(partsSource)) },
+                            )
+                            FilterChip(
+                                selected = !isPartsActive,
+                                onClick = { if (isPartsActive) onSwitchToAlternate() },
+                                label = { Text(viewLabelFor(regionsSource)) },
+                            )
+                        }
                     }
 
                     val treeWithCustom = result.tree + listOfNotNull(
@@ -879,6 +908,18 @@ private fun MoveComponentSheet(
 /** Translate raw triangle positions onto the U1 bed (270×270 plate origin at corner). The
  *  bounding box is centred at (135, 135) in XY and the lowest Z lands at 0. Output array has
  *  the same length as input. */
+/** Friendly label for the Parts/Regions toggle. */
+private fun viewLabelFor(source: com.u1.slicer.aipaint.SegmentationSource): String = when (source) {
+    com.u1.slicer.aipaint.SegmentationSource.PAINT_STATE -> "🎨 Painted"
+    com.u1.slicer.aipaint.SegmentationSource.VOLUME -> "🧩 Parts"
+    com.u1.slicer.aipaint.SegmentationSource.OBJECT -> "📦 Objects"
+    com.u1.slicer.aipaint.SegmentationSource.TRIANGLE_INDEX -> "🎯 Indices"
+    com.u1.slicer.aipaint.SegmentationSource.TOPOLOGY,
+    com.u1.slicer.aipaint.SegmentationSource.TOPOLOGY_RECURSIVE -> "🪨 Regions"
+    com.u1.slicer.aipaint.SegmentationSource.Z_BAND -> "📏 Bands"
+    com.u1.slicer.aipaint.SegmentationSource.BRUSH -> "✏️ Brush"
+}
+
 /** Walk the tree looking for a node with [id]. Returns null when no match. */
 private fun findNodeById(tree: List<com.u1.slicer.aipaint.AiRegionNode>, id: Int): com.u1.slicer.aipaint.AiRegionNode? {
     for (root in tree) {

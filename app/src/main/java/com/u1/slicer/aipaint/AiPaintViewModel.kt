@@ -133,6 +133,24 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 Log.i("AiPaint", "Cascade fired: ${cascadeResult.source.name} → " +
                     "${cascadeResult.tree.firstOrNull()?.leafCount() ?: 0} leaves")
 
+                // fix38: compute a topology alternate so the user can toggle between Parts
+                // (Branch A/B/C/D) and Regions (Branch E topology) views on models that
+                // support both. Skip when the primary IS already a topology view.
+                val alternateResult: CascadeResult? = if (
+                    cascadeResult.source != SegmentationSource.TOPOLOGY &&
+                    cascadeResult.source != SegmentationSource.TOPOLOGY_RECURSIVE &&
+                    cascadeResult.source != SegmentationSource.Z_BAND
+                ) {
+                    withContext(Dispatchers.Default) {
+                        SegmentationCascade.topologyBranch(input.positions)
+                            .takeIf { it.tree.isNotEmpty() }
+                    }
+                } else null
+                if (alternateResult != null) {
+                    Log.i("AiPaint", "Alternate available: ${alternateResult.source.name} → " +
+                        "${alternateResult.tree.firstOrNull()?.leafCount() ?: 0} leaves")
+                }
+
                 val (treeAfterAi, aiFailed, modelTried) = if (aiEnabled && (!provider.requiresKey || apiKey.isNotBlank())) {
                     _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
                     applyAiNaming(provider, apiKey, positions, cascadeResult.tree)
@@ -180,6 +198,12 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     printerColours = printerColours,
                 )
 
+                // fix38: bake the alternate tree (topology) with printer colours so that when
+                // the user switches, the alternate already has the right slot colours.
+                val alternateTreeWithColours = alternateResult?.tree?.map { root ->
+                    applyPrinterColours(root, printerColours)
+                }
+
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         tree = tree,
@@ -192,6 +216,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         aiNamingFailed = aiFailed,
                         aiModelTried = modelTried,
                         customSelections = emptyList(),
+                        alternateTree = alternateTreeWithColours,
+                        alternateSource = alternateResult?.source,
+                        alternateTriangleSegments = alternateResult?.triangleSegments,
                     )
                 )
             } catch (e: Exception) {
@@ -508,6 +535,48 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     fun redo(sourceModelPath: String, native: NativeLibrary) {
         _uiState.value = AiPaintUiState.Idle
         runPipeline(sourceModelPath, native, lastPrinterColours)
+    }
+
+    /** fix38: swap the active tree with the stored alternate (typically topology). User edits
+     *  (triangleRegions overrides + customSelections + undo stack) are reset on switch — the
+     *  alternate is a fresh start with the cascade-derived slot defaults, not a paint overlay
+     *  carried across views. */
+    fun switchToAlternate() {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val state = current.state
+        val altTree = state.alternateTree ?: return
+        val altSource = state.alternateSource ?: return
+        val altSegments = state.alternateTriangleSegments ?: return
+
+        val triCount = state.trianglePositions.size / 9
+        val newTriRegions = ByteArray(triCount)
+        altTree.forEach { root ->
+            root.flatten().forEach { (node, _) ->
+                if (node.isLeaf) {
+                    node.triangleIds.forEach { t ->
+                        if (t in 0 until triCount) newTriRegions[t] = node.region.slot.toByte()
+                    }
+                }
+            }
+        }
+
+        undoStack.clear()
+        _uiState.value = AiPaintUiState.Result(
+            state.copy(
+                tree = altTree,
+                source = altSource,
+                triangleSegments = altSegments,
+                triangleRegions = newTriRegions,
+                // Swap the alternate pointer to the previous active view so the user can flip
+                // back and forth.
+                alternateTree = state.tree,
+                alternateSource = state.source,
+                alternateTriangleSegments = state.triangleSegments,
+                customSelections = emptyList(),
+                canUndo = false,
+                highlightComponentId = null,
+            )
+        )
     }
 
     fun reset() { _uiState.value = AiPaintUiState.Idle }

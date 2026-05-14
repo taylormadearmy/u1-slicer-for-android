@@ -174,6 +174,7 @@ fun U1NavGraph(
                 onUndo = { aiVm.undo() },
                 onSetSegmentSlot = { segmentId, newSlot -> aiVm.setSegmentSlot(segmentId, newSlot) },
                 onCommitSelection = { triIds, toSlot -> aiVm.commitSelection(triIds, toSlot) },
+                onSwitchToAlternate = { aiVm.switchToAlternate() },
             )
         }
     }
