@@ -8,7 +8,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -196,25 +198,45 @@ fun AiPaintResultScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
                     )
-                    // Pre-compute the 4 slot ARGB colours from regions[0..TARGET_SLOTS-1] so we
-                    // don't reparse them on every row recomposition.
-                    val slotColours = remember(result.regions) {
-                        result.regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS)
-                            .map { r ->
-                                runCatching { android.graphics.Color.parseColor(r.effectiveColour) }
+                    // Build the 4 slot palette colours from the cascade root's leaves, grouped
+                    // by slot. Fallback to default palette for slots that have no triangles
+                    // currently assigned (rare but possible while brushing).
+                    val slotPalette: List<Color> = remember(result.tree) {
+                        val byTris = result.leafRegions.groupBy { it.slot }
+                        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
+                            val hex = byTris[slot]?.firstOrNull()?.effectiveColour ?: "#888888"
+                            Color(
+                                runCatching { android.graphics.Color.parseColor(hex) }
                                     .getOrDefault(android.graphics.Color.GRAY)
-                            }
-                    }
-                    LazyColumn(Modifier.weight(1f)) {
-                        items(result.regions) { region ->
-                            RegionRow(
-                                region = region,
-                                slotColours = slotColours,
-                                onSetSlot = { newSlot -> onSetSegmentSlot(region.id, newSlot) },
-                                onEditSlotColour = { editSlotColour = region.slot },
                             )
                         }
                     }
+
+                    // F54 — AI failure chip surfaces when AI naming was attempted but failed.
+                    if (result.aiNamingFailed) {
+                        AiNamingFailureChip(
+                            modelTried = result.aiModelTried,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                    }
+
+                    AiPaintTree(
+                        tree = result.tree + listOfNotNull(
+                            com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
+                        ),
+                        slotPalette = slotPalette,
+                        onTapSwatch = { nodeId -> editSlotColour = nodeId },
+                        onPickSlot = { path, slot ->
+                            // Slot picks address the deepest node by id (path's last entry).
+                            // setSegmentSlot already cascades reassignment to all leaves under
+                            // that node — same semantics whether the user picked on a parent or
+                            // a leaf.
+                            if (path.isNotEmpty()) {
+                                onSetSegmentSlot(path.last(), slot)
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
 
                     if (!paintMode) {
                         Text(
@@ -785,4 +807,29 @@ private fun recenterForBed(positions: FloatArray): FloatArray {
         j += 3
     }
     return out
+}
+
+@Composable
+private fun AiNamingFailureChip(modelTried: String?, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.tertiaryContainer)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.Info,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            "AI naming unavailable — using default labels" +
+                (modelTried?.let { " ($it)" } ?: ""),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+        )
+    }
 }
