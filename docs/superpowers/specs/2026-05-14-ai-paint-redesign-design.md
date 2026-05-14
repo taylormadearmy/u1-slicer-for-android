@@ -26,7 +26,7 @@ Current pipeline is non-deterministic — same goat sometimes shows part-coloure
 | 3 | **Z-bands** | Fallback only. Bands only appear when branches A–E all yielded < 2 segments. No "supplement" mode. |
 | 4 | **AI failure** | Surface a small "AI naming unavailable" chip on the result screen so users distinguish "AI is off" from "AI failed". |
 | 5 | **Brush strokes** | Create a new child row under the affected parent ("Custom selection · 200 tri"). Visible in the tree, reassignable / undoable like any other row. |
-| 6 | **AI gating** | Settings adds "Use smart segments only" toggle; AI Paint provider list marked Experimental. Default: smart segments only. AI naming is opt-in. |
+| 6 | **AI gating** | Settings adds `aiNamingEnabled` toggle on the AI Paint section, marked Experimental, defaulting **off**. When off, no AI calls are made — pipeline returns deterministic regions only. |
 
 ## Architecture
 
@@ -115,7 +115,7 @@ One `LazyColumn`. All rows share the same shape: `chevron · swatch · label · 
 
 #### Behaviour
 
-- **Tap a slot chip on a parent** → cascade-reassign every leaf under it to that slot. Show `Snackbar`: "Reassigned 12 regions → Slot 2 · Undo".
+- **Tap a slot chip on a parent** → cascade-reassign every cascade-tree leaf under it to that slot. Brush-stroke "Custom selections" (which live under their own root-level group, see below) are NOT swept up — they remain on their independently-assigned slots so cascade-reassign never destroys manual paint work. Show `Snackbar`: "Reassigned 12 regions → Slot 2 · Undo".
 - **Tap a slot chip on a leaf** → reassign just that leaf.
 - **Tap the swatch** → open existing HSV picker; updates the slot's colour (not the region's only).
 - **Long-press a parent** → "Select all in viewer" pushes its triangles into Lasso selection so the user can prune.
@@ -144,15 +144,22 @@ Goat-on-base.stl                  Benchy.3mf
 
 #### Custom selections from the brush (decision #5)
 
-Each brush stroke / lasso commit creates a new child row under the affected parent labelled `"Custom selection · <triangle-count>"` (or "Brush stroke #N"). Behaves like any other leaf:
-- Has its own slot chips, swatch, % coverage
-- Reassignable to a different slot
-- Single-undo restores the row's deletion + the triangles' previous slots
-- Multiple custom selections accumulate as separate rows; the user can re-tap "Clear custom selections" on the parent to flatten them back
+Brush strokes and lasso commits append children under a **single root-level `"Custom selections"` group**, NOT nested under cascade-tree parents. This avoids two ambiguities:
+
+- a stroke that crosses Hull and Cabin would otherwise need to split into per-parent children
+- a cascade-reassign on Hull would otherwise sweep up brush work the user did inside Hull
+
+With the root-level group, custom selections are clearly separate user intent that overlays the cascade. Behaviour:
+
+- Each brush stroke / lasso commit appends one row: `"Custom selection · <triangle-count>"`
+- Each child has its own slot chips, swatch, % coverage; reassignable / undoable like any other leaf
+- Custom-selection rows are derived from a side-channel `customSelections: List<TriangleRange>` on the result state; rebuilding the tree never collapses them back into the cascade
+- Tapping the "Custom selections" parent's slot chip cascade-reassigns every brush stroke
+- A "Clear all" action on the parent flattens the custom selections back into the cascade (triangles revert to their original segment's slot)
 
 #### AI failure chip (decision #4)
 
-When `aiPaintProvider != null && useSmartSegmentsOnly == false` AND AI naming returned null/parse-failed, show a compact info chip in the result screen header:
+When `aiPaintProvider != null && aiNamingEnabled == false` AND AI naming returned null/parse-failed, show a compact info chip in the result screen header:
 
 ```
 [ⓘ AI naming unavailable — using default labels]
@@ -198,7 +205,7 @@ data class AiRegionNode(
    - Branch D: flat.
    - Branch E: root → components → sub-regions (when recursion fired).
    - Branch F: flat (root → bands).
-4. Optional AI naming (if provider+key set AND useSmartSegmentsOnly = false):
+4. Optional AI naming (if provider+key set AND aiNamingEnabled = false):
    - Render shaded + region-coloured views.
    - Call AiLabelClient.labelSegments(provider, key, [shaded, regions], leafCount).
    - On success: apply labels + suggested colours to leaves.
@@ -238,8 +245,8 @@ User can always remap via the tree's chips.
 - `aipaint/AiLabelClient.kt` — `labelGroups` removed. `labelSegments` stays but always operates on deterministic regions.
 - `aipaint/AiRegion.kt` — minor changes for `SegmentationSource`.
 - `ui/AiPaintResultScreen.kt` — region list replaced by `AiPaintTree`. Result-state consumers updated.
-- `ui/SettingsScreen.kt` — "Use smart segments only" toggle + "Experimental" label on AI Paint provider section.
-- `data/SettingsRepository.kt` — `useSmartSegmentsOnly: Flow<Boolean>` + setter.
+- `ui/SettingsScreen.kt` — "AI naming (experimental)" toggle on the AI Paint section.
+- `data/SettingsRepository.kt` — `aiNamingEnabled: Flow<Boolean>` + setter; default false.
 
 **Removed:**
 - `aipaint/AiPaintViewModel.runTopologyGroupingPath`
@@ -295,15 +302,11 @@ Counts to update on completion: `CLAUDE.md` and `.worktrees/f54-ai-paint/CLAUDE.
 - Pre-painted models with seam paint (`supported_facets`) — branch A reads MMU only; seam paint stays a SlicerViewModel concern.
 - Saved palette presets across models.
 
-### 11. Migration / staging
+### 11. Migration
 
-1. Land `SegmentationCascade` + tree data model with branches A, C, F implemented; keep old pipeline as a flag-gated fallback.
-2. Land branches B, D and topology recursion.
-3. Replace the screen list with the tree composable.
-4. Cut over default; remove the flag and old pipeline.
-5. Settings toggle + Experimental label ships with step 3.
+Implemented as a single cohesive change. No flag-gating, no staged shipping. The old pipeline (`runTopologyGroupingPath`, `runZBandPath`, the flat region list, the toggle-related state fields) is removed once the new pipeline + tree composable + settings toggle compile and pass tests. A debug APK ships only after the full feature is in place.
 
-Each step is independently shippable as a debug APK for on-device verification.
+Within the implementation plan, the work decomposes into independently-testable units (cascade branches, tree composable, settings, custom-selections, AI naming) so unit + instrumented tests gate each unit before the screen is wired up — but no intermediate APK is staged for on-device review.
 
 ## Out-of-design considerations
 
