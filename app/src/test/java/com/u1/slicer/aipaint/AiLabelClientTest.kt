@@ -25,8 +25,11 @@ class AiLabelClientTest {
     @Test
     fun `buildLabelPrompt embeds the band count`() {
         val prompt = AiLabelClient.buildLabelPrompt(bandCount = 8)
-        assertTrue("prompt should mention 8 bands", prompt.contains("8 horizontal bands"))
-        assertTrue("prompt should mention band index range 0..7",
+        // fix39.1: prompt no longer anchors on "horizontal bands" (which led the AI to
+        // misidentify organic models as boats and return Hull/Deck/Cabin/Roof labels).
+        // It now talks about "painted regions" and asks for anatomical part names.
+        assertTrue("prompt should mention 8 regions", prompt.contains("8 painted regions"))
+        assertTrue("prompt should mention region index range 0..7",
             prompt.contains("0..7"))
         assertTrue("prompt should ask for exactly 8 entries",
             prompt.contains("exactly 8"))

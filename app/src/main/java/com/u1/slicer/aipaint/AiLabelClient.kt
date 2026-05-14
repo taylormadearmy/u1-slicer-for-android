@@ -51,19 +51,17 @@ object AiLabelClient {
     )
 
     fun buildLabelPrompt(bandCount: Int): String =
-        "You are looking at two views of the SAME 3D model from the same angle:\n" +
-        "  • Image 1: plain shaded render — use this to identify what the object IS " +
-        "(e.g. boat, dragon, vase, figurine).\n" +
-        "  • Image 2: the same model split into $bandCount horizontal bands from bottom to top, " +
-        "each band rendered in a different colour.\n\n" +
-        "First identify the object from image 1, then for image 2 name each colour band based " +
-        "on which part of THAT specific object it covers. For a boat the bands might be " +
-        "\"Hull\", \"Deck\", \"Cabin\", \"Roof\"; for a dragon \"Tail\", \"Body\", \"Neck\", " +
-        "\"Head\". Use real names from the object you identified — NOT generic terms like " +
-        "\"Band 1\". Also suggest a realistic filament colour for each band so the printed " +
-        "result looks natural.\n\n" +
-        "Bands are numbered 0..${bandCount - 1} from bottom to top. Return exactly $bandCount " +
-        "entries in band-index order.\n\n" +
+        "You are looking at two views of the SAME 3D model from the same camera angle:\n" +
+        "  • Image 1: plain shaded render — use this to identify what the object IS.\n" +
+        "  • Image 2: the same model with $bandCount painted regions, each shown in a " +
+        "different colour. Region ids are 0..${bandCount - 1}.\n\n" +
+        "First identify the object from image 1, then for each of the $bandCount coloured " +
+        "regions name the part of THAT object that the region covers (e.g. \"Head\", \"Body\", " +
+        "\"Wings\", \"Base\"). Use real anatomical or structural part names of whatever the " +
+        "object actually is — NOT generic placeholders like \"Region 1\" or \"Band 2\", and " +
+        "NOT names from unrelated objects. Also suggest a realistic filament colour for each " +
+        "region so the printed result looks natural.\n\n" +
+        "Return exactly $bandCount entries in region-id order (0 first, then 1, …).\n\n" +
         "Respond ONLY with valid JSON:\n" +
         "{\"segments\": [\n" +
         "  {\"id\": 0, \"label\": \"...\", \"colour\": \"#RRGGBB\"},\n" +

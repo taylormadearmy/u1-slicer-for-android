@@ -155,12 +155,11 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         "${alternateResult.tree.firstOrNull()?.leafCount() ?: 0} leaves")
                 }
 
-                // fix39: when the cascade picked topology (organic models — goat, dragon,
-                // figurines) AND AI is enabled, do the AI semantic-grouping pass that fix30
-                // used. AI sees the topology-coloured render and groups the N components into
-                // ~12 semantic regions with explicit symmetry rules (left/right eyes share a
-                // group → same colour). Without this, raw topology gives 50-200 tiny leaves
-                // that are individually selectable but visually noisy and asymmetric.
+                // fix39.1: AI semantic-grouping pass applies to BOTH the primary (when it's
+                // topology) AND the alternate (which is topology whenever the primary isn't).
+                // The user sees the grouping in whichever view they toggle to — painted goat
+                // models hit PAINT_STATE primary but the Regions toggle exposes 48 raw
+                // topology shells; those are the leaves that need symmetric grouping.
                 val isTopologyPrimary = cascadeResult.source == SegmentationSource.TOPOLOGY ||
                     cascadeResult.source == SegmentationSource.TOPOLOGY_RECURSIVE
                 val canCallAi = aiEnabled && (!provider.requiresKey || apiKey.isNotBlank())
@@ -169,6 +168,13 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     applyAiTopologyGrouping(provider, apiKey, positions, cascadeResult)
                         ?: cascadeResult
                 } else cascadeResult
+
+                val groupedAlternate: CascadeResult? =
+                    if (alternateResult != null && canCallAi) {
+                        _uiState.value = AiPaintUiState.Running(3, "Asking AI to group the parts…")
+                        applyAiTopologyGrouping(provider, apiKey, positions, alternateResult)
+                            ?: alternateResult
+                    } else alternateResult
 
                 val (treeAfterAi, aiFailed, modelTried) = if (canCallAi && !isTopologyPrimary) {
                     _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
@@ -219,7 +225,8 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
                 // fix38: bake the alternate tree (topology) with printer colours so that when
                 // the user switches, the alternate already has the right slot colours.
-                val alternateTreeWithColours = alternateResult?.tree?.map { root ->
+                // fix39.1: use the AI-grouped alternate when grouping succeeded.
+                val alternateTreeWithColours = groupedAlternate?.tree?.map { root ->
                     applyPrinterColours(root, printerColours)
                 }
 
@@ -236,8 +243,8 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         aiModelTried = modelTried,
                         customSelections = emptyList(),
                         alternateTree = alternateTreeWithColours,
-                        alternateSource = alternateResult?.source,
-                        alternateTriangleSegments = alternateResult?.triangleSegments,
+                        alternateSource = groupedAlternate?.source,
+                        alternateTriangleSegments = groupedAlternate?.triangleSegments,
                     )
                 )
             } catch (e: Exception) {
