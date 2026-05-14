@@ -731,6 +731,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiNamingEnabled(enabled) }
     }
 
+    /** F54 fix38.4: change one extruder slot's filament colour, persisting via the extruder
+     *  presets DataStore. Used by Smart Paint's slot picker so editing a slot colour actually
+     *  propagates back to the printer-side filament list (and shows up everywhere — Prepare
+     *  filaments row, Map dialog, recolour preview). */
+    fun setSlotColor(slotIndex: Int, hex: String) {
+        if (slotIndex !in 0..3) return
+        val cleaned = if (hex.startsWith("#")) hex else "#$hex"
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = settingsRepo.extruderPresets.first().toMutableList()
+            val existing = current.firstOrNull { it.index == slotIndex }
+            val updated = existing?.copy(color = cleaned)
+                ?: com.u1.slicer.data.ExtruderPreset(index = slotIndex, color = cleaned)
+            val withoutOld = current.filterNot { it.index == slotIndex }
+            settingsRepo.saveExtruderPresets((withoutOld + updated).sortedBy { it.index })
+        }
+    }
+
     // Track the current working file (may be sanitized copy)
     private var _currentModelFile: File? = null
     private var currentModelFile: File?

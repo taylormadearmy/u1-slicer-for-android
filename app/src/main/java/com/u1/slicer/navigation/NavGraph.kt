@@ -175,6 +175,7 @@ fun U1NavGraph(
                 onSetSegmentSlot = { segmentId, newSlot -> aiVm.setSegmentSlot(segmentId, newSlot) },
                 onCommitSelection = { triIds, toSlot -> aiVm.commitSelection(triIds, toSlot) },
                 onSwitchToAlternate = { aiVm.switchToAlternate() },
+                onSetSlotColor = { slot, hex -> viewModel.setSlotColor(slot, hex) },
             )
         }
     }

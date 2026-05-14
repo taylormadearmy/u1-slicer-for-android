@@ -41,6 +41,7 @@ fun AiPaintResultScreen(
     onSetSegmentSlot: (segmentId: Int, newSlot: Int) -> Unit = { _, _ -> },
     onCommitSelection: (triangleIds: List<Int>, toSlot: Int) -> Unit = { _, _ -> },
     onSwitchToAlternate: () -> Unit = {},
+    onSetSlotColor: (slotIndex: Int, hex: String) -> Unit = { _, _ -> },
 ) {
     var swapSheetRegion by remember { mutableStateOf<AiRegion?>(null) }
     var moveSheetComponent by remember { mutableStateOf<Int?>(null) }
@@ -277,7 +278,7 @@ fun AiPaintResultScreen(
                                 "LASSO — drag on the 3D model to highlight an area, then tap a slot colour"
                             lassoMode -> "LASSO — tap a slot colour to apply, or × to clear"
                             paintMode -> "PAINT — tap a slot colour, then drag to paint"
-                            else -> "REGIONS — tap a slot swatch on the right to remap a region"
+                            else -> "REGIONS — tap an extruder swatch on the right to remap a region"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -328,7 +329,7 @@ fun AiPaintResultScreen(
                     AiPaintTree(
                         tree = treeWithCustom,
                         slotPalette = slotPalette,
-                        onTapSwatch = { nodeId -> editSlotColour = nodeId },
+                        onTapSwatch = { nodeSlot -> editSlotColour = nodeSlot },
                         onPickSlot = { path, slot ->
                             // fix35.2: tapping a slot chip on a row also highlights that row
                             // (so the model lights up the affected triangles in yellow + the
@@ -434,15 +435,19 @@ fun AiPaintResultScreen(
     }
 
     editSlotColour?.let { slot ->
-        val regions = (uiState as? AiPaintUiState.Result)?.state?.regions ?: emptyList()
-        // The canonical region for a slot is the one whose id matches the slot number — that's
-        // what the 3D viewer's palette pulls from (regions[0..3]).
-        val canonical = regions.firstOrNull { it.id == slot } ?: regions.getOrNull(slot)
-        if (canonical != null) {
+        // fix38.4: tapping a slot swatch now edits the underlying EXTRUDER PRESET colour
+        // (persisted via SlicerViewModel.setSlotColor). The change propagates to every
+        // surface that reads filamentColours / extruderPresets — Smart Paint picker, tree
+        // rows, Prepare filaments row, Map dialog — so the user only edits it once and the
+        // change sticks for future loads.
+        if (slot in 0..3) {
+            val initialHex = filamentColours.getOrNull(slot)
+                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS.getOrNull(slot)
+                ?: "#888888"
             FilamentColorEditDialog(
-                initialHex = canonical.effectiveColour,
+                initialHex = initialHex,
                 onSave = { hex ->
-                    onUpdateRegionColour(canonical.id, hex)
+                    onSetSlotColor(slot, hex)
                     editSlotColour = null
                 },
                 onDismiss = { editSlotColour = null },
@@ -678,7 +683,7 @@ private fun PaintModeBar(
                 when {
                     lassoMode -> "Apply to →"
                     paintMode -> "Active →"
-                    else -> "Slots →"
+                    else -> "Extruders →"
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

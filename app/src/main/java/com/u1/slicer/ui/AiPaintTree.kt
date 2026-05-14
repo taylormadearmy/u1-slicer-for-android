@@ -21,7 +21,7 @@ import com.u1.slicer.aipaint.AiRegionNode
 fun AiPaintTree(
     tree: List<AiRegionNode>,
     slotPalette: List<Color>,
-    onTapSwatch: (nodeId: Int) -> Unit,
+    onTapSwatch: (nodeSlot: Int) -> Unit,
     onPickSlot: (path: List<Int>, slot: Int) -> Unit,
     onSelectNode: (nodeId: Int) -> Unit,
     selectedNodeId: Int? = null,
@@ -49,7 +49,9 @@ fun AiPaintTree(
                 node = node.copy(expanded = expanded[node.region.id] ?: true),
                 depth = depth,
                 onToggleExpand = { expanded[node.region.id] = !(expanded[node.region.id] ?: true) },
-                onTapSwatch = { onTapSwatch(node.region.id) },
+                // fix38.4: pass the node's SLOT (0..3) — tapping the row's swatch edits the
+                // extruder colour for that slot, not the region.
+                onTapSwatch = { onTapSwatch(node.region.slot) },
                 onPickSlot = { slot -> onPickSlot(path, slot) },
                 onSelectRow = { onSelectNode(node.region.id) },
                 selected = selectedNodeId == node.region.id,
