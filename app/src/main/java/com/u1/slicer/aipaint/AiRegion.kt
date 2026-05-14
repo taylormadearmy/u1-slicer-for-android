@@ -18,33 +18,51 @@ data class AiRegion(
 }
 
 data class AiPaintResultState(
-    val regions: List<AiRegion>,
+    /** Root-level nodes. Today the cascade emits exactly one cascade root + an optional
+     *  "Custom selections" sibling. Tree is the source of truth for what the screen renders. */
+    val tree: List<AiRegionNode>,
+    /** Which cascade branch produced the segmentation. */
+    val source: SegmentationSource,
+
     val paintedModelPath: String,
     val sourceModelPath: String,
     val previewBitmap: Bitmap? = null,
-    // Persisted topology data so users can move components between regions interactively.
+
     val trianglePositions: FloatArray = FloatArray(0),
-    val componentIds: IntArray = IntArray(0),
-    val numComponents: Int = 0,
-    val componentToRegion: IntArray = IntArray(0),
-    // Per-triangle SLOT assignment (0..TARGET_SLOTS-1). This is what gets written to the
-    // painted 3MF as paint_color. Initially derived from segments[triangleSegments[t]].slot;
-    // the brush mutates it directly so individual triangles can override their segment's slot.
-    val triangleRegions: ByteArray = ByteArray(0),
-    // Per-triangle SEGMENT assignment (0..TARGET_SEGMENTS-1). Immutable after pipeline run.
-    // Each segment is one row in the result list and has its own slot mapping (see
-    // `regions[i].slot`). Mass-updating a segment's slot rewrites triangleRegions for every
-    // triangle in that segment.
+    /** Per-triangle SEGMENT id (matches the cascade-tree leaf id that originally claimed the
+     *  triangle; mutated only when the user does a "Clear all custom selections" flatten). */
     val triangleSegments: ByteArray = ByteArray(0),
+    /** Per-triangle SLOT (0..3). Mutated by paint/lasso/cascade-reassign. Written to the 3MF. */
+    val triangleRegions: ByteArray = ByteArray(0),
+
     // When non-null, the 3D view highlights this single component and dims the rest.
     val highlightComponentId: Int? = null,
     // True when the undo stack has at least one snapshot to restore. Enables the Undo button.
     val canUndo: Boolean = false,
+
+    /** Optional AI-naming side state — drives the failure chip. */
+    val aiNamingFailed: Boolean = false,
+    val aiModelTried: String? = null,
+
+    /** Brush / lasso commits accumulated in this session. Rendered as a root-level group. */
+    val customSelections: List<CustomSelection> = emptyList(),
 ) {
-    // data class equals/hashCode default would compare arrays by reference; we don't rely on
-    // equality of result state beyond identity, so we override to suppress warnings.
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = System.identityHashCode(this)
+
+    /** Convenience: flat list of leaf regions, used by code that wants to iterate everything
+     *  the user can recolour. Skips the cascade root and the "Custom selections" group parent. */
+    val leafRegions: List<AiRegion>
+        get() = tree.flatMap { root ->
+            root.flatten().filter { (n, _) -> n.isLeaf }.map { it.first.region }
+        }
+
+    /** Stub members for old call sites — empty until the cascade comes online. The ViewModel's
+     *  setSegmentSlot / moveComponent path uses these temporarily; rewired in Task 12. */
+    val regions: List<AiRegion> get() = leafRegions
+    val componentIds: IntArray get() = IntArray(0)
+    val numComponents: Int get() = leafRegions.size
+    val componentToRegion: IntArray get() = IntArray(0)
 }
 
 enum class AiPaintProvider(

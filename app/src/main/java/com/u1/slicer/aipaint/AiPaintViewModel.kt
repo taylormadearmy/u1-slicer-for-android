@@ -227,16 +227,29 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     printerColours = printerColours
                 )
 
+                // Task 4 stub: build a placeholder tree out of the existing region list so the
+                // ViewModel keeps compiling. Replaced wholesale in Task 12 (cascade cutover).
+                val placeholderTree = listOf(AiRegionNode(
+                    region = AiRegion(id = -1, label = "Model", suggestedColour = "#888888"),
+                    children = regions.mapIndexed { i, r ->
+                        AiRegionNode(
+                            region = r,
+                            children = emptyList(),
+                            nodeSource = SegmentationSource.TOPOLOGY,
+                            triangleIds = IntArray(0),
+                        )
+                    },
+                    nodeSource = SegmentationSource.TOPOLOGY,
+                    triangleIds = IntArray(triangleSegments.size) { it },
+                ))
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
-                        regions = regions,
+                        tree = placeholderTree,
+                        source = SegmentationSource.TOPOLOGY,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
                         previewBitmap = null,
                         trianglePositions = mesh.trianglePositions,
-                        componentIds = pipelineState.componentIds,
-                        numComponents = pipelineState.numComponents,
-                        componentToRegion = pipelineState.componentToRegion,
                         triangleRegions = triangleRegions,
                         triangleSegments = triangleSegments,
                     )
@@ -361,11 +374,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun updateRegionColour(regionId: Int, hexColour: String) {
-        val current = _uiState.value as? AiPaintUiState.Result ?: return
-        val updated = current.state.regions.map { r ->
-            if (r.id == regionId) r.copy(userColour = hexColour) else r
-        }
-        _uiState.value = AiPaintUiState.Result(current.state.copy(regions = updated))
+        // Task 4 stub — tree-aware rewrite lands in Task 12 (cascade cutover).
+        @Suppress("UNUSED_PARAMETER") val _r = regionId
+        @Suppress("UNUSED_PARAMETER") val _h = hexColour
     }
 
     /** Equal-width Z-band assignment: each triangle is bucketed by its centroid Z relative to
@@ -400,43 +411,11 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         return FloatArray(segmentCount) { counts[it] / total }
     }
 
-    /** Move every triangle that currently belongs to [componentId] (a band index) to the slot
-     *  of segment [toRegion]. Single undo step. */
+    /** Move every triangle that currently belongs to [componentId] to the slot of [toRegion].
+     *  Task 4 stub — tree-aware rewrite lands in Task 12. */
     fun moveComponent(componentId: Int, toRegion: Int) {
-        val current = _uiState.value as? AiPaintUiState.Result ?: return
-        val state = current.state
-        if (componentId !in 0 until state.numComponents) return
-        if (toRegion !in state.regions.indices) return
-
-        pushUndo(state.triangleRegions)
-        val targetSlot = state.regions[toRegion].slot.toByte()
-        val targetSegment = toRegion.toByte()
-        val newTriRegions = state.triangleRegions.copyOf()
-        val newTriSegments = state.triangleSegments.copyOf()
-        for (t in state.componentIds.indices) {
-            if (state.componentIds[t] == componentId) {
-                newTriRegions[t] = targetSlot
-                if (t in newTriSegments.indices) newTriSegments[t] = targetSegment
-            }
-        }
-        val newCompMap = state.componentToRegion.copyOf()
-        newCompMap[componentId] = toRegion
-        val segmentIds = IntArray(newTriSegments.size) { newTriSegments[it].toInt() and 0xFF }
-        val fractions = computeCoverageFractions(segmentIds, state.regions.size)
-        val updatedRegions = state.regions.mapIndexed { i, r ->
-            r.copy(
-                coverageFraction = fractions.getOrElse(i) { 0f },
-            )
-        }
-        _uiState.value = AiPaintUiState.Result(
-            state.copy(
-                regions = updatedRegions,
-                triangleRegions = newTriRegions,
-                triangleSegments = newTriSegments,
-                componentToRegion = newCompMap,
-                canUndo = true,
-            )
-        )
+        @Suppress("UNUSED_PARAMETER") val _c = componentId
+        @Suppress("UNUSED_PARAMETER") val _r = toRegion
     }
 
     /** Brush: each triangle is mapped to a target SLOT (0..TARGET_SLOTS-1). triangleSegments
@@ -501,34 +480,11 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
-    /** Reassign a single SEGMENT to a different physical slot. Mass-updates triangleRegions
-     *  for every triangle in that segment; overrides any brush edits in those triangles. */
+    /** Reassign a single SEGMENT to a different physical slot.
+     *  Task 4 stub — tree-aware rewrite lands in Task 12. */
     fun setSegmentSlot(segmentId: Int, newSlot: Int) {
-        val current = _uiState.value as? AiPaintUiState.Result ?: return
-        val state = current.state
-        if (segmentId !in state.regions.indices) return
-        if (newSlot !in 0 until TARGET_SLOTS) return
-        if (state.regions[segmentId].slot == newSlot) return
-
-        pushUndo(state.triangleRegions)
-        val newRegions = state.regions.mapIndexed { i, r ->
-            if (i == segmentId) r.copy(
-                slot = newSlot,
-                userColour = lastPrinterColours?.getOrNull(newSlot)?.takeIf(::isValidHex),
-            ) else r
-        }
-        val newTriRegions = state.triangleRegions.copyOf()
-        val segByte = segmentId.toByte()
-        for (t in state.triangleSegments.indices) {
-            if (state.triangleSegments[t] == segByte) newTriRegions[t] = newSlot.toByte()
-        }
-        _uiState.value = AiPaintUiState.Result(
-            state.copy(
-                regions = newRegions,
-                triangleRegions = newTriRegions,
-                canUndo = true,
-            )
-        )
+        @Suppress("UNUSED_PARAMETER") val _s = segmentId
+        @Suppress("UNUSED_PARAMETER") val _ns = newSlot
     }
 
     /** Highlight a single component on the 3D view (others dimmed). Pass null to clear. */
