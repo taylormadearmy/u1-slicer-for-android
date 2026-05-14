@@ -155,37 +155,23 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         "${alternateResult.tree.firstOrNull()?.leafCount() ?: 0} leaves")
                 }
 
-                // fix39.1: AI semantic-grouping pass applies to BOTH the primary (when it's
-                // topology) AND the alternate (which is topology whenever the primary isn't).
-                // The user sees the grouping in whichever view they toggle to — painted goat
-                // models hit PAINT_STATE primary but the Regions toggle exposes 48 raw
-                // topology shells; those are the leaves that need symmetric grouping.
-                val isTopologyPrimary = cascadeResult.source == SegmentationSource.TOPOLOGY ||
-                    cascadeResult.source == SegmentationSource.TOPOLOGY_RECURSIVE
+                // fix39.3: deterministic height-banding in topologyBranch produces symmetric
+                // grouping without depending on a vision-capable AI provider — the bilateral
+                // pairs (left + right horns at same Z) already land in the same band. AI is
+                // now only used for optional re-naming (e.g. "Head" instead of "Top") on
+                // providers that have working vision; the goat-symmetry case works on every
+                // provider, including text-only Pollinations free tier.
                 val canCallAi = aiEnabled && (!provider.requiresKey || apiKey.isNotBlank())
-                Log.i("AiPaint", "fix39 gate: aiEnabled=$aiEnabled provider=${provider.name} " +
-                    "requiresKey=${provider.requiresKey} hasKey=${apiKey.isNotBlank()} " +
-                    "canCallAi=$canCallAi isTopologyPrimary=$isTopologyPrimary " +
-                    "hasAlternate=${alternateResult != null}")
-                val groupedCascade: CascadeResult = if (isTopologyPrimary && canCallAi) {
-                    _uiState.value = AiPaintUiState.Running(3, "Asking AI to group the parts…")
-                    applyAiTopologyGrouping(provider, apiKey, positions, cascadeResult)
-                        ?: cascadeResult
-                } else cascadeResult
+                Log.i("AiPaint", "fix39.3 gate: aiEnabled=$aiEnabled provider=${provider.name} " +
+                    "canCallAi=$canCallAi hasAlternate=${alternateResult != null}")
 
-                val groupedAlternate: CascadeResult? =
-                    if (alternateResult != null && canCallAi) {
-                        _uiState.value = AiPaintUiState.Running(3, "Asking AI to group the parts…")
-                        applyAiTopologyGrouping(provider, apiKey, positions, alternateResult)
-                            ?: alternateResult
-                    } else alternateResult
-
-                val (treeAfterAi, aiFailed, modelTried) = if (canCallAi && !isTopologyPrimary) {
+                val (treeAfterAi, aiFailed, modelTried) = if (canCallAi) {
                     _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
-                    applyAiNaming(provider, apiKey, positions, groupedCascade.tree)
+                    applyAiNaming(provider, apiKey, positions, cascadeResult.tree)
                 } else {
-                    Triple(groupedCascade.tree, false, null)
+                    Triple(cascadeResult.tree, false, null)
                 }
+                val groupedAlternate: CascadeResult? = alternateResult
 
                 _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
 

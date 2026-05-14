@@ -22,6 +22,26 @@ object SegmentationCascade {
         "#FFEB3B", "#FFFFFF",
     )
 
+    /** fix39.3 — restored from fix30. Labels biased toward upright figurines (the common
+     *  Smart Paint use case): bottom-to-top anatomy. Used by topology Z-banded grouping,
+     *  which folds N flood-fill components into 12 height bands so bilateral pairs (left/
+     *  right horns, eyes, legs, ears) share a band and thus a colour without needing AI. */
+    internal val HEIGHT_BAND_LABELS: List<String> = listOf(
+        "Base", "Hooves", "Lower legs", "Upper legs", "Belly",
+        "Lower body", "Upper body", "Neck", "Head", "Crown",
+        "Top", "Tip",
+    )
+    internal val HEIGHT_BAND_COLOURS: List<String> = listOf(
+        "#37474F", "#5D4037", "#795548", "#1E88E5", "#43A047",
+        "#00ACC1", "#FB8C00", "#8E24AA", "#E53935", "#EC407A",
+        "#FFEB3B", "#FFFFFF",
+    )
+    private const val HEIGHT_BAND_COUNT = 12
+    /** Minimum Z-span (post-coerce) for height-banding to make sense. Below this the components
+     *  are effectively coplanar (a sheet, a coin) and per-component leaves remain the better
+     *  choice — height grouping would collapse everything into one band. */
+    private const val HEIGHT_SPAN_EPSILON = 1e-3f
+
     private val PALETTE = listOf(
         "#E53935", "#1E88E5", "#43A047", "#FB8C00",
         "#8E24AA", "#00ACC1", "#F4511E", "#6D4C41",
@@ -30,14 +50,9 @@ object SegmentationCascade {
 
     internal fun paletteFor(i: Int): String = PALETTE[i % PALETTE.size]
 
-    /** Triangle-share threshold for recursive sub-division: when ONE component owns more than
-     *  this fraction of total triangles, we K-means-split it into sub-regions. */
-    private const val DOMINANT_THRESHOLD = 0.60f
-
-    /** Starting id offset for K-means sub-regions added under a dominant topology component.
-     *  Reserved past 1000 so it can never collide with real component indices on any realistic
-     *  model (a 1000-component STL would be hundreds of MB). */
-    private const val RECURSION_ID_BASE = 1000
+    // (DOMINANT_THRESHOLD / RECURSION_ID_BASE removed in fix39.3 — topology now folds
+    // components into height bands instead of recursively K-means-splitting the dominant
+    // shell; the same end result without depending on K-means convergence quirks.)
 
     /** One per-plate object, as fed into the cascade. The triangleIds list MUST be exhaustive
      *  and disjoint across all objects on the plate; the cascade does no deduplication. */
@@ -260,7 +275,10 @@ object SegmentationCascade {
         return CascadeResult(listOf(root), triangleSegments, SegmentationSource.TRIANGLE_INDEX)
     }
 
-    /** Branch E — topology flood-fill, with recursion on the dominant component. */
+    /** Branch E — topology flood-fill, then height-band components by centroid Z so that
+     *  bilaterally symmetric features (left + right horns at the same Z) land in the same
+     *  band and thus the same physical slot. Restores fix30's deterministic symmetric
+     *  grouping without depending on a vision-capable AI provider. */
     fun topologyBranch(positions: FloatArray): CascadeResult {
         val (componentIds, numComponents) =
             MeshSegmenter.segmentByTopologyOrSpatial(positions)
@@ -269,22 +287,100 @@ object SegmentationCascade {
             return CascadeResult(emptyList(), ByteArray(triCount), SegmentationSource.TOPOLOGY)
         }
 
-        // Triangle counts per component → descending order. ALL components become leaves
-        // — no cap. Models with many disconnected shells (Dragon Scale, articulated chains)
-        // need every shell selectable; the LazyColumn handles long lists fine, and the
-        // tree's auto-collapse-to-depth-1 (when > 20 leaves) keeps the result screen quiet
-        // on first open.
+        // Per-component centroid Z and total Z span.
+        val sumZ = FloatArray(numComponents)
+        val cnt = IntArray(numComponents)
+        for (t in 0 until triCount) {
+            val b = t * 9
+            val cz = (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
+            val c = componentIds[t]
+            sumZ[c] += cz
+            cnt[c]++
+        }
+        val meanZ = FloatArray(numComponents) { if (cnt[it] > 0) sumZ[it] / cnt[it] else 0f }
+        val minZ = meanZ.min()
+        val maxZ = meanZ.max()
+        val span = maxZ - minZ
+
+        // Triangles grouped by their component (used by both the height-banded and the
+        // per-component fallback paths).
         val triByComp = Array(numComponents) { mutableListOf<Int>() }
         for (t in 0 until triCount) triByComp[componentIds[t]].add(t)
+
+        // Degenerate Z-span (coplanar components — sheets, coins, very flat models): fall
+        // back to per-component leaves so the user can still tap individual shells. Height
+        // banding here would collapse everything into a single band.
+        if (span < HEIGHT_SPAN_EPSILON) {
+            return perComponentTopology(numComponents, triCount, triByComp)
+        }
+
+        // Assign each component to one of HEIGHT_BAND_COUNT bands by its centroid Z. Left/
+        // right symmetric features share Z → share band → share slot → symmetric colouring.
+        val bandCount = minOf(HEIGHT_BAND_COUNT, numComponents)
+        val compToBand = IntArray(numComponents) { i ->
+            val pct = (meanZ[i] - minZ) / span
+            (pct * bandCount).toInt().coerceIn(0, bandCount - 1)
+        }
+
+        val trisByBand = Array(bandCount) { mutableListOf<Int>() }
+        val partsByBand = IntArray(bandCount)
+        for (c in 0 until numComponents) {
+            val b = compToBand[c]
+            trisByBand[b].addAll(triByComp[c])
+            partsByBand[b]++
+        }
+
+        // Drop empty bands — they show up when components cluster heavily in one Z range
+        // and several bands receive no components. Renumber so leaf ids stay dense 0..M-1.
+        val nonEmptyBands = (0 until bandCount).filter { trisByBand[it].isNotEmpty() }
+        val newIdFor = IntArray(bandCount) { -1 }
+        nonEmptyBands.forEachIndexed { i, oldId -> newIdFor[oldId] = i }
+
+        // If banding collapsed everything to a single band (e.g. clustered Z components),
+        // fall back to per-component so the user can still address individual shells.
+        if (nonEmptyBands.size < 2) {
+            return perComponentTopology(numComponents, triCount, triByComp)
+        }
+
+        val triangleSegments = ByteArray(triCount) { compToBand[componentIds[it]].let(newIdFor::get).toByte() }
+
+        val children = nonEmptyBands.mapIndexed { newId, oldId ->
+            val tris = trisByBand[oldId].toIntArray()
+            AiRegionNode(
+                region = AiRegion(
+                    id = newId,
+                    label = HEIGHT_BAND_LABELS.getOrElse(oldId) { "Band ${oldId + 1}" },
+                    suggestedColour = HEIGHT_BAND_COLOURS.getOrElse(oldId) { "#888888" },
+                    coverageFraction = tris.size.toFloat() / triCount,
+                    slot = newId % TARGET_SLOTS,
+                ),
+                children = emptyList(),
+                nodeSource = SegmentationSource.TOPOLOGY,
+                triangleIds = tris,
+            )
+        }
+        val root = AiRegionNode(
+            region = AiRegion(id = -1, label = "Model", suggestedColour = "#888888", coverageFraction = 1f),
+            children = children,
+            nodeSource = SegmentationSource.TOPOLOGY,
+            triangleIds = IntArray(triCount) { it },
+        )
+        return CascadeResult(listOf(root), triangleSegments, SegmentationSource.TOPOLOGY)
+    }
+
+    /** Per-component fallback used when height-banding can't produce >= 2 distinct bands —
+     *  matches the pre-fix39.3 raw topology behaviour so disjoint-but-coplanar inputs still
+     *  resolve to separate leaves. */
+    private fun perComponentTopology(
+        numComponents: Int,
+        triCount: Int,
+        triByComp: Array<MutableList<Int>>,
+    ): CascadeResult {
         val sortedComps = (0 until numComponents).sortedByDescending { triByComp[it].size }
-
-        // Detect dominant component for recursion.
-        val largestSize = triByComp[sortedComps.first()].size
-        val largestFraction = largestSize.toFloat() / triCount
-        val shouldRecurse = largestFraction > DOMINANT_THRESHOLD
-
-        val baseLeaves = sortedComps.mapIndexed { i, comp ->
+        val triangleSegments = ByteArray(triCount)
+        val children = sortedComps.mapIndexed { i, comp ->
             val tris = triByComp[comp].toIntArray()
+            tris.forEach { t -> triangleSegments[t] = i.toByte() }
             AiRegionNode(
                 region = AiRegion(
                     id = i,
@@ -298,52 +394,13 @@ object SegmentationCascade {
                 triangleIds = tris,
             )
         }
-
-        val children: List<AiRegionNode> = if (shouldRecurse) {
-            // Replace the dominant leaf with one whose children are K-means sub-regions.
-            val dominant = baseLeaves.first()
-            val subRegions = TopologyRecursion.subdivide(
-                positions = positions,
-                triangleIds = dominant.triangleIds,
-                kMeansK = 8,
-                startId = RECURSION_ID_BASE,
-            )
-            listOf(dominant.copy(
-                children = subRegions,
-                nodeSource = SegmentationSource.TOPOLOGY_RECURSIVE,
-            )) + baseLeaves.drop(1)
-        } else {
-            baseLeaves
-        }
-
-        // Triangle → segment id map. For recursive children, the SUB-region id wins.
-        val triangleSegments = ByteArray(triCount)
-        children.forEach { topChild ->
-            if (topChild.children.isEmpty()) {
-                topChild.triangleIds.forEach { t -> triangleSegments[t] = topChild.region.id.toByte() }
-            } else {
-                topChild.children.forEach { sub ->
-                    sub.triangleIds.forEach { t -> triangleSegments[t] = sub.region.id.toByte() }
-                }
-            }
-        }
-
         val root = AiRegionNode(
-            region = AiRegion(
-                id = -1,
-                label = "Model",
-                suggestedColour = "#888888",
-                coverageFraction = 1f,
-            ),
+            region = AiRegion(id = -1, label = "Model", suggestedColour = "#888888", coverageFraction = 1f),
             children = children,
-            nodeSource = if (shouldRecurse) SegmentationSource.TOPOLOGY_RECURSIVE else SegmentationSource.TOPOLOGY,
+            nodeSource = SegmentationSource.TOPOLOGY,
             triangleIds = IntArray(triCount) { it },
         )
-        return CascadeResult(
-            tree = listOf(root),
-            triangleSegments = triangleSegments,
-            source = root.nodeSource,
-        )
+        return CascadeResult(listOf(root), triangleSegments, SegmentationSource.TOPOLOGY)
     }
 
     /** Bundle every input the cascade needs from the loaded native snapshot. The ViewModel
