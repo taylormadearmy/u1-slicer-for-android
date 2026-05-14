@@ -23,6 +23,8 @@ fun AiPaintTree(
     slotPalette: List<Color>,
     onTapSwatch: (nodeId: Int) -> Unit,
     onPickSlot: (path: List<Int>, slot: Int) -> Unit,
+    onSelectNode: (nodeId: Int) -> Unit,
+    selectedNodeId: Int? = null,
     modifier: Modifier = Modifier,
 ) {
     val totalLeaves = remember(tree) { tree.sumOf { it.leafCount() } }
@@ -49,6 +51,8 @@ fun AiPaintTree(
                 onToggleExpand = { expanded[node.region.id] = !(expanded[node.region.id] ?: true) },
                 onTapSwatch = { onTapSwatch(node.region.id) },
                 onPickSlot = { slot -> onPickSlot(path, slot) },
+                onSelectRow = { onSelectNode(node.region.id) },
+                selected = selectedNodeId == node.region.id,
                 slotPalette = slotPalette,
             )
             HorizontalDivider()

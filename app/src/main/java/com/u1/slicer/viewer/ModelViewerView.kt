@@ -75,6 +75,13 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     private var brushStrokeActive = false
     private var lastBrushEmitMs = 0L
 
+    // F54 fix34: while paint mode is engaged a second finger landing transitions the gesture
+    // into a two-finger ORBIT (rotate) — pan/zoom still come from the base class. We track
+    // the previous midpoint so we can compute deltas across MOVE events.
+    private var brushRotateActive = false
+    private var brushRotateLastMidX = 0f
+    private var brushRotateLastMidY = 0f
+
     init {
         setEGLContextClientVersion(3)
         setRenderer(renderer)
@@ -193,6 +200,19 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             renderer.highlightIndex = -1
             requestRender()
         }
+        // F54 fix34 — second finger landed while a brush stroke was active. Stop the stroke
+        // and transition the gesture into a two-finger orbit so the user can rotate the
+        // model without leaving paint mode.
+        if (brushStrokeActive) {
+            brushStrokeActive = false
+            onBrushTouchAt?.invoke(-1f, -1f)
+            brushRotateActive = true
+            // Midpoint baseline captured here so the first MOVE delta starts at zero.
+            // event.getX(0/1) isn't available in this callback signature; the actual midpoint
+            // will be initialised on the first 2-pointer MOVE.
+            brushRotateLastMidX = -1f
+            brushRotateLastMidY = -1f
+        }
     }
 
     override fun handleActionMove(event: MotionEvent): Boolean {
@@ -211,6 +231,25 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
                 if (tris.isNotEmpty()) onBrushPaint?.invoke(tris)
                 lastBrushEmitMs = event.eventTime
             }
+            return true
+        }
+        // F54 fix34 — two-finger orbit takes precedence over the base class's two-finger PAN
+        // when the user was painting. Rotate using the midpoint delta; matches the single-
+        // finger orbit gain (0.3) so the gesture feels familiar.
+        if (brushRotateActive && event.pointerCount >= 2) {
+            val midX = (event.getX(0) + event.getX(1)) / 2f
+            val midY = (event.getY(0) + event.getY(1)) / 2f
+            if (brushRotateLastMidX < 0f) {
+                brushRotateLastMidX = midX
+                brushRotateLastMidY = midY
+                return true
+            }
+            val dx = midX - brushRotateLastMidX
+            val dy = midY - brushRotateLastMidY
+            camera.rotate(-dx.toDouble() * 0.3, dy.toDouble() * 0.3)
+            requestRender()
+            brushRotateLastMidX = midX
+            brushRotateLastMidY = midY
             return true
         }
         if (placementMode && draggingIndex >= 0 && event.pointerCount == 1) {
@@ -232,6 +271,13 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             draggingIndex = -1
             renderer.highlightIndex = -1
             requestRender()
+        }
+        // End the two-finger orbit when the second finger lifts (handleActionUp fires on both
+        // ACTION_UP and ACTION_POINTER_UP via the base class dispatcher).
+        if (brushRotateActive && event.pointerCount <= 2) {
+            brushRotateActive = false
+            brushRotateLastMidX = -1f
+            brushRotateLastMidY = -1f
         }
         if (brushStrokeActive) {
             // Brush already painted on DOWN and during MOVE; just clear the touch-indicator.
@@ -288,6 +334,9 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             brushStrokeActive = false
             onBrushTouchAt?.invoke(-1f, -1f)
         }
+        brushRotateActive = false
+        brushRotateLastMidX = -1f
+        brushRotateLastMidY = -1f
     }
 
     /**

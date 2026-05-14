@@ -60,7 +60,7 @@ fun AiPaintResultScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("AI Paint") },
+                title = { Text("Smart Paint") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
@@ -122,13 +122,35 @@ fun AiPaintResultScreen(
                     }
                     val brushRadiusWorld = brushPct * modelDiagonal
 
+                    // Triangle set for the currently-highlighted tree node, derived from the
+                    // node's stored triangleIds. Walks the tree once whenever the highlight or
+                    // the tree changes. Empty when nothing is highlighted → renderer falls back
+                    // to the natural slot palette.
+                    val highlightedTriangles: Set<Int> = remember(result.tree, result.highlightComponentId, result.customSelections) {
+                        val id = result.highlightComponentId ?: return@remember emptySet()
+                        val withCustom = result.tree + listOfNotNull(
+                            com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
+                        )
+                        findNodeById(withCustom, id)
+                            ?.let { it.triangleIds.toHashSet() }
+                            ?: emptySet()
+                    }
+
                     // Live 3D viewer — replaces the previous static iso bitmap.
                     AiPaintViewer(
                         state = result,
                         onTriangleTapped = { triangleIdx ->
-                            val comp = result.componentIds.getOrNull(triangleIdx) ?: return@AiPaintViewer
-                            moveSheetComponent = comp
-                            onHighlightComponent(comp)
+                            // Find the deepest leaf whose triangleIds contain the tapped index
+                            // and highlight it. The tree row also visually selects.
+                            val withCustom = result.tree + listOfNotNull(
+                                com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
+                            )
+                            val leaf = findLeafContainingTriangle(withCustom, triangleIdx)
+                            if (leaf != null) {
+                                onHighlightComponent(
+                                    if (result.highlightComponentId == leaf.region.id) null else leaf.region.id
+                                )
+                            }
                         },
                         paintMode = paintMode || lassoMode,
                         brushRadiusWorld = brushRadiusWorld,
@@ -150,6 +172,7 @@ fun AiPaintResultScreen(
                             if (!lassoMode) onBrushStrokeStart()
                         },
                         lassoSelection = lassoSelection,
+                        highlightedTriangles = highlightedTriangles,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f)
                             .background(Color(0xFF111118))
                     )
@@ -220,10 +243,11 @@ fun AiPaintResultScreen(
                         )
                     }
 
+                    val treeWithCustom = result.tree + listOfNotNull(
+                        com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
+                    )
                     AiPaintTree(
-                        tree = result.tree + listOfNotNull(
-                            com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
-                        ),
+                        tree = treeWithCustom,
                         slotPalette = slotPalette,
                         onTapSwatch = { nodeId -> editSlotColour = nodeId },
                         onPickSlot = { path, slot ->
@@ -235,6 +259,14 @@ fun AiPaintResultScreen(
                                 onSetSegmentSlot(path.last(), slot)
                             }
                         },
+                        onSelectNode = { nodeId ->
+                            // Highlight the node's triangles on the 3D viewer so users see what
+                            // they're about to operate on. Re-tapping the same row clears.
+                            onHighlightComponent(
+                                if (result.highlightComponentId == nodeId) null else nodeId
+                            )
+                        },
+                        selectedNodeId = result.highlightComponentId,
                         modifier = Modifier.weight(1f),
                     )
 
@@ -343,6 +375,7 @@ private fun AiPaintViewer(
     onPaintTriangles: (List<Int>, Int) -> Unit,
     onBrushStrokeStart: () -> Unit,
     lassoSelection: Set<Int> = emptySet(),
+    highlightedTriangles: Set<Int> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
     var viewerView by remember { mutableStateOf<ModelViewerView?>(null) }
@@ -438,18 +471,23 @@ private fun AiPaintViewer(
     }
 
     // Whenever the per-triangle regions, palette, highlight target, or lasso selection changes:
-    // update extruder indices in place and recolor. Two overlay modes:
-    //   * tap-to-move highlight: selected component yellow, rest dimmed.
+    // update extruder indices in place and recolor. Three overlay modes:
+    //   * tap-to-select highlight (from tree row or model tap): selected node's triangles
+    //     yellow, rest dimmed.
     //   * lasso selection: selected triangles yellow, rest keep their slot colour.
-    LaunchedEffect(viewerView, state.triangleRegions, state.componentIds, state.highlightComponentId, regionPalette, lassoSelection) {
+    //   * none: render the natural slot palette.
+    LaunchedEffect(viewerView, state.triangleRegions, highlightedTriangles, regionPalette, lassoSelection) {
         val v = viewerView ?: return@LaunchedEffect
         if (state.triangleRegions.isEmpty()) return@LaunchedEffect
-        val highlight = state.highlightComponentId
         when {
-            highlight != null && state.componentIds.size == state.triangleRegions.size -> {
-                // Indices: 4 = bright highlight, 5 = dimmed background.
+            highlightedTriangles.isNotEmpty() -> {
+                // Reserve two palette slots past the existing region count so the indices don't
+                // collide with leaf colours (the old code hardcoded 4/5 which only worked when
+                // there were exactly 4 leaves).
+                val highlightIdx = regionPalette.size.coerceAtMost(254)
+                val dimIdx = (regionPalette.size + 1).coerceAtMost(255)
                 val overlay = ByteArray(state.triangleRegions.size) { i ->
-                    if (state.componentIds[i] == highlight) 4.toByte() else 5.toByte()
+                    if (i in highlightedTriangles) highlightIdx.toByte() else dimIdx.toByte()
                 }
                 val extended = regionPalette + listOf(
                     floatArrayOf(1f, 0.92f, 0.20f, 1f),   // highlight = yellow
@@ -778,6 +816,32 @@ private fun MoveComponentSheet(
 /** Translate raw triangle positions onto the U1 bed (270×270 plate origin at corner). The
  *  bounding box is centred at (135, 135) in XY and the lowest Z lands at 0. Output array has
  *  the same length as input. */
+/** Walk the tree looking for a node with [id]. Returns null when no match. */
+private fun findNodeById(tree: List<com.u1.slicer.aipaint.AiRegionNode>, id: Int): com.u1.slicer.aipaint.AiRegionNode? {
+    for (root in tree) {
+        for ((node, _) in root.flatten()) {
+            if (node.region.id == id) return node
+        }
+    }
+    return null
+}
+
+/** Find the deepest leaf whose triangleIds contain [triangleId]. Custom-selection rows take
+ *  priority over cascade leaves so a triangle painted manually highlights the user's stroke,
+ *  not the underlying segment it overpaints. */
+private fun findLeafContainingTriangle(
+    tree: List<com.u1.slicer.aipaint.AiRegionNode>,
+    triangleId: Int,
+): com.u1.slicer.aipaint.AiRegionNode? {
+    var match: com.u1.slicer.aipaint.AiRegionNode? = null
+    for (root in tree) {
+        for ((node, _) in root.flatten()) {
+            if (node.isLeaf && triangleId in node.triangleIds) match = node
+        }
+    }
+    return match
+}
+
 private fun recenterForBed(positions: FloatArray): FloatArray {
     if (positions.isEmpty()) return positions
     var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY

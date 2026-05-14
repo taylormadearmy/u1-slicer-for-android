@@ -24,12 +24,17 @@ fun AiPaintTreeRow(
     onToggleExpand: () -> Unit,
     onTapSwatch: () -> Unit,
     onPickSlot: (slot: Int) -> Unit,
+    onSelectRow: () -> Unit,
     slotPalette: List<Color>,
+    selected: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val rowBg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Row(
         modifier
             .fillMaxWidth()
+            .background(rowBg)
+            .clickable { onSelectRow() }
             .padding(start = (12 * depth).dp, end = 12.dp, top = 6.dp, bottom = 6.dp)
             .heightIn(min = 36.dp),
         verticalAlignment = Alignment.CenterVertically,

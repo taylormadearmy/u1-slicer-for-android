@@ -694,8 +694,8 @@ fun SettingsScreen(
                 )
             }
 
-            // ---- AI Paint ----
-            SettingsSection("AI Paint") {
+            // ---- Smart Paint (renamed from AI Paint in fix34) ----
+            SettingsSection("Smart Paint") {
                 // F54: AI naming toggle. Off by default — pipeline uses deterministic segments
                 // from the model's own structure (paint state / volumes / objects / topology /
                 // height bands). When on, AI is also called to name and recolour the leaves.
@@ -737,7 +737,7 @@ fun SettingsScreen(
                         value = currentProvider.displayName,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("AI Paint provider") },
+                        label = { Text("AI provider (for naming)") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(providerExpanded) },
                         modifier = Modifier.menuAnchor().fillMaxWidth()
                     )

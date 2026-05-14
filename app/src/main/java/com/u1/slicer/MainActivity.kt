@@ -1404,7 +1404,7 @@ fun PrepareScreen(
                                 },
                                 modifier = Modifier.padding(horizontal = 8.dp)
                             ) {
-                                Text(if (isReeditAvailable) "✨ Edit AI Paint regions" else "✨ Recolour with AI")
+                                Text(if (isReeditAvailable) "✨ Edit Smart Paint regions" else "✨ Smart Paint")
                             }
                         }
                         // Scale & copies controls
@@ -1468,7 +1468,7 @@ fun PrepareScreen(
                                 },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                             ) {
-                                Text(if (isReeditAvailable) "✨ Edit AI Paint regions" else "✨ AI Paint")
+                                Text(if (isReeditAvailable) "✨ Edit Smart Paint regions" else "✨ Smart Paint")
                             }
                         }
                         ConfigCard(
