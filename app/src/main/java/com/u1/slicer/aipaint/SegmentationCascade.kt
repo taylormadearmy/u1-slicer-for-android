@@ -34,8 +34,10 @@ object SegmentationCascade {
      *  this fraction of total triangles, we K-means-split it into sub-regions. */
     private const val DOMINANT_THRESHOLD = 0.60f
 
-    /** Maximum leaves the cascade emits. The original UI cap; tree depth caps independently. */
-    private const val TARGET_LEAVES = 12
+    /** Starting id offset for K-means sub-regions added under a dominant topology component.
+     *  Reserved past 1000 so it can never collide with real component indices on any realistic
+     *  model (a 1000-component STL would be hundreds of MB). */
+    private const val RECURSION_ID_BASE = 1000
 
     /** One per-plate object, as fed into the cascade. The triangleIds list MUST be exhaustive
      *  and disjoint across all objects on the plate; the cascade does no deduplication. */
@@ -262,7 +264,11 @@ object SegmentationCascade {
             return CascadeResult(emptyList(), ByteArray(triCount), SegmentationSource.TOPOLOGY)
         }
 
-        // Triangle counts per component → descending order; keep top TARGET_LEAVES.
+        // Triangle counts per component → descending order. ALL components become leaves
+        // — no cap. Models with many disconnected shells (Dragon Scale, articulated chains)
+        // need every shell selectable; the LazyColumn handles long lists fine, and the
+        // tree's auto-collapse-to-depth-1 (when > 20 leaves) keeps the result screen quiet
+        // on first open.
         val triByComp = Array(numComponents) { mutableListOf<Int>() }
         for (t in 0 until triCount) triByComp[componentIds[t]].add(t)
         val sortedComps = (0 until numComponents).sortedByDescending { triByComp[it].size }
@@ -272,7 +278,7 @@ object SegmentationCascade {
         val largestFraction = largestSize.toFloat() / triCount
         val shouldRecurse = largestFraction > DOMINANT_THRESHOLD
 
-        val baseLeaves = sortedComps.take(TARGET_LEAVES).mapIndexed { i, comp ->
+        val baseLeaves = sortedComps.mapIndexed { i, comp ->
             val tris = triByComp[comp].toIntArray()
             AiRegionNode(
                 region = AiRegion(
@@ -295,7 +301,7 @@ object SegmentationCascade {
                 positions = positions,
                 triangleIds = dominant.triangleIds,
                 kMeansK = 8,
-                startId = TARGET_LEAVES,
+                startId = RECURSION_ID_BASE,
             )
             listOf(dominant.copy(
                 children = subRegions,
