@@ -45,6 +45,7 @@ class SettingsRepository(private val context: Context) {
         val PLATE_TYPE = stringPreferencesKey("plate_type")
         val AI_PAINT_PROVIDER = stringPreferencesKey("ai_paint_provider")
         val AI_PAINT_API_KEY = stringPreferencesKey("ai_paint_api_key")
+        val AI_NAMING_ENABLED = booleanPreferencesKey("ai_naming_enabled")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.dataStore.data.map { prefs ->
@@ -109,6 +110,19 @@ class SettingsRepository(private val context: Context) {
      *  same key (the leak fix23 was supposed to fix). Blank when nothing's been entered. */
     fun aiPaintApiKeyFor(providerName: String): Flow<String> = context.dataStore.data.map { prefs ->
         prefs[stringPreferencesKey("ai_paint_key_$providerName")] ?: ""
+    }
+
+    /** F54: when true the AI Paint pipeline calls the configured provider for region naming +
+     *  colour suggestions on top of the deterministic cascade. Defaults to false; gating users
+     *  out of the experimental AI path keeps results predictable. */
+    val aiNamingEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.AI_NAMING_ENABLED] ?: false
+    }
+
+    suspend fun saveAiNamingEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_NAMING_ENABLED] = enabled
+        }
     }
 
     suspend fun saveExtruderPresets(presets: List<ExtruderPreset>) {

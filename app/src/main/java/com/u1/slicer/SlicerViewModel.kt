@@ -723,6 +723,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintKey(provider, apiKey) }
     }
 
+    /** F54: AI naming toggle (experimental). Off by default. */
+    val aiNamingEnabled: StateFlow<Boolean> = settingsRepo.aiNamingEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun saveAiNamingEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiNamingEnabled(enabled) }
+    }
+
     // Track the current working file (may be sanitized copy)
     private var _currentModelFile: File? = null
     private var currentModelFile: File?

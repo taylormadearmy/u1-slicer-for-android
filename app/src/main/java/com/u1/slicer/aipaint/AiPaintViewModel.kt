@@ -112,9 +112,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 val providerName = settings.aiPaintProvider.first()
                 val apiKey = settings.aiPaintApiKeyFor(providerName).first()
                 val provider = AiPaintProvider.fromId(providerName)
-                // AI naming defaults to false until Task 13 wires the Settings toggle.
-                // The flow is read here so when the setting flips on the pipeline picks it up.
-                val aiEnabled = false
+                val aiEnabled = settings.aiNamingEnabled.first()
 
                 val mesh = native.getPreparePreviewMesh(
                     maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES

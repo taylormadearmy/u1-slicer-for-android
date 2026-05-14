@@ -696,6 +696,29 @@ fun SettingsScreen(
 
             // ---- AI Paint ----
             SettingsSection("AI Paint") {
+                // F54: AI naming toggle. Off by default — pipeline uses deterministic segments
+                // from the model's own structure (paint state / volumes / objects / topology /
+                // height bands). When on, AI is also called to name and recolour the leaves.
+                val aiNaming by viewModel.aiNamingEnabled.collectAsState()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("AI naming (experimental)",
+                            style = MaterialTheme.typography.bodyMedium)
+                        Text("Send rendered views to the AI for label + colour suggestions.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = aiNaming,
+                        onCheckedChange = { viewModel.saveAiNamingEnabled(it) },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+
                 val aiProviderName by viewModel.aiPaintProvider.collectAsState()
                 // Per-provider key — re-derived whenever the selected provider changes so each
                 // provider keeps its own key independently.
