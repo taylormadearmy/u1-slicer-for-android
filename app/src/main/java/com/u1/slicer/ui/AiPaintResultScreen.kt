@@ -122,12 +122,14 @@ fun AiPaintResultScreen(
                     }
                     val brushRadiusWorld = brushPct * modelDiagonal
 
-                    // Slot palette hoisted up here (was originally below the viewer) so the
-                    // HighlightSlotPicker overlay can use it.
-                    val slotPalette: List<Color> = remember(result.tree) {
-                        val byTris = result.leafRegions.groupBy { it.slot }
+                    // fix35.2: slot palette comes from the user's loaded filament colours
+                    // directly (passed in as filamentColours), NOT from whatever leaves are
+                    // currently assigned to each slot. The leaves-grouped approach drifted
+                    // because reassignments left some slots with no leaves on them — the
+                    // picker would then show grey instead of the real filament colour.
+                    val slotPalette: List<Color> = remember(filamentColours) {
                         (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
-                            val hex = byTris[slot]?.firstOrNull()?.effectiveColour ?: "#888888"
+                            val hex = filamentColours.getOrNull(slot) ?: "#888888"
                             Color(
                                 runCatching { android.graphics.Color.parseColor(hex) }
                                     .getOrDefault(android.graphics.Color.GRAY)
@@ -176,6 +178,8 @@ fun AiPaintResultScreen(
                                 )
                             }
                         },
+                        // fix35.2: tap empty viewer area = clear highlight.
+                        onEmptyTap = { onHighlightComponent(null) },
                         paintMode = paintMode || lassoMode,
                         brushRadiusWorld = brushRadiusWorld,
                         brushPct = brushPct,
@@ -211,8 +215,10 @@ fun AiPaintResultScreen(
                             currentSlot = highlightedNode.region.slot,
                             slotPalette = slotPalette,
                             onPickSlot = { slot ->
+                                // fix35.2: don't clear the highlight after reassign — the user
+                                // wants to iterate (tap red, see it, tap blue, see that, etc).
+                                // The X / different-region / empty-tap paths handle clearing.
                                 onSetSegmentSlot(highlightedNode.region.id, slot)
-                                onHighlightComponent(null)
                             },
                             onDismiss = { onHighlightComponent(null) },
                             modifier = Modifier
@@ -285,12 +291,14 @@ fun AiPaintResultScreen(
                         slotPalette = slotPalette,
                         onTapSwatch = { nodeId -> editSlotColour = nodeId },
                         onPickSlot = { path, slot ->
-                            // Slot picks address the deepest node by id (path's last entry).
-                            // setSegmentSlot already cascades reassignment to all leaves under
-                            // that node — same semantics whether the user picked on a parent or
-                            // a leaf.
+                            // fix35.2: tapping a slot chip on a row also highlights that row
+                            // (so the model lights up the affected triangles in yellow + the
+                            // overlay picker appears below the viewer). Reassign + highlight is
+                            // one coherent action.
                             if (path.isNotEmpty()) {
-                                onSetSegmentSlot(path.last(), slot)
+                                val nodeId = path.last()
+                                onSetSegmentSlot(nodeId, slot)
+                                onHighlightComponent(nodeId)
                             }
                         },
                         onSelectNode = { nodeId ->
@@ -402,6 +410,7 @@ fun AiPaintResultScreen(
 private fun AiPaintViewer(
     state: AiPaintResultState,
     onTriangleTapped: (Int) -> Unit,
+    onEmptyTap: () -> Unit,
     paintMode: Boolean,
     brushRadiusWorld: Float,
     brushPct: Float,
@@ -488,11 +497,14 @@ private fun AiPaintViewer(
                 brushTouchPx = if (x < 0f) null else x to y
             }
             v.onTriangleTapped = null
+            v.onEmptyTap = null
         } else {
             v.onBrushPaint = null
             v.onBrushStrokeStart = null
             v.onBrushTouchAt = null
             v.onTriangleTapped = onTriangleTapped
+            // fix35.2: tap on empty viewer background clears the highlight.
+            v.onEmptyTap = onEmptyTap
             brushTouchPx = null
         }
     }

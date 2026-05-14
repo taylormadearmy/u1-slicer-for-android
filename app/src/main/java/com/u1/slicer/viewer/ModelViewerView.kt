@@ -52,6 +52,10 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     // touch screen coordinates so it can draw a brush ring overlay. (-1f, -1f) on lift.
     var onBrushTouchAt: ((Float, Float) -> Unit)? = null
 
+    /** fix35.2: fired when a tap lands on the viewer but doesn't hit any triangle (i.e. empty
+     *  background space). Used by AI Paint to "click off the model to clear the highlight". */
+    var onEmptyTap: (() -> Unit)? = null
+
     var brushRadiusWorld: Float = 0f
 
     // Positions used for triangle picking. Separate from the mesh VBO so callers don't have to
@@ -283,11 +287,17 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             // Brush already painted on DOWN and during MOVE; just clear the touch-indicator.
             brushStrokeActive = false
             onBrushTouchAt?.invoke(-1f, -1f)
-        } else if (!wasDragging && !tapMovedTooFar && onTriangleTapped != null) {
+        } else if (!wasDragging && !tapMovedTooFar && (onTriangleTapped != null || onEmptyTap != null)) {
             val dt = event.eventTime - tapDownTime
             if (dt < 300L) {
                 val triIdx = pickTriangle(event.x, event.y)
-                if (triIdx >= 0) onTriangleTapped?.invoke(triIdx)
+                if (triIdx >= 0) {
+                    onTriangleTapped?.invoke(triIdx)
+                } else {
+                    // fix35.2: tap on empty viewer background → fire onEmptyTap so the screen
+                    // can clear its selection state.
+                    onEmptyTap?.invoke()
+                }
             }
         }
     }
