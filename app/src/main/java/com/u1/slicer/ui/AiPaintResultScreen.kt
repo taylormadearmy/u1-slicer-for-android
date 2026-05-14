@@ -580,11 +580,14 @@ private fun AiPaintViewer(
                 val baseSlotColours = (0 until slotCount).map { i ->
                     regionPalette.getOrNull(i) ?: floatArrayOf(0.55f, 0.55f, 0.55f, 1f)
                 }
+                // fix38.2: stronger fade for more contrast. 25% original + tiny dark floor
+                // keeps the colour identity readable but pushes everything dark enough that
+                // the selected region pops.
                 val fadedSlotColours = baseSlotColours.map { c ->
                     floatArrayOf(
-                        c[0] * 0.5f + 0.10f,
-                        c[1] * 0.5f + 0.10f,
-                        c[2] * 0.5f + 0.10f,
+                        c[0] * 0.25f + 0.04f,
+                        c[1] * 0.25f + 0.04f,
+                        c[2] * 0.25f + 0.04f,
                         c[3],
                     )
                 }
