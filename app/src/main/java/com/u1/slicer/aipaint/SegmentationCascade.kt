@@ -283,39 +283,18 @@ object SegmentationCascade {
      *  band and thus the same physical slot. Restores fix30's deterministic symmetric
      *  grouping without depending on a vision-capable AI provider. */
     fun topologyBranch(positions: FloatArray): CascadeResult {
-        val (rawComponentIds, rawNumComponents) =
+        val (componentIds, numComponents) =
             MeshSegmenter.segmentByTopologyOrSpatial(positions)
         val triCount = positions.size / 9
-        if (rawNumComponents < 1) {
-            return CascadeResult(emptyList(), ByteArray(triCount), SegmentationSource.TOPOLOGY)
-        }
-
-        // fix40.3: spatially subdivide any over-sized flood-fill component via K-means.
-        // Smooth organic meshes fuse adjacent features (nose ↔ hair) under one component
-        // because there's no crease angle between them; subdivision recovers per-feature
-        // tap precision while preserving the overall topology structure.
-        val rawTrisByComp = Array(rawNumComponents) { mutableListOf<Int>() }
-        for (t in 0 until triCount) rawTrisByComp[rawComponentIds[t]].add(t)
-        val effectiveTris = mutableListOf<IntArray>()
-        for (c in 0 until rawNumComponents) {
-            val tris = rawTrisByComp[c].toIntArray()
-            val fraction = tris.size.toFloat() / triCount
-            if (fraction > SUBDIVIDE_THRESHOLD) {
-                val k = (fraction / SUBDIVIDE_TARGET_FRACTION).toInt().coerceIn(2, 12)
-                val subs = TopologyRecursion.subdivide(positions, tris, k, startId = 0)
-                if (subs.isEmpty()) effectiveTris += tris
-                else subs.forEach { effectiveTris += it.triangleIds }
-            } else {
-                effectiveTris += tris
-            }
-        }
-
-        val numComponents = effectiveTris.size
         if (numComponents < 2) {
             return CascadeResult(emptyList(), ByteArray(triCount), SegmentationSource.TOPOLOGY)
         }
-        val componentIds = IntArray(triCount)
-        effectiveTris.forEachIndexed { ci, tris -> tris.forEach { t -> componentIds[t] = ci } }
+
+        // fix40.4: reverted the fix40.3 K-means subdivision. Spatial K-means on smooth-meshed
+        // organic models produced non-anatomical clusters (e.g. right-leg triangles grouping
+        // with left-ear-interior triangles because of seed placement), breaking tap precision.
+        // Each raw flood-fill component is now a single leaf so tap on a triangle always
+        // highlights exactly the surface-connected component it belongs to.
 
         // Per-component centroid Z and total Z span.
         val sumZ = FloatArray(numComponents)

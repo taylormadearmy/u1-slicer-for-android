@@ -175,8 +175,25 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
                 _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
 
+                // fix40.5: when the primary cascade is PAINT_STATE but a TOPOLOGY alternate
+                // exists, default the user to the topology view. Paint state has only N≤4
+                // leaves (one per slot) so tap-to-highlight selects "everything painted this
+                // colour" — not useful for editing. Topology gives per-component leaves so
+                // tap on the nose actually selects the nose. The user can still switch back
+                // to the Painted view via the chip toggle.
+                val swapToTopology = cascadeResult.source == SegmentationSource.PAINT_STATE &&
+                    (groupedAlternate?.source == SegmentationSource.TOPOLOGY ||
+                     groupedAlternate?.source == SegmentationSource.TOPOLOGY_RECURSIVE)
+                if (swapToTopology) {
+                    Log.i("AiPaint", "fix40.5 default-swap: PAINT_STATE primary + TOPOLOGY alternate " +
+                        "→ TOPOLOGY becomes default view")
+                }
+                val primaryTree = if (swapToTopology) groupedAlternate!!.tree else treeAfterAi
+                val primarySource = if (swapToTopology) groupedAlternate!!.source else cascadeResult.source
+                val primarySegments = if (swapToTopology) groupedAlternate!!.triangleSegments else null
+
                 // Apply printer-slot colour overrides on leaf regions matching slot index.
-                val tree = treeAfterAi.map { root -> applyPrinterColours(root, printerColours) }
+                val tree = primaryTree.map { root -> applyPrinterColours(root, printerColours) }
 
                 // Per-triangle slot from tree leaves' slot assignment.
                 val triangleRegions = ByteArray(triCount)
@@ -215,26 +232,33 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
                 // fix38: bake the alternate tree (topology) with printer colours so that when
                 // the user switches, the alternate already has the right slot colours.
-                // fix39.1: use the AI-grouped alternate when grouping succeeded.
-                val alternateTreeWithColours = groupedAlternate?.tree?.map { root ->
+                // fix40.5: when we swap to TOPOLOGY as the default view, the PAINT_STATE
+                // tree becomes the alternate so the user can still toggle to it.
+                val alternateSourceTree = if (swapToTopology) treeAfterAi else groupedAlternate?.tree
+                val alternateSourceSrc = if (swapToTopology) cascadeResult.source else groupedAlternate?.source
+                val alternateSegments = if (swapToTopology) {
+                    // Re-derive paint-state's per-tri segments from the primary cascadeResult.
+                    cascadeResult.triangleSegments
+                } else groupedAlternate?.triangleSegments
+                val alternateTreeWithColours = alternateSourceTree?.map { root ->
                     applyPrinterColours(root, printerColours)
                 }
 
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
                         tree = tree,
-                        source = cascadeResult.source,
+                        source = primarySource,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
                         trianglePositions = positions,
-                        triangleSegments = triangleSegments,
+                        triangleSegments = primarySegments ?: triangleSegments,
                         triangleRegions = triangleRegions,
                         aiNamingFailed = aiFailed,
                         aiModelTried = modelTried,
                         customSelections = emptyList(),
                         alternateTree = alternateTreeWithColours,
-                        alternateSource = groupedAlternate?.source,
-                        alternateTriangleSegments = groupedAlternate?.triangleSegments,
+                        alternateSource = alternateSourceSrc,
+                        alternateTriangleSegments = alternateSegments,
                     )
                 )
             } catch (e: Exception) {
@@ -646,6 +670,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     fun switchToAlternate() {
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         val state = current.state
+        Log.i("AiPaint", "switchToAlternate: from ${state.source.name} → ${state.alternateSource?.name}")
         val altTree = state.alternateTree ?: return
         val altSource = state.alternateSource ?: return
         val altSegments = state.alternateTriangleSegments ?: return

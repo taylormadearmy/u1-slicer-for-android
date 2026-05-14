@@ -183,6 +183,13 @@ fun AiPaintResultScreen(
                                 com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
                             )
                             val leaf = findLeafContainingTriangle(withCustom, triangleIdx)
+                            android.util.Log.i(
+                                "AiPaintTap",
+                                "tap tri=$triangleIdx → leaf=${leaf?.region?.id} " +
+                                    "label='${leaf?.region?.label}' slot=${leaf?.region?.slot} " +
+                                    "size=${leaf?.triangleIds?.size} " +
+                                    "source=${result.source.name}"
+                            )
                             if (leaf != null) {
                                 onHighlightComponent(
                                     if (result.highlightComponentId == leaf.region.id) null else leaf.region.id
