@@ -335,6 +335,47 @@ object SegmentationCascade {
         )
     }
 
+    /** Bundle every input the cascade needs from the loaded native snapshot. The ViewModel
+     *  assembles this from JNI calls; tests construct it directly. */
+    data class Input(
+        val positions: FloatArray,
+        val perTrianglePaintState: ByteArray,
+        val volumes: List<ObjectVolumes>,
+        val objects: List<ObjectInfo>,
+        val perTriangleIndex: ByteArray,
+    )
+
+    /** Walk branches A → F top-down; return the first non-trivial result. */
+    fun run(input: Input): CascadeResult {
+        val triCount = input.positions.size / 9
+
+        // A — paint state
+        if (input.perTrianglePaintState.size == triCount && triCount > 0) {
+            val r = paintStateBranch(input.perTrianglePaintState)
+            if (r.tree.isNotEmpty()) return r
+        }
+        // B — per-volume
+        if (input.volumes.sumOf { it.volumes.size } >= 2) {
+            val r = volumeBranch(triCount, input.volumes)
+            if (r.tree.isNotEmpty()) return r
+        }
+        // C — per-object
+        if (input.objects.size >= 2) {
+            val r = objectBranch(triCount, input.objects)
+            if (r.tree.isNotEmpty()) return r
+        }
+        // D — triangle indices (safety net)
+        if (input.perTriangleIndex.size == triCount && triCount > 0) {
+            val r = triangleIndexBranch(input.perTriangleIndex)
+            if (r.tree.isNotEmpty()) return r
+        }
+        // E — topology + recursion
+        val topo = topologyBranch(input.positions)
+        if (topo.tree.isNotEmpty()) return topo
+        // F — Z-bands (last resort, always succeeds)
+        return zBandBranch(input.positions)
+    }
+
     /** Branch F — equal-width Z-band segmentation. Always succeeds. */
     fun zBandBranch(positions: FloatArray, bandCount: Int = 12): CascadeResult {
         val triCount = positions.size / 9

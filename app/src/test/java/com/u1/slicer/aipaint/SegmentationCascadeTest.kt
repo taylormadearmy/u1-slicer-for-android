@@ -181,6 +181,67 @@ class SegmentationCascadeTest {
     }
 
     @Test
+    fun `run picks paint state first when present`() {
+        val input = SegmentationCascade.Input(
+            positions = ladderPositions(30),
+            perTrianglePaintState = ByteArray(30) { i -> ((i / 10) + 1).toByte() },
+            volumes = emptyList(),
+            objects = emptyList(),
+            perTriangleIndex = ByteArray(0),
+        )
+        assertEquals(SegmentationSource.PAINT_STATE, SegmentationCascade.run(input).source)
+    }
+
+    @Test
+    fun `run picks volume branch over object branch when both present`() {
+        val obj1 = volumeInfo(1L, "Object", listOf(
+            Triple(1, 0, 50),
+            Triple(2, 50, 50),
+        ))
+        val input = SegmentationCascade.Input(
+            positions = ladderPositions(100),
+            perTrianglePaintState = ByteArray(100),
+            volumes = listOf(obj1),
+            objects = listOf(SegmentationCascade.ObjectInfo(1L, "Object", null, IntArray(100) { it })),
+            perTriangleIndex = ByteArray(100),
+        )
+        assertEquals(SegmentationSource.VOLUME, SegmentationCascade.run(input).source)
+    }
+
+    @Test
+    fun `run picks object branch over topology when both present`() {
+        val input = SegmentationCascade.Input(
+            positions = ladderPositions(100),
+            perTrianglePaintState = ByteArray(100),
+            volumes = emptyList(),
+            objects = listOf(
+                SegmentationCascade.ObjectInfo(1L, "A", null, intArrayOf(0, 1, 2, 3, 4)),
+                SegmentationCascade.ObjectInfo(2L, "B", null, IntArray(95) { it + 5 }),
+            ),
+            perTriangleIndex = ByteArray(100),
+        )
+        assertEquals(SegmentationSource.OBJECT, SegmentationCascade.run(input).source)
+    }
+
+    @Test
+    fun `run falls all the way to Z-bands when no branch fires`() {
+        val input = SegmentationCascade.Input(
+            positions = ladderPositions(120),
+            perTrianglePaintState = ByteArray(120),
+            volumes = emptyList(),
+            objects = emptyList(),
+            perTriangleIndex = ByteArray(120),
+        )
+        val r = SegmentationCascade.run(input)
+        assertTrue(
+            "expected TOPOLOGY*, or Z_BAND: got ${r.source}",
+            r.source == SegmentationSource.TOPOLOGY ||
+            r.source == SegmentationSource.TOPOLOGY_RECURSIVE ||
+            r.source == SegmentationSource.Z_BAND,
+        )
+    }
+
+    @Test
     fun `topology branch yields at least 2 leaves on disjoint clusters`() {
         // 3 disjoint triangle clusters of 30 each.
         val positions = FloatArray(90 * 9)
