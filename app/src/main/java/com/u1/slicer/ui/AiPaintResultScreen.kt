@@ -224,6 +224,36 @@ fun AiPaintResultScreen(
                             .background(Color(0xFF111118))
                     )
 
+                    // fix41: tool strip overlaid on the TOP of the viewer (replaces the
+                    // PaintModeBar that previously sat below the viewer). Tools live with the
+                    // model they act on, not with the regions list.
+                    ViewerToolbar(
+                        paintMode = paintMode,
+                        lassoMode = lassoMode,
+                        brushPct = brushPct,
+                        selectionSize = lassoSelection.size,
+                        onSelect = {
+                            paintMode = false
+                            lassoMode = false
+                            lassoSelection = emptySet()
+                        },
+                        onTogglePaint = {
+                            paintMode = !paintMode
+                            if (paintMode) lassoMode = false
+                            lassoSelection = emptySet()
+                        },
+                        onToggleLasso = {
+                            lassoMode = !lassoMode
+                            if (lassoMode) paintMode = false
+                            lassoSelection = emptySet()
+                        },
+                        onBrushSizeChange = { brushPct = it },
+                        onClearSelection = { lassoSelection = emptySet() },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(8.dp),
+                    )
+
                     // fix35.1: floating slot picker overlay shown when a region is currently
                     // highlighted. Provides the "what now?" action — tap a slot to assign the
                     // highlighted region; × clears. Solves the user-feedback "Select a region
@@ -247,62 +277,11 @@ fun AiPaintResultScreen(
                     }
                     }  // end Box wrapper for viewer + overlay
 
-                    // Mode toolbar — Paint and Lasso are mutually exclusive.
-                    PaintModeBar(
-                        paintMode = paintMode,
-                        lassoMode = lassoMode,
-                        slotPalette = slotPalette,
-                        activeRegion = paintActiveRegion,
-                        brushPct = brushPct,
-                        onTogglePaintMode = {
-                            paintMode = !paintMode
-                            if (paintMode) lassoMode = false
-                            lassoSelection = emptySet()
-                        },
-                        onToggleLassoMode = {
-                            lassoMode = !lassoMode
-                            if (lassoMode) paintMode = false
-                            lassoSelection = emptySet()
-                        },
-                        onSelectRegion = { newSlot ->
-                            if (lassoMode && lassoSelection.isNotEmpty()) {
-                                // Tap a slot chip in Lasso mode = commit the selection.
-                                onCommitSelection(lassoSelection.toList(), newSlot)
-                                lassoSelection = emptySet()
-                            } else {
-                                paintActiveRegion = newSlot
-                            }
-                        },
-                        onEditSlotColour = { slot -> editSlotColour = slot },
-                        onBrushSizeChange = { brushPct = it },
-                        onClearSelection = { lassoSelection = emptySet() },
-                        selectionSize = lassoSelection.size,
-                    )
+                    // fix41 panel order: primary view toggle → AI failure chip (if any) →
+                    // slot palette row → tree → tip → bottom bar. Manual paint/lasso/brush
+                    // moved INTO the viewer overlay (ViewerToolbar above).
 
-                    Text(
-                        when {
-                            lassoMode && lassoSelection.isEmpty() ->
-                                "LASSO — drag on the 3D model to highlight an area, then tap a slot colour"
-                            lassoMode -> "LASSO — tap a slot colour to apply, or × to clear"
-                            paintMode -> "PAINT — tap a slot colour, then drag to paint"
-                            else -> "REGIONS — tap an extruder swatch on the right to remap a region"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
-                    )
-                    // Build the 4 slot palette colours from the cascade root's leaves, grouped
-                    // slotPalette hoisted to above the AiPaintViewer (see line ~127).
-
-                    // F54 — AI failure chip surfaces when AI naming was attempted but failed.
-                    if (result.aiNamingFailed) {
-                        AiNamingFailureChip(
-                            modelTried = result.aiModelTried,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                        )
-                    }
-
-                    // fix38: Parts ⇄ Regions toggle when an alternate view is available.
+                    // Painted ⇄ Regions toggle promoted to the top of the panel.
                     if (result.alternateSource != null) {
                         val (partsSource, regionsSource) = when (result.source) {
                             com.u1.slicer.aipaint.SegmentationSource.TOPOLOGY,
@@ -314,7 +293,7 @@ fun AiPaintResultScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             FilterChip(
@@ -329,6 +308,38 @@ fun AiPaintResultScreen(
                             )
                         }
                     }
+
+                    // F54 — AI failure chip surfaces when AI naming was attempted but failed.
+                    if (result.aiNamingFailed) {
+                        AiNamingFailureChip(
+                            modelTried = result.aiModelTried,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                    }
+
+                    // Consolidated slot palette row. Tap behaviour depends on the toolbar mode
+                    // armed via ViewerToolbar:
+                    //   • Select (default) → tap a swatch opens the colour picker for that slot
+                    //   • Paint            → tap a swatch sets the active paint slot (tick mark)
+                    //   • Lasso + items    → tap a swatch commits the selection to that slot
+                    //   • Lasso + empty    → tap a swatch sets the active slot for next stroke
+                    SlotPaletteRow(
+                        slotPalette = slotPalette,
+                        paintMode = paintMode,
+                        lassoMode = lassoMode,
+                        activeSlot = paintActiveRegion,
+                        hasLassoSelection = lassoSelection.isNotEmpty(),
+                        onTapSlot = { slot ->
+                            when {
+                                lassoMode && lassoSelection.isNotEmpty() -> {
+                                    onCommitSelection(lassoSelection.toList(), slot)
+                                    lassoSelection = emptySet()
+                                }
+                                paintMode || lassoMode -> paintActiveRegion = slot
+                                else -> editSlotColour = slot
+                            }
+                        },
+                    )
 
                     val treeWithCustom = result.tree + listOfNotNull(
                         com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
@@ -652,43 +663,52 @@ private fun AiPaintViewer(
     }
 }
 
+/**
+ * fix41 ViewerToolbar — overlay strip sat at the top of the 3D viewer. Holds the three
+ * mode chips (Select / Paint / Lasso) and the brush-size slider when a manual mode is
+ * armed. Placing this on the viewer (not in the regions panel) keeps the tools visually
+ * grouped with the model they act on.
+ */
 @Composable
-private fun PaintModeBar(
+private fun ViewerToolbar(
     paintMode: Boolean,
     lassoMode: Boolean,
-    slotPalette: List<Color>,
-    activeRegion: Int,
     brushPct: Float,
-    onTogglePaintMode: () -> Unit,
-    onToggleLassoMode: () -> Unit,
-    onSelectRegion: (Int) -> Unit,
-    onEditSlotColour: (Int) -> Unit,
+    selectionSize: Int,
+    onSelect: () -> Unit,
+    onTogglePaint: () -> Unit,
+    onToggleLasso: () -> Unit,
     onBrushSizeChange: (Float) -> Unit,
     onClearSelection: () -> Unit,
-    selectionSize: Int,
+    modifier: Modifier = Modifier,
 ) {
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-        // Row 1 — the two mutually exclusive mode chips + (lasso only) clear button.
+    val isSelectActive = !paintMode && !lassoMode
+    Column(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.medium)
+            .background(Color(0xCC181A20))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             FilterChip(
+                selected = isSelectActive,
+                onClick = onSelect,
+                label = { Text("→ Select") },
+            )
+            FilterChip(
                 selected = paintMode,
-                onClick = onTogglePaintMode,
-                label = { Text(if (paintMode) "🖌 Painting" else "🖌 Paint") },
+                onClick = onTogglePaint,
+                label = { Text("🖌 Paint") },
             )
             FilterChip(
                 selected = lassoMode,
-                onClick = onToggleLassoMode,
+                onClick = onToggleLasso,
                 label = {
-                    Text(
-                        when {
-                            lassoMode && selectionSize > 0 -> "🪄 $selectionSize selected"
-                            lassoMode -> "🪄 Lasso"
-                            else -> "🪄 Lasso"
-                        }
-                    )
+                    Text(if (lassoMode && selectionSize > 0) "🪄 $selectionSize" else "🪄 Lasso")
                 },
             )
             if (lassoMode && selectionSize > 0) {
@@ -697,60 +717,13 @@ private fun PaintModeBar(
                 }
             }
         }
-        // Row 2 — slot swatches. ALWAYS shown (not gated on paint/lasso mode) so users can
-        // see and edit slot colours straight from the result screen. Tap behaviour depends on
-        // current mode: paint=select-active, lasso=commit-selection, neither=open-picker.
-        Spacer(Modifier.height(6.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                when {
-                    lassoMode -> "Apply to →"
-                    paintMode -> "Active →"
-                    else -> "Extruders →"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // fix38.5: chip colours now come from slotPalette (the user's extruder presets)
-            // — was previously regions[0..3].effectiveColour which diverged after slot
-            // reassignments / extruder colour edits. The PaintModeBar is the only "Extruders"
-            // row the user sees; it must always show the actual loaded filament colours.
-            slotPalette.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS).forEachIndexed { idx, color ->
-                val isActive = paintMode && idx == activeRegion
-                Box(
-                    Modifier
-                        .size(if (isActive) 44.dp else 40.dp)
-                        .background(color, MaterialTheme.shapes.small)
-                        .clickable {
-                            // Neither mode = colour picker. Paint mode = select active.
-                            // Lasso mode = commit (handled by parent's onSelectRegion).
-                            if (!paintMode && !lassoMode) onEditSlotColour(idx)
-                            else onSelectRegion(idx)
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val tickColor = tickContrastColor(color)
-                    when {
-                        isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
-                        !paintMode && !lassoMode -> Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
-                        else -> {}
-                    }
-                }
-            }
-        }
-        // Row 3 — brush size slider (only meaningful when painting / lassoing).
         if (paintMode || lassoMode) {
-            Spacer(Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Brush",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(end = 8.dp)
+                    modifier = Modifier.padding(end = 6.dp)
                 )
                 Slider(
                     value = brushPct,
@@ -762,8 +735,57 @@ private fun PaintModeBar(
                     "${"%.1f".format(brushPct * 100)}%",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp).widthIn(min = 36.dp)
+                    modifier = Modifier.padding(start = 6.dp).widthIn(min = 36.dp)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * fix41 SlotPaletteRow — consolidated "Extruders →" row that lives below the viewer.
+ * Always visible. Tap behaviour is mode-aware (select/paint/lasso), driven by the parent
+ * via [onTapSlot]. Visual indicator on the swatch shows what the next tap will do.
+ */
+@Composable
+private fun SlotPaletteRow(
+    slotPalette: List<Color>,
+    paintMode: Boolean,
+    lassoMode: Boolean,
+    activeSlot: Int,
+    hasLassoSelection: Boolean,
+    onTapSlot: (Int) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            when {
+                lassoMode && hasLassoSelection -> "Apply to →"
+                paintMode || lassoMode -> "Active →"
+                else -> "Extruders →"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        slotPalette.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS).forEachIndexed { idx, color ->
+            val isActive = (paintMode || lassoMode) && idx == activeSlot && !hasLassoSelection
+            Box(
+                Modifier
+                    .size(if (isActive) 44.dp else 40.dp)
+                    .background(color, MaterialTheme.shapes.small)
+                    .clickable { onTapSlot(idx) },
+                contentAlignment = Alignment.Center,
+            ) {
+                val tickColor = tickContrastColor(color)
+                when {
+                    isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
+                    !paintMode && !lassoMode ->
+                        Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
+                    else -> {}
+                }
             }
         }
     }
