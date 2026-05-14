@@ -208,6 +208,25 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     ): SegmentationCascade.Input {
         val perTriPaint = mesh.extruderIndices.takeIf { it.size == triCount } ?: ByteArray(triCount)
 
+        // fix36: populate mesh.volumeRanges from the per-volume triangle counts captured
+        // during the native preview build. Once populated the cascade's Branch B (per-volume)
+        // and Branch C (per-object) become usable on multi-volume Bambu 3MFs.
+        if (mesh.volumeRanges == null) {
+            val counts = runCatching { native.nativeGetPreviewVolumeTriangleCounts() }.getOrNull()
+            if (counts != null && counts.isNotEmpty()) {
+                var cursor = 0
+                val ranges = mutableListOf<IntRange>()
+                for (c in counts) {
+                    if (c <= 0) continue
+                    val end = cursor + c - 1
+                    if (end >= triCount) break // defensive — desync between counts + mesh
+                    ranges += cursor..end
+                    cursor += c
+                }
+                if (ranges.isNotEmpty()) mesh.volumeRanges = ranges
+            }
+        }
+
         val volumeJson = runCatching { native.nativeGetAllVolumeExtruders() }.getOrNull()
         val objectJson = runCatching { native.nativeGetObjectExtruderMap() }.getOrNull()
         val ranges = mesh.volumeRanges ?: emptyList()
