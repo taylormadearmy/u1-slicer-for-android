@@ -448,6 +448,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F83: Scale model by absolute dimension (mm) in addition to percentage (GitHub #136)
+- Today the Prepare screen only allows scaling by percentage (1% increments per F74). Users often want a specific final size (e.g. "50mm tall") without doing the percentage math.
+- **Proposal**: add a dimension-input mode alongside the percentage field — user types target X, Y, or Z in mm; other axes follow proportionally under uniform scaling.
+- **UX notes**: toggle between `%` and `mm`; show the resulting % alongside the mm value; clamp to a sensible min (~1mm); warn when the result exceeds the 270×270×270 bed.
+- Preserve B108/B109 bed-snap and rotated-footprint logic — only the input affordance changes.
+- **Out of scope**: non-uniform scaling UI rework; snap-to-bed (already handled by `setModelScale`).
+
 ### F82: Idle-state printer controls on Printer tab (GitHub #133)
 - The Printer tab today only exposes pause/resume/cancel during an active print, plus the LED toggle and filament sync card.  Add idle-state controls so the user can drive the printer without an active job.
 - **Likely scope**: set bed temp (with a "Cooldown" preset), set per-extruder nozzle temp, manual-move/home (G28, G0 X/Y/Z), undock / dock extruder, manual filament load/unload per slot, send custom G-code box.
