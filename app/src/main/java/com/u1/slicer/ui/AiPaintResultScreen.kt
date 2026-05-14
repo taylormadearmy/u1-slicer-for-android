@@ -549,14 +549,25 @@ private fun AiPaintViewer(
         }
     }
 
+    // fix40.6: rememberUpdatedState wraps the parent lambdas so the LaunchedEffect's
+    // assignment always sees the LATEST closure — without this, swapping Painted ↔ Regions
+    // (which doesn't change paintMode/activeRegion/brushRadiusWorld) left the GL view holding
+    // a stale onTriangleTapped that referenced the previous tab's tree, so tap returned a
+    // leaf id from the old tree and findNodeById on the new tree returned null → no
+    // visible selection.
+    val currentTapped by rememberUpdatedState(onTriangleTapped)
+    val currentEmptyTap by rememberUpdatedState(onEmptyTap)
+    val currentPaint by rememberUpdatedState(onPaintTriangles)
+    val currentStrokeStart by rememberUpdatedState(onBrushStrokeStart)
+
     // Wire up the tap callbacks every time the mode flips. Paint mode → onBrushPaint, default
     // mode → onTriangleTapped (for the move-component sheet).
     LaunchedEffect(viewerView, paintMode, activeRegion, brushRadiusWorld) {
         val v = viewerView ?: return@LaunchedEffect
         v.brushRadiusWorld = brushRadiusWorld
         if (paintMode) {
-            v.onBrushPaint = { tris -> onPaintTriangles(tris, activeRegion) }
-            v.onBrushStrokeStart = { onBrushStrokeStart() }
+            v.onBrushPaint = { tris -> currentPaint(tris, activeRegion) }
+            v.onBrushStrokeStart = { currentStrokeStart() }
             v.onBrushTouchAt = { x, y ->
                 brushTouchPx = if (x < 0f) null else x to y
             }
@@ -566,9 +577,9 @@ private fun AiPaintViewer(
             v.onBrushPaint = null
             v.onBrushStrokeStart = null
             v.onBrushTouchAt = null
-            v.onTriangleTapped = onTriangleTapped
+            v.onTriangleTapped = { tri -> currentTapped(tri) }
             // fix35.2: tap on empty viewer background clears the highlight.
-            v.onEmptyTap = onEmptyTap
+            v.onEmptyTap = { currentEmptyTap() }
             brushTouchPx = null
         }
     }
