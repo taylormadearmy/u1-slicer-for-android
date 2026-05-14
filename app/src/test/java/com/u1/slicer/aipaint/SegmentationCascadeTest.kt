@@ -1,6 +1,7 @@
 package com.u1.slicer.aipaint
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -259,5 +260,122 @@ class SegmentationCascadeTest {
             (r.tree.firstOrNull()?.children?.size ?: 0) >= 2)
         assertTrue(r.source == SegmentationSource.TOPOLOGY ||
                    r.source == SegmentationSource.TOPOLOGY_RECURSIVE)
+    }
+
+    // fix44 unit-test additions covering the fix40.x height-banding work in topologyBranch.
+
+    /** Helper — generate a connected strip of triCount triangles (must be even) as one
+     *  flood-fill component. Each row contributes a quad of two triangles sharing an edge;
+     *  consecutive rows share an edge too. All triangles are at z = [z], lie in the XY
+     *  plane (normal +Z), so the dihedral flood-fill at CREASE_DOT keeps them in one
+     *  component. */
+    private fun cluster(centerX: Float, z: Float, triCount: Int): FloatArray {
+        require(triCount % 2 == 0) { "triCount must be even (2 triangles per quad row)" }
+        val out = FloatArray(triCount * 9)
+        val rows = triCount / 2
+        for (r in 0 until rows) {
+            val y0 = r.toFloat()
+            val y1 = (r + 1).toFloat()
+            // up triangle at row r: (cx, y0), (cx+1, y0), (cx, y1)
+            val bUp = (r * 2) * 9
+            out[bUp + 0] = centerX;     out[bUp + 1] = y0; out[bUp + 2] = z
+            out[bUp + 3] = centerX + 1f; out[bUp + 4] = y0; out[bUp + 5] = z
+            out[bUp + 6] = centerX;     out[bUp + 7] = y1; out[bUp + 8] = z
+            // down triangle at row r: (cx+1, y0), (cx+1, y1), (cx, y1)
+            // — shares edge (cx+1,y0)→(cx,y1) with the up triangle above
+            // — shares edge (cx,y1)→(cx+1,y1) with row r+1's up triangle
+            val bDn = (r * 2 + 1) * 9
+            out[bDn + 0] = centerX + 1f; out[bDn + 1] = y0; out[bDn + 2] = z
+            out[bDn + 3] = centerX + 1f; out[bDn + 4] = y1; out[bDn + 5] = z
+            out[bDn + 6] = centerX;     out[bDn + 7] = y1; out[bDn + 8] = z
+        }
+        return out
+    }
+
+    private fun concatenate(vararg arrays: FloatArray): FloatArray {
+        val total = arrays.sumOf { it.size }
+        val out = FloatArray(total)
+        var offset = 0
+        for (a in arrays) { a.copyInto(out, offset); offset += a.size }
+        return out
+    }
+
+    @Test
+    fun `topology branch height-bands components by centroid Z when Z-span is meaningful`() {
+        // 4 disjoint clusters at different Z heights: 0, 20, 40, 60. Should land in
+        // separate bands. The tree's top-level children are band parents (id < 0); their
+        // children are the component leaves.
+        val pos = concatenate(
+            cluster(0f,   0f, 30),
+            cluster(100f, 20f, 30),
+            cluster(200f, 40f, 30),
+            cluster(300f, 60f, 30),
+        )
+        val r = SegmentationCascade.topologyBranch(pos)
+        val bandParents = r.tree.firstOrNull()?.children ?: emptyList()
+        assertEquals("4 components at distinct heights → 4 bands", 4, bandParents.size)
+        bandParents.forEach { parent ->
+            assertTrue("band parent ids are negative (clear of leaf ids)",
+                parent.region.id < 0)
+            assertTrue("each band parent has at least one component child",
+                parent.children.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun `topology branch falls back to per-component when Z-span is degenerate`() {
+        // 3 coplanar clusters (all at z=0). Height-banding can't split them; falls back to
+        // per-component leaves directly under the model root (no band-parent layer).
+        val pos = concatenate(
+            cluster(0f,   0f, 30),
+            cluster(100f, 0f, 30),
+            cluster(200f, 0f, 30),
+        )
+        val r = SegmentationCascade.topologyBranch(pos)
+        val children = r.tree.firstOrNull()?.children ?: emptyList()
+        assertEquals("3 coplanar components → 3 leaves at root", 3, children.size)
+        children.forEach { child ->
+            assertTrue("perComponent fallback emits leaves directly (no band parents)",
+                child.children.isEmpty())
+            assertTrue("leaf ids are non-negative component indices",
+                child.region.id >= 0)
+        }
+    }
+
+    @Test
+    fun `topology branch groups bilaterally symmetric components into the same band`() {
+        // Two components at the same Z but mirrored across X — the goat-symmetry case.
+        // Both must land in the same band so they share a slot/colour by default.
+        val pos = concatenate(
+            cluster(-200f, 40f, 30),   // "left horn"
+            cluster( 200f, 40f, 30),   // "right horn"
+            cluster(0f,    0f, 30),    // body — different Z so a separate band exists
+        )
+        val r = SegmentationCascade.topologyBranch(pos)
+        val bandParents = r.tree.firstOrNull()?.children ?: emptyList()
+        // Find a band containing 2 children — that's the horn pair.
+        val pairBand = bandParents.firstOrNull { it.children.size == 2 }
+        assertNotNull("expected one band with both horn components", pairBand)
+        assertEquals("both horns share the band's slot",
+            pairBand!!.children[0].region.slot,
+            pairBand.children[1].region.slot)
+    }
+
+    @Test
+    fun `topology branch keeps band parent ids unique and negative`() {
+        // 5 clusters at distinct heights → 5 bands. Each parent id must be unique so
+        // findNodeById on tap-to-highlight doesn't ambiguously resolve.
+        val pos = concatenate(
+            cluster(0f,    0f, 30),
+            cluster(100f,  15f, 30),
+            cluster(200f,  30f, 30),
+            cluster(300f,  45f, 30),
+            cluster(400f,  60f, 30),
+        )
+        val r = SegmentationCascade.topologyBranch(pos)
+        val parentIds = (r.tree.firstOrNull()?.children ?: emptyList()).map { it.region.id }
+        assertEquals("all parent ids must be distinct", parentIds.size, parentIds.toSet().size)
+        assertTrue("all parent ids must be negative (clear of leaf ids)",
+            parentIds.all { it < 0 })
     }
 }

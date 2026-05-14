@@ -424,22 +424,7 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         return out
     }
 
-    /** Standard horizontal-ray crossing count: a point is inside the polygon when a ray cast
-     *  to the right crosses an odd number of edges. Handles arbitrary (non-convex) loops. */
-    private fun pointInPolygon(x: Float, y: Float, polygon: List<Pair<Float, Float>>): Boolean {
-        var inside = false
-        var j = polygon.size - 1
-        for (i in polygon.indices) {
-            val (xi, yi) = polygon[i]
-            val (xj, yj) = polygon[j]
-            if ((yi > y) != (yj > y)) {
-                val xIntersect = xi + (y - yi) * (xj - xi) / (yj - yi + 1e-9f)
-                if (x < xIntersect) inside = !inside
-            }
-            j = i
-        }
-        return inside
-    }
+    // pointInPolygon extracted to LassoGeometry.kt for unit-testability (fix44).
 
     /** Pick the hit triangle and gather every triangle whose centroid is within [radiusWorld]
      *  units of the hit centroid. radiusWorld = 0 returns just the hit triangle. */

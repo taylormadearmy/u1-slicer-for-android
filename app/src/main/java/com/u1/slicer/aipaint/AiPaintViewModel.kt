@@ -581,28 +581,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         val altSegments = state.alternateTriangleSegments ?: return
 
         val triCount = state.trianglePositions.size / 9
-        // Step 1: base colouring from the alternate tree's leaf slot assignments.
-        val newTriRegions = ByteArray(triCount)
-        altTree.forEach { root ->
-            root.flatten().forEach { (node, _) ->
-                if (node.isLeaf) {
-                    node.triangleIds.forEach { t ->
-                        if (t in 0 until triCount) newTriRegions[t] = node.region.slot.toByte()
-                    }
-                }
-            }
-        }
-        // fix43: re-apply the user's manual paint/lasso commits (customSelections) on top of
-        // the base colouring, so edits are NOT lost when the user toggles between Painted and
-        // Regions. Each CustomSelection is replayed in order — later ones override earlier
-        // ones on the same triangle, matching commit-time semantics. The customSelections
-        // list itself is preserved; the undo stack stays intact so undo can span a flip.
-        state.customSelections.forEach { sel ->
-            val slotByte = sel.slot.toByte()
-            sel.triangleIds.forEach { t ->
-                if (t in 0 until triCount) newTriRegions[t] = slotByte
-            }
-        }
+        val newTriRegions = buildSwitchedTriangleRegions(altTree, state.customSelections, triCount)
 
         _uiState.value = AiPaintUiState.Result(
             state.copy(
@@ -623,4 +602,38 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun reset() { _uiState.value = AiPaintUiState.Idle }
+}
+
+/**
+ * fix43 / fix44 — pure logic for `switchToAlternate`. Builds the per-triangle slot byte
+ * array when the user toggles to a tree's alternate view. Two passes:
+ *   1. Base colouring from the alternate tree's leaf slot assignments
+ *   2. Replay every CustomSelection in order so manual paint/lasso commits override the
+ *      base (last-write-wins on overlapping triangles, matching commit-time semantics)
+ *
+ * Extracted to a top-level function so it's unit-testable without an AndroidViewModel
+ * harness.
+ */
+internal fun buildSwitchedTriangleRegions(
+    altTree: List<AiRegionNode>,
+    customSelections: List<CustomSelection>,
+    triCount: Int,
+): ByteArray {
+    val out = ByteArray(triCount)
+    altTree.forEach { root ->
+        root.flatten().forEach { (node, _) ->
+            if (node.isLeaf) {
+                node.triangleIds.forEach { t ->
+                    if (t in 0 until triCount) out[t] = node.region.slot.toByte()
+                }
+            }
+        }
+    }
+    customSelections.forEach { sel ->
+        val slotByte = sel.slot.toByte()
+        sel.triangleIds.forEach { t ->
+            if (t in 0 until triCount) out[t] = slotByte
+        }
+    }
+    return out
 }
