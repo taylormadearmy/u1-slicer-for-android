@@ -83,6 +83,95 @@ object SegmentationCascade {
         return CascadeResult(listOf(root), triangleSegments, SegmentationSource.OBJECT)
     }
 
+    data class VolumeInfo(
+        val volumeIndex: Int,
+        val extruder: Int?,
+        val triangleIds: IntArray,
+    )
+    data class ObjectVolumes(
+        val objectId: Long,
+        val objectName: String,
+        val volumes: List<VolumeInfo>,
+    )
+
+    /** Branch B — per-volume extruder. Nests volumes under their object when > 1 volume. */
+    fun volumeBranch(totalTriangles: Int, objects: List<ObjectVolumes>): CascadeResult {
+        val totalVolumes = objects.sumOf { it.volumes.size }
+        if (totalVolumes < 2) {
+            return CascadeResult(emptyList(), ByteArray(totalTriangles), SegmentationSource.VOLUME)
+        }
+        val triangleSegments = ByteArray(totalTriangles)
+        var nextLeafId = 0
+
+        val rootChildren = mutableListOf<AiRegionNode>()
+        for (obj in objects) {
+            if (obj.volumes.size == 1) {
+                val v = obj.volumes.first()
+                val slot = v.extruder?.let { (it - 1).coerceIn(0, TARGET_SLOTS - 1) }
+                    ?: (nextLeafId % TARGET_SLOTS)
+                val id = nextLeafId++
+                v.triangleIds.forEach { t ->
+                    if (t in 0 until totalTriangles) triangleSegments[t] = id.toByte()
+                }
+                rootChildren += AiRegionNode(
+                    region = AiRegion(
+                        id = id,
+                        label = obj.objectName,
+                        suggestedColour = paletteFor(id),
+                        coverageFraction = v.triangleIds.size.toFloat() / totalTriangles,
+                        slot = slot,
+                    ),
+                    children = emptyList(),
+                    nodeSource = SegmentationSource.VOLUME,
+                    triangleIds = v.triangleIds,
+                )
+            } else {
+                val volChildren = obj.volumes.map { v ->
+                    val slot = v.extruder?.let { (it - 1).coerceIn(0, TARGET_SLOTS - 1) }
+                        ?: (nextLeafId % TARGET_SLOTS)
+                    val id = nextLeafId++
+                    v.triangleIds.forEach { t ->
+                        if (t in 0 until totalTriangles) triangleSegments[t] = id.toByte()
+                    }
+                    AiRegionNode(
+                        region = AiRegion(
+                            id = id,
+                            label = "${obj.objectName} · volume ${v.volumeIndex + 1}",
+                            suggestedColour = paletteFor(id),
+                            coverageFraction = v.triangleIds.size.toFloat() / totalTriangles,
+                            slot = slot,
+                        ),
+                        children = emptyList(),
+                        nodeSource = SegmentationSource.VOLUME,
+                        triangleIds = v.triangleIds,
+                    )
+                }
+                val objTris = obj.volumes.flatMap { it.triangleIds.toList() }.toIntArray()
+                rootChildren += AiRegionNode(
+                    region = AiRegion(
+                        id = -1,
+                        label = obj.objectName,
+                        suggestedColour = paletteFor(0),
+                        coverageFraction = objTris.size.toFloat() / totalTriangles,
+                        slot = volChildren.first().region.slot,
+                    ),
+                    children = volChildren,
+                    nodeSource = SegmentationSource.VOLUME,
+                    triangleIds = objTris,
+                )
+            }
+        }
+        val root = AiRegionNode(
+            region = AiRegion(
+                id = -2, label = "Model", suggestedColour = "#888888", coverageFraction = 1f,
+            ),
+            children = rootChildren,
+            nodeSource = SegmentationSource.VOLUME,
+            triangleIds = IntArray(totalTriangles) { it },
+        )
+        return CascadeResult(listOf(root), triangleSegments, SegmentationSource.VOLUME)
+    }
+
     /** Branch E — topology flood-fill, with recursion on the dominant component. */
     fun topologyBranch(positions: FloatArray): CascadeResult {
         val (componentIds, numComponents) =

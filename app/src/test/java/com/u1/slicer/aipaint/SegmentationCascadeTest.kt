@@ -100,6 +100,52 @@ class SegmentationCascadeTest {
         assertEquals(listOf(0, 1, 2), slots)
     }
 
+    private fun volumeInfo(objId: Long, objName: String, volumes: List<Triple<Int?, Int, Int>>): SegmentationCascade.ObjectVolumes {
+        // volumes = list of (extruder?, firstTri, triCount)
+        val vols = volumes.mapIndexed { idx, (ext, first, count) ->
+            SegmentationCascade.VolumeInfo(
+                volumeIndex = idx,
+                extruder = ext,
+                triangleIds = IntArray(count) { first + it },
+            )
+        }
+        return SegmentationCascade.ObjectVolumes(objId, objName, vols)
+    }
+
+    @Test
+    fun `volumeBranch nests volumes under an object when more than one`() {
+        val obj = volumeInfo(1L, "Dragon", listOf(
+            Triple(1, 0, 100),
+            Triple(2, 100, 50),
+            Triple(3, 150, 25),
+        ))
+        val r = SegmentationCascade.volumeBranch(totalTriangles = 175, objects = listOf(obj))
+        assertEquals(SegmentationSource.VOLUME, r.source)
+        val root = r.tree.first()
+        assertEquals(1, root.children.size)
+        assertEquals("Dragon", root.children.first().region.label)
+        assertEquals(3, root.children.first().children.size)
+    }
+
+    @Test
+    fun `volumeBranch flattens to leaves when each object has one volume`() {
+        val objs = listOf(
+            volumeInfo(1L, "A", listOf(Triple(1, 0, 50))),
+            volumeInfo(2L, "B", listOf(Triple(2, 50, 50))),
+        )
+        val r = SegmentationCascade.volumeBranch(totalTriangles = 100, objects = objs)
+        val root = r.tree.first()
+        assertEquals(2, root.children.size)
+        assertEquals(true, root.children.all { it.children.isEmpty() })
+    }
+
+    @Test
+    fun `volumeBranch null when only one volume across all objects`() {
+        val obj = volumeInfo(1L, "Solo", listOf(Triple(1, 0, 100)))
+        val r = SegmentationCascade.volumeBranch(totalTriangles = 100, objects = listOf(obj))
+        assertTrue(r.tree.isEmpty())
+    }
+
     @Test
     fun `topology branch yields at least 2 leaves on disjoint clusters`() {
         // 3 disjoint triangle clusters of 30 each.
