@@ -4,7 +4,11 @@ import kotlin.math.sqrt
 
 object MeshSegmenter {
 
-    private const val MAX_INTERMEDIATE_COMPONENTS = 32
+    // fix38.3: was 32 — the cap merged small components (e.g. a goat's nose patch) into
+    // larger edge-shared neighbours (e.g. a leg), causing tap-on-nose-highlights-leg. Raised
+    // to 1024 so the merge step almost never fires; the user can always see the natural
+    // dihedral-flood components and recombine via brush/lasso if there are too many.
+    private const val MAX_INTERMEDIATE_COMPONENTS = 1024
     private const val CREASE_DOT = 0.7071f // cos(45°) — dihedral angles sharper than 45° are treated as creases
 
     /**

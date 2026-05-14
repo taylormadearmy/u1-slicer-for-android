@@ -17,6 +17,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.u1.slicer.aipaint.AiRegionNode
 
+/** Returns black or white depending on which has more contrast against [color]. Uses the
+ *  WCAG relative-luminance formula. Used for swatch ticks so they're visible on every slot. */
+internal fun tickContrastColor(color: Color): Color {
+    // sRGB luminance (no gamma — approximation is fine for tick contrast).
+    val lum = 0.299f * color.red + 0.587f * color.green + 0.114f * color.blue
+    return if (lum > 0.55f) Color.Black else Color.White
+}
+
 @Composable
 fun AiPaintTreeRow(
     node: AiRegionNode,
@@ -95,7 +103,9 @@ fun AiPaintTreeRow(
                     contentAlignment = Alignment.Center,
                 ) {
                     if (isActive) {
-                        Text("✓", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                        // fix38.3: contrasting tick — black on light slots (white/yellow),
+                        // white on dark. Without this the tick disappears on slot=white.
+                        Text("✓", color = tickContrastColor(color), style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }

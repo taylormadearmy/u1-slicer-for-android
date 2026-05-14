@@ -67,7 +67,8 @@ fun HighlightSlotPicker(
                 contentAlignment = Alignment.Center,
             ) {
                 if (isCurrent) {
-                    Text("✓", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    // fix38.3: contrasting tick (was white — invisible on white slot).
+                    Text("✓", color = tickContrastColor(color), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
