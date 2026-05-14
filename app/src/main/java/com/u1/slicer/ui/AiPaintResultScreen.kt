@@ -244,7 +244,7 @@ fun AiPaintResultScreen(
                     PaintModeBar(
                         paintMode = paintMode,
                         lassoMode = lassoMode,
-                        regions = result.regions,
+                        slotPalette = slotPalette,
                         activeRegion = paintActiveRegion,
                         brushPct = brushPct,
                         onTogglePaintMode = {
@@ -492,6 +492,13 @@ private fun AiPaintViewer(
     val recenteredPositions = remember(state.trianglePositions) {
         recenterForBed(state.trianglePositions)
     }
+    // fix38.5: compute a CameraViewState that fits the recentered mesh, then apply it after
+    // setMesh. Default camera targets (135, 135, 0) with distance 500 — fits the whole 270mm
+    // bed, which makes a small model (e.g. a 50mm goat) look tiny → tap precision is poor.
+    // Fitting to the model's bounding diagonal puts the whole model on screen with margin.
+    val fitCamera = remember(recenteredPositions) {
+        computeFitCameraState(recenteredPositions)
+    }
 
     // The mesh is built ONCE per pipeline run. Subsequent paints mutate extruderIndices in
     // place via ModelViewerView.updateExtruderIndices — far cheaper than rebuilding the VBO.
@@ -511,6 +518,7 @@ private fun AiPaintViewer(
                     viewerView = view
                     mesh?.let { view.setMesh(it) }
                     view.setTrianglePickingPositions(recenteredPositions)
+                    fitCamera?.let { view.applyCameraState(it) }
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -563,6 +571,7 @@ private fun AiPaintViewer(
         val m = mesh ?: return@LaunchedEffect
         v.setMesh(m)
         v.setTrianglePickingPositions(recenteredPositions)
+        fitCamera?.let { v.applyCameraState(it) }
     }
 
     // Whenever the per-triangle regions, palette, highlight target, or lasso selection changes:
@@ -629,7 +638,7 @@ private fun AiPaintViewer(
 private fun PaintModeBar(
     paintMode: Boolean,
     lassoMode: Boolean,
-    regions: List<AiRegion>,
+    slotPalette: List<Color>,
     activeRegion: Int,
     brushPct: Float,
     onTogglePaintMode: () -> Unit,
@@ -688,20 +697,16 @@ private fun PaintModeBar(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            // One swatch per PHYSICAL filament slot (TARGET_SLOTS=4). Swatch shows the
-            // canonical slot colour from regions[slot]. Tap = mode-dependent action; the ✎
-            // hint reveals when neither mode is on so users discover the picker.
-            val slotChips = regions.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS)
-            slotChips.forEachIndexed { idx, region ->
-                val argb = remember(region.effectiveColour) {
-                    runCatching { android.graphics.Color.parseColor(region.effectiveColour) }
-                        .getOrDefault(android.graphics.Color.GRAY)
-                }
+            // fix38.5: chip colours now come from slotPalette (the user's extruder presets)
+            // — was previously regions[0..3].effectiveColour which diverged after slot
+            // reassignments / extruder colour edits. The PaintModeBar is the only "Extruders"
+            // row the user sees; it must always show the actual loaded filament colours.
+            slotPalette.take(com.u1.slicer.aipaint.AiPaintViewModel.TARGET_SLOTS).forEachIndexed { idx, color ->
                 val isActive = paintMode && idx == activeRegion
                 Box(
                     Modifier
                         .size(if (isActive) 44.dp else 40.dp)
-                        .background(Color(argb), MaterialTheme.shapes.small)
+                        .background(color, MaterialTheme.shapes.small)
                         .clickable {
                             // Neither mode = colour picker. Paint mode = select active.
                             // Lasso mode = commit (handled by parent's onSelectRegion).
@@ -710,9 +715,10 @@ private fun PaintModeBar(
                         },
                     contentAlignment = Alignment.Center,
                 ) {
+                    val tickColor = tickContrastColor(color)
                     when {
-                        isActive -> Text("✓", color = Color.White, style = MaterialTheme.typography.labelLarge)
-                        !paintMode && !lassoMode -> Text("✎", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
+                        !paintMode && !lassoMode -> Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
                         else -> {}
                     }
                 }
@@ -933,6 +939,40 @@ private fun viewLabelFor(source: com.u1.slicer.aipaint.SegmentationSource): Stri
     com.u1.slicer.aipaint.SegmentationSource.TOPOLOGY_RECURSIVE -> "🪨 Regions"
     com.u1.slicer.aipaint.SegmentationSource.Z_BAND -> "📏 Bands"
     com.u1.slicer.aipaint.SegmentationSource.BRUSH -> "✏️ Brush"
+}
+
+/** fix38.5: compute a CameraViewState that frames the model nicely (target = model centroid,
+ *  distance proportional to model diagonal). Without this the default camera fits the whole
+ *  270×270 bed which makes small models look tiny and breaks tap precision. */
+private fun computeFitCameraState(positions: FloatArray): com.u1.slicer.viewer.CameraViewState? {
+    if (positions.isEmpty()) return null
+    var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY
+    var minY = Float.POSITIVE_INFINITY; var maxY = Float.NEGATIVE_INFINITY
+    var minZ = Float.POSITIVE_INFINITY; var maxZ = Float.NEGATIVE_INFINITY
+    var i = 0
+    while (i < positions.size) {
+        val x = positions[i]; val y = positions[i + 1]; val z = positions[i + 2]
+        if (x < minX) minX = x; if (x > maxX) maxX = x
+        if (y < minY) minY = y; if (y > maxY) maxY = y
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+        i += 3
+    }
+    val cx = (minX + maxX) / 2f
+    val cy = (minY + maxY) / 2f
+    val cz = (minZ + maxZ) / 2f
+    val dx = maxX - minX; val dy = maxY - minY; val dz = maxZ - minZ
+    val diagonal = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz).coerceAtLeast(50f)
+    // Distance ≈ 2x diagonal for a 45° FOV — fits the model with ~20% margin.
+    return com.u1.slicer.viewer.CameraViewState(
+        azimuth = -90.0,
+        elevation = 35.0,
+        distance = diagonal.toDouble() * 2.0,
+        panX = 0.0,
+        panY = 0.0,
+        targetX = cx.toDouble(),
+        targetY = cy.toDouble(),
+        targetZ = cz.toDouble(),
+    )
 }
 
 /** Walk the tree looking for a node with [id]. Returns null when no match. */

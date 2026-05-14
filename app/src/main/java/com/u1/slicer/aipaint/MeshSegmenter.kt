@@ -9,11 +9,12 @@ object MeshSegmenter {
     // to 1024 so the merge step almost never fires; the user can always see the natural
     // dihedral-flood components and recombine via brush/lasso if there are too many.
     private const val MAX_INTERMEDIATE_COMPONENTS = 1024
-    // fix38.4: was cos(45°) — that flood-filled goat's nose, ear, leg etc. into one giant
-    // component because organic models have continuous smooth transitions across visual
-    // features. Tightened to cos(20°) so only very smooth surfaces (within a 20° dihedral)
-    // count as the same component. Sculpted features now generally land in separate regions.
-    private const val CREASE_DOT = 0.94f // cos(~20°) — dihedral angles sharper than 20° are treated as creases
+    // fix38.5: tightened further from cos(20°) to cos(10°). cos(20°) still kept the whole
+    // goat in one component because sculpted organic surfaces transition very gradually.
+    // cos(10°) requires near-coplanar adjacency to count as the same component, breaking
+    // visual features apart. Trade-off: smooth uniform surfaces (cylinders, spheres) split
+    // into many small components, but those are easy to recombine with brush/lasso.
+    private const val CREASE_DOT = 0.985f // cos(~10°) — anything sharper is a crease
 
     /**
      * Segments a mesh by surface topology using dihedral-angle flood fill.
