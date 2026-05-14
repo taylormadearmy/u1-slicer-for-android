@@ -327,38 +327,72 @@ object SegmentationCascade {
             partsByBand[b]++
         }
 
-        // Drop empty bands — they show up when components cluster heavily in one Z range
-        // and several bands receive no components. Renumber so leaf ids stay dense 0..M-1.
-        val nonEmptyBands = (0 until bandCount).filter { trisByBand[it].isNotEmpty() }
-        val newIdFor = IntArray(bandCount) { -1 }
-        nonEmptyBands.forEachIndexed { i, oldId -> newIdFor[oldId] = i }
+        // Components grouped by band, dropping empty bands.
+        val compsByBand = Array(bandCount) { mutableListOf<Int>() }
+        for (c in 0 until numComponents) compsByBand[compToBand[c]].add(c)
+        val nonEmptyBands = (0 until bandCount).filter { compsByBand[it].isNotEmpty() }
 
-        // If banding collapsed everything to a single band (e.g. clustered Z components),
-        // fall back to per-component so the user can still address individual shells.
+        // If banding collapsed everything to a single band, fall back to per-component so the
+        // user can still address individual shells.
         if (nonEmptyBands.size < 2) {
             return perComponentTopology(numComponents, triCount, triByComp)
         }
 
-        val triangleSegments = ByteArray(triCount) { compToBand[componentIds[it]].let(newIdFor::get).toByte() }
+        // fix40.2: bands are PARENT groups containing one child leaf per topology component.
+        // The hierarchy gives the user:
+        //   • Band-level slot/colour grouping — bilateral pairs share a slot via the band's
+        //     compToBand assignment, so left + right horns get the same colour by default.
+        //   • Per-component highlighting — tap on the eye highlights ONLY the eye component
+        //     (a child leaf), not the entire Z-band. Fixes the fix40 regression where tap
+        //     on eye lit up the tail because they happened to share a centroid Z.
+        //   • Per-component recolouring — each child leaf is independently slottable, so the
+        //     user can split a band's children across multiple physical slots when desired
+        //     (e.g. paint the left leg different from the right leg post-grouping).
+        val triangleSegments = ByteArray(triCount)
+        // Negative parent ids — leaf component ids occupy 0..numComponents-1, so parents use
+        // -100 downwards to stay clear of both leaf ids and the cascade root id (-1).
+        var nextParentId = -100
+        val bandNodes = nonEmptyBands.mapIndexed { newBandIdx, oldBandId ->
+            val bandSlot = newBandIdx % TARGET_SLOTS
+            val bandColour = HEIGHT_BAND_COLOURS.getOrElse(oldBandId) { "#888888" }
+            val bandLabel = HEIGHT_BAND_LABELS.getOrElse(oldBandId) { "Band ${oldBandId + 1}" }
+            val compsInBand = compsByBand[oldBandId]
+            val bandTriCount = compsInBand.sumOf { triByComp[it].size }
 
-        val children = nonEmptyBands.mapIndexed { newId, oldId ->
-            val tris = trisByBand[oldId].toIntArray()
+            // One child leaf per topology component in this band.
+            val childLeaves = compsInBand.mapIndexed { ci, comp ->
+                val tris = triByComp[comp].toIntArray()
+                tris.forEach { t -> if (t in 0 until triCount) triangleSegments[t] = comp.toByte() }
+                AiRegionNode(
+                    region = AiRegion(
+                        id = comp,
+                        label = "Part ${ci + 1}",
+                        suggestedColour = bandColour,
+                        coverageFraction = tris.size.toFloat() / triCount,
+                        slot = bandSlot,
+                    ),
+                    children = emptyList(),
+                    nodeSource = SegmentationSource.TOPOLOGY,
+                    triangleIds = tris,
+                )
+            }
+            val bandTris = compsInBand.flatMap { triByComp[it].toList() }.toIntArray()
             AiRegionNode(
                 region = AiRegion(
-                    id = newId,
-                    label = HEIGHT_BAND_LABELS.getOrElse(oldId) { "Band ${oldId + 1}" },
-                    suggestedColour = HEIGHT_BAND_COLOURS.getOrElse(oldId) { "#888888" },
-                    coverageFraction = tris.size.toFloat() / triCount,
-                    slot = newId % TARGET_SLOTS,
+                    id = nextParentId--,
+                    label = bandLabel,
+                    suggestedColour = bandColour,
+                    coverageFraction = bandTriCount.toFloat() / triCount,
+                    slot = bandSlot,
                 ),
-                children = emptyList(),
+                children = childLeaves,
                 nodeSource = SegmentationSource.TOPOLOGY,
-                triangleIds = tris,
+                triangleIds = bandTris,
             )
         }
         val root = AiRegionNode(
             region = AiRegion(id = -1, label = "Model", suggestedColour = "#888888", coverageFraction = 1f),
-            children = children,
+            children = bandNodes,
             nodeSource = SegmentationSource.TOPOLOGY,
             triangleIds = IntArray(triCount) { it },
         )
