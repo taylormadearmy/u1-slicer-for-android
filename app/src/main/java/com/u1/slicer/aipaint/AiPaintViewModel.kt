@@ -15,47 +15,26 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
+import org.json.JSONArray
 import java.io.File
 
 /**
- * AI Paint pipeline (post-fix32 pivot):
- *   1. Segment the model into N horizontal Z-bands (equal-percentile of mean Z per triangle).
- *   2. Render the banded model in one isometric view and ask the AI to name each band and
- *      suggest a realistic filament colour. AI is text-only — no spatial grounding required.
- *   3. Build N AiRegion entries, round-robin onto the 4 physical extruder slots.
- *   4. The user refines via paint / lasso / per-segment slot swap on the result screen.
+ * AI Paint pipeline (F54 redesign — post-fix33):
+ *   1. Read the loaded native snapshot — paint state, volumes, objects.
+ *   2. Run [SegmentationCascade] (branches A → F) to produce a deterministic tree.
+ *   3. If `aiNamingEnabled`: ask AI to name the tree leaves (text-only — no spatial grounding).
+ *   4. The user refines on the result screen via paint, lasso, slot reassignment, brush strokes.
  *
- * If AI is unavailable or fails to return parseable JSON, default labels (`Base`, `Hooves`,
- * `Body`, etc.) and colours are used silently — Z-bands are always the segmentation, AI is
- * purely decorative.
+ * AI is opt-in and decorative. Segmentation always succeeds (Z-bands as last resort).
  */
 class AiPaintViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
-        // Snapmaker U1 has 4 physical extruder slots — paint_color in the painted 3MF uses
-        // states 1..4 (region indices 0..3). This is the SLOT count.
-        const val TARGET_SLOTS = 4
-        // The number of SEGMENTS (Z-bands) we split the model into. With N > 4, multiple
-        // bands fold onto the 4 physical slots — the slot picker row lets users remap.
-        const val TARGET_SEGMENTS = 12
-
-        // Default labels for Z-bands when AI is unavailable. Generic — model-agnostic — so a
-        // boat doesn't show up labelled "Hooves". AI fills these with real semantic names when
-        // it succeeds. Sized to TARGET_SEGMENTS; "Band N" is fine as a placeholder.
-        internal val ZBAND_LABELS = List(TARGET_SEGMENTS) { i -> "Band ${i + 1}" }
-        internal val ZBAND_COLOURS = listOf(
-            "#37474F", "#5D4037", "#795548", "#1E88E5", "#43A047",
-            "#00ACC1", "#FB8C00", "#8E24AA", "#E53935", "#EC407A",
-            "#FFEB3B", "#FFFFFF",
-        )
+        const val TARGET_SLOTS = SegmentationCascade.TARGET_SLOTS
 
         /**
-         * Painted 3MFs are written by [PaintedMeshWriter] as `ai_paint_<timestamp>.3mf`. After
-         * "Use this painting" calls `loadModelFromFile`, the working copy goes through the Bambu
-         * sanitizer (`sanitized_` prefix) and the profile embedder (`embedded_` prefix). We strip
-         * both prefixes in any order before comparing basenames so the "Edit AI Paint regions"
-         * button can still recognise the in-memory cached result for the currently loaded model.
+         * Painted 3MFs are written by [PaintedMeshWriter] as `ai_paint_<timestamp>.3mf`.
+         * Strip pipeline prefixes (`embedded_`, `sanitized_`) so cache-hit lookup works.
          */
         fun isSamePainting(cachedPaintedPath: String?, currentModelPath: String?): Boolean {
             if (cachedPaintedPath.isNullOrBlank() || currentModelPath.isNullOrBlank()) return false
@@ -65,7 +44,6 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         }
 
         private val PIPELINE_PREFIXES = listOf("embedded_", "sanitized_")
-
         private fun stripPipelinePrefixes(name: String): String {
             var out = name
             var changed = true
@@ -88,37 +66,17 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow<AiPaintUiState>(AiPaintUiState.Idle)
     val uiState: StateFlow<AiPaintUiState> = _uiState.asStateFlow()
 
-    /**
-     * @param printerColours hex colours of the user's loaded extruder slots (E1..E4). When
-     *   provided, these are written into the painted 3MF's filament_colour array so the slicer's
-     *   Prepare / Preview viewers render the print in the user's physical filament colours
-     *   instead of the AI's suggested region colours.
-     */
-    fun runPipeline(
-        sourceModelPath: String,
-        native: NativeLibrary,
-        printerColours: List<String>? = null
-    ) {
-        lastPrinterColours = printerColours
-        runPipelineInternal(sourceModelPath, native, printerColours)
-    }
-
     private var lastPrinterColours: List<String>? = null
 
     private val HEX_REGEX = Regex("^#[0-9A-Fa-f]{6}$")
     private fun isValidHex(s: String): Boolean = HEX_REGEX.matches(s)
 
-    // Undo: deque of triangleRegions snapshots, capped to 50 entries. One snapshot per stroke
-    // (paint by tap stroke or tap-to-move action), not per intermediate frame, so a single
-    // brush sweep is a single undo.
     private val undoStack = ArrayDeque<ByteArray>()
     private fun pushUndo(snapshot: ByteArray) {
         undoStack.addLast(snapshot.copyOf())
         while (undoStack.size > 50) undoStack.removeFirst()
     }
 
-    /** Save the current triangle-region state to the undo stack. Called from the screen at the
-     *  start of a brush stroke (ACTION_DOWN) and from moveComponent on each tap-to-move. */
     fun beginUndoCheckpoint() {
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         pushUndo(current.state.triangleRegions)
@@ -127,17 +85,20 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** Pop the last undo snapshot. No-op if the stack is empty. */
     fun undo() {
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         val state = current.state
         val prev = undoStack.removeLastOrNull() ?: return
         if (prev.size != state.triangleRegions.size) return
-        val nextState = state.copy(
+        _uiState.value = AiPaintUiState.Result(state.copy(
             triangleRegions = prev,
             canUndo = undoStack.isNotEmpty(),
-        )
-        _uiState.value = AiPaintUiState.Result(nextState)
+        ))
+    }
+
+    fun runPipeline(sourceModelPath: String, native: NativeLibrary, printerColours: List<String>? = null) {
+        lastPrinterColours = printerColours
+        runPipelineInternal(sourceModelPath, native, printerColours)
     }
 
     private fun runPipelineInternal(
@@ -146,11 +107,14 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         printerColours: List<String>?,
     ) {
         viewModelScope.launch {
-            _uiState.value = AiPaintUiState.Running(1, "Analysing model geometry…")
+            _uiState.value = AiPaintUiState.Running(1, "Reading model geometry…")
             try {
                 val providerName = settings.aiPaintProvider.first()
                 val apiKey = settings.aiPaintApiKeyFor(providerName).first()
                 val provider = AiPaintProvider.fromId(providerName)
+                // AI naming defaults to false until Task 13 wires the Settings toggle.
+                // The flow is read here so when the setting flips on the pipeline picks it up.
+                val aiEnabled = false
 
                 val mesh = native.getPreparePreviewMesh(
                     maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES
@@ -158,60 +122,50 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     _uiState.value = AiPaintUiState.Error("Could not read model geometry.")
                     return@launch
                 }
+                val positions = mesh.trianglePositions
+                val triCount = positions.size / 9
 
-                val canCallAi = !provider.requiresKey || apiKey.isNotBlank()
-
-                // Phase 2 — topology segmentation. Dihedral flood-fill gives N connected
-                // surface components for figurines / dragons / goats; the dispatcher falls
-                // back to spatial K-means for smooth single-shell models (cat pots, vases).
                 _uiState.value = AiPaintUiState.Running(2, "Finding parts of the model…")
-                val (componentIds, numComponents) = withContext(Dispatchers.Default) {
-                    MeshSegmenter.segmentByTopologyOrSpatial(mesh.trianglePositions)
+                val input = withContext(Dispatchers.Default) {
+                    buildCascadeInput(native, mesh, triCount)
                 }
-                Log.i(
-                    "AiPaint",
-                    "Phase 2 → $numComponents components across ${componentIds.size} triangles"
-                )
+                val cascadeResult = withContext(Dispatchers.Default) {
+                    SegmentationCascade.run(input)
+                }
+                Log.i("AiPaint", "Cascade fired: ${cascadeResult.source.name} → " +
+                    "${cascadeResult.tree.firstOrNull()?.leafCount() ?: 0} leaves")
 
-                // Phase 3 — pick a labelling strategy.
-                //   • If we got ENOUGH topology components AND we can call AI: ask AI to group
-                //     them into TARGET_SEGMENTS semantic regions (legs, body, head, ...). This
-                //     is the path that worked well on figurines pre-fix32 — semantic groups.
-                //   • Otherwise fall back to Z-bands (equal-width horizontal slices) with the
-                //     AI optionally naming each band based on a shaded reference + banded view.
-                val pipelineState = withContext(Dispatchers.Default) {
-                    val topologyOk = numComponents >= 4
-                    if (topologyOk && canCallAi) {
-                        runTopologyGroupingPath(
-                            mesh.trianglePositions, componentIds, numComponents, provider, apiKey
-                        )
-                    } else null
-                } ?: withContext(Dispatchers.Default) {
-                    runZBandPath(
-                        mesh.trianglePositions, provider, apiKey, canCallAi
-                    )
+                val (treeAfterAi, aiFailed, modelTried) = if (aiEnabled && (!provider.requiresKey || apiKey.isNotBlank())) {
+                    _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
+                    applyAiNaming(provider, apiKey, positions, cascadeResult.tree)
+                } else {
+                    Triple(cascadeResult.tree, false, null)
                 }
 
                 _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
 
-                // Apply printer colours as userColour overrides on each region (drives the 3D
-                // viewer palette + paint flow). Round-robin slot mapping.
-                val regions = pipelineState.regions.mapIndexed { idx, r ->
-                    val slot = idx % TARGET_SLOTS
-                    val printerHex = printerColours?.getOrNull(slot)?.takeIf(::isValidHex)
-                    r.copy(slot = slot, userColour = printerHex)
+                // Apply printer-slot colour overrides on leaf regions matching slot index.
+                val tree = treeAfterAi.map { root -> applyPrinterColours(root, printerColours) }
+
+                // Per-triangle slot from tree leaves' slot assignment.
+                val triangleRegions = ByteArray(triCount)
+                val leafByTri = IntArray(triCount) { -1 }
+                tree.forEach { root ->
+                    root.flatten().forEach { (node, _) ->
+                        if (node.isLeaf) {
+                            node.triangleIds.forEach { t ->
+                                if (t in 0 until triCount) {
+                                    triangleRegions[t] = node.region.slot.toByte()
+                                    leafByTri[t] = node.region.id
+                                }
+                            }
+                        }
+                    }
+                }
+                val triangleSegments = ByteArray(triCount) {
+                    leafByTri[it].coerceIn(0, 255).toByte()
                 }
 
-                // Per-triangle segment + slot maps. triangleSegments comes from the chosen
-                // strategy (topology group index or Z-band index). triangleRegions = slot.
-                val triangleSegments = pipelineState.triangleSegments
-                val triangleRegions = ByteArray(triangleSegments.size) { i ->
-                    val seg = triangleSegments[i].toInt() and 0xFF
-                    regions.getOrNull(seg)?.slot?.toByte() ?: 0
-                }
-                val slotIdsForFile = IntArray(triangleSegments.size) { i ->
-                    triangleRegions[i].toInt() and 0xFF
-                }
                 val slotsView = (0 until TARGET_SLOTS).map { s ->
                     AiRegion(
                         id = s,
@@ -222,224 +176,282 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
+                val slotIdsForFile = IntArray(triCount) { triangleRegions[it].toInt() and 0xFF }
                 PaintedMeshWriter.write(
-                    mesh.trianglePositions, slotIdsForFile, slotsView, outFile,
-                    printerColours = printerColours
+                    positions, slotIdsForFile, slotsView, outFile,
+                    printerColours = printerColours,
                 )
 
-                // Task 4 stub: build a placeholder tree out of the existing region list so the
-                // ViewModel keeps compiling. Replaced wholesale in Task 12 (cascade cutover).
-                val placeholderTree = listOf(AiRegionNode(
-                    region = AiRegion(id = -1, label = "Model", suggestedColour = "#888888"),
-                    children = regions.mapIndexed { i, r ->
-                        AiRegionNode(
-                            region = r,
-                            children = emptyList(),
-                            nodeSource = SegmentationSource.TOPOLOGY,
-                            triangleIds = IntArray(0),
-                        )
-                    },
-                    nodeSource = SegmentationSource.TOPOLOGY,
-                    triangleIds = IntArray(triangleSegments.size) { it },
-                ))
                 _uiState.value = AiPaintUiState.Result(
                     AiPaintResultState(
-                        tree = placeholderTree,
-                        source = SegmentationSource.TOPOLOGY,
+                        tree = tree,
+                        source = cascadeResult.source,
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
-                        previewBitmap = null,
-                        trianglePositions = mesh.trianglePositions,
-                        triangleRegions = triangleRegions,
+                        trianglePositions = positions,
                         triangleSegments = triangleSegments,
+                        triangleRegions = triangleRegions,
+                        aiNamingFailed = aiFailed,
+                        aiModelTried = modelTried,
+                        customSelections = emptyList(),
                     )
                 )
             } catch (e: Exception) {
+                Log.e("AiPaint", "Pipeline failed", e)
                 _uiState.value = AiPaintUiState.Error(e.message ?: "Unknown error")
             }
         }
     }
 
-    /** Per-pipeline shape: enough to drive the result-state construction. */
-    private data class PipelineState(
-        val regions: List<AiRegion>,
-        val triangleSegments: ByteArray,
-        val componentIds: IntArray,
-        val numComponents: Int,
-        val componentToRegion: IntArray,
-    )
+    private fun buildCascadeInput(
+        native: NativeLibrary,
+        mesh: NativePreviewMesh,
+        triCount: Int,
+    ): SegmentationCascade.Input {
+        val perTriPaint = mesh.extruderIndices.takeIf { it.size == triCount } ?: ByteArray(triCount)
 
-    /** Topology → AI grouping. Returns null when AI fails so the caller falls back. */
-    private suspend fun runTopologyGroupingPath(
-        positions: FloatArray,
-        componentIds: IntArray,
-        numComponents: Int,
-        provider: AiPaintProvider,
-        apiKey: String,
-    ): PipelineState? {
-        // Target group count: clamp to numComponents (AI can't make more groups than
-        // components since each group needs at least one).
-        val targetGroups = TARGET_SEGMENTS.coerceAtMost(numComponents)
-        // Render shaded + component-coloured views from the same isometric angle.
-        val shaded = AiPaintRenderer.renderShaded(
-            positions, 512, 512, CameraAngle.RIGHT_ISO
-        )
-        val displayColours = AiLabelClient.componentDisplayColors(numComponents)
-        val banded = AiPaintRenderer.renderRegions(
-            positions, componentIds, displayColours, 512, 512, CameraAngle.RIGHT_ISO
-        )
-        _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
-        val grouped = AiLabelClient.labelGroups(
-            provider, apiKey, shaded, banded, numComponents, targetGroups
-        ) ?: return null
+        val volumeJson = runCatching { native.nativeGetAllVolumeExtruders() }.getOrNull()
+        val objectJson = runCatching { native.nativeGetObjectExtruderMap() }.getOrNull()
+        val ranges = mesh.volumeRanges ?: emptyList()
 
-        // componentToRegion: each component to its group index.
-        val componentToGroup = IntArray(numComponents) { c ->
-            val g = grouped.indexOfFirst { it.componentIds.contains(c) }
-            if (g >= 0) g else 0
-        }
-        // triangleSegments: per-triangle group index.
-        val triangleSegments = ByteArray(componentIds.size) { t ->
-            componentToGroup[componentIds[t]].toByte()
-        }
-        val segmentIds = IntArray(triangleSegments.size) { triangleSegments[it].toInt() and 0xFF }
-        val fractions = computeCoverageFractions(segmentIds, targetGroups)
-        val regions = grouped.mapIndexed { i, g ->
-            g.copy(
-                coverageFraction = fractions.getOrElse(i) { 0f },
-            )
-        }
-        Log.i("AiPaint", "Topology+AI path: ${regions.size} groups: ${regions.joinToString { it.label }}")
-        return PipelineState(
-            regions = regions,
-            triangleSegments = triangleSegments,
-            componentIds = componentIds,
-            numComponents = numComponents,
-            componentToRegion = componentToGroup,
+        val volumes = parseObjectVolumes(volumeJson, ranges)
+        val objects = parseObjectInfos(objectJson, ranges)
+
+        return SegmentationCascade.Input(
+            positions = mesh.trianglePositions,
+            perTrianglePaintState = perTriPaint,
+            volumes = volumes,
+            objects = objects,
+            perTriangleIndex = perTriPaint,
         )
     }
 
-    /** Z-band fallback. Equal-width horizontal slices. AI optionally names the bands when
-     *  available; otherwise generic "Band N" labels are used. Always succeeds. */
-    private suspend fun runZBandPath(
-        positions: FloatArray,
+    /** Parse the JSON returned by NativeLibrary.nativeGetAllVolumeExtruders() into the cascade
+     *  input shape. Returns empty list when JSON is missing or volumeRanges aren't supplied. */
+    private fun parseObjectVolumes(
+        json: String?,
+        volumeRanges: List<IntRange>,
+    ): List<SegmentationCascade.ObjectVolumes> {
+        if (json.isNullOrBlank() || volumeRanges.isEmpty()) return emptyList()
+        val arr = runCatching { JSONArray(json) }.getOrNull() ?: return emptyList()
+        val out = mutableListOf<SegmentationCascade.ObjectVolumes>()
+        var volumeCursor = 0
+        for (o in 0 until arr.length()) {
+            val obj = arr.getJSONObject(o)
+            val objId = obj.optLong("objectIndex", o.toLong())
+            val objName = obj.optString("objectName", "Object ${o + 1}").ifBlank { "Object ${o + 1}" }
+            val volsArr = obj.optJSONArray("volumes") ?: continue
+            val vols = mutableListOf<SegmentationCascade.VolumeInfo>()
+            for (v in 0 until volsArr.length()) {
+                val vobj = volsArr.getJSONObject(v)
+                val ext = vobj.optInt("extruder", -1).takeIf { it > 0 }
+                val range = volumeRanges.getOrNull(volumeCursor) ?: continue
+                vols += SegmentationCascade.VolumeInfo(
+                    volumeIndex = v,
+                    extruder = ext,
+                    triangleIds = (range.first..range.last).toList().toIntArray(),
+                )
+                volumeCursor++
+            }
+            if (vols.isNotEmpty()) out += SegmentationCascade.ObjectVolumes(objId, objName, vols)
+        }
+        return out
+    }
+
+    /** Parse the JSON returned by NativeLibrary.nativeGetObjectExtruderMap() into the cascade
+     *  input shape. Pairs each object with its triangle range using volumeRanges as a side-table. */
+    private fun parseObjectInfos(
+        json: String?,
+        volumeRanges: List<IntRange>,
+    ): List<SegmentationCascade.ObjectInfo> {
+        if (json.isNullOrBlank() || volumeRanges.isEmpty()) return emptyList()
+        val arr = runCatching { JSONArray(json) }.getOrNull() ?: return emptyList()
+        var rangeCursor = 0
+        val out = mutableListOf<SegmentationCascade.ObjectInfo>()
+        for (o in 0 until arr.length()) {
+            val obj = arr.getJSONObject(o)
+            val id = obj.optLong("objectId", o.toLong())
+            val name = obj.optString("name", "Object ${o + 1}").ifBlank { "Object ${o + 1}" }
+            val extruder = obj.optInt("extruder", -1).takeIf { it > 0 }
+            val volumeCount = obj.optInt("volumeCount", 1).coerceAtLeast(1)
+            val objRanges = (0 until volumeCount).mapNotNull { volumeRanges.getOrNull(rangeCursor + it) }
+            rangeCursor += volumeCount
+            if (objRanges.isEmpty()) continue
+            val tris = objRanges.flatMap { (it.first..it.last).toList() }.toIntArray()
+            out += SegmentationCascade.ObjectInfo(
+                objectId = id,
+                name = name,
+                extruder = extruder,
+                triangleIds = tris,
+            )
+        }
+        return out
+    }
+
+    /** Optional AI naming post-pass. Returns (renamed tree, aiFailed, modelTried). */
+    private suspend fun applyAiNaming(
         provider: AiPaintProvider,
         apiKey: String,
-        canCallAi: Boolean,
-    ): PipelineState {
-        val triangleBands = assignTriangleBands(positions, TARGET_SEGMENTS)
-        var bandLabels: List<String> = ZBAND_LABELS.take(TARGET_SEGMENTS)
-        var bandColours: List<String> = ZBAND_COLOURS.take(TARGET_SEGMENTS)
-        if (canCallAi) {
-            _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the bands…")
-            val colorInts = bandColours.map {
-                runCatching { Color.parseColor(it) }.getOrDefault(Color.GRAY)
-            }.toIntArray()
-            val banded = AiPaintRenderer.renderRegions(
-                positions, triangleBands, colorInts, 512, 512, CameraAngle.RIGHT_ISO,
-            )
-            val shaded = AiPaintRenderer.renderShaded(
-                positions, 512, 512, CameraAngle.RIGHT_ISO,
-            )
-            val labelled = AiLabelClient.labelSegments(
-                provider, apiKey, listOf(shaded, banded), TARGET_SEGMENTS
-            )
-            if (labelled != null && labelled.size == TARGET_SEGMENTS) {
-                bandLabels = labelled.map { it.label }
-                bandColours = labelled.map { it.colour }
-                Log.i("AiPaint", "Z-band path: AI labels: ${bandLabels.joinToString()}")
-            } else {
-                Log.w("AiPaint", "Z-band path: AI failed; using default labels.")
-            }
+        positions: FloatArray,
+        tree: List<AiRegionNode>,
+    ): Triple<List<AiRegionNode>, Boolean, String?> {
+        val leaves = tree.flatMap { it.flatten().filter { (n, _) -> n.isLeaf }.map { it.first } }
+        if (leaves.isEmpty()) return Triple(tree, false, null)
+
+        val shaded = withContext(Dispatchers.Default) {
+            AiPaintRenderer.renderShaded(positions, 512, 512, CameraAngle.RIGHT_ISO)
         }
-        val fractions = computeCoverageFractions(triangleBands, TARGET_SEGMENTS)
-        val regions = (0 until TARGET_SEGMENTS).map { i ->
-            AiRegion(
-                id = i,
-                label = bandLabels.getOrElse(i) { "Band ${i + 1}" },
-                suggestedColour = bandColours.getOrElse(i) { "#888888" },
-                coverageFraction = fractions.getOrElse(i) { 0f },
-                componentIds = listOf(i),
-            )
+        val perTriRegion = IntArray(positions.size / 9)
+        leaves.forEachIndexed { idx, leaf ->
+            leaf.triangleIds.forEach { t -> if (t in perTriRegion.indices) perTriRegion[t] = idx }
         }
-        val triangleSegments = ByteArray(triangleBands.size) { triangleBands[it].toByte() }
-        val componentToRegion = IntArray(TARGET_SEGMENTS) { it }
-        return PipelineState(
-            regions = regions,
-            triangleSegments = triangleSegments,
-            componentIds = triangleBands,
-            numComponents = TARGET_SEGMENTS,
-            componentToRegion = componentToRegion,
+        val palette = leaves.mapIndexed { i, _ ->
+            runCatching { Color.parseColor(SegmentationCascade.paletteFor(i)) }
+                .getOrDefault(Color.GRAY)
+        }.toIntArray()
+        val banded = withContext(Dispatchers.Default) {
+            AiPaintRenderer.renderRegions(positions, perTriRegion, palette, 512, 512, CameraAngle.RIGHT_ISO)
+        }
+        val names = AiLabelClient.labelSegments(provider, apiKey, listOf(shaded, banded), leaves.size)
+            ?: return Triple(tree, true, AiLabelClient.lastModel)
+
+        if (names.size != leaves.size) return Triple(tree, true, AiLabelClient.lastModel)
+        val nameById: Map<Int, NamedColour> = leaves.mapIndexed { i, leaf -> leaf.region.id to names[i] }.toMap()
+        val renamed = tree.map { root -> applyNames(root, nameById) }
+        return Triple(renamed, false, AiLabelClient.lastModel)
+    }
+
+    private fun applyNames(node: AiRegionNode, names: Map<Int, NamedColour>): AiRegionNode {
+        val named = names[node.region.id]
+        val updated = if (named != null) {
+            node.region.copy(label = named.label, suggestedColour = named.colour)
+        } else node.region
+        return node.copy(
+            region = updated,
+            children = node.children.map { applyNames(it, names) },
+        )
+    }
+
+    private fun applyPrinterColours(node: AiRegionNode, printerColours: List<String>?): AiRegionNode {
+        val printerHex = printerColours?.getOrNull(node.region.slot)?.takeIf(::isValidHex)
+        val updated = if (printerHex != null && node.isLeaf) {
+            node.region.copy(userColour = printerHex)
+        } else node.region
+        return node.copy(
+            region = updated,
+            children = node.children.map { applyPrinterColours(it, printerColours) },
         )
     }
 
     fun updateRegionColour(regionId: Int, hexColour: String) {
-        // Task 4 stub — tree-aware rewrite lands in Task 12 (cascade cutover).
-        @Suppress("UNUSED_PARAMETER") val _r = regionId
-        @Suppress("UNUSED_PARAMETER") val _h = hexColour
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val newTree = current.state.tree.map { root -> recolorNode(root, regionId, hexColour) }
+        _uiState.value = AiPaintUiState.Result(current.state.copy(tree = newTree))
     }
 
-    /** Equal-width Z-band assignment: each triangle is bucketed by its centroid Z relative to
-     *  the model's full Z range. Bands are equal-width in world space (not equal-population),
-     *  which keeps proportions intuitive on upright models (e.g. tall thin neck → its own band
-     *  even when triangle count is low). */
-    private fun assignTriangleBands(positions: FloatArray, bandCount: Int): IntArray {
-        val triCount = positions.size / 9
-        if (triCount == 0 || bandCount <= 0) return IntArray(0)
-        var minZ = Float.POSITIVE_INFINITY
-        var maxZ = Float.NEGATIVE_INFINITY
-        for (t in 0 until triCount) {
-            val b = t * 9
-            val cz = (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
-            if (cz < minZ) minZ = cz
-            if (cz > maxZ) maxZ = cz
-        }
-        val span = (maxZ - minZ).coerceAtLeast(1e-3f)
-        return IntArray(triCount) { t ->
-            val b = t * 9
-            val cz = (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
-            val pct = (cz - minZ) / span
-            (pct * bandCount).toInt().coerceIn(0, bandCount - 1)
-        }
+    private fun recolorNode(node: AiRegionNode, targetId: Int, hex: String): AiRegionNode {
+        if (node.region.id == targetId) return node.copy(region = node.region.copy(userColour = hex))
+        return node.copy(children = node.children.map { recolorNode(it, targetId, hex) })
     }
 
-    private fun computeCoverageFractions(triangleSegments: IntArray, segmentCount: Int): FloatArray {
-        if (triangleSegments.isEmpty() || segmentCount <= 0) return FloatArray(segmentCount)
-        val counts = IntArray(segmentCount)
-        triangleSegments.forEach { counts[it.coerceIn(0, segmentCount - 1)]++ }
-        val total = triangleSegments.size.toFloat()
-        return FloatArray(segmentCount) { counts[it] / total }
-    }
-
-    /** Move every triangle that currently belongs to [componentId] to the slot of [toRegion].
-     *  Task 4 stub — tree-aware rewrite lands in Task 12. */
-    fun moveComponent(componentId: Int, toRegion: Int) {
-        @Suppress("UNUSED_PARAMETER") val _c = componentId
-        @Suppress("UNUSED_PARAMETER") val _r = toRegion
-    }
-
-    /** Brush: each triangle is mapped to a target SLOT (0..TARGET_SLOTS-1). triangleSegments
-     *  is left alone — a painted triangle keeps its original segment for display purposes
-     *  but its physical slot is overridden. */
-    fun paintTriangles(triangleIndices: List<Int>, toRegion: Int) {
+    /** Brush stroke: paint a set of triangles to a target slot. Appends a CustomSelection so
+     *  the screen renders the stroke as a child under the "Custom selections" group. */
+    fun paintTriangles(triangleIndices: List<Int>, toSlot: Int) {
         if (triangleIndices.isEmpty()) return
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         val state = current.state
-        if (toRegion !in 0 until TARGET_SLOTS) return
-
+        if (toSlot !in 0 until TARGET_SLOTS) return
         val newTriRegions = state.triangleRegions.copyOf()
-        val targetSlot = toRegion.toByte()
-        for (t in triangleIndices) {
-            if (t in newTriRegions.indices) newTriRegions[t] = targetSlot
-        }
-        _uiState.value = AiPaintUiState.Result(state.copy(triangleRegions = newTriRegions))
+        val slot = toSlot.toByte()
+        for (t in triangleIndices) if (t in newTriRegions.indices) newTriRegions[t] = slot
+        val nextId = (state.customSelections.maxOfOrNull { it.id } ?: -1) + 1
+        val newSelections = state.customSelections + CustomSelection(
+            id = nextId,
+            slot = toSlot,
+            triangleIds = triangleIndices.toIntArray(),
+        )
+        _uiState.value = AiPaintUiState.Result(state.copy(
+            triangleRegions = newTriRegions,
+            customSelections = newSelections,
+            canUndo = true,
+        ))
     }
 
-    /**
-     * Write the painted 3MF to disk with the current per-triangle region map and return its
-     * path. Called only when the user clicks "Use this painting →" — avoids per-tap disk I/O
-     * that previously froze the main thread for 100-300 ms per brush stroke.
-     */
+    fun commitSelection(triangleIndices: List<Int>, toSlot: Int) = paintTriangles(triangleIndices, toSlot)
+
+    /** Reassign a single SEGMENT (or any node by id) to a different physical slot. */
+    fun setSegmentSlot(segmentId: Int, newSlot: Int) {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val state = current.state
+        if (newSlot !in 0 until TARGET_SLOTS) return
+        pushUndo(state.triangleRegions)
+        val newTriRegions = state.triangleRegions.copyOf()
+        val newTree = state.tree.map { root -> reassignSlot(root, segmentId, newSlot, newTriRegions) }
+        _uiState.value = AiPaintUiState.Result(state.copy(
+            tree = newTree,
+            triangleRegions = newTriRegions,
+            canUndo = true,
+        ))
+    }
+
+    /** Cascade-reassign: reassign EVERY cascade-tree leaf under the node addressed by [pathIds]
+     *  to the new slot. Custom-selection rows are NOT swept up — they live under a separate
+     *  root-level group (see CustomSelections.buildGroup). */
+    fun cascadeReassign(pathIds: List<Int>, newSlot: Int) {
+        if (pathIds.isEmpty()) return
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        val state = current.state
+        if (newSlot !in 0 until TARGET_SLOTS) return
+        pushUndo(state.triangleRegions)
+        val newTriRegions = state.triangleRegions.copyOf()
+        val newTree = state.tree.map { root -> reassignSubtree(root, pathIds, newSlot, newTriRegions) }
+        _uiState.value = AiPaintUiState.Result(state.copy(
+            tree = newTree,
+            triangleRegions = newTriRegions,
+            canUndo = true,
+        ))
+    }
+
+    /** Reassign a single node by its region.id to a slot, including all its leaf triangles. */
+    private fun reassignSlot(node: AiRegionNode, targetId: Int, newSlot: Int, out: ByteArray): AiRegionNode {
+        if (node.region.id == targetId) {
+            fun visit(n: AiRegionNode): AiRegionNode {
+                if (n.isLeaf) {
+                    n.triangleIds.forEach { t -> if (t in out.indices) out[t] = newSlot.toByte() }
+                    return n.copy(region = n.region.copy(slot = newSlot))
+                }
+                return n.copy(children = n.children.map(::visit))
+            }
+            return visit(node).copy(region = node.region.copy(slot = newSlot))
+        }
+        return node.copy(children = node.children.map { reassignSlot(it, targetId, newSlot, out) })
+    }
+
+    /** Cascade subtree reassign — finds the node at path[last] and reassigns every leaf under it. */
+    private fun reassignSubtree(node: AiRegionNode, path: List<Int>, newSlot: Int, out: ByteArray): AiRegionNode {
+        if (path.isEmpty()) return node
+        if (node.region.id == path.last()) {
+            fun visit(n: AiRegionNode): AiRegionNode {
+                if (n.isLeaf) {
+                    n.triangleIds.forEach { t -> if (t in out.indices) out[t] = newSlot.toByte() }
+                    return n.copy(region = n.region.copy(slot = newSlot))
+                }
+                return n.copy(children = n.children.map(::visit))
+            }
+            return visit(node).copy(region = node.region.copy(slot = newSlot))
+        }
+        return node.copy(children = node.children.map { reassignSubtree(it, path, newSlot, out) })
+    }
+
+    /** Backwards-compat: callers that did "move part to region N" funnel through setSegmentSlot. */
+    fun moveComponent(componentId: Int, toRegion: Int) = setSegmentSlot(componentId, toRegion)
+
+    fun highlightComponent(componentId: Int?) {
+        val current = _uiState.value as? AiPaintUiState.Result ?: return
+        if (current.state.highlightComponentId == componentId) return
+        _uiState.value = AiPaintUiState.Result(current.state.copy(highlightComponentId = componentId))
+    }
+
     fun finalizePainting(): String? {
         val current = _uiState.value as? AiPaintUiState.Result ?: return null
         val state = current.state
@@ -456,42 +468,10 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
         PaintedMeshWriter.write(
             state.trianglePositions, regionIds, slotsView, outFile,
-            printerColours = lastPrinterColours
+            printerColours = lastPrinterColours,
         )
         _uiState.value = AiPaintUiState.Result(state.copy(paintedModelPath = outFile.absolutePath))
         return outFile.absolutePath
-    }
-
-    /** Lasso commit: apply a selected set of triangles to a target slot in one shot. */
-    fun commitSelection(triangleIndices: List<Int>, toSlot: Int) {
-        if (triangleIndices.isEmpty()) return
-        val current = _uiState.value as? AiPaintUiState.Result ?: return
-        val state = current.state
-        if (toSlot !in 0 until TARGET_SLOTS) return
-
-        pushUndo(state.triangleRegions)
-        val newTriRegions = state.triangleRegions.copyOf()
-        val slotByte = toSlot.toByte()
-        for (t in triangleIndices) {
-            if (t in newTriRegions.indices) newTriRegions[t] = slotByte
-        }
-        _uiState.value = AiPaintUiState.Result(
-            state.copy(triangleRegions = newTriRegions, canUndo = true)
-        )
-    }
-
-    /** Reassign a single SEGMENT to a different physical slot.
-     *  Task 4 stub — tree-aware rewrite lands in Task 12. */
-    fun setSegmentSlot(segmentId: Int, newSlot: Int) {
-        @Suppress("UNUSED_PARAMETER") val _s = segmentId
-        @Suppress("UNUSED_PARAMETER") val _ns = newSlot
-    }
-
-    /** Highlight a single component on the 3D view (others dimmed). Pass null to clear. */
-    fun highlightComponent(componentId: Int?) {
-        val current = _uiState.value as? AiPaintUiState.Result ?: return
-        if (current.state.highlightComponentId == componentId) return
-        _uiState.value = AiPaintUiState.Result(current.state.copy(highlightComponentId = componentId))
     }
 
     fun redo(sourceModelPath: String, native: NativeLibrary) {
