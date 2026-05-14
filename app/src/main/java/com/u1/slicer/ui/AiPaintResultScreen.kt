@@ -527,20 +527,29 @@ private fun AiPaintViewer(
         if (state.triangleRegions.isEmpty()) return@LaunchedEffect
         when {
             highlightedTriangles.isNotEmpty() -> {
-                // Reserve two palette slots past the existing region count so the indices don't
-                // collide with leaf colours (the old code hardcoded 4/5 which only worked when
-                // there were exactly 4 leaves).
-                val highlightIdx = regionPalette.size.coerceAtMost(254)
-                val dimIdx = (regionPalette.size + 1).coerceAtMost(255)
-                val overlay = ByteArray(state.triangleRegions.size) { i ->
-                    if (i in highlightedTriangles) highlightIdx.toByte() else dimIdx.toByte()
+                // fix35.3: highlight in the region's REAL slot colour (was yellow). The rest of
+                // the model fades but keeps its colour identity — lerp 50% toward a medium dark
+                // grey, which desaturates and darkens but preserves hue. Slot-indexed palette
+                // doubles up: indices 0..3 = full slot colours (for highlighted triangles),
+                // indices 4..7 = faded versions (for everything else).
+                val slotCount = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+                val baseSlotColours = (0 until slotCount).map { i ->
+                    regionPalette.getOrNull(i) ?: floatArrayOf(0.55f, 0.55f, 0.55f, 1f)
                 }
-                val extended = regionPalette + listOf(
-                    floatArrayOf(1f, 0.92f, 0.20f, 1f),   // highlight = yellow
-                    floatArrayOf(0.20f, 0.20f, 0.22f, 1f) // dim = near-black grey
-                )
+                val fadedSlotColours = baseSlotColours.map { c ->
+                    floatArrayOf(
+                        c[0] * 0.5f + 0.10f,
+                        c[1] * 0.5f + 0.10f,
+                        c[2] * 0.5f + 0.10f,
+                        c[3],
+                    )
+                }
+                val overlay = ByteArray(state.triangleRegions.size) { i ->
+                    val baseSlot = (state.triangleRegions[i].toInt() and 0xFF).coerceIn(0, slotCount - 1)
+                    if (i in highlightedTriangles) baseSlot.toByte() else (baseSlot + slotCount).toByte()
+                }
                 v.updateExtruderIndices(overlay)
-                v.recolorMesh(extended)
+                v.recolorMesh(baseSlotColours + fadedSlotColours)
             }
             lassoSelection.isNotEmpty() -> {
                 // Reserve a fresh palette index past whatever the regions need so we don't clash
