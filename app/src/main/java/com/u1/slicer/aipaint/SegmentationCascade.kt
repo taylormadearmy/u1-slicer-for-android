@@ -30,6 +30,95 @@ object SegmentationCascade {
 
     internal fun paletteFor(i: Int): String = PALETTE[i % PALETTE.size]
 
+    /** Triangle-share threshold for recursive sub-division: when ONE component owns more than
+     *  this fraction of total triangles, we K-means-split it into sub-regions. */
+    private const val DOMINANT_THRESHOLD = 0.60f
+
+    /** Maximum leaves the cascade emits. The original UI cap; tree depth caps independently. */
+    private const val TARGET_LEAVES = 12
+
+    /** Branch E — topology flood-fill, with recursion on the dominant component. */
+    fun topologyBranch(positions: FloatArray): CascadeResult {
+        val (componentIds, numComponents) =
+            MeshSegmenter.segmentByTopologyOrSpatial(positions)
+        val triCount = positions.size / 9
+        if (numComponents < 2) {
+            return CascadeResult(emptyList(), ByteArray(triCount), SegmentationSource.TOPOLOGY)
+        }
+
+        // Triangle counts per component → descending order; keep top TARGET_LEAVES.
+        val triByComp = Array(numComponents) { mutableListOf<Int>() }
+        for (t in 0 until triCount) triByComp[componentIds[t]].add(t)
+        val sortedComps = (0 until numComponents).sortedByDescending { triByComp[it].size }
+
+        // Detect dominant component for recursion.
+        val largestSize = triByComp[sortedComps.first()].size
+        val largestFraction = largestSize.toFloat() / triCount
+        val shouldRecurse = largestFraction > DOMINANT_THRESHOLD
+
+        val baseLeaves = sortedComps.take(TARGET_LEAVES).mapIndexed { i, comp ->
+            val tris = triByComp[comp].toIntArray()
+            AiRegionNode(
+                region = AiRegion(
+                    id = i,
+                    label = "Region ${i + 1}",
+                    suggestedColour = paletteFor(i),
+                    coverageFraction = tris.size.toFloat() / triCount,
+                    slot = i % TARGET_SLOTS,
+                ),
+                children = emptyList(),
+                nodeSource = SegmentationSource.TOPOLOGY,
+                triangleIds = tris,
+            )
+        }
+
+        val children: List<AiRegionNode> = if (shouldRecurse) {
+            // Replace the dominant leaf with one whose children are K-means sub-regions.
+            val dominant = baseLeaves.first()
+            val subRegions = TopologyRecursion.subdivide(
+                positions = positions,
+                triangleIds = dominant.triangleIds,
+                kMeansK = 8,
+                startId = TARGET_LEAVES,
+            )
+            listOf(dominant.copy(
+                children = subRegions,
+                nodeSource = SegmentationSource.TOPOLOGY_RECURSIVE,
+            )) + baseLeaves.drop(1)
+        } else {
+            baseLeaves
+        }
+
+        // Triangle → segment id map. For recursive children, the SUB-region id wins.
+        val triangleSegments = ByteArray(triCount)
+        children.forEach { topChild ->
+            if (topChild.children.isEmpty()) {
+                topChild.triangleIds.forEach { t -> triangleSegments[t] = topChild.region.id.toByte() }
+            } else {
+                topChild.children.forEach { sub ->
+                    sub.triangleIds.forEach { t -> triangleSegments[t] = sub.region.id.toByte() }
+                }
+            }
+        }
+
+        val root = AiRegionNode(
+            region = AiRegion(
+                id = -1,
+                label = "Model",
+                suggestedColour = "#888888",
+                coverageFraction = 1f,
+            ),
+            children = children,
+            nodeSource = if (shouldRecurse) SegmentationSource.TOPOLOGY_RECURSIVE else SegmentationSource.TOPOLOGY,
+            triangleIds = IntArray(triCount) { it },
+        )
+        return CascadeResult(
+            tree = listOf(root),
+            triangleSegments = triangleSegments,
+            source = root.nodeSource,
+        )
+    }
+
     /** Branch F — equal-width Z-band segmentation. Always succeeds. */
     fun zBandBranch(positions: FloatArray, bandCount: Int = 12): CascadeResult {
         val triCount = positions.size / 9

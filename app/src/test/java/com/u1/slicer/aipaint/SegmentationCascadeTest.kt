@@ -51,4 +51,24 @@ class SegmentationCascadeTest {
         val slots = result.tree.first().children.map { it.region.slot }
         assertEquals(listOf(0,1,2,3,0,1,2,3,0,1,2,3), slots)
     }
+
+    @Test
+    fun `topology branch yields at least 2 leaves on disjoint clusters`() {
+        // 3 disjoint triangle clusters of 30 each.
+        val positions = FloatArray(90 * 9)
+        for (cluster in 0 until 3) {
+            val cx = cluster * 100f
+            for (t in 0 until 30) {
+                val b = (cluster * 30 + t) * 9
+                positions[b + 0] = cx; positions[b + 1] = t * 0.01f; positions[b + 2] = 0f
+                positions[b + 3] = cx + 1f; positions[b + 4] = t * 0.01f; positions[b + 5] = 0f
+                positions[b + 6] = cx; positions[b + 7] = t * 0.01f + 1f; positions[b + 8] = 0f
+            }
+        }
+        val r = SegmentationCascade.topologyBranch(positions)
+        assertTrue("topology branch must yield ≥ 2 leaves on disjoint clusters",
+            (r.tree.firstOrNull()?.children?.size ?: 0) >= 2)
+        assertTrue(r.source == SegmentationSource.TOPOLOGY ||
+                   r.source == SegmentationSource.TOPOLOGY_RECURSIVE)
+    }
 }
