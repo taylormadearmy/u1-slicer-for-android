@@ -54,11 +54,18 @@ fun AiPaintTreeRow(
             Spacer(Modifier.width(26.dp))
         }
 
-        val primary = remember(node) {
-            val argb = runCatching { android.graphics.Color.parseColor(node.region.effectiveColour) }
-                .getOrDefault(android.graphics.Color.GRAY)
-            Color(argb)
-        }
+        // fix35.1: row leading swatch shows the SLOT's colour (slotPalette[node.slot]) rather
+        // than the node's own suggestedColour. Without this, reassigning a node to a different
+        // slot wouldn't visibly change the row's swatch (user complaint: "tapping a region in
+        // the list does not seem to change the colour"). Parents with mixed children fall back
+        // to dominantSlot for the primary + a diagonal stripe of secondarySlot.
+        val primarySlot = if (node.isLeaf) node.region.slot else node.dominantSlot()
+        val primary = slotPalette.getOrNull(primarySlot)
+            ?: remember(node) {
+                val argb = runCatching { android.graphics.Color.parseColor(node.region.effectiveColour) }
+                    .getOrDefault(android.graphics.Color.GRAY)
+                Color(argb)
+            }
         val secondary = if (node.isLeaf) null else node.secondarySlot()?.let { slotPalette.getOrNull(it) }
         MixedSlotSwatch(
             primary = primary,

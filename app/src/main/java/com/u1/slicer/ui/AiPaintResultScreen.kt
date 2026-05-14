@@ -122,6 +122,19 @@ fun AiPaintResultScreen(
                     }
                     val brushRadiusWorld = brushPct * modelDiagonal
 
+                    // Slot palette hoisted up here (was originally below the viewer) so the
+                    // HighlightSlotPicker overlay can use it.
+                    val slotPalette: List<Color> = remember(result.tree) {
+                        val byTris = result.leafRegions.groupBy { it.slot }
+                        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
+                            val hex = byTris[slot]?.firstOrNull()?.effectiveColour ?: "#888888"
+                            Color(
+                                runCatching { android.graphics.Color.parseColor(hex) }
+                                    .getOrDefault(android.graphics.Color.GRAY)
+                            )
+                        }
+                    }
+
                     // Triangle set for the currently-highlighted tree node, derived from the
                     // node's stored triangleIds. Walks the tree once whenever the highlight or
                     // the tree changes. Empty when nothing is highlighted → renderer falls back
@@ -135,8 +148,19 @@ fun AiPaintResultScreen(
                             ?.let { it.triangleIds.toHashSet() }
                             ?: emptySet()
                     }
+                    val highlightedNode: com.u1.slicer.aipaint.AiRegionNode? = remember(result.tree, result.highlightComponentId, result.customSelections) {
+                        val id = result.highlightComponentId ?: return@remember null
+                        val withCustom = result.tree + listOfNotNull(
+                            com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
+                        )
+                        findNodeById(withCustom, id)
+                    }
 
-                    // Live 3D viewer — replaces the previous static iso bitmap.
+                    // Live 3D viewer — wrapped in a Box so the HighlightSlotPicker overlay can
+                    // float at the bottom of the viewer when a region is selected.
+                    Box(
+                        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f),
+                    ) {
                     AiPaintViewer(
                         state = result,
                         onTriangleTapped = { triangleIdx ->
@@ -173,9 +197,30 @@ fun AiPaintResultScreen(
                         },
                         lassoSelection = lassoSelection,
                         highlightedTriangles = highlightedTriangles,
-                        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f)
+                        modifier = Modifier.fillMaxSize()
                             .background(Color(0xFF111118))
                     )
+
+                    // fix35.1: floating slot picker overlay shown when a region is currently
+                    // highlighted. Provides the "what now?" action — tap a slot to assign the
+                    // highlighted region; × clears. Solves the user-feedback "Select a region
+                    // on the 3D view — there is no way to change the colour".
+                    if (highlightedNode != null) {
+                        HighlightSlotPicker(
+                            label = highlightedNode.region.label,
+                            currentSlot = highlightedNode.region.slot,
+                            slotPalette = slotPalette,
+                            onPickSlot = { slot ->
+                                onSetSegmentSlot(highlightedNode.region.id, slot)
+                                onHighlightComponent(null)
+                            },
+                            onDismiss = { onHighlightComponent(null) },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 12.dp),
+                        )
+                    }
+                    }  // end Box wrapper for viewer + overlay
 
                     // Mode toolbar — Paint and Lasso are mutually exclusive.
                     PaintModeBar(
@@ -222,18 +267,7 @@ fun AiPaintResultScreen(
                         modifier = Modifier.padding(start = 16.dp, top = 8.dp, bottom = 4.dp)
                     )
                     // Build the 4 slot palette colours from the cascade root's leaves, grouped
-                    // by slot. Fallback to default palette for slots that have no triangles
-                    // currently assigned (rare but possible while brushing).
-                    val slotPalette: List<Color> = remember(result.tree) {
-                        val byTris = result.leafRegions.groupBy { it.slot }
-                        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
-                            val hex = byTris[slot]?.firstOrNull()?.effectiveColour ?: "#888888"
-                            Color(
-                                runCatching { android.graphics.Color.parseColor(hex) }
-                                    .getOrDefault(android.graphics.Color.GRAY)
-                            )
-                        }
-                    }
+                    // slotPalette hoisted to above the AiPaintViewer (see line ~127).
 
                     // F54 — AI failure chip surfaces when AI naming was attempted but failed.
                     if (result.aiNamingFailed) {
