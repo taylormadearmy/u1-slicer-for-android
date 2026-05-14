@@ -104,6 +104,10 @@ object SegmentationCascade {
         }
         val triangleSegments = ByteArray(totalTriangles)
         var nextLeafId = 0
+        // fix37: parents need unique ids too — previously every multi-volume object's parent
+        // got id=-1, colliding with the cascade root (-2) and other parents. Multiple parents
+        // with the same id broke findNodeById on tap-to-highlight.
+        var nextParentId = -100
 
         val rootChildren = mutableListOf<AiRegionNode>()
         for (obj in objects) {
@@ -149,9 +153,10 @@ object SegmentationCascade {
                     )
                 }
                 val objTris = obj.volumes.flatMap { it.triangleIds.toList() }.toIntArray()
+                val parentId = nextParentId--
                 rootChildren += AiRegionNode(
                     region = AiRegion(
-                        id = -1,
+                        id = parentId,
                         label = obj.objectName,
                         suggestedColour = paletteFor(0),
                         coverageFraction = objTris.size.toFloat() / totalTriangles,

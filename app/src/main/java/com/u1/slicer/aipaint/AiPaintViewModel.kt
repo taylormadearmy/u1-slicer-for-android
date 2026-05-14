@@ -211,19 +211,33 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         // fix36: populate mesh.volumeRanges from the per-volume triangle counts captured
         // during the native preview build. Once populated the cascade's Branch B (per-volume)
         // and Branch C (per-object) become usable on multi-volume Bambu 3MFs.
+        // fix37: always emit a range entry per count (even when count is 0) so the index
+        // alignment with nativeGetAllVolumeExtruders's volume order stays correct. Empty
+        // ranges encode "this volume exists but contributed no preview triangles".
         if (mesh.volumeRanges == null) {
             val counts = runCatching { native.nativeGetPreviewVolumeTriangleCounts() }.getOrNull()
             if (counts != null && counts.isNotEmpty()) {
                 var cursor = 0
                 val ranges = mutableListOf<IntRange>()
                 for (c in counts) {
-                    if (c <= 0) continue
-                    val end = cursor + c - 1
+                    val safeC = c.coerceAtLeast(0)
+                    if (safeC == 0) {
+                        // empty range — preserves index alignment with the JSON volumes
+                        ranges += IntRange(0, -1)
+                        continue
+                    }
+                    val end = cursor + safeC - 1
                     if (end >= triCount) break // defensive — desync between counts + mesh
                     ranges += cursor..end
-                    cursor += c
+                    cursor += safeC
                 }
-                if (ranges.isNotEmpty()) mesh.volumeRanges = ranges
+                if (ranges.isNotEmpty()) {
+                    mesh.volumeRanges = ranges
+                    Log.i("AiPaint",
+                        "fix37 volumeRanges populated: ${ranges.size} ranges, " +
+                        "total tris ${ranges.sumOf { (it.last - it.first + 1).coerceAtLeast(0) }} " +
+                        "/ ${triCount}")
+                }
             }
         }
 

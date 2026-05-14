@@ -321,25 +321,33 @@ fun AiPaintResultScreen(
                         )
                     }
 
+                    // fix37: compact button row. Undo + Re-run as icon-only buttons (saves
+                    // horizontal space and is visually consistent), the primary action takes
+                    // the remaining width so its label never wraps on narrow phones.
                     Row(
                         Modifier.fillMaxWidth().padding(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         OutlinedButton(
                             onClick = onUndo,
                             enabled = result.canUndo,
-                            modifier = Modifier.weight(1f),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                            modifier = Modifier.size(width = 48.dp, height = 40.dp),
                         ) {
-                            Text("↶ Undo")
+                            Text("↶", style = MaterialTheme.typography.titleMedium)
                         }
-                        OutlinedButton(onClick = onRedo, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Redo")
+                        OutlinedButton(
+                            onClick = onRedo,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                            modifier = Modifier.size(width = 48.dp, height = 40.dp),
+                        ) {
+                            Icon(Icons.Default.Refresh, "Re-run AI",
+                                modifier = Modifier.size(20.dp))
                         }
                         Button(
                             onClick = { onUsePainting(result.paintedModelPath) },
-                            modifier = Modifier.weight(2f)
+                            modifier = Modifier.weight(1f).height(40.dp),
                         ) {
                             Text("Use this painting →")
                         }

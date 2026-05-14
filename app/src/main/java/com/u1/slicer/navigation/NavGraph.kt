@@ -3,6 +3,7 @@ package com.u1.slicer.navigation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -129,7 +130,19 @@ fun U1NavGraph(
             val container = (navController.context.applicationContext as U1SlicerApplication).container
             val aiVm = container.aiPaintViewModel
             val uiState by aiVm.uiState.collectAsState()
-            val filamentColours = viewModel.activeExtruderColors.collectAsState().value
+            // fix37: build the full 4-slot palette from the user's extruder presets directly.
+            // viewModel.activeExtruderColors is filtered by `usedSlots` (which slots the loaded
+            // model actually uses) so on a single-colour plate it leaves the other 3 slots
+            // blank — making the Smart Paint picker show grey for slots the user can still
+            // pick. The presets always have all 4, regardless of model.
+            val extruderPresets by viewModel.extruderPresets.collectAsState()
+            val filamentColours = remember(extruderPresets) {
+                (0..3).map { i ->
+                    extruderPresets.firstOrNull { it.index == i }?.color
+                        ?.takeIf { it.isNotBlank() }
+                        ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
+                }
+            }
 
             AiPaintResultScreen(
                 uiState = uiState,
