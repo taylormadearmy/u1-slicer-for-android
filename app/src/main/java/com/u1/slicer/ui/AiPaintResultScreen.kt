@@ -137,6 +137,15 @@ fun AiPaintResultScreen(
                             )
                         }
                     }
+                    // fix38.1: float-array form of slotPalette for the GL renderer. Used by
+                    // AiPaintViewer's recolor path so triangleRegions[t] (a slot byte 0..3)
+                    // correctly indexes into the user's loaded filament colours, regardless of
+                    // how many leaves are currently assigned to that slot or in what order.
+                    val slotPaletteFloats: List<FloatArray> = remember(slotPalette) {
+                        slotPalette.map { c ->
+                            floatArrayOf(c.red, c.green, c.blue, c.alpha)
+                        }
+                    }
 
                     // Triangle set for the currently-highlighted tree node, derived from the
                     // node's stored triangleIds. Walks the tree once whenever the highlight or
@@ -181,6 +190,7 @@ fun AiPaintResultScreen(
                         },
                         // fix35.2: tap empty viewer area = clear highlight.
                         onEmptyTap = { onHighlightComponent(null) },
+                        slotPaletteFloats = slotPaletteFloats,
                         paintMode = paintMode || lassoMode,
                         brushRadiusWorld = brushRadiusWorld,
                         brushPct = brushPct,
@@ -454,6 +464,12 @@ private fun AiPaintViewer(
     activeRegion: Int,
     onPaintTriangles: (List<Int>, Int) -> Unit,
     onBrushStrokeStart: () -> Unit,
+    /** fix38.1: SLOT-indexed palette (size = TARGET_SLOTS = 4). The renderer applies
+     *  palette[triangleRegions[t]] where triangleRegions[t] stores the slot byte 0..3. Previously
+     *  AiPaintViewer built a LEAF-indexed palette from state.regions, which only happened to
+     *  work when leaves were laid out in slot order. After any reassignment, palette[slot] would
+     *  return the wrong leaf's effectiveColour — e.g. all-red leaves rendered blue. */
+    slotPaletteFloats: List<FloatArray>,
     lassoSelection: Set<Int> = emptySet(),
     highlightedTriangles: Set<Int> = emptySet(),
     modifier: Modifier = Modifier,
@@ -479,18 +495,9 @@ private fun AiPaintViewer(
         else AiPaintMeshBuilder.build(recenteredPositions, state.triangleRegions)
     }
 
-    val regionPalette = remember(state.regions) {
-        state.regions.map { r ->
-            val argb = runCatching { android.graphics.Color.parseColor(r.effectiveColour) }
-                .getOrDefault(android.graphics.Color.GRAY)
-            floatArrayOf(
-                android.graphics.Color.red(argb)   / 255f,
-                android.graphics.Color.green(argb) / 255f,
-                android.graphics.Color.blue(argb)  / 255f,
-                1f
-            )
-        }
-    }
+    // fix38.1: palette is now SLOT-indexed (4 entries) supplied from the screen. The renderer
+    // reads palette[triangleRegions[t]] where triangleRegions[t] is the slot byte 0..3.
+    val regionPalette = slotPaletteFloats
 
     Box(modifier = modifier.onSizeChanged { viewerSizePx = it }) {
         AndroidView(
