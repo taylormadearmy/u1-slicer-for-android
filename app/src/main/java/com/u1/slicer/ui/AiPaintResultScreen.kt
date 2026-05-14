@@ -199,24 +199,27 @@ fun AiPaintResultScreen(
                         // fix35.2: tap empty viewer area = clear highlight.
                         onEmptyTap = { onHighlightComponent(null) },
                         slotPaletteFloats = slotPaletteFloats,
-                        paintMode = paintMode || lassoMode,
+                        paintMode = paintMode,
+                        lassoMode = lassoMode,
                         brushRadiusWorld = brushRadiusWorld,
                         brushPct = brushPct,
                         activeRegion = paintActiveRegion,
                         onPaintTriangles = { tris, slot ->
-                            if (lassoMode) {
-                                // Lasso: union into a NEW set each call so Compose sees a state
-                                // change and the yellow overlay updates mid-drag.
-                                if (tris.isNotEmpty()) {
-                                    lassoSelection = lassoSelection + tris
-                                }
-                            } else {
-                                // Paint mode: apply immediately to active slot.
-                                onPaintTriangles(tris, slot)
-                            }
+                            // Paint mode applies immediately to active slot. Lasso is a
+                            // separate channel via onLassoLoop — no per-tick painting.
+                            onPaintTriangles(tris, slot)
                         },
-                        onBrushStrokeStart = {
-                            if (!lassoMode) onBrushStrokeStart()
+                        onBrushStrokeStart = { onBrushStrokeStart() },
+                        onLassoLoop = { tris ->
+                            // fix42: polygon lasso UP → auto-commit the enclosed front-facing
+                            // triangles to the currently-active slot. No intermediate selection
+                            // step; the user already picked the colour by tapping a swatch
+                            // before drawing the loop. Snapshot for undo first so a single
+                            // lasso stroke is one undo step.
+                            if (tris.isNotEmpty()) {
+                                onBrushStrokeStart()
+                                onCommitSelection(tris, paintActiveRegion)
+                            }
                         },
                         lassoSelection = lassoSelection,
                         highlightedTriangles = highlightedTriangles,
@@ -339,13 +342,9 @@ fun AiPaintResultScreen(
                         paintMode = paintMode,
                         lassoMode = lassoMode,
                         activeSlot = paintActiveRegion,
-                        hasLassoSelection = lassoSelection.isNotEmpty(),
+                        hasLassoSelection = false,
                         onTapSlot = { slot ->
                             when {
-                                lassoMode && lassoSelection.isNotEmpty() -> {
-                                    onCommitSelection(lassoSelection.toList(), slot)
-                                    lassoSelection = emptySet()
-                                }
                                 paintMode || lassoMode -> paintActiveRegion = slot
                                 else -> editSlotColour = slot
                             }
@@ -493,11 +492,13 @@ private fun AiPaintViewer(
     onTriangleTapped: (Int) -> Unit,
     onEmptyTap: () -> Unit,
     paintMode: Boolean,
+    lassoMode: Boolean,
     brushRadiusWorld: Float,
     brushPct: Float,
     activeRegion: Int,
     onPaintTriangles: (List<Int>, Int) -> Unit,
     onBrushStrokeStart: () -> Unit,
+    onLassoLoop: (List<Int>) -> Unit,
     /** fix38.1: SLOT-indexed palette (size = TARGET_SLOTS = 4). The renderer applies
      *  palette[triangleRegions[t]] where triangleRegions[t] stores the slot byte 0..3. Previously
      *  AiPaintViewer built a LEAF-indexed palette from state.regions, which only happened to
@@ -511,6 +512,9 @@ private fun AiPaintViewer(
     var viewerView by remember { mutableStateOf<ModelViewerView?>(null) }
     // Latest brush touch position in viewer-local pixels, or null when the finger is up.
     var brushTouchPx by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    // fix42: live lasso path in view-local pixels — populated on every MOVE while lasso-
+    // dragging, cleared on UP. Drawn as a yellow polyline overlay on top of the GL surface.
+    var lassoPathPx by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
     var viewerSizePx by remember { mutableStateOf(IntSize.Zero) }
 
     // Recenter the mesh on the U1 build plate so it sits in frame. The pipeline retains
@@ -569,6 +573,29 @@ private fun AiPaintViewer(
                 )
             }
         }
+        // fix42: live lasso polygon overlay — yellow polyline that follows the user's finger
+        // while they draw the loop. Drawn as a closed Path with a faint fill so the enclosed
+        // area is visible during the drag. Cleared on UP by ModelViewerView's path-empty emit.
+        val lassoPts = lassoPathPx
+        if (lassoMode && lassoPts.size >= 2) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(lassoPts.first().first, lassoPts.first().second)
+                    for (i in 1 until lassoPts.size) lineTo(lassoPts[i].first, lassoPts[i].second)
+                    close()
+                }
+                drawPath(
+                    path = path,
+                    color = Color(0xFFFFC107).copy(alpha = 0.18f),
+                    style = androidx.compose.ui.graphics.drawscope.Fill,
+                )
+                drawPath(
+                    path = path,
+                    color = Color(0xFFFFC107),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f),
+                )
+            }
+        }
     }
 
     // fix40.6: rememberUpdatedState wraps the parent lambdas so the LaunchedEffect's
@@ -581,28 +608,44 @@ private fun AiPaintViewer(
     val currentEmptyTap by rememberUpdatedState(onEmptyTap)
     val currentPaint by rememberUpdatedState(onPaintTriangles)
     val currentStrokeStart by rememberUpdatedState(onBrushStrokeStart)
+    val currentLassoLoop by rememberUpdatedState(onLassoLoop)
 
-    // Wire up the tap callbacks every time the mode flips. Paint mode → onBrushPaint, default
-    // mode → onTriangleTapped (for the move-component sheet).
-    LaunchedEffect(viewerView, paintMode, activeRegion, brushRadiusWorld) {
+    // Wire up the GL-view callbacks every time the mode flips. Three exclusive modes:
+    //   paintMode → brush stroke (immediate paint per tick)
+    //   lassoMode → polygon lasso (path captured, auto-commit on UP)
+    //   neither   → tap-to-highlight
+    LaunchedEffect(viewerView, paintMode, lassoMode, activeRegion, brushRadiusWorld) {
         val v = viewerView ?: return@LaunchedEffect
         v.brushRadiusWorld = brushRadiusWorld
-        if (paintMode) {
-            v.onBrushPaint = { tris -> currentPaint(tris, activeRegion) }
-            v.onBrushStrokeStart = { currentStrokeStart() }
-            v.onBrushTouchAt = { x, y ->
-                brushTouchPx = if (x < 0f) null else x to y
+        // Clear all callbacks first; subsequent block re-wires the active mode.
+        v.onBrushPaint = null
+        v.onBrushStrokeStart = null
+        v.onBrushTouchAt = null
+        v.onTriangleTapped = null
+        v.onEmptyTap = null
+        v.lassoMode = false
+        v.onLassoLoop = null
+        v.onLassoPathUpdate = null
+        when {
+            paintMode -> {
+                v.onBrushPaint = { tris -> currentPaint(tris, activeRegion) }
+                v.onBrushStrokeStart = { currentStrokeStart() }
+                v.onBrushTouchAt = { x, y ->
+                    brushTouchPx = if (x < 0f) null else x to y
+                }
             }
-            v.onTriangleTapped = null
-            v.onEmptyTap = null
-        } else {
-            v.onBrushPaint = null
-            v.onBrushStrokeStart = null
-            v.onBrushTouchAt = null
-            v.onTriangleTapped = { tri -> currentTapped(tri) }
-            // fix35.2: tap on empty viewer background clears the highlight.
-            v.onEmptyTap = { currentEmptyTap() }
-            brushTouchPx = null
+            lassoMode -> {
+                v.lassoMode = true
+                v.onLassoLoop = { tris -> currentLassoLoop(tris) }
+                v.onLassoPathUpdate = { path -> lassoPathPx = path }
+                brushTouchPx = null
+            }
+            else -> {
+                v.onTriangleTapped = { tri -> currentTapped(tri) }
+                v.onEmptyTap = { currentEmptyTap() }
+                brushTouchPx = null
+                lassoPathPx = emptyList()
+            }
         }
     }
 
@@ -718,17 +761,12 @@ private fun ViewerToolbar(
             FilterChip(
                 selected = lassoMode,
                 onClick = onToggleLasso,
-                label = {
-                    Text(if (lassoMode && selectionSize > 0) "🪄 $selectionSize" else "🪄 Lasso")
-                },
+                label = { Text("🪄 Lasso") },
             )
-            if (lassoMode && selectionSize > 0) {
-                IconButton(onClick = onClearSelection, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = "Clear selection")
-                }
-            }
         }
-        if (paintMode || lassoMode) {
+        if (paintMode) {
+            // fix42: brush slider only meaningful for Paint mode. Lasso draws a polygon, no
+            // thickness involved, so no slider.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "Brush",

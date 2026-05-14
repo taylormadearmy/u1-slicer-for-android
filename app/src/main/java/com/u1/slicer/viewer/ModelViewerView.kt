@@ -58,6 +58,22 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
 
     var brushRadiusWorld: Float = 0f
 
+    /** fix42 polygon lasso mode. When `lassoMode = true` AND `onLassoLoop` is set:
+     *  DOWN starts a path; MOVE appends screen-space points (streamed via `onLassoPathUpdate`
+     *  so the consumer can draw the live polygon overlay); UP closes the loop and fires
+     *  `onLassoLoop` with the list of FRONT-FACING triangle indices whose centroids project
+     *  inside the closed polygon. No brush radius involved.
+     *
+     *  Mutually exclusive with brush mode — the consumer ensures `onBrushPaint` is null when
+     *  `lassoMode` is on. */
+    var lassoMode: Boolean = false
+    var onLassoLoop: ((triangleIds: List<Int>) -> Unit)? = null
+    var onLassoPathUpdate: ((path: List<Pair<Float, Float>>) -> Unit)? = null
+
+    // Lasso path accumulator (screen-space, in view-local pixels).
+    private val lassoPath = mutableListOf<Pair<Float, Float>>()
+    private var lassoActive = false
+
     // Positions used for triangle picking. Separate from the mesh VBO so callers don't have to
     // rebuild the picking data when only colours change.
     private var pickingPositions: FloatArray? = null
@@ -165,6 +181,16 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         tapDownTime = event.eventTime
         tapMovedTooFar = false
         brushStrokeActive = false
+        // fix42 lasso: DOWN starts a fresh polygon path. Suppresses orbit so single-finger
+        // drag is consumed as a lasso stroke instead of camera rotation.
+        if (lassoMode && onLassoLoop != null) {
+            lassoActive = true
+            lassoPath.clear()
+            lassoPath.add(event.x to event.y)
+            onLassoPathUpdate?.invoke(lassoPath.toList())
+            onActionDownHandled = true
+            return
+        }
         // Brush mode: start the stroke immediately on DOWN — emit a stroke-start callback
         // (used to snapshot for undo) and paint the touch point. Subsequent MOVE events
         // continue the stroke. Suppresses orbit by setting onActionDownHandled.
@@ -225,6 +251,19 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             val mdy = event.y - tapDownY
             if (mdx * mdx + mdy * mdy > tapSlopPx * tapSlopPx) tapMovedTooFar = true
         }
+        // fix42 lasso: append the current touch point to the polygon path. Coalesce so we
+        // don't flood the consumer — only append when we've moved at least a few pixels from
+        // the last sample (avoids duplicate vertices that confuse the point-in-polygon test).
+        if (lassoActive && event.pointerCount == 1) {
+            val last = lassoPath.lastOrNull()
+            val far = last == null ||
+                (event.x - last.first).let { it * it } + (event.y - last.second).let { it * it } > 4f
+            if (far) {
+                lassoPath.add(event.x to event.y)
+                onLassoPathUpdate?.invoke(lassoPath.toList())
+            }
+            return true
+        }
         // Brush mode: continue painting along the drag, throttled to ~30 Hz so we don't flood
         // the viewmodel. The screen receives one paintTriangles call per emit and the GL view
         // recolors in the same frame thanks to fix19's deferred-write pipeline.
@@ -276,6 +315,20 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             renderer.highlightIndex = -1
             requestRender()
         }
+        // fix42 lasso: UP closes the polygon and emits the enclosed front-facing triangles.
+        // Need ≥ 3 distinct points to form a meaningful loop; below that we treat it as a
+        // tap (no commit, just clear the path).
+        if (lassoActive) {
+            lassoActive = false
+            val path = lassoPath.toList()
+            lassoPath.clear()
+            onLassoPathUpdate?.invoke(emptyList())
+            if (path.size >= 3) {
+                val inside = pickTrianglesInsideLasso(path)
+                onLassoLoop?.invoke(inside)
+            }
+            return
+        }
         // End the two-finger orbit when the second finger lifts (handleActionUp fires on both
         // ACTION_UP and ACTION_POINTER_UP via the base class dispatcher).
         if (brushRotateActive && event.pointerCount <= 2) {
@@ -300,6 +353,92 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
                 }
             }
         }
+    }
+
+    /** fix42 — return every triangle whose centroid PROJECTS inside the screen-space lasso
+     *  polygon AND whose normal faces the camera (front-facing). Backfaces are filtered out
+     *  so lassoing the goat's front doesn't also commit to the matching back-of-goat triangles
+     *  the user can't see. */
+    private fun pickTrianglesInsideLasso(path: List<Pair<Float, Float>>): List<Int> {
+        val positions = pickingPositions ?: return emptyList()
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f || path.size < 3) return emptyList()
+
+        // Camera eye in world space — recomputed from the camera's spherical parameters.
+        val cam = renderer.camera
+        val radAz = Math.toRadians(cam.azimuth)
+        val radEl = Math.toRadians(cam.elevation)
+        val eyeX = (cam.targetX + cam.panX + cam.distance * kotlin.math.cos(radEl) * kotlin.math.cos(radAz)).toFloat()
+        val eyeY = (cam.targetY + cam.panY + cam.distance * kotlin.math.cos(radEl) * kotlin.math.sin(radAz)).toFloat()
+        val eyeZ = (cam.targetZ + cam.distance * kotlin.math.sin(radEl)).toFloat()
+
+        // Recompute MVP for an identity model matrix — pickingPositions are already in world
+        // space, so model = I. updateViewMatrix has been called by the most recent render.
+        cam.updateViewMatrix()
+        cam.updateProjectionMatrix(width, height)
+        cam.computeMVP()
+        val mvp = cam.mvpMatrix
+
+        val nTri = positions.size / 9
+        val out = ArrayList<Int>(256)
+        val v = FloatArray(4)
+        val clip = FloatArray(4)
+        for (i in 0 until nTri) {
+            val b = i * 9
+            // Centroid.
+            val cx = (positions[b]     + positions[b + 3] + positions[b + 6]) / 3f
+            val cy = (positions[b + 1] + positions[b + 4] + positions[b + 7]) / 3f
+            val cz = (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
+
+            // Front-facing test — compute face normal and dot against view direction.
+            // View vector points FROM eye TO centroid; a triangle whose normal opposes the
+            // view vector (dot < 0) is facing the camera.
+            val ax = positions[b + 3] - positions[b]
+            val ay = positions[b + 4] - positions[b + 1]
+            val az = positions[b + 5] - positions[b + 2]
+            val bx = positions[b + 6] - positions[b]
+            val by = positions[b + 7] - positions[b + 1]
+            val bz = positions[b + 8] - positions[b + 2]
+            val nx = ay * bz - az * by
+            val ny = az * bx - ax * bz
+            val nz = ax * by - ay * bx
+            val vx = cx - eyeX
+            val vy = cy - eyeY
+            val vz = cz - eyeZ
+            if (nx * vx + ny * vy + nz * vz >= 0f) continue   // backface (or edge-on)
+
+            // Project centroid to screen via MVP.
+            v[0] = cx; v[1] = cy; v[2] = cz; v[3] = 1f
+            android.opengl.Matrix.multiplyMV(clip, 0, mvp, 0, v, 0)
+            if (clip[3] <= 0f) continue                       // behind camera
+            val ndcX = clip[0] / clip[3]
+            val ndcY = clip[1] / clip[3]
+            val ndcZ = clip[2] / clip[3]
+            if (ndcZ < -1f || ndcZ > 1f) continue             // outside near/far clip
+            val sx = (ndcX + 1f) * 0.5f * w
+            val sy = (1f - ndcY) * 0.5f * h
+
+            if (pointInPolygon(sx, sy, path)) out.add(i)
+        }
+        return out
+    }
+
+    /** Standard horizontal-ray crossing count: a point is inside the polygon when a ray cast
+     *  to the right crosses an odd number of edges. Handles arbitrary (non-convex) loops. */
+    private fun pointInPolygon(x: Float, y: Float, polygon: List<Pair<Float, Float>>): Boolean {
+        var inside = false
+        var j = polygon.size - 1
+        for (i in polygon.indices) {
+            val (xi, yi) = polygon[i]
+            val (xj, yj) = polygon[j]
+            if ((yi > y) != (yj > y)) {
+                val xIntersect = xi + (y - yi) * (xj - xi) / (yj - yi + 1e-9f)
+                if (x < xIntersect) inside = !inside
+            }
+            j = i
+        }
+        return inside
     }
 
     /** Pick the hit triangle and gather every triangle whose centroid is within [radiusWorld]
