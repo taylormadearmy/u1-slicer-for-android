@@ -147,6 +147,40 @@ class SegmentationCascadeTest {
     }
 
     @Test
+    fun `paintStateBranch produces one leaf per distinct state`() {
+        val perTriState = ByteArray(30) { i -> ((i / 10) + 1).toByte() }
+        val r = SegmentationCascade.paintStateBranch(perTriState)
+        assertEquals(SegmentationSource.PAINT_STATE, r.source)
+        val root = r.tree.first()
+        assertEquals(3, root.children.size)
+        assertEquals(listOf(0, 1, 2), root.children.map { it.region.slot })
+    }
+
+    @Test
+    fun `paintStateBranch handles seven H2C states without folding`() {
+        val perTriState = ByteArray(70) { i -> ((i / 10) + 1).toByte() }
+        val r = SegmentationCascade.paintStateBranch(perTriState)
+        val root = r.tree.first()
+        assertEquals(7, root.children.size)
+        assertEquals(listOf(0,1,2,3,0,1,2), root.children.map { it.region.slot })
+    }
+
+    @Test
+    fun `paintStateBranch null when only one state present`() {
+        val perTriState = ByteArray(50) { 1 }
+        val r = SegmentationCascade.paintStateBranch(perTriState)
+        assertTrue(r.tree.isEmpty())
+    }
+
+    @Test
+    fun `triangleIndexBranch fires when preview indices distinct`() {
+        val perTriIndex = ByteArray(20) { i -> (i % 3).toByte() }
+        val r = SegmentationCascade.triangleIndexBranch(perTriIndex)
+        assertEquals(SegmentationSource.TRIANGLE_INDEX, r.source)
+        assertEquals(3, r.tree.first().children.size)
+    }
+
+    @Test
     fun `topology branch yields at least 2 leaves on disjoint clusters`() {
         // 3 disjoint triangle clusters of 30 each.
         val positions = FloatArray(90 * 9)

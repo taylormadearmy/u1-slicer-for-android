@@ -172,6 +172,87 @@ object SegmentationCascade {
         return CascadeResult(listOf(root), triangleSegments, SegmentationSource.VOLUME)
     }
 
+    /** Branch A — pre-painted (MMU / H2C / SEMM). perTriangleState[t] = paint state 0..16
+     *  (0 = unpainted; we ignore those when building leaves but include them as "state 0" if
+     *  the user has unpainted triangles). */
+    fun paintStateBranch(perTriangleState: ByteArray): CascadeResult {
+        val triCount = perTriangleState.size
+        val grouped = mutableMapOf<Int, MutableList<Int>>()
+        for (t in 0 until triCount) {
+            val s = perTriangleState[t].toInt() and 0xFF
+            grouped.getOrPut(s) { mutableListOf() }.add(t)
+        }
+        if (grouped.size < 2) {
+            return CascadeResult(emptyList(), perTriangleState.copyOf(), SegmentationSource.PAINT_STATE)
+        }
+        val sortedStates = grouped.keys.sorted()
+        val triangleSegments = perTriangleState.copyOf()
+        val children = sortedStates.mapIndexed { i, state ->
+            val tris = grouped[state]!!.toIntArray()
+            val slot = if (state == 0) i % TARGET_SLOTS else ((state - 1) % TARGET_SLOTS)
+            AiRegionNode(
+                region = AiRegion(
+                    id = i,
+                    label = if (state == 0) "Unpainted" else "Paint state $state",
+                    suggestedColour = paletteFor(i),
+                    coverageFraction = tris.size.toFloat() / triCount,
+                    slot = slot,
+                ),
+                children = emptyList(),
+                nodeSource = SegmentationSource.PAINT_STATE,
+                triangleIds = tris,
+            )
+        }
+        val root = AiRegionNode(
+            region = AiRegion(
+                id = -1, label = "Model", suggestedColour = "#888888", coverageFraction = 1f,
+            ),
+            children = children,
+            nodeSource = SegmentationSource.PAINT_STATE,
+            triangleIds = IntArray(triCount) { it },
+        )
+        return CascadeResult(listOf(root), triangleSegments, SegmentationSource.PAINT_STATE)
+    }
+
+    /** Branch D — distinct preview-mesh extruder indices. Safety net. */
+    fun triangleIndexBranch(perTriangleIndex: ByteArray): CascadeResult {
+        val triCount = perTriangleIndex.size
+        val grouped = mutableMapOf<Int, MutableList<Int>>()
+        for (t in 0 until triCount) {
+            val s = perTriangleIndex[t].toInt() and 0xFF
+            grouped.getOrPut(s) { mutableListOf() }.add(t)
+        }
+        if (grouped.size < 2) {
+            return CascadeResult(emptyList(), perTriangleIndex.copyOf(), SegmentationSource.TRIANGLE_INDEX)
+        }
+        val sortedKeys = grouped.keys.sorted()
+        val triangleSegments = perTriangleIndex.copyOf()
+        val children = sortedKeys.mapIndexed { i, idx ->
+            val tris = grouped[idx]!!.toIntArray()
+            AiRegionNode(
+                region = AiRegion(
+                    id = i,
+                    label = "Region ${i + 1}",
+                    suggestedColour = paletteFor(i),
+                    coverageFraction = tris.size.toFloat() / triCount,
+                    slot = idx % TARGET_SLOTS,
+                ),
+                children = emptyList(),
+                nodeSource = SegmentationSource.TRIANGLE_INDEX,
+                triangleIds = tris,
+            )
+        }
+        val root = AiRegionNode(
+            region = AiRegion(
+                id = -1, label = "Model", suggestedColour = "#888888", coverageFraction = 1f,
+            ),
+            children = children,
+            nodeSource = SegmentationSource.TRIANGLE_INDEX,
+            triangleIds = IntArray(triCount) { it },
+        )
+        return CascadeResult(listOf(root), triangleSegments, SegmentationSource.TRIANGLE_INDEX)
+    }
+
     /** Branch E — topology flood-fill, with recursion on the dominant component. */
     fun topologyBranch(positions: FloatArray): CascadeResult {
         val (componentIds, numComponents) =
