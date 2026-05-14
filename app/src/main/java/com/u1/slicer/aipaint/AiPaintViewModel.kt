@@ -163,6 +163,10 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 val isTopologyPrimary = cascadeResult.source == SegmentationSource.TOPOLOGY ||
                     cascadeResult.source == SegmentationSource.TOPOLOGY_RECURSIVE
                 val canCallAi = aiEnabled && (!provider.requiresKey || apiKey.isNotBlank())
+                Log.i("AiPaint", "fix39 gate: aiEnabled=$aiEnabled provider=${provider.name} " +
+                    "requiresKey=${provider.requiresKey} hasKey=${apiKey.isNotBlank()} " +
+                    "canCallAi=$canCallAi isTopologyPrimary=$isTopologyPrimary " +
+                    "hasAlternate=${alternateResult != null}")
                 val groupedCascade: CascadeResult = if (isTopologyPrimary && canCallAi) {
                     _uiState.value = AiPaintUiState.Running(3, "Asking AI to group the parts…")
                     applyAiTopologyGrouping(provider, apiKey, positions, cascadeResult)
@@ -420,7 +424,11 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     ): CascadeResult? {
         val triCount = positions.size / 9
         val leaves = cascade.tree.flatMap { it.flatten().filter { (n, _) -> n.isLeaf }.map { it.first } }
-        if (leaves.size < 2) return null
+        Log.i("AiPaint", "fix39 applyAiTopologyGrouping entry: ${leaves.size} leaves, provider=${provider.name}")
+        if (leaves.size < 2) {
+            Log.w("AiPaint", "fix39 skip: too few leaves (${leaves.size})")
+            return null
+        }
 
         // Render shaded + component-coloured views from the same camera angle.
         val perTriComp = IntArray(triCount)
@@ -436,9 +444,15 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         }
 
         val targetCount = minOf(TARGET_GROUP_COUNT, leaves.size)
+        Log.i("AiPaint", "fix39 calling labelGroups: $targetCount target groups from ${leaves.size} components")
         val groups = AiLabelClient.labelGroups(
             provider, apiKey, shaded, banded, leaves.size, targetCount,
-        ) ?: return null
+        )
+        if (groups == null) {
+            Log.w("AiPaint", "fix39 labelGroups returned null. " +
+                "lastModel=${AiLabelClient.lastModel} lastRaw=${AiLabelClient.lastRaw?.take(400)}")
+            return null
+        }
 
         // Build new leaves: one per AI group, triangle ids = union of member components'
         // triangles. Slot rotates so adjacent groups land on different physical slots; if the

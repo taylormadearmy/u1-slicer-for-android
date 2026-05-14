@@ -143,6 +143,13 @@ object AiLabelClient {
     ): Request = when (provider) {
         AiPaintProvider.POLLINATIONS -> buildOpenAiStyleRequest(
             url = "https://text.pollinations.ai/openai/chat/completions",
+            // 2026-05-14: Pollinations' free legacy endpoint dropped all vision-capable
+            // models — `/models` now reports only GPT-OSS 20B (text-only) for both anonymous
+            // and key-authenticated tiers. Pollinations therefore CANNOT do Smart Paint AI
+            // grouping today. We keep the alias "openai" for the rare text-only call (e.g.
+            // diagnostic naming on already-painted models) but the topology grouping pass
+            // will silently fall back to raw cascade when Pollinations is the selected
+            // provider. Configure GEMINI or OPENROUTER for working vision-based grouping.
             model = "openai",
             // Pollinations works anonymously but accepts an OpenAI-style Authorization header
             // to lift the public-tier rate limits and prioritise routing.
