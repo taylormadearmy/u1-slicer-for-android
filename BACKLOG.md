@@ -16,7 +16,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Reported by**: DC15 (Discord), v2.1.2 (versionCode 272). Model: `Articulated+Fish+(3).3mf` (MakerWorld, 2.21 MB).
 - **Root cause**: `setModelScale()` called `inst->set_scaling_factor(user_scale)` absolutely, overwriting the file's embedded 5.083× scale with 0.6 (producing a 4mm model instead of 21mm). The Z offset (17.5mm) was then unchanged, so world-space bottom = −3.44 × 0.6 + 17.5 = 15.4mm above bed. The multi-object `setModelInstances` path sets `delta.z = 0` (no Z correction for multi-object groups), leaving the model floating.
 - **Fix** (`sapil_arrange.cpp`): (1) Snapshot per-instance load-time scaling factors on the first `setModelScale()` call after model load; apply user scale multiplicatively (`effective_sf = loadtime_sf × user_scale`). (2) After updating all instances, recompute the world AABB and apply a Z correction so the group bottom lands at z=0. Reset the snapshot in `sapil_model.cpp` on both `loadModel` and `clearModel`.
-- **Tests**: `SlicingIntegrationTest#b108_articulatedFish_scaledTo60pct_slicesWithModelOnBed`; B73 scale-placement regression still passes.
+- **Follow-up fix** (multi-object gap): the initial fix used a single group-wide Z correction (`-postScaleBB.min.z()`), which only snapped the lowest object to the bed. Multi-object 3MFs where build items have different Z translations (e.g. `skywing-seawing-silkwing.3mf`: 2.89mm vs 16.75mm) still produced `[obj N] empty initial layer` because the higher object stayed floating. Now each instance's Z is snapped independently using its own world AABB.
+- **Tests**: `SlicingIntegrationTest#b108_articulatedFish_scaledTo60pct_slicesWithModelOnBed`, `SlicingIntegrationTest#b108_skywingMultiObject_perInstanceZOffsets_bedSnappedAfterScale`; B73 scale-placement regression and `SetModelInstancesOffsetTest` (7 tests) still pass.
 - **Related**: distinct from B73 (fixed v1.5.65, XY drift on scale); this is Z re-snap + multiplicative scale from embedded file transform.
 
 ### B107: STL bed temp silently bumped +5°C above user setting (GitHub #123) — FIXED v2.1.2
@@ -446,6 +447,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Issue #19 closed.
 
 ## Open Features
+
+### F83: Scale model by absolute dimension (mm) in addition to percentage (GitHub #136)
+- Today the Prepare screen only allows scaling by percentage (1% increments per F74). Users often want a specific final size (e.g. "50mm tall") without doing the percentage math.
+- **Proposal**: add a dimension-input mode alongside the percentage field — user types target X, Y, or Z in mm; other axes follow proportionally under uniform scaling.
+- **UX notes**: toggle between `%` and `mm`; show the resulting % alongside the mm value; clamp to a sensible min (~1mm); warn when the result exceeds the 270×270×270 bed.
+- Preserve B108/B109 bed-snap and rotated-footprint logic — only the input affordance changes.
+- **Out of scope**: non-uniform scaling UI rework; snap-to-bed (already handled by `setModelScale`).
 
 ### F82: Idle-state printer controls on Printer tab (GitHub #133)
 - The Printer tab today only exposes pause/resume/cancel during an active print, plus the LED toggle and filament sync card.  Add idle-state controls so the user can drive the printer without an active job.

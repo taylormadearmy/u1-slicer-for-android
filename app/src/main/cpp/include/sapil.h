@@ -188,6 +188,12 @@ public:
     // (in object/instance enumeration order). Used by instrumented tests.
     std::vector<float> getInstanceOffsets() const;
 
+    // Returns per-instance world-space minimum Z (after full instance + volume
+    // transform), in object/instance enumeration order. Used by the B108
+    // multi-object regression test to verify that each instance's bottom sits
+    // on the bed after setModelScale.
+    std::vector<float> getInstanceWorldZMins() const;
+
 private:
     struct Impl;
     Impl* pImpl;

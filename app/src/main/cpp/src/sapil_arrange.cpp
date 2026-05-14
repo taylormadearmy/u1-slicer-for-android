@@ -225,31 +225,27 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
         }
     }
 
-    // Bed-snap: recompute the world AABB after the scale change and shift all instance
-    // Z offsets so the group bottom lands at z=0. This is required because the Z
-    // translation embedded in the build-item transform is not proportional to the user
-    // scale — without the snap, models whose geometry is centred at the origin (with a
-    // large embedded Z offset to compensate) float above the bed after scale-down (B108).
-    Slic3r::BoundingBoxf3 postScaleBB;
+    // Bed-snap: for each instance, recompute its own world AABB after the scale change
+    // and shift that instance's Z offset so its bottom lands at z=0. A single group-wide
+    // shift only snaps the lowest object to the bed — objects with larger embedded Z
+    // translations (e.g. skywing-seawing-silkwing: 2.89mm vs 16.75mm) would otherwise
+    // remain floating above the bed and trigger "empty initial layer" slice errors
+    // (B108 multi-object follow-up).
     for (auto* obj : model.objects) {
         for (auto* inst : obj->instances) {
             const Slic3r::Transform3d inst_full =
                 inst->get_transformation().get_matrix();
+            Slic3r::BoundingBoxf3 instBB;
             for (const auto* v : obj->volumes) {
                 if (v->is_model_part()) {
-                    postScaleBB.merge(
+                    instBB.merge(
                         v->mesh().transformed_bounding_box(inst_full * v->get_matrix())
                     );
                 }
             }
-        }
-    }
-    if (postScaleBB.defined && postScaleBB.min.z() != 0.0) {
-        const double z_correction = -postScaleBB.min.z();
-        for (auto* obj : model.objects) {
-            for (auto* inst : obj->instances) {
+            if (instBB.defined && instBB.min.z() != 0.0) {
                 const Slic3r::Vec3d off = inst->get_offset();
-                inst->set_offset(Slic3r::Vec3d(off.x(), off.y(), off.z() + z_correction));
+                inst->set_offset(Slic3r::Vec3d(off.x(), off.y(), off.z() - instBB.min.z()));
             }
         }
     }
@@ -386,6 +382,28 @@ std::vector<float> SlicerEngine::getInstanceOffsets() const {
             const Slic3r::Vec3d off = inst->get_offset();
             result.push_back(static_cast<float>(off.x()));
             result.push_back(static_cast<float>(off.y()));
+        }
+    }
+    return result;
+}
+
+std::vector<float> SlicerEngine::getInstanceWorldZMins() const {
+    std::vector<float> result;
+    if (!isModelLoaded()) return result;
+    const Slic3r::Model& model = getGlobalModel();
+    for (const auto* obj : model.objects) {
+        for (const auto* inst : obj->instances) {
+            const Slic3r::Transform3d inst_full =
+                inst->get_transformation().get_matrix();
+            Slic3r::BoundingBoxf3 instBB;
+            for (const auto* v : obj->volumes) {
+                if (v->is_model_part()) {
+                    instBB.merge(
+                        v->mesh().transformed_bounding_box(inst_full * v->get_matrix())
+                    );
+                }
+            }
+            result.push_back(instBB.defined ? static_cast<float>(instBB.min.z()) : 0.0f);
         }
     }
     return result;
