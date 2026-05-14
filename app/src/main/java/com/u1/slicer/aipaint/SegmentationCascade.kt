@@ -47,9 +47,15 @@ object SegmentationCascade {
 
     internal fun paletteFor(i: Int): String = PALETTE[i % PALETTE.size]
 
-    // (DOMINANT_THRESHOLD / RECURSION_ID_BASE removed in fix39.3 — topology now folds
-    // components into height bands instead of recursively K-means-splitting the dominant
-    // shell; the same end result without depending on K-means convergence quirks.)
+    /** fix40.3 — any flood-fill component larger than this fraction of the mesh gets
+     *  spatially K-means-subdivided. Smooth organic meshes (the goat, figurines) have
+     *  smooth tessellation between adjacent features (nose ↔ hair, face ↔ neck) so the
+     *  dihedral flood-fill merges them into single oversized components. Subdividing
+     *  those into spatial clusters restores per-feature tap precision. */
+    private const val SUBDIVIDE_THRESHOLD = 0.05f
+    /** Target fraction per sub-region — used to derive K for K-means. A 25% component
+     *  with TARGET_FRACTION=0.04 → K=6. Clamped to [2, 12] so we don't over-fragment. */
+    private const val SUBDIVIDE_TARGET_FRACTION = 0.04f
 
     /** One per-plate object, as fed into the cascade. The triangleIds list MUST be exhaustive
      *  and disjoint across all objects on the plate; the cascade does no deduplication. */
@@ -277,12 +283,39 @@ object SegmentationCascade {
      *  band and thus the same physical slot. Restores fix30's deterministic symmetric
      *  grouping without depending on a vision-capable AI provider. */
     fun topologyBranch(positions: FloatArray): CascadeResult {
-        val (componentIds, numComponents) =
+        val (rawComponentIds, rawNumComponents) =
             MeshSegmenter.segmentByTopologyOrSpatial(positions)
         val triCount = positions.size / 9
+        if (rawNumComponents < 1) {
+            return CascadeResult(emptyList(), ByteArray(triCount), SegmentationSource.TOPOLOGY)
+        }
+
+        // fix40.3: spatially subdivide any over-sized flood-fill component via K-means.
+        // Smooth organic meshes fuse adjacent features (nose ↔ hair) under one component
+        // because there's no crease angle between them; subdivision recovers per-feature
+        // tap precision while preserving the overall topology structure.
+        val rawTrisByComp = Array(rawNumComponents) { mutableListOf<Int>() }
+        for (t in 0 until triCount) rawTrisByComp[rawComponentIds[t]].add(t)
+        val effectiveTris = mutableListOf<IntArray>()
+        for (c in 0 until rawNumComponents) {
+            val tris = rawTrisByComp[c].toIntArray()
+            val fraction = tris.size.toFloat() / triCount
+            if (fraction > SUBDIVIDE_THRESHOLD) {
+                val k = (fraction / SUBDIVIDE_TARGET_FRACTION).toInt().coerceIn(2, 12)
+                val subs = TopologyRecursion.subdivide(positions, tris, k, startId = 0)
+                if (subs.isEmpty()) effectiveTris += tris
+                else subs.forEach { effectiveTris += it.triangleIds }
+            } else {
+                effectiveTris += tris
+            }
+        }
+
+        val numComponents = effectiveTris.size
         if (numComponents < 2) {
             return CascadeResult(emptyList(), ByteArray(triCount), SegmentationSource.TOPOLOGY)
         }
+        val componentIds = IntArray(triCount)
+        effectiveTris.forEachIndexed { ci, tris -> tris.forEach { t -> componentIds[t] = ci } }
 
         // Per-component centroid Z and total Z span.
         val sumZ = FloatArray(numComponents)
