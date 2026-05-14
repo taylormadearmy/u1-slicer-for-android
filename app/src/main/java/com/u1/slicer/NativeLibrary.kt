@@ -90,6 +90,11 @@ class NativeLibrary {
     // Used by instrumented tests only.
     external fun getInstanceOffsets(): FloatArray
 
+    // Returns per-instance world-space minimum Z (after full instance + volume
+    // transform), in object/instance enumeration order. Used by the B108
+    // multi-object regression test only.
+    external fun getInstanceWorldZMins(): FloatArray
+
     // ---- Diagnostics — Phase 0 differential harness ----
     // Returns a JSON dump of g_model after Model::read_from_file.
     // Path must be the same path passed to loadModel(); native re-loads to ensure

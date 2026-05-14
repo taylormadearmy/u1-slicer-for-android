@@ -1190,6 +1190,7 @@ class SlicingIntegrationTest {
     // slice error.
     @Test
     fun b108_articulatedFish_scaledTo60pct_slicesWithModelOnBed() {
+
         val file = asset("Articulated+Fish+(3).3mf")
         assertTrue("B108: model must load", lib.loadModel(file.absolutePath))
 
@@ -1211,5 +1212,35 @@ class SlicingIntegrationTest {
                 "error: ${result.errorMessage}",
             result.success
         )
+    }
+
+    // B108 multi-object gap: 3MF with two build items that each carry different embedded
+    // rotation+scale matrices (~0.76×) AND different Z translations (z≈2.89mm and z≈16.75mm).
+    // The original B108 fix used a single group-wide Z correction (shift all instances by
+    // -groupMinZ), which only snaps the lowest object to the bed; the higher object stayed
+    // floating ~14mm above the bed and triggered "[obj N] empty initial layer" slice errors.
+    // The follow-up fix snaps each instance independently. Direct check via
+    // getInstanceWorldZMins() — avoids a multi-million-triangle slice that OOMs the
+    // instrumentation process on test devices.
+    @Test
+    fun b108_skywingMultiObject_perInstanceZOffsets_bedSnappedAfterScale() {
+        val file = asset("skywing-seawing-silkwing.3mf")
+        assertTrue("B108 multi-object: model must load", lib.loadModel(file.absolutePath))
+
+        lib.setModelScale(0.8f, 0.8f, 0.8f)
+
+        val zMins = lib.getInstanceWorldZMins()
+        assertTrue(
+            "B108 multi-object: fixture must produce at least 2 instances (one per build item), " +
+                "got ${zMins.size}",
+            zMins.size >= 2
+        )
+        for ((i, z) in zMins.withIndex()) {
+            assertEquals(
+                "B108 multi-object: instance $i must sit on the bed after scale " +
+                    "(world min.z must be ~0); got worldZMins=${zMins.toList()}",
+                0.0, z.toDouble(), 0.01
+            )
+        }
     }
 }

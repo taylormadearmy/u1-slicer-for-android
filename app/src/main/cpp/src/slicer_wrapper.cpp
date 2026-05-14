@@ -219,6 +219,18 @@ Java_com_u1_slicer_NativeLibrary_getInstanceOffsets(
     return result;
 }
 
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_getInstanceWorldZMins(
+        JNIEnv* env, jobject) {
+    if (!g_engine) return env->NewFloatArray(0);
+    auto zmins = g_engine->getInstanceWorldZMins();
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(zmins.size()));
+    if (!zmins.empty()) {
+        env->SetFloatArrayRegion(result, 0, static_cast<jsize>(zmins.size()), zmins.data());
+    }
+    return result;
+}
+
 // ---- Cancellation ----
 JNIEXPORT void JNICALL
 Java_com_u1_slicer_NativeLibrary_cancelPreviewMesh(JNIEnv*, jobject) {
