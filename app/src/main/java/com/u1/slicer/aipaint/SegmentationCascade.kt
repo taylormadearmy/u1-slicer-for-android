@@ -22,15 +22,12 @@ object SegmentationCascade {
         "#FFEB3B", "#FFFFFF",
     )
 
-    /** fix39.3 — restored from fix30. Labels biased toward upright figurines (the common
-     *  Smart Paint use case): bottom-to-top anatomy. Used by topology Z-banded grouping,
-     *  which folds N flood-fill components into 12 height bands so bilateral pairs (left/
-     *  right horns, eyes, legs, ears) share a band and thus a colour without needing AI. */
-    internal val HEIGHT_BAND_LABELS: List<String> = listOf(
-        "Base", "Hooves", "Lower legs", "Upper legs", "Belly",
-        "Lower body", "Upper body", "Neck", "Head", "Crown",
-        "Top", "Tip",
-    )
+    /** fix40.1 — generic labels for height-banded topology leaves. fix30 anchored these to
+     *  upright-figurine anatomy ("Base"/"Hooves"/…) but that lied on non-figurines (a boat
+     *  would get "Hooves") AND looked like AI output even with AI disabled. Generic "Band N"
+     *  is honest about being deterministic; AI naming (when enabled and successful) replaces
+     *  these with object-specific terms via applyAiNaming. */
+    internal val HEIGHT_BAND_LABELS: List<String> = List(12) { "Band ${it + 1}" }
     internal val HEIGHT_BAND_COLOURS: List<String> = listOf(
         "#37474F", "#5D4037", "#795548", "#1E88E5", "#43A047",
         "#00ACC1", "#FB8C00", "#8E24AA", "#E53935", "#EC407A",
