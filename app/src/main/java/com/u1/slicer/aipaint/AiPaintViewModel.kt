@@ -32,6 +32,10 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     companion object {
         const val TARGET_SLOTS = SegmentationCascade.TARGET_SLOTS
 
+        /** fix39 — topology cascades get folded into this many AI-named groups (matches fix30).
+         *  Capped at the actual component count so small models stay sane. */
+        const val TARGET_GROUP_COUNT = 12
+
         /**
          * Painted 3MFs are written by [PaintedMeshWriter] as `ai_paint_<timestamp>.3mf`.
          * Strip pipeline prefixes (`embedded_`, `sanitized_`) so cache-hit lookup works.
@@ -151,11 +155,26 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         "${alternateResult.tree.firstOrNull()?.leafCount() ?: 0} leaves")
                 }
 
-                val (treeAfterAi, aiFailed, modelTried) = if (aiEnabled && (!provider.requiresKey || apiKey.isNotBlank())) {
+                // fix39: when the cascade picked topology (organic models — goat, dragon,
+                // figurines) AND AI is enabled, do the AI semantic-grouping pass that fix30
+                // used. AI sees the topology-coloured render and groups the N components into
+                // ~12 semantic regions with explicit symmetry rules (left/right eyes share a
+                // group → same colour). Without this, raw topology gives 50-200 tiny leaves
+                // that are individually selectable but visually noisy and asymmetric.
+                val isTopologyPrimary = cascadeResult.source == SegmentationSource.TOPOLOGY ||
+                    cascadeResult.source == SegmentationSource.TOPOLOGY_RECURSIVE
+                val canCallAi = aiEnabled && (!provider.requiresKey || apiKey.isNotBlank())
+                val groupedCascade: CascadeResult = if (isTopologyPrimary && canCallAi) {
+                    _uiState.value = AiPaintUiState.Running(3, "Asking AI to group the parts…")
+                    applyAiTopologyGrouping(provider, apiKey, positions, cascadeResult)
+                        ?: cascadeResult
+                } else cascadeResult
+
+                val (treeAfterAi, aiFailed, modelTried) = if (canCallAi && !isTopologyPrimary) {
                     _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
-                    applyAiNaming(provider, apiKey, positions, cascadeResult.tree)
+                    applyAiNaming(provider, apiKey, positions, groupedCascade.tree)
                 } else {
-                    Triple(cascadeResult.tree, false, null)
+                    Triple(groupedCascade.tree, false, null)
                 }
 
                 _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
@@ -377,6 +396,82 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         val nameById: Map<Int, NamedColour> = leaves.mapIndexed { i, leaf -> leaf.region.id to names[i] }.toMap()
         val renamed = tree.map { root -> applyNames(root, nameById) }
         return Triple(renamed, false, AiLabelClient.lastModel)
+    }
+
+    /**
+     * fix39 — semantic-grouping post-pass for topology cascades. Renders the N topology
+     * components in distinct hues, sends `(shaded, components)` to the AI with an explicit
+     * symmetry rule, and folds the result into a new cascade tree with [TARGET_GROUP_COUNT]
+     * leaves. On any failure (AI declined, parse mismatch, model error) returns null and the
+     * caller keeps the raw topology cascade.
+     */
+    private suspend fun applyAiTopologyGrouping(
+        provider: AiPaintProvider,
+        apiKey: String,
+        positions: FloatArray,
+        cascade: CascadeResult,
+    ): CascadeResult? {
+        val triCount = positions.size / 9
+        val leaves = cascade.tree.flatMap { it.flatten().filter { (n, _) -> n.isLeaf }.map { it.first } }
+        if (leaves.size < 2) return null
+
+        // Render shaded + component-coloured views from the same camera angle.
+        val perTriComp = IntArray(triCount)
+        leaves.forEachIndexed { idx, leaf ->
+            leaf.triangleIds.forEach { t -> if (t in perTriComp.indices) perTriComp[t] = idx }
+        }
+        val palette = AiLabelClient.componentDisplayColors(leaves.size)
+        val shaded = withContext(Dispatchers.Default) {
+            AiPaintRenderer.renderShaded(positions, 512, 512, CameraAngle.RIGHT_ISO)
+        }
+        val banded = withContext(Dispatchers.Default) {
+            AiPaintRenderer.renderRegions(positions, perTriComp, palette, 512, 512, CameraAngle.RIGHT_ISO)
+        }
+
+        val targetCount = minOf(TARGET_GROUP_COUNT, leaves.size)
+        val groups = AiLabelClient.labelGroups(
+            provider, apiKey, shaded, banded, leaves.size, targetCount,
+        ) ?: return null
+
+        // Build new leaves: one per AI group, triangle ids = union of member components'
+        // triangles. Slot rotates so adjacent groups land on different physical slots; if the
+        // AI's suggested colour parses, it stays as suggestedColour.
+        val newLeaves = groups.mapIndexed { i, g ->
+            val tris = g.componentIds.flatMap { ci ->
+                leaves.getOrNull(ci)?.triangleIds?.toList() ?: emptyList()
+            }.toIntArray()
+            AiRegionNode(
+                region = AiRegion(
+                    id = i,
+                    label = g.label,
+                    suggestedColour = g.suggestedColour.takeIf(::isValidHex)
+                        ?: SegmentationCascade.paletteFor(i),
+                    coverageFraction = tris.size.toFloat() / triCount,
+                    slot = i % TARGET_SLOTS,
+                ),
+                children = emptyList(),
+                nodeSource = cascade.source,
+                triangleIds = tris,
+            )
+        }
+
+        val triangleSegments = ByteArray(triCount)
+        newLeaves.forEach { leaf ->
+            leaf.triangleIds.forEach { t ->
+                if (t in 0 until triCount) triangleSegments[t] = leaf.region.id.toByte()
+            }
+        }
+        val newRoot = AiRegionNode(
+            region = AiRegion(
+                id = -1, label = "Model", suggestedColour = "#888888", coverageFraction = 1f,
+            ),
+            children = newLeaves,
+            nodeSource = cascade.source,
+            triangleIds = IntArray(triCount) { it },
+        )
+        Log.i("AiPaint", "fix39 AI grouping: ${leaves.size} components → ${newLeaves.size} groups " +
+            "(model=${AiLabelClient.lastModel})")
+        return CascadeResult(listOf(newRoot), triangleSegments, cascade.source)
     }
 
     private fun applyNames(node: AiRegionNode, names: Map<Int, NamedColour>): AiRegionNode {
