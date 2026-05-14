@@ -52,6 +52,54 @@ class SegmentationCascadeTest {
         assertEquals(listOf(0,1,2,3,0,1,2,3,0,1,2,3), slots)
     }
 
+    private fun objectInfo(id: Long, name: String, extruder: Int?, triCount: Int): SegmentationCascade.ObjectInfo =
+        SegmentationCascade.ObjectInfo(
+            objectId = id,
+            name = name,
+            extruder = extruder,
+            triangleIds = IntArray(triCount) { it },
+        )
+
+    @Test
+    fun `objectBranch produces one leaf per object`() {
+        val objects = listOf(
+            objectInfo(1, "Hull", 1, 100),
+            objectInfo(2, "Cabin", 2, 50),
+            objectInfo(3, "Smokestack", 3, 25),
+        )
+        val r = SegmentationCascade.objectBranch(totalTriangles = 175, objects = objects)
+        assertEquals(SegmentationSource.OBJECT, r.source)
+        val root = r.tree.first()
+        assertEquals(3, root.children.size)
+        assertEquals(listOf("Hull", "Cabin", "Smokestack"),
+            root.children.map { it.region.label })
+        assertEquals(listOf(0, 1, 2),
+            root.children.map { it.region.slot })
+    }
+
+    @Test
+    fun `objectBranch null when only one object`() {
+        val r = SegmentationCascade.objectBranch(
+            totalTriangles = 100,
+            objects = listOf(objectInfo(1, "Solo", null, 100)),
+        )
+        assertTrue(r.tree.isEmpty())
+    }
+
+    @Test
+    fun `objectBranch falls back to round-robin slots when extruder missing`() {
+        val r = SegmentationCascade.objectBranch(
+            totalTriangles = 300,
+            objects = listOf(
+                objectInfo(1, "A", null, 100),
+                objectInfo(2, "B", null, 100),
+                objectInfo(3, "C", null, 100),
+            ),
+        )
+        val slots = r.tree.first().children.map { it.region.slot }
+        assertEquals(listOf(0, 1, 2), slots)
+    }
+
     @Test
     fun `topology branch yields at least 2 leaves on disjoint clusters`() {
         // 3 disjoint triangle clusters of 30 each.

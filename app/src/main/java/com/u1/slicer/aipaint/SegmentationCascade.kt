@@ -37,6 +37,52 @@ object SegmentationCascade {
     /** Maximum leaves the cascade emits. The original UI cap; tree depth caps independently. */
     private const val TARGET_LEAVES = 12
 
+    /** One per-plate object, as fed into the cascade. The triangleIds list MUST be exhaustive
+     *  and disjoint across all objects on the plate; the cascade does no deduplication. */
+    data class ObjectInfo(
+        val objectId: Long,
+        val name: String,
+        /** 1-based extruder index from `model_settings.config`; null when undeclared. */
+        val extruder: Int?,
+        val triangleIds: IntArray,
+    )
+
+    /** Branch C — one tree leaf per object on the selected plate. */
+    fun objectBranch(totalTriangles: Int, objects: List<ObjectInfo>): CascadeResult {
+        if (objects.size < 2) {
+            return CascadeResult(emptyList(), ByteArray(totalTriangles), SegmentationSource.OBJECT)
+        }
+        val triangleSegments = ByteArray(totalTriangles)
+        val children = objects.mapIndexed { i, obj ->
+            val slot = obj.extruder?.let { (it - 1).coerceIn(0, TARGET_SLOTS - 1) }
+                ?: (i % TARGET_SLOTS)
+            obj.triangleIds.forEach { t ->
+                if (t in 0 until totalTriangles) triangleSegments[t] = i.toByte()
+            }
+            AiRegionNode(
+                region = AiRegion(
+                    id = i,
+                    label = obj.name,
+                    suggestedColour = paletteFor(i),
+                    coverageFraction = obj.triangleIds.size.toFloat() / totalTriangles,
+                    slot = slot,
+                ),
+                children = emptyList(),
+                nodeSource = SegmentationSource.OBJECT,
+                triangleIds = obj.triangleIds,
+            )
+        }
+        val root = AiRegionNode(
+            region = AiRegion(
+                id = -1, label = "Model", suggestedColour = "#888888", coverageFraction = 1f,
+            ),
+            children = children,
+            nodeSource = SegmentationSource.OBJECT,
+            triangleIds = IntArray(totalTriangles) { it },
+        )
+        return CascadeResult(listOf(root), triangleSegments, SegmentationSource.OBJECT)
+    }
+
     /** Branch E — topology flood-fill, with recursion on the dominant component. */
     fun topologyBranch(positions: FloatArray): CascadeResult {
         val (componentIds, numComponents) =
