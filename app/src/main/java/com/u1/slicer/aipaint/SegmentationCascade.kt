@@ -4,8 +4,11 @@ package com.u1.slicer.aipaint
 data class CascadeResult(
     val tree: List<AiRegionNode>,         // typically one cascade root; may include the
                                           // "Custom selections" group as a sibling later
-    val triangleSegments: ByteArray,      // per-triangle leaf-id mapping; ByteArray so it
-                                          // round-trips with state.triangleSegments
+    val triangleSegments: IntArray,       // per-triangle leaf-id mapping. fix44: widened
+                                          // from ByteArray to IntArray — leaf ids can exceed
+                                          // 255 on high-fragmentation models (Dragon Scale,
+                                          // multi-volume Bambu); byte truncation silently
+                                          // aliased ids ≥ 256.
     val source: SegmentationSource,
 )
 
@@ -70,14 +73,14 @@ object SegmentationCascade {
     /** Branch C — one tree leaf per object on the selected plate. */
     fun objectBranch(totalTriangles: Int, objects: List<ObjectInfo>): CascadeResult {
         if (objects.size < 2) {
-            return CascadeResult(emptyList(), ByteArray(totalTriangles), SegmentationSource.OBJECT)
+            return CascadeResult(emptyList(), IntArray(totalTriangles), SegmentationSource.OBJECT)
         }
-        val triangleSegments = ByteArray(totalTriangles)
+        val triangleSegments = IntArray(totalTriangles)
         val children = objects.mapIndexed { i, obj ->
             val slot = obj.extruder?.let { (it - 1).coerceIn(0, TARGET_SLOTS - 1) }
                 ?: (i % TARGET_SLOTS)
             obj.triangleIds.forEach { t ->
-                if (t in 0 until totalTriangles) triangleSegments[t] = i.toByte()
+                if (t in 0 until totalTriangles) triangleSegments[t] = i
             }
             AiRegionNode(
                 region = AiRegion(
@@ -118,9 +121,9 @@ object SegmentationCascade {
     fun volumeBranch(totalTriangles: Int, objects: List<ObjectVolumes>): CascadeResult {
         val totalVolumes = objects.sumOf { it.volumes.size }
         if (totalVolumes < 2) {
-            return CascadeResult(emptyList(), ByteArray(totalTriangles), SegmentationSource.VOLUME)
+            return CascadeResult(emptyList(), IntArray(totalTriangles), SegmentationSource.VOLUME)
         }
-        val triangleSegments = ByteArray(totalTriangles)
+        val triangleSegments = IntArray(totalTriangles)
         var nextLeafId = 0
         // fix37: parents need unique ids too — previously every multi-volume object's parent
         // got id=-1, colliding with the cascade root (-2) and other parents. Multiple parents
@@ -135,7 +138,7 @@ object SegmentationCascade {
                     ?: (nextLeafId % TARGET_SLOTS)
                 val id = nextLeafId++
                 v.triangleIds.forEach { t ->
-                    if (t in 0 until totalTriangles) triangleSegments[t] = id.toByte()
+                    if (t in 0 until totalTriangles) triangleSegments[t] = id
                 }
                 rootChildren += AiRegionNode(
                     region = AiRegion(
@@ -155,7 +158,7 @@ object SegmentationCascade {
                         ?: (nextLeafId % TARGET_SLOTS)
                     val id = nextLeafId++
                     v.triangleIds.forEach { t ->
-                        if (t in 0 until totalTriangles) triangleSegments[t] = id.toByte()
+                        if (t in 0 until totalTriangles) triangleSegments[t] = id
                     }
                     AiRegionNode(
                         region = AiRegion(
@@ -208,10 +211,14 @@ object SegmentationCascade {
             grouped.getOrPut(s) { mutableListOf() }.add(t)
         }
         if (grouped.size < 2) {
-            return CascadeResult(emptyList(), perTriangleState.copyOf(), SegmentationSource.PAINT_STATE)
+            return CascadeResult(
+                emptyList(),
+                IntArray(perTriangleState.size) { perTriangleState[it].toInt() and 0xFF },
+                SegmentationSource.PAINT_STATE,
+            )
         }
         val sortedStates = grouped.keys.sorted()
-        val triangleSegments = perTriangleState.copyOf()
+        val triangleSegments = IntArray(perTriangleState.size) { perTriangleState[it].toInt() and 0xFF }
         val children = sortedStates.mapIndexed { i, state ->
             val tris = grouped[state]!!.toIntArray()
             val slot = if (state == 0) i % TARGET_SLOTS else ((state - 1) % TARGET_SLOTS)
@@ -248,10 +255,14 @@ object SegmentationCascade {
             grouped.getOrPut(s) { mutableListOf() }.add(t)
         }
         if (grouped.size < 2) {
-            return CascadeResult(emptyList(), perTriangleIndex.copyOf(), SegmentationSource.TRIANGLE_INDEX)
+            return CascadeResult(
+                emptyList(),
+                IntArray(perTriangleIndex.size) { perTriangleIndex[it].toInt() and 0xFF },
+                SegmentationSource.TRIANGLE_INDEX,
+            )
         }
         val sortedKeys = grouped.keys.sorted()
-        val triangleSegments = perTriangleIndex.copyOf()
+        val triangleSegments = IntArray(perTriangleIndex.size) { perTriangleIndex[it].toInt() and 0xFF }
         val children = sortedKeys.mapIndexed { i, idx ->
             val tris = grouped[idx]!!.toIntArray()
             AiRegionNode(
@@ -287,7 +298,7 @@ object SegmentationCascade {
             MeshSegmenter.segmentByTopologyOrSpatial(positions)
         val triCount = positions.size / 9
         if (numComponents < 2) {
-            return CascadeResult(emptyList(), ByteArray(triCount), SegmentationSource.TOPOLOGY)
+            return CascadeResult(emptyList(), IntArray(triCount), SegmentationSource.TOPOLOGY)
         }
 
         // fix40.4: reverted the fix40.3 K-means subdivision. Spatial K-means on smooth-meshed
@@ -360,7 +371,7 @@ object SegmentationCascade {
         //   • Per-component recolouring — each child leaf is independently slottable, so the
         //     user can split a band's children across multiple physical slots when desired
         //     (e.g. paint the left leg different from the right leg post-grouping).
-        val triangleSegments = ByteArray(triCount)
+        val triangleSegments = IntArray(triCount)
         // Negative parent ids — leaf component ids occupy 0..numComponents-1, so parents use
         // -100 downwards to stay clear of both leaf ids and the cascade root id (-1).
         var nextParentId = -100
@@ -374,7 +385,7 @@ object SegmentationCascade {
             // One child leaf per topology component in this band.
             val childLeaves = compsInBand.mapIndexed { ci, comp ->
                 val tris = triByComp[comp].toIntArray()
-                tris.forEach { t -> if (t in 0 until triCount) triangleSegments[t] = comp.toByte() }
+                tris.forEach { t -> if (t in 0 until triCount) triangleSegments[t] = comp }
                 AiRegionNode(
                     region = AiRegion(
                         id = comp,
@@ -420,10 +431,10 @@ object SegmentationCascade {
         triByComp: Array<MutableList<Int>>,
     ): CascadeResult {
         val sortedComps = (0 until numComponents).sortedByDescending { triByComp[it].size }
-        val triangleSegments = ByteArray(triCount)
+        val triangleSegments = IntArray(triCount)
         val children = sortedComps.mapIndexed { i, comp ->
             val tris = triByComp[comp].toIntArray()
-            tris.forEach { t -> triangleSegments[t] = i.toByte() }
+            tris.forEach { t -> triangleSegments[t] = i }
             AiRegionNode(
                 region = AiRegion(
                     id = i,
@@ -490,7 +501,7 @@ object SegmentationCascade {
     /** Branch F — equal-width Z-band segmentation. Always succeeds. */
     fun zBandBranch(positions: FloatArray, bandCount: Int = 12): CascadeResult {
         val triCount = positions.size / 9
-        val bands = ByteArray(triCount)
+        val bands = IntArray(triCount)
 
         if (triCount == 0 || bandCount <= 0) {
             return CascadeResult(emptyList(), bands, SegmentationSource.Z_BAND)
@@ -508,12 +519,12 @@ object SegmentationCascade {
             val b = t * 9
             val cz = (positions[b + 2] + positions[b + 5] + positions[b + 8]) / 3f
             val band = ((cz - minZ) / span * bandCount).toInt().coerceIn(0, bandCount - 1)
-            bands[t] = band.toByte()
+            bands[t] = band
         }
 
         // Group triangle indices by band so the tree carries explicit membership.
         val perBand = Array(bandCount) { mutableListOf<Int>() }
-        for (t in 0 until triCount) perBand[bands[t].toInt() and 0xFF].add(t)
+        for (t in 0 until triCount) perBand[bands[t]].add(t)
 
         val children = (0 until bandCount).map { i ->
             val tris = perBand[i].toIntArray()

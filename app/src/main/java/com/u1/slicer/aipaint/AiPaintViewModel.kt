@@ -32,10 +32,6 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     companion object {
         const val TARGET_SLOTS = SegmentationCascade.TARGET_SLOTS
 
-        /** fix39 — topology cascades get folded into this many AI-named groups (matches fix30).
-         *  Capped at the actual component count so small models stay sane. */
-        const val TARGET_GROUP_COUNT = 12
-
         /**
          * Painted 3MFs are written by [PaintedMeshWriter] as `ai_paint_<timestamp>.3mf`.
          * Strip pipeline prefixes (`embedded_`, `sanitized_`) so cache-hit lookup works.
@@ -162,18 +158,6 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 // providers that have working vision; the goat-symmetry case works on every
                 // provider, including text-only Pollinations free tier.
                 val canCallAi = aiEnabled && (!provider.requiresKey || apiKey.isNotBlank())
-                Log.i("AiPaint", "fix39.3 gate: aiEnabled=$aiEnabled provider=${provider.name} " +
-                    "canCallAi=$canCallAi hasAlternate=${alternateResult != null}")
-
-                val (treeAfterAi, aiFailed, modelTried) = if (canCallAi) {
-                    _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
-                    applyAiNaming(provider, apiKey, positions, cascadeResult.tree)
-                } else {
-                    Triple(cascadeResult.tree, false, null)
-                }
-                val groupedAlternate: CascadeResult? = alternateResult
-
-                _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
 
                 // fix40.5: when the primary cascade is PAINT_STATE but a TOPOLOGY alternate
                 // exists, default the user to the topology view. Paint state has only N≤4
@@ -181,37 +165,49 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 // colour" — not useful for editing. Topology gives per-component leaves so
                 // tap on the nose actually selects the nose. The user can still switch back
                 // to the Painted view via the chip toggle.
+                //
+                // fix44: decide swap BEFORE running AI naming so the AI-named tree is the
+                // one the user actually sees. Previously AI naming was applied to
+                // cascadeResult.tree (paint state) but then primaryTree became the topology
+                // tree — so the AI names were silently discarded.
                 val swapToTopology = cascadeResult.source == SegmentationSource.PAINT_STATE &&
-                    (groupedAlternate?.source == SegmentationSource.TOPOLOGY ||
-                     groupedAlternate?.source == SegmentationSource.TOPOLOGY_RECURSIVE)
-                if (swapToTopology) {
-                    Log.i("AiPaint", "fix40.5 default-swap: PAINT_STATE primary + TOPOLOGY alternate " +
-                        "→ TOPOLOGY becomes default view")
+                    (alternateResult?.source == SegmentationSource.TOPOLOGY ||
+                     alternateResult?.source == SegmentationSource.TOPOLOGY_RECURSIVE)
+                val primaryCascade = if (swapToTopology) alternateResult!! else cascadeResult
+                val alternateCascadeForState = if (swapToTopology) cascadeResult else alternateResult
+                Log.i("AiPaint", "fix44 gate: aiEnabled=$aiEnabled provider=${provider.name} " +
+                    "canCallAi=$canCallAi swapToTopology=$swapToTopology " +
+                    "primary=${primaryCascade.source.name} " +
+                    "alternate=${alternateCascadeForState?.source?.name}")
+
+                val (primaryTreeAfterAi, aiFailed, modelTried) = if (canCallAi) {
+                    _uiState.value = AiPaintUiState.Running(3, "Asking AI to name the parts…")
+                    applyAiNaming(provider, apiKey, positions, primaryCascade.tree)
+                } else {
+                    Triple(primaryCascade.tree, false, null)
                 }
-                val primaryTree = if (swapToTopology) groupedAlternate!!.tree else treeAfterAi
-                val primarySource = if (swapToTopology) groupedAlternate!!.source else cascadeResult.source
-                val primarySegments = if (swapToTopology) groupedAlternate!!.triangleSegments else null
+
+                _uiState.value = AiPaintUiState.Running(4, "Writing painted model…")
+
+                val primaryTree = primaryTreeAfterAi
+                val primarySource = primaryCascade.source
+                val primarySegments = primaryCascade.triangleSegments
 
                 // Apply printer-slot colour overrides on leaf regions matching slot index.
                 val tree = primaryTree.map { root -> applyPrinterColours(root, printerColours) }
 
                 // Per-triangle slot from tree leaves' slot assignment.
                 val triangleRegions = ByteArray(triCount)
-                val leafByTri = IntArray(triCount) { -1 }
                 tree.forEach { root ->
                     root.flatten().forEach { (node, _) ->
                         if (node.isLeaf) {
                             node.triangleIds.forEach { t ->
                                 if (t in 0 until triCount) {
                                     triangleRegions[t] = node.region.slot.toByte()
-                                    leafByTri[t] = node.region.id
                                 }
                             }
                         }
                     }
-                }
-                val triangleSegments = ByteArray(triCount) {
-                    leafByTri[it].coerceIn(0, 255).toByte()
                 }
 
                 val slotsView = (0 until TARGET_SLOTS).map { s ->
@@ -230,17 +226,12 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     printerColours = printerColours,
                 )
 
-                // fix38: bake the alternate tree (topology) with printer colours so that when
-                // the user switches, the alternate already has the right slot colours.
-                // fix40.5: when we swap to TOPOLOGY as the default view, the PAINT_STATE
-                // tree becomes the alternate so the user can still toggle to it.
-                val alternateSourceTree = if (swapToTopology) treeAfterAi else groupedAlternate?.tree
-                val alternateSourceSrc = if (swapToTopology) cascadeResult.source else groupedAlternate?.source
-                val alternateSegments = if (swapToTopology) {
-                    // Re-derive paint-state's per-tri segments from the primary cascadeResult.
-                    cascadeResult.triangleSegments
-                } else groupedAlternate?.triangleSegments
-                val alternateTreeWithColours = alternateSourceTree?.map { root ->
+                // fix38: bake the alternate tree with printer colours so that when the user
+                // switches, the alternate already has the right slot colours. The alternate
+                // is the cascade we DIDN'T pick as primary (see swap logic above). Not run
+                // through AI naming today — feels coarse to spend a second AI call on a tree
+                // the user may never look at; we re-run on switch only if it ever matters.
+                val alternateTreeWithColours = alternateCascadeForState?.tree?.map { root ->
                     applyPrinterColours(root, printerColours)
                 }
 
@@ -251,14 +242,14 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         paintedModelPath = outFile.absolutePath,
                         sourceModelPath = sourceModelPath,
                         trianglePositions = positions,
-                        triangleSegments = primarySegments ?: triangleSegments,
+                        triangleSegments = primarySegments,
                         triangleRegions = triangleRegions,
                         aiNamingFailed = aiFailed,
                         aiModelTried = modelTried,
                         customSelections = emptyList(),
                         alternateTree = alternateTreeWithColours,
-                        alternateSource = alternateSourceSrc,
-                        alternateTriangleSegments = alternateSegments,
+                        alternateSource = alternateCascadeForState?.source,
+                        alternateTriangleSegments = alternateCascadeForState?.triangleSegments,
                     )
                 )
             } catch (e: Exception) {
@@ -417,92 +408,6 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         val nameById: Map<Int, NamedColour> = leaves.mapIndexed { i, leaf -> leaf.region.id to names[i] }.toMap()
         val renamed = tree.map { root -> applyNames(root, nameById) }
         return Triple(renamed, false, AiLabelClient.lastModel)
-    }
-
-    /**
-     * fix39 — semantic-grouping post-pass for topology cascades. Renders the N topology
-     * components in distinct hues, sends `(shaded, components)` to the AI with an explicit
-     * symmetry rule, and folds the result into a new cascade tree with [TARGET_GROUP_COUNT]
-     * leaves. On any failure (AI declined, parse mismatch, model error) returns null and the
-     * caller keeps the raw topology cascade.
-     */
-    private suspend fun applyAiTopologyGrouping(
-        provider: AiPaintProvider,
-        apiKey: String,
-        positions: FloatArray,
-        cascade: CascadeResult,
-    ): CascadeResult? {
-        val triCount = positions.size / 9
-        val leaves = cascade.tree.flatMap { it.flatten().filter { (n, _) -> n.isLeaf }.map { it.first } }
-        Log.i("AiPaint", "fix39 applyAiTopologyGrouping entry: ${leaves.size} leaves, provider=${provider.name}")
-        if (leaves.size < 2) {
-            Log.w("AiPaint", "fix39 skip: too few leaves (${leaves.size})")
-            return null
-        }
-
-        // Render shaded + component-coloured views from the same camera angle.
-        val perTriComp = IntArray(triCount)
-        leaves.forEachIndexed { idx, leaf ->
-            leaf.triangleIds.forEach { t -> if (t in perTriComp.indices) perTriComp[t] = idx }
-        }
-        val palette = AiLabelClient.componentDisplayColors(leaves.size)
-        val shaded = withContext(Dispatchers.Default) {
-            AiPaintRenderer.renderShaded(positions, 512, 512, CameraAngle.RIGHT_ISO)
-        }
-        val banded = withContext(Dispatchers.Default) {
-            AiPaintRenderer.renderRegions(positions, perTriComp, palette, 512, 512, CameraAngle.RIGHT_ISO)
-        }
-
-        val targetCount = minOf(TARGET_GROUP_COUNT, leaves.size)
-        Log.i("AiPaint", "fix39 calling labelGroups: $targetCount target groups from ${leaves.size} components")
-        val groups = AiLabelClient.labelGroups(
-            provider, apiKey, shaded, banded, leaves.size, targetCount,
-        )
-        if (groups == null) {
-            Log.w("AiPaint", "fix39 labelGroups returned null. " +
-                "lastModel=${AiLabelClient.lastModel} lastRaw=${AiLabelClient.lastRaw?.take(400)}")
-            return null
-        }
-
-        // Build new leaves: one per AI group, triangle ids = union of member components'
-        // triangles. Slot rotates so adjacent groups land on different physical slots; if the
-        // AI's suggested colour parses, it stays as suggestedColour.
-        val newLeaves = groups.mapIndexed { i, g ->
-            val tris = g.componentIds.flatMap { ci ->
-                leaves.getOrNull(ci)?.triangleIds?.toList() ?: emptyList()
-            }.toIntArray()
-            AiRegionNode(
-                region = AiRegion(
-                    id = i,
-                    label = g.label,
-                    suggestedColour = g.suggestedColour.takeIf(::isValidHex)
-                        ?: SegmentationCascade.paletteFor(i),
-                    coverageFraction = tris.size.toFloat() / triCount,
-                    slot = i % TARGET_SLOTS,
-                ),
-                children = emptyList(),
-                nodeSource = cascade.source,
-                triangleIds = tris,
-            )
-        }
-
-        val triangleSegments = ByteArray(triCount)
-        newLeaves.forEach { leaf ->
-            leaf.triangleIds.forEach { t ->
-                if (t in 0 until triCount) triangleSegments[t] = leaf.region.id.toByte()
-            }
-        }
-        val newRoot = AiRegionNode(
-            region = AiRegion(
-                id = -1, label = "Model", suggestedColour = "#888888", coverageFraction = 1f,
-            ),
-            children = newLeaves,
-            nodeSource = cascade.source,
-            triangleIds = IntArray(triCount) { it },
-        )
-        Log.i("AiPaint", "fix39 AI grouping: ${leaves.size} components → ${newLeaves.size} groups " +
-            "(model=${AiLabelClient.lastModel})")
-        return CascadeResult(listOf(newRoot), triangleSegments, cascade.source)
     }
 
     private fun applyNames(node: AiRegionNode, names: Map<Int, NamedColour>): AiRegionNode {

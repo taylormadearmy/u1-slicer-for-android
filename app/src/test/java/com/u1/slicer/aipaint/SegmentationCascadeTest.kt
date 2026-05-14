@@ -41,7 +41,7 @@ class SegmentationCascadeTest {
         for (t in 0 until tris) {
             val expectedBand = (t / 20).coerceAtMost(11)
             assertEquals("triangle $t belongs to band $expectedBand",
-                expectedBand, result.triangleSegments[t].toInt() and 0xFF)
+                expectedBand, result.triangleSegments[t])
         }
     }
 

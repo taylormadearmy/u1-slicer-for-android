@@ -31,7 +31,7 @@ data class AiPaintResultState(
     val trianglePositions: FloatArray = FloatArray(0),
     /** Per-triangle SEGMENT id (matches the cascade-tree leaf id that originally claimed the
      *  triangle; mutated only when the user does a "Clear all custom selections" flatten). */
-    val triangleSegments: ByteArray = ByteArray(0),
+    val triangleSegments: IntArray = IntArray(0),
     /** Per-triangle SLOT (0..3). Mutated by paint/lasso/cascade-reassign. Written to the 3MF. */
     val triangleRegions: ByteArray = ByteArray(0),
 
@@ -54,7 +54,7 @@ data class AiPaintResultState(
      *  switch — the alternate is a fresh start, not a layered overlay. */
     val alternateTree: List<AiRegionNode>? = null,
     val alternateSource: SegmentationSource? = null,
-    val alternateTriangleSegments: ByteArray? = null,
+    val alternateTriangleSegments: IntArray? = null,
 ) {
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = System.identityHashCode(this)
