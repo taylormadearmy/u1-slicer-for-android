@@ -122,13 +122,23 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 }
                 // fix45: native MMU path emits ALL triangles regardless of max_triangles —
                 // sapil_model.cpp:533-557 round-robin interleave skips decimation.
-                // fix45.1: cap at 30k (not 100k) because the topology *alternate* runs
-                // `MeshSegmenter.segmentByTopologyOrSpatial` whose merge step is super-linear
-                // in component count — 98k Korok hung >150s. 30k keeps tap precision usable
-                // on a phone-sized 3D view while bounding cascade compute.
-                val aiPaintTriCap = 30_000
-                val subsampled = if (rawMesh.trianglePositions.size / 9 > aiPaintTriCap) {
-                    subsampleMeshForAiPaint(rawMesh, aiPaintTriCap)
+                // fix45.1: cap at 30k (not 100k) because the topology *alternate* on painted
+                // fixtures was super-linear in component count — 98k Korok hung >150s before
+                // B112's adjacency-graph merge rewrite landed.
+                //
+                // B113: fix45 must NOT fire on meshes the native decimator already capped.
+                // Subsampling by stride keeps every Nth triangle and drops the rest, which
+                // destroys mesh adjacency — kept triangles no longer share edges, so the
+                // topology flood-fill sees each as its own component (20k+ leaves on a 25k
+                // benchy, rendered as multi-coloured confetti). Native decimation already
+                // produces a connected subset; only the MMU path (which returns >100k tris
+                // because it bypasses decimation per sapil_model.cpp:533) needs the Kotlin
+                // band-aid. Anything ≤ MAX_DECIMATED_TRIANGLES came from the proper native
+                // decimator and is safe to pass through untouched.
+                val subsampled = if (
+                    rawMesh.trianglePositions.size / 9 > NativePreviewMesh.MAX_DECIMATED_TRIANGLES
+                ) {
+                    subsampleMeshForAiPaint(rawMesh, targetCount = 30_000)
                 } else SubsampledMesh(rawMesh, stride = 1)
                 val mesh = subsampled.mesh
                 val cascadeStride = subsampled.stride
