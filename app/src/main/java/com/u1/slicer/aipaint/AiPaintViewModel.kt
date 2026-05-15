@@ -114,12 +114,22 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 val provider = AiPaintProvider.fromId(providerName)
                 val aiEnabled = settings.aiNamingEnabled.first()
 
-                val mesh = native.getPreparePreviewMesh(
+                val rawMesh = native.getPreparePreviewMesh(
                     maxTriangles = NativePreviewMesh.MAX_DECIMATED_TRIANGLES
                 ) ?: run {
                     _uiState.value = AiPaintUiState.Error("Could not read model geometry.")
                     return@launch
                 }
+                // fix45: native MMU path emits ALL triangles regardless of max_triangles —
+                // sapil_model.cpp:533-557 round-robin interleave skips decimation.
+                // fix45.1: cap at 30k (not 100k) because the topology *alternate* runs
+                // `MeshSegmenter.segmentByTopologyOrSpatial` whose merge step is super-linear
+                // in component count — 98k Korok hung >150s. 30k keeps tap precision usable
+                // on a phone-sized 3D view while bounding cascade compute.
+                val aiPaintTriCap = 30_000
+                val mesh = if (rawMesh.trianglePositions.size / 9 > aiPaintTriCap) {
+                    subsampleMeshForAiPaint(rawMesh, aiPaintTriCap)
+                } else rawMesh
                 val positions = mesh.trianglePositions
                 val triCount = positions.size / 9
 
@@ -602,6 +612,63 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun reset() { _uiState.value = AiPaintUiState.Idle }
+}
+
+/**
+ * fix45 — Kotlin-side subsample for AI Paint pipeline.
+ *
+ * The native MMU path (painted/SEMM 3MFs) in `sapil_model.cpp` skips decimation —
+ * the round-robin interleave at line ~533 emits every triangle from every paint
+ * state regardless of the `max_triangles` argument. As a result colored_3DBenchy
+ * returned 603k triangles to the cascade, and Korok 788k → topology pass either
+ * hangs or OOMs.
+ *
+ * This helper applies a global stride to the position + extruderIndices arrays,
+ * and remaps `volumeRanges` to the subsampled index space. Output triangle count
+ * is approximately `targetCount` (within stride rounding).
+ *
+ * The stride pattern preserves per-state proportion globally (we keep every Nth
+ * triangle), but doesn't try to balance across paint states — that's the native
+ * path's job. For Smart Paint's segmentation cascade this is good enough: topology
+ * flood-fill and Z-banding work on a strided subset just as well as the full
+ * mesh, and tap-to-highlight lookups still resolve via `triangleIds in leaf`.
+ */
+internal fun subsampleMeshForAiPaint(
+    src: com.u1.slicer.viewer.NativePreviewMesh,
+    targetCount: Int,
+): com.u1.slicer.viewer.NativePreviewMesh {
+    val triCount = src.trianglePositions.size / 9
+    if (triCount <= targetCount) return src
+    val stride = (triCount + targetCount - 1) / targetCount
+    val newTriCount = (triCount + stride - 1) / stride
+    val newPositions = FloatArray(newTriCount * 9)
+    val newIndices = ByteArray(newTriCount)
+    var writeT = 0
+    var readT = 0
+    while (readT < triCount && writeT < newTriCount) {
+        val readBase = readT * 9
+        val writeBase = writeT * 9
+        for (k in 0 until 9) newPositions[writeBase + k] = src.trianglePositions[readBase + k]
+        newIndices[writeT] = src.extruderIndices[readT]
+        readT += stride
+        writeT++
+    }
+
+    // Re-map volume ranges from the source's triangle index space into the subsampled
+    // one. Each source range [a, b] becomes [ceil(a/stride), b/stride].
+    val newRanges = src.volumeRanges?.map { range ->
+        val newFirst = (range.first + stride - 1) / stride
+        val newLast = range.last / stride
+        if (newLast < newFirst) IntRange(0, -1) else IntRange(newFirst, newLast)
+    }
+
+    val out = com.u1.slicer.viewer.NativePreviewMesh(
+        trianglePositions = newPositions.copyOf(writeT * 9),
+        extruderIndices = newIndices.copyOf(writeT),
+    )
+    out.volumeRanges = newRanges
+    android.util.Log.i("AiPaint", "fix45 subsample: ${triCount} → ${writeT} tris (stride=${stride})")
+    return out
 }
 
 /**
