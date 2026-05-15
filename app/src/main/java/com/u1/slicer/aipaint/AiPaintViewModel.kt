@@ -127,11 +127,14 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 // in component count — 98k Korok hung >150s. 30k keeps tap precision usable
                 // on a phone-sized 3D view while bounding cascade compute.
                 val aiPaintTriCap = 30_000
-                val mesh = if (rawMesh.trianglePositions.size / 9 > aiPaintTriCap) {
+                val subsampled = if (rawMesh.trianglePositions.size / 9 > aiPaintTriCap) {
                     subsampleMeshForAiPaint(rawMesh, aiPaintTriCap)
-                } else rawMesh
+                } else SubsampledMesh(rawMesh, stride = 1)
+                val mesh = subsampled.mesh
+                val cascadeStride = subsampled.stride
                 val positions = mesh.trianglePositions
                 val triCount = positions.size / 9
+                val originalTriCount = rawMesh.trianglePositions.size / 9
 
                 _uiState.value = AiPaintUiState.Running(2, "Finding parts of the model…")
                 val input = withContext(Dispatchers.Default) {
@@ -229,10 +232,19 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         slot = s,
                     )
                 }
+                // B111: export must write the *original* mesh, not the subsampled scaffolding.
+                // Broadcast each subsampled triangle's slot id to the `cascadeStride` source
+                // triangles it represents. When the model wasn't subsampled (stride == 1)
+                // this is identity. Without this, accepting Smart Paint on any model > 30k
+                // triangles silently replaces the geometry with ~3% of itself.
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
-                val slotIdsForFile = IntArray(triCount) { triangleRegions[it].toInt() and 0xFF }
+                val slotIdsForFile = broadcastSlotIdsToOriginalMesh(
+                    subsampledRegions = triangleRegions,
+                    originalTriCount = originalTriCount,
+                    stride = cascadeStride,
+                )
                 PaintedMeshWriter.write(
-                    positions, slotIdsForFile, slotsView, outFile,
+                    rawMesh.trianglePositions, slotIdsForFile, slotsView, outFile,
                     printerColours = printerColours,
                 )
 
@@ -254,6 +266,8 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         trianglePositions = positions,
                         triangleSegments = primarySegments,
                         triangleRegions = triangleRegions,
+                        sourceTrianglePositions = if (cascadeStride > 1) rawMesh.trianglePositions else FloatArray(0),
+                        cascadeStride = cascadeStride,
                         aiNamingFailed = aiFailed,
                         aiModelTried = modelTried,
                         customSelections = emptyList(),
@@ -554,7 +568,26 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     fun finalizePainting(): String? {
         val current = _uiState.value as? AiPaintUiState.Result ?: return null
         val state = current.state
-        val regionIds = IntArray(state.triangleRegions.size) { state.triangleRegions[it].toInt() }
+        // B111: if the cascade ran on a subsampled mesh (cascadeStride > 1), write the
+        // *original* mesh with slot ids broadcast from subsampled space. Otherwise the
+        // saved 3MF would contain only ~3% of the geometry (29k of 880k triangles for
+        // the axolotl repro). When stride == 1 the source positions are unused and
+        // state.trianglePositions is already the original.
+        val exportPositions = if (state.cascadeStride > 1 && state.sourceTrianglePositions.isNotEmpty()) {
+            state.sourceTrianglePositions
+        } else {
+            state.trianglePositions
+        }
+        val exportTriCount = exportPositions.size / 9
+        val regionIds = if (state.cascadeStride > 1 && state.sourceTrianglePositions.isNotEmpty()) {
+            broadcastSlotIdsToOriginalMesh(
+                subsampledRegions = state.triangleRegions,
+                originalTriCount = exportTriCount,
+                stride = state.cascadeStride,
+            )
+        } else {
+            IntArray(state.triangleRegions.size) { state.triangleRegions[it].toInt() and 0xFF }
+        }
         val slotsView = (0 until TARGET_SLOTS).map { s ->
             AiRegion(
                 id = s,
@@ -566,7 +599,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         }
         val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
         PaintedMeshWriter.write(
-            state.trianglePositions, regionIds, slotsView, outFile,
+            exportPositions, regionIds, slotsView, outFile,
             printerColours = lastPrinterColours,
         )
         _uiState.value = AiPaintUiState.Result(state.copy(paintedModelPath = outFile.absolutePath))
@@ -633,12 +666,21 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
  * flood-fill and Z-banding work on a strided subset just as well as the full
  * mesh, and tap-to-highlight lookups still resolve via `triangleIds in leaf`.
  */
+/** Result of [subsampleMeshForAiPaint]: the strided mesh plus the stride that produced
+ *  it. B111: callers need the stride to broadcast per-subsampled-triangle paint state
+ *  back to the original mesh at export time — without the stride, the export collapses
+ *  to the subsampled scaffolding (~3% of geometry on an 880k-tri model). */
+internal data class SubsampledMesh(
+    val mesh: com.u1.slicer.viewer.NativePreviewMesh,
+    val stride: Int,
+)
+
 internal fun subsampleMeshForAiPaint(
     src: com.u1.slicer.viewer.NativePreviewMesh,
     targetCount: Int,
-): com.u1.slicer.viewer.NativePreviewMesh {
+): SubsampledMesh {
     val triCount = src.trianglePositions.size / 9
-    if (triCount <= targetCount) return src
+    if (triCount <= targetCount) return SubsampledMesh(src, stride = 1)
     val stride = (triCount + targetCount - 1) / targetCount
     val newTriCount = (triCount + stride - 1) / stride
     val newPositions = FloatArray(newTriCount * 9)
@@ -668,7 +710,26 @@ internal fun subsampleMeshForAiPaint(
     )
     out.volumeRanges = newRanges
     android.util.Log.i("AiPaint", "fix45 subsample: ${triCount} → ${writeT} tris (stride=${stride})")
-    return out
+    return SubsampledMesh(out, stride)
+}
+
+/** B111: broadcast a subsampled per-triangle slot id array back to the original mesh's
+ *  triangle count. Each subsampled triangle covers `stride` source triangles (every
+ *  Nth was kept). The export uses this to write a 3MF with the full original geometry
+ *  whose paint state is derived from the subsampled cascade output.
+ *
+ *  When `stride == 1` (no subsampling) this is the identity-with-widen-to-Int copy. */
+internal fun broadcastSlotIdsToOriginalMesh(
+    subsampledRegions: ByteArray,
+    originalTriCount: Int,
+    stride: Int,
+): IntArray {
+    require(stride >= 1) { "stride must be >= 1, got $stride" }
+    val subsampledCount = subsampledRegions.size
+    return IntArray(originalTriCount) { t ->
+        val s = (t / stride).coerceAtMost(subsampledCount - 1).coerceAtLeast(0)
+        if (subsampledCount == 0) 0 else (subsampledRegions[s].toInt() and 0xFF)
+    }
 }
 
 /**

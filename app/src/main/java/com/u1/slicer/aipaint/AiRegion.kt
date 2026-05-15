@@ -34,6 +34,15 @@ data class AiPaintResultState(
     val triangleSegments: IntArray = IntArray(0),
     /** Per-triangle SLOT (0..3). Mutated by paint/lasso/cascade-reassign. Written to the 3MF. */
     val triangleRegions: ByteArray = ByteArray(0),
+    /** B111: positions of the ORIGINAL pre-subsample mesh, used at export to write a 3MF
+     *  with full geometry. Empty when the model wasn't subsampled (`cascadeStride == 1`)
+     *  in which case `trianglePositions` is already the original. */
+    val sourceTrianglePositions: FloatArray = FloatArray(0),
+    /** B111: stride that produced `trianglePositions` from the original mesh (see
+     *  `subsampleMeshForAiPaint`). 1 means no subsampling. Used at export to broadcast
+     *  each subsampled triangle's slot id back to the `stride` source triangles it
+     *  represents, so the saved 3MF has full geometry not just the subsampled scaffold. */
+    val cascadeStride: Int = 1,
 
     // When non-null, the 3D view highlights this single component and dims the rest.
     val highlightComponentId: Int? = null,
