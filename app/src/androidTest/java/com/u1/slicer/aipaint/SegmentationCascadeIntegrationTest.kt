@@ -21,9 +21,15 @@ import java.io.File
 class SegmentationCascadeIntegrationTest {
 
     private fun copyAsset(name: String): File {
-        val ctx = InstrumentationRegistry.getInstrumentation().targetContext
-        val out = File(ctx.cacheDir, name)
-        ctx.assets.open(name).use { input -> out.outputStream().use { input.copyTo(it) } }
+        // androidTest fixtures are bundled in the *test* APK, not the app-under-test.
+        // `getInstrumentation().context.assets` is the test APK; `targetContext.assets` is
+        // the app APK and won't find these fixtures. Matches the pattern used in
+        // KotlinBambuSnapshotTest. Writing the temp copy under targetContext.cacheDir is
+        // fine — either app's cache works for the on-disk copy that the native loader needs.
+        val testCtx = InstrumentationRegistry.getInstrumentation().context
+        val targetCtx = InstrumentationRegistry.getInstrumentation().targetContext
+        val out = File(targetCtx.cacheDir, name)
+        testCtx.assets.open(name).use { input -> out.outputStream().use { input.copyTo(it) } }
         return out
     }
 
