@@ -3130,18 +3130,36 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         slicingOverrides.value.supportFilament.value ?: 0,
                         slicingOverrides.value.supportInterfaceFilament.value ?: 0,
                     )
-                    val ftTypes = if (
+                    // B110: produce filament_type AND nozzle_temperature header arrays
+                    // from the same physical-slot-indexed source so they agree on which
+                    // slot received a Prepare-screen override. Without this, the
+                    // post-slice `filament_type` patch is physical-slot-indexed (B102) but
+                    // `nozzle_temperature` stays in canonical/UI order — the two header
+                    // rows disagree (PLA at slot 0 but 235°C at slot 0, vs PETG at slot 2).
+                    val ftTypes: List<String>
+                    val ntTemps: List<Int>
+                    if (
                         canonicalForPatch != null &&
                         !(canonicalForPatch.size <= 1 && supportDrivenSlotCount > canonicalForPatch.size)
                     ) {
-                        resolveFilamentTypesForHeaderPatch(
+                        val padTo = maxOf(canonicalForPatch.size, supportDrivenSlotCount)
+                        ftTypes = resolveFilamentTypesForHeaderPatch(
                             canonical = canonicalForPatch,
                             overrides = _filamentOverrides.value
                                 .mapValues { (_, ov) -> ov.color to ov.materialType },
                             colorMapping = _colorMapping.value,
                             presets = basePresets,
                             filamentLibrary = filaments.value,
-                            padTo = maxOf(canonicalForPatch.size, supportDrivenSlotCount),
+                            padTo = padTo,
+                        )
+                        ntTemps = resolveNozzleTempsForHeaderPatch(
+                            canonical = canonicalForPatch,
+                            overrides = _filamentOverrides.value
+                                .mapValues { (_, ov) -> ov.color to ov.materialType },
+                            colorMapping = _colorMapping.value,
+                            presets = basePresets,
+                            filamentLibrary = filaments.value,
+                            padTo = padTo,
                         )
                     } else {
                         // B105: for non-canonical files (STL, generic 3MF) emit only the
@@ -3151,10 +3169,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         val usedSlotsForPatch = toolRemapSlots
                             ?: _colorMapping.value?.distinct()?.sorted()
                             ?: listOf(_selectedExtruder.value)
-                        resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets)
+                        ftTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets)
+                        ntTemps = resolveNonCanonicalHeaderPatchTemps(
+                            usedSlotsForPatch, basePresets, filaments.value
+                        )
                     }
                     val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
+                    val ntPatched = fixNozzleTemperatureHeader(result.gcodePath, ntTemps)
                     Log.i("SlicerVM", "B63 filament_type patch: $ftPatched (types=$ftTypes)")
+                    Log.i("SlicerVM", "B110 nozzle_temperature patch: $ntPatched (temps=$ntTemps)")
 
                     // Sub-plan #2c P1 fix: when a plate is selected (currentPlateId > 0), the
                     // plate-filtered custom_gcode_per_layer.xml lives in currentModelFile
@@ -5556,4 +5579,149 @@ internal fun resolveNonCanonicalHeaderPatchTypes(
     presets: List<ExtruderPreset>,
 ): List<String> = usedSlots.map { slot ->
     presets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+}
+
+/**
+ * B110: physical-slot-indexed nozzle_temperature companion to
+ * [resolveFilamentTypesForHeaderPatch]. The two arrays MUST agree on which slot
+ * received a given material/temp so that downstream consumers reading
+ * `filament_type[i]` and `nozzle_temperature[i]` see consistent rows.
+ *
+ * Resolution order mirrors [com.u1.slicer.data.resolvePerFilamentTypeAndTemp]:
+ *   1. User override material → [nozzleTempDefaultForMaterial] of that material.
+ *   2. Linked filament-profile temp for the mapped slot (when no override).
+ *   3. Material-default temp of the slot's preset materialType.
+ *   4. PLA default (220°C).
+ *
+ * Indexing:
+ *   - When [colorMapping] is non-empty, the result is **physical-slot-indexed**
+ *     (length = max(maxPhysicalSlot+1, padTo)). Forward-order traversal so the
+ *     lowest canonical index wins on H2C-style folds where multiple file
+ *     filaments share a physical slot.
+ *   - When [colorMapping] is null/empty, the result is canonical-indexed and
+ *     padded to [padTo] using material defaults from the preset at that slot.
+ */
+internal fun resolveNozzleTempsForHeaderPatch(
+    canonical: com.u1.slicer.data.CanonicalFilamentList,
+    overrides: Map<Int, Pair<String?, String?>>,
+    colorMapping: List<Int>?,
+    presets: List<ExtruderPreset>,
+    filamentLibrary: List<FilamentProfile>,
+    padTo: Int = canonical.size,
+): List<Int> {
+    val resolved = com.u1.slicer.data.resolvePerFilamentTypeAndTemp(
+        canonical = canonical,
+        overrides = overrides,
+        colorMapping = colorMapping,
+        presets = presets,
+        filamentLibrary = filamentLibrary,
+    ).second
+
+    if (!colorMapping.isNullOrEmpty()) {
+        val slotPresetByIndex = presets.associateBy { it.index }
+        val maxPhysicalSlot = colorMapping.maxOrNull() ?: 0
+        val physicalSize = maxOf(maxPhysicalSlot + 1, padTo)
+        val result = MutableList(physicalSize) { idx ->
+            val preset = slotPresetByIndex[idx]
+            val material = preset?.materialType?.takeIf { it.isNotBlank() } ?: "PLA"
+            val profileTemp = preset?.filamentProfileId
+                ?.let { id -> filamentLibrary.firstOrNull { it.id == id }?.nozzleTemp }
+            profileTemp ?: nozzleTempDefaultForMaterial(material)
+        }
+        val seen = mutableSetOf<Int>()
+        colorMapping.forEachIndexed { canonicalIdx, physicalSlot ->
+            if (physicalSlot in result.indices && canonicalIdx < resolved.size && physicalSlot !in seen) {
+                result[physicalSlot] = resolved[canonicalIdx]
+                seen.add(physicalSlot)
+            }
+        }
+        return result
+    }
+
+    if (resolved.size >= padTo) return resolved
+    val slotPresetByIndex = presets.associateBy { it.index }
+    return resolved + (resolved.size until padTo).map { idx ->
+        val preset = slotPresetByIndex[idx]
+        val material = preset?.materialType?.takeIf { it.isNotBlank() } ?: "PLA"
+        val profileTemp = preset?.filamentProfileId
+            ?.let { id -> filamentLibrary.firstOrNull { it.id == id }?.nozzleTemp }
+        profileTemp ?: nozzleTempDefaultForMaterial(material)
+    }
+}
+
+/**
+ * B110: nozzle_temperature companion to [resolveNonCanonicalHeaderPatchTypes].
+ *
+ * Returns one temp per entry in [usedSlots], pulled from the preset's linked
+ * filament profile (when set) or otherwise the material default for the slot's
+ * preset materialType. Used for STL / single-colour 3MF flows where the file has
+ * no canonical filament list.
+ */
+internal fun resolveNonCanonicalHeaderPatchTemps(
+    usedSlots: List<Int>,
+    presets: List<ExtruderPreset>,
+    filamentLibrary: List<FilamentProfile>,
+): List<Int> = usedSlots.map { slot ->
+    val preset = presets.firstOrNull { it.index == slot }
+    val material = preset?.materialType ?: "PLA"
+    val profileTemp = preset?.filamentProfileId
+        ?.let { id -> filamentLibrary.firstOrNull { it.id == id }?.nozzleTemp }
+    profileTemp ?: nozzleTempDefaultForMaterial(material)
+}
+
+/**
+ * B110: Replace the `; nozzle_temperature = ...` (and matching
+ * `; nozzle_temperature_initial_layer = ...`) header comment lines in a
+ * generated G-code file with [temps] joined by commas.
+ *
+ * OrcaSlicer's `ConfigOptionInts::serialize` emits comma-separated values for
+ * integer vector options (vs semicolons for string vectors like filament_type).
+ *
+ * Both `nozzle_temperature` and `nozzle_temperature_initial_layer` are patched
+ * with the same array because B110's source mismatch is the slot-indexing
+ * convention, not a per-line difference between layer 1 and layer 2+.
+ *
+ * @return true if at least one of the two header lines was found and replaced.
+ */
+internal fun fixNozzleTemperatureHeader(gcodePath: String, temps: List<Int>): Boolean {
+    if (temps.isEmpty()) return false
+    val file = java.io.File(gcodePath)
+    if (!file.exists()) return false
+    val replacement = temps.joinToString(",")
+    val tmpFile = java.io.File("$gcodePath.ntemp.tmp")
+    return try {
+        var foundMain = false
+        var foundInitial = false
+        file.bufferedReader().use { reader ->
+            tmpFile.bufferedWriter().use { writer ->
+                for (line in reader.lineSequence()) {
+                    when {
+                        !foundMain && line.startsWith("; nozzle_temperature = ") -> {
+                            writer.write("; nozzle_temperature = $replacement")
+                            foundMain = true
+                        }
+                        !foundInitial && line.startsWith("; nozzle_temperature_initial_layer = ") -> {
+                            writer.write("; nozzle_temperature_initial_layer = $replacement")
+                            foundInitial = true
+                        }
+                        else -> writer.write(line)
+                    }
+                    writer.newLine()
+                }
+            }
+        }
+        val found = foundMain || foundInitial
+        if (found) {
+            java.nio.file.Files.move(
+                tmpFile.toPath(), file.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+        } else {
+            tmpFile.delete()
+        }
+        found
+    } catch (e: Exception) {
+        tmpFile.delete()
+        false
+    }
 }

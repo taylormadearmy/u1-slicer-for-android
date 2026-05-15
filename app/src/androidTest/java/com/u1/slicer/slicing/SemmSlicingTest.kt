@@ -7,9 +7,17 @@ import com.u1.slicer.NativeLibrary
 import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
+import com.u1.slicer.data.CanonicalFilamentList
+import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentEntry
+import com.u1.slicer.data.FilamentSource
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.fixFilamentTypeHeader
+import com.u1.slicer.fixNozzleTemperatureHeader
 import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.GcodeValidator
+import com.u1.slicer.resolveFilamentTypesForHeaderPatch
+import com.u1.slicer.resolveNozzleTempsForHeaderPatch
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -426,6 +434,117 @@ class SemmSlicingTest {
                 "7-colour segmentation (got $totalToolChanges). If ~432, filament_colour " +
                 "is not reaching the native slicer with 7 entries.",
             totalToolChanges > 600
+        )
+    }
+
+    /**
+     * B110: After Prepare-screen Filament 1 → PETG on H2C benchy, the emitted
+     * G-code must have `filament_type` and `nozzle_temperature` agreeing on the
+     * PETG slot index. Before the fix, `filament_type` (post-slice patched via
+     * B102) used physical-slot indexing while `nozzle_temperature` (untouched
+     * after the slicer wrote it) stayed in canonical/UI order — the two arrays
+     * disagreed: `filament_type = PLA;PLA;PETG;PLA;PLA;PLA;PLA` claimed slot 2
+     * was PETG while `nozzle_temperature = 235,220,...` claimed slot 0 hit 235°C.
+     *
+     * Red-green TDD: this test slices H2C benchy without any embed-time override
+     * (so the native slicer writes the embedded 4-PLA / 7-PLA defaults), then
+     * applies the post-slice header patches with a synthetic Prepare-screen
+     * override (Filament 1 / canonical fileIndex 0 → PETG). It asserts the two
+     * arrays agree on which slot index holds the PETG/235°C row.
+     */
+    @Test
+    fun h2cBenchy_filament1PetgOverride_headerArraysAgreeOnPetgSlot() {
+        val input = asset("3DBenchy-H2C-Multi-Color.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        assertTrue("H2C benchy must have hasPaintData=true", origInfo.hasPaintData)
+        assertEquals("H2C benchy must detect 7 model colours", 7, origInfo.detectedColors.size)
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val config = embedder.buildConfig(
+            info = origInfo,
+            sourceConfig = sourceConfig,
+            targetExtruderCount = 7
+        )
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(makeConfig(4))
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue("H2C benchy must slice successfully: ${result.errorMessage}", result.success)
+
+        // Build canonical + override the way SlicerViewModel would after the user
+        // tapped "Filament 1 → PETG" on the Prepare screen. fileIndex 0 → PETG;
+        // colorMapping is identity for the first 4 file filaments and folds 5/6/7
+        // back onto physical slots 0/1/2 (H2C's standard fold).
+        val canonical = CanonicalFilamentList(
+            filaments = origInfo.detectedColors.mapIndexed { idx, hex ->
+                FilamentEntry(idx, hex, "PLA", FilamentSource.FILE_COLOUR)
+            }
+        )
+        val presets = (0 until 4).map { idx ->
+            ExtruderPreset(index = idx, color = "#FFFFFF", materialType = "PLA")
+        }
+        val colorMapping = listOf(0, 1, 2, 3, 0, 1, 2)
+        val overrides = mapOf<Int, Pair<String?, String?>>(0 to (null to "PETG"))
+
+        val ftTypes = resolveFilamentTypesForHeaderPatch(
+            canonical = canonical,
+            overrides = overrides,
+            colorMapping = colorMapping,
+            presets = presets,
+            filamentLibrary = emptyList(),
+            padTo = canonical.size,
+        )
+        val ntTemps = resolveNozzleTempsForHeaderPatch(
+            canonical = canonical,
+            overrides = overrides,
+            colorMapping = colorMapping,
+            presets = presets,
+            filamentLibrary = emptyList(),
+            padTo = canonical.size,
+        )
+
+        // Apply both patches the same way startSlicing() does post-success.
+        assertTrue("filament_type header patch must succeed",
+            fixFilamentTypeHeader(result.gcodePath, ftTypes))
+        assertTrue("nozzle_temperature header patch must succeed",
+            fixNozzleTemperatureHeader(result.gcodePath, ntTemps))
+
+        // Grep both header lines from the patched G-code and verify alignment.
+        val gcode = File(result.gcodePath).readText()
+        val filamentTypeLine = gcode.lines().firstOrNull { it.startsWith("; filament_type = ") }
+        val nozzleTempLine = gcode.lines().firstOrNull { it.startsWith("; nozzle_temperature = ") }
+        assertNotNull("G-code must contain `; filament_type = ...` header line", filamentTypeLine)
+        assertNotNull("G-code must contain `; nozzle_temperature = ...` header line", nozzleTempLine)
+
+        val types = filamentTypeLine!!.removePrefix("; filament_type = ").split(";")
+        val temps = nozzleTempLine!!.removePrefix("; nozzle_temperature = ").split(",")
+            .map { it.trim().toInt() }
+
+        assertEquals(
+            "B110: filament_type and nozzle_temperature header arrays must have equal length. " +
+                "types=$types temps=$temps",
+            types.size, temps.size
+        )
+
+        val petgIndex = types.indexOf("PETG")
+        assertTrue(
+            "Expected a PETG entry in filament_type after Filament 1 PETG override, got $types",
+            petgIndex >= 0
+        )
+        assertEquals(
+            "B110: nozzle_temperature must read 235°C at slot $petgIndex (the same slot where " +
+                "filament_type reads PETG). types=$types temps=$temps",
+            235, temps[petgIndex]
+        )
+        // No other slot should carry 235°C — the override applied to exactly one file filament,
+        // which folds onto exactly one physical slot.
+        val temp235Slots = temps.withIndex().filter { it.value == 235 }.map { it.index }
+        assertEquals(
+            "B110: only the PETG slot ($petgIndex) should read 235°C. temps=$temps",
+            listOf(petgIndex), temp235Slots
         )
     }
 
