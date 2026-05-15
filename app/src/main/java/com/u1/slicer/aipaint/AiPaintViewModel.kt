@@ -120,24 +120,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     _uiState.value = AiPaintUiState.Error("Could not read model geometry.")
                     return@launch
                 }
-                // fix45: native MMU path emits ALL triangles regardless of max_triangles —
-                // sapil_model.cpp:533-557 round-robin interleave skips decimation.
-                // fix45.1: cap at 30k (not 100k) because the topology *alternate* on painted
-                // fixtures was super-linear in component count — 98k Korok hung >150s before
-                // B112's adjacency-graph merge rewrite landed.
-                //
-                // B113: fix45 must NOT fire on meshes the native decimator already capped.
-                // Subsampling by stride keeps every Nth triangle and drops the rest, which
-                // destroys mesh adjacency — kept triangles no longer share edges, so the
-                // topology flood-fill sees each as its own component (20k+ leaves on a 25k
-                // benchy, rendered as multi-coloured confetti). Native decimation already
-                // produces a connected subset; only the MMU path (which returns >100k tris
-                // because it bypasses decimation per sapil_model.cpp:533) needs the Kotlin
-                // band-aid. Anything ≤ MAX_DECIMATED_TRIANGLES came from the proper native
-                // decimator and is safe to pass through untouched.
-                val subsampled = if (
-                    rawMesh.trianglePositions.size / 9 > NativePreviewMesh.MAX_DECIMATED_TRIANGLES
-                ) {
+                // B113: subsample only when the native decimator was bypassed
+                // (see `shouldSubsampleForAiPaint` for the threshold rationale).
+                val subsampled = if (shouldSubsampleForAiPaint(rawMesh.trianglePositions.size / 9)) {
                     subsampleMeshForAiPaint(rawMesh, targetCount = 30_000)
                 } else SubsampledMesh(rawMesh, stride = 1)
                 val mesh = subsampled.mesh
@@ -684,6 +669,25 @@ internal data class SubsampledMesh(
     val mesh: com.u1.slicer.viewer.NativePreviewMesh,
     val stride: Int,
 )
+
+/**
+ * B113 threshold gate. The Kotlin stride subsample in [subsampleMeshForAiPaint] is a
+ * band-aid for the native MMU path emitting all triangles regardless of `max_triangles`
+ * (sapil_model.cpp:533-557). It must NOT fire on meshes the native decimator already
+ * capped: stride subsample keeps every Nth triangle and DESTROYS mesh adjacency, so
+ * topology flood-fill produces one tiny component per surviving triangle (the v2.2.0
+ * benchy confetti regression).
+ *
+ * Anything `≤ MAX_DECIMATED_TRIANGLES` came from the proper native decimator with
+ * adjacency intact and is safe to pass through to the cascade untouched. Anything
+ * larger means the MMU bypass leaked the full mesh — those need the Kotlin band-aid
+ * to keep the topology *alternate* compute tractable on painted fixtures.
+ *
+ * Pure function; extracted so the threshold has a single source of truth and a unit
+ * test guards future drift.
+ */
+internal fun shouldSubsampleForAiPaint(triCount: Int): Boolean =
+    triCount > com.u1.slicer.viewer.NativePreviewMesh.MAX_DECIMATED_TRIANGLES
 
 internal fun subsampleMeshForAiPaint(
     src: com.u1.slicer.viewer.NativePreviewMesh,

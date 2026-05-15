@@ -38,6 +38,38 @@ Use this checklist for final on-device sanity passes before publishing:
 7. Confirm Preview colours match the intended tool usage
 8. Apply the **Universal post-slice rubric** below
 
+## Smart Paint smoke scenario
+
+Added after the v2.2.0/v2.2.1 Smart Paint regressions (B111 export, B112 merge perf,
+B113 subsample threshold). Run this on **every release** that touches anything under
+`app/src/main/java/com/u1/slicer/aipaint/` or `app/src/main/java/com/u1/slicer/ui/AiPaint*`.
+
+**Fixture:** `app/src/androidTest/assets/3DBenchy.stl` — bare STL, no paint state, ~25k
+native-decimated triangles. Exercises the cascade's TOPOLOGY primary branch (the path
+that broke in v2.2.0). Painted fixtures hit Branch A and bypass the regressed code.
+
+**Steps:**
+
+1. Push the fixture into app-private storage (`adb shell cat /sdcard/Download/benchy.stl | run-as com.u1.slicer.orca sh -c 'cat > files/benchy.stl'`) and load it.
+2. Tap the Smart Paint wand icon on the Prepare viewer.
+3. Wait for the "Phase 2/4 Finding parts of the model…" spinner to clear. Budget: **< 30 seconds** (B112 guard — pre-fix this hung indefinitely).
+4. **Inspect the result viewer.** The boat must render as a recognisable mesh with a handful of coloured regions — typically a blue hull, green cabin, red door details, maybe white accents. Reject if you see:
+   - Multi-coloured confetti (B113 regression — adjacency destroyed by subsample)
+   - A sparse cloud of disconnected triangles (B111 regression — subsampled mesh on viewer)
+   - More than ~10 visible bands of any colour mixed across the boat
+5. Confirm logcat shows `Cascade fired: TOPOLOGY → N leaves` with **N < 200** (typically ~32). N > 200 means confetti even if it visually looks OK.
+6. Tap **Use this painting →**. Logcat should show `SAPIL: Model loaded: embedded_sanitized_ai_paint_*.3mf — N triangles` with **N matching the native-decimated count** (~99,996 for benchy, NOT 29,340 — the B111 regression class).
+7. Slice. Confirm G-code emits multiple T-indices (one per painted band) and contains no FATAL/UnsatisfiedLink/SIGSEGV in logcat.
+
+**Why each step matters:** the v2.2.0 regression was invisible until step 4 (cascade *completed* but produced confetti). Step 6 catches B111's "destroy-the-mesh-on-export" path which is orthogonal to the cascade. Step 7 catches a downstream slice break from a malformed painted 3MF.
+
+**Automated coverage:** unit tests cover the threshold gate
+(`ShouldSubsampleForAiPaintTest`) and the merge perf algorithm
+(`MeshSegmenterMergePerfTest`); the instrumented test
+`SmartPaintBenchyIntegrationTest` runs steps 1–5 on real `3DBenchy.stl` and asserts
+N < 200 leaves and < 30s wall time. Steps 6–7 (accept + slice) remain manual until
+a future test harness can drive the result-screen UI.
+
 ## Universal post-slice rubric (every multi-colour file)
 
 These four checks catch the v2.0.x export-mapping bug classes regardless of
