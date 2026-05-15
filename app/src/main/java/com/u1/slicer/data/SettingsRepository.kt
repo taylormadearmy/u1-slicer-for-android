@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.u1.slicer.aipaint.AiPaintProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -42,6 +43,9 @@ class SettingsRepository(private val context: Context) {
         val SLICING_OVERRIDES = stringPreferencesKey("slicing_overrides")
         val MAKERWORLD_COOKIES = stringPreferencesKey("makerworld_cookies")
         val PLATE_TYPE = stringPreferencesKey("plate_type")
+        val AI_PAINT_PROVIDER = stringPreferencesKey("ai_paint_provider")
+        val AI_PAINT_API_KEY = stringPreferencesKey("ai_paint_api_key")
+        val AI_NAMING_ENABLED = booleanPreferencesKey("ai_naming_enabled")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.dataStore.data.map { prefs ->
@@ -91,6 +95,34 @@ class SettingsRepository(private val context: Context) {
 
     val plateType: Flow<PlateType> = context.dataStore.data.map { prefs ->
         PlateType.fromName(prefs[Keys.PLATE_TYPE])
+    }
+
+    val aiPaintProvider: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.AI_PAINT_PROVIDER] ?: AiPaintProvider.DEFAULT.name
+    }
+
+    val aiPaintApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.AI_PAINT_API_KEY] ?: ""
+    }
+
+    /** Per-provider API key. Reads ONLY from the provider's own slot — no fallback to the
+     *  legacy single-key slot, because that fallback caused every provider to inherit the
+     *  same key (the leak fix23 was supposed to fix). Blank when nothing's been entered. */
+    fun aiPaintApiKeyFor(providerName: String): Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[stringPreferencesKey("ai_paint_key_$providerName")] ?: ""
+    }
+
+    /** F54: when true the AI Paint pipeline calls the configured provider for region naming +
+     *  colour suggestions on top of the deterministic cascade. Defaults to false; gating users
+     *  out of the experimental AI path keeps results predictable. */
+    val aiNamingEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.AI_NAMING_ENABLED] ?: false
+    }
+
+    suspend fun saveAiNamingEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_NAMING_ENABLED] = enabled
+        }
     }
 
     suspend fun saveExtruderPresets(presets: List<ExtruderPreset>) {
@@ -154,6 +186,31 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveMakerWorldCookies(cookies: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.MAKERWORLD_COOKIES] = cookies
+        }
+    }
+
+    /** Save just the selected provider, without touching any API keys. Called when the user
+     *  picks a different provider in the dropdown — the key field should then auto-load that
+     *  provider's stored key (or be blank if none). */
+    suspend fun saveAiPaintProvider(provider: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_PAINT_PROVIDER] = provider
+        }
+    }
+
+    /** Save just the API key for a specific provider. Each provider's key is independent. */
+    suspend fun saveAiPaintKey(provider: String, apiKey: String) {
+        context.dataStore.edit { prefs ->
+            prefs[stringPreferencesKey("ai_paint_key_$provider")] = apiKey
+        }
+    }
+
+    @Deprecated("Bundled save leaks the key across providers; use saveAiPaintProvider and " +
+        "saveAiPaintKey separately so switching providers doesn't copy the visible key.")
+    suspend fun saveAiPaintSettings(provider: String, apiKey: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_PAINT_PROVIDER] = provider
+            prefs[stringPreferencesKey("ai_paint_key_$provider")] = apiKey
         }
     }
 

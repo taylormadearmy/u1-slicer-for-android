@@ -45,6 +45,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -153,6 +154,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private val native = NativeLibrary()
+    internal val nativeLib: NativeLibrary get() = native
     private val diagnostics = DiagnosticsStore(application)
     private val container = (application as U1SlicerApplication).container
     private val settingsRepo = container.settingsRepository
@@ -696,6 +698,54 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun saveMakerWorldCookies(cookies: String) {
         viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveMakerWorldCookies(cookies) }
+    }
+
+    // AI Paint provider + API key
+    val aiPaintProvider: StateFlow<String> = settingsRepo.aiPaintProvider
+        .stateIn(viewModelScope, SharingStarted.Eagerly, com.u1.slicer.aipaint.AiPaintProvider.DEFAULT.name)
+
+    val aiPaintApiKey: StateFlow<String> = settingsRepo.aiPaintApiKey
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    /** Per-provider API key flow. Each provider's key is stored independently so switching
+     *  providers in Settings doesn't leak / overwrite a different provider's key. */
+    fun aiPaintApiKeyFor(provider: String): Flow<String> = settingsRepo.aiPaintApiKeyFor(provider)
+
+    fun saveAiPaintSettings(provider: String, apiKey: String) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintSettings(provider, apiKey) }
+    }
+
+    fun saveAiPaintProvider(provider: String) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintProvider(provider) }
+    }
+
+    fun saveAiPaintKey(provider: String, apiKey: String) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiPaintKey(provider, apiKey) }
+    }
+
+    /** F54: AI naming toggle (experimental). Off by default. */
+    val aiNamingEnabled: StateFlow<Boolean> = settingsRepo.aiNamingEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun saveAiNamingEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiNamingEnabled(enabled) }
+    }
+
+    /** F54 fix38.4: change one extruder slot's filament colour, persisting via the extruder
+     *  presets DataStore. Used by Smart Paint's slot picker so editing a slot colour actually
+     *  propagates back to the printer-side filament list (and shows up everywhere — Prepare
+     *  filaments row, Map dialog, recolour preview). */
+    fun setSlotColor(slotIndex: Int, hex: String) {
+        if (slotIndex !in 0..3) return
+        val cleaned = if (hex.startsWith("#")) hex else "#$hex"
+        viewModelScope.launch(Dispatchers.IO) {
+            val current = settingsRepo.extruderPresets.first().toMutableList()
+            val existing = current.firstOrNull { it.index == slotIndex }
+            val updated = existing?.copy(color = cleaned)
+                ?: com.u1.slicer.data.ExtruderPreset(index = slotIndex, color = cleaned)
+            val withoutOld = current.filterNot { it.index == slotIndex }
+            settingsRepo.saveExtruderPresets((withoutOld + updated).sortedBy { it.index })
+        }
     }
 
     // Track the current working file (may be sanitized copy)

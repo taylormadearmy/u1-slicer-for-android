@@ -1,0 +1,359 @@
+package com.u1.slicer.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import com.u1.slicer.aipaint.AiPaintMeshBuilder
+import com.u1.slicer.aipaint.AiPaintResultState
+import com.u1.slicer.aipaint.AiPaintViewModel
+import com.u1.slicer.aipaint.SegmentationCascade
+import com.u1.slicer.viewer.ModelViewerView
+
+/**
+ * fix44: extracted from AiPaintResultScreen during the 1147-LOC file split. Owns the 3D
+ * viewer panel — the GLSurfaceView wrapper, the tool strip overlay, and the slot palette
+ * row below the viewer. The screen file is now responsible only for Scaffold + state +
+ * tree wiring; everything visual that interacts with the model lives here.
+ */
+
+@Composable
+internal fun AiPaintViewer(
+    state: AiPaintResultState,
+    onTriangleTapped: (Int) -> Unit,
+    onEmptyTap: () -> Unit,
+    paintMode: Boolean,
+    lassoMode: Boolean,
+    brushRadiusWorld: Float,
+    brushPct: Float,
+    activeRegion: Int,
+    onPaintTriangles: (List<Int>, Int) -> Unit,
+    onBrushStrokeStart: () -> Unit,
+    onLassoLoop: (List<Int>) -> Unit,
+    /** fix38.1: SLOT-indexed palette (size = TARGET_SLOTS = 4). The renderer applies
+     *  palette[triangleRegions[t]] where triangleRegions[t] stores the slot byte 0..3. */
+    slotPaletteFloats: List<FloatArray>,
+    lassoSelection: Set<Int> = emptySet(),
+    highlightedTriangles: Set<Int> = emptySet(),
+    modifier: Modifier = Modifier,
+) {
+    var viewerView by remember { mutableStateOf<ModelViewerView?>(null) }
+    // Latest brush touch position in viewer-local pixels, or null when the finger is up.
+    var brushTouchPx by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    // fix42: live lasso path in view-local pixels — populated on every MOVE while lasso-
+    // dragging, cleared on UP. Drawn as a yellow polyline overlay on top of the GL surface.
+    var lassoPathPx by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
+    var viewerSizePx by remember { mutableStateOf(IntSize.Zero) }
+
+    // Recenter the mesh on the U1 build plate so it sits in frame.
+    val recenteredPositions = remember(state.trianglePositions) {
+        recenterForBed(state.trianglePositions)
+    }
+    val fitCamera = remember(recenteredPositions) {
+        computeFitCameraState(recenteredPositions)
+    }
+
+    // The mesh is built ONCE per pipeline run. Subsequent paints mutate extruderIndices in
+    // place via ModelViewerView.updateExtruderIndices — far cheaper than rebuilding the VBO.
+    val mesh = remember(recenteredPositions) {
+        if (state.triangleRegions.isEmpty()) null
+        else AiPaintMeshBuilder.build(recenteredPositions, state.triangleRegions)
+    }
+
+    val regionPalette = slotPaletteFloats
+
+    Box(modifier = modifier.onSizeChanged { viewerSizePx = it }) {
+        AndroidView(
+            factory = { ctx ->
+                ModelViewerView(ctx).also { view ->
+                    viewerView = view
+                    mesh?.let { view.setMesh(it) }
+                    view.setTrianglePickingPositions(recenteredPositions)
+                    fitCamera?.let { view.applyCameraState(it) }
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        // Brush ring overlay — drawn on top of the GL surface at the latest touch position.
+        val touch = brushTouchPx
+        if (paintMode && touch != null && viewerSizePx.width > 0) {
+            val px = touch.first
+            val py = touch.second
+            val ringRadius = brushPct * 0.85f * minOf(viewerSizePx.width, viewerSizePx.height)
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.85f),
+                    radius = ringRadius.coerceAtLeast(4f),
+                    center = androidx.compose.ui.geometry.Offset(px, py),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f),
+                )
+            }
+        }
+        // fix42: live lasso polygon overlay — yellow polyline that follows the user's finger.
+        val lassoPts = lassoPathPx
+        if (lassoMode && lassoPts.size >= 2) {
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                val path = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(lassoPts.first().first, lassoPts.first().second)
+                    for (i in 1 until lassoPts.size) lineTo(lassoPts[i].first, lassoPts[i].second)
+                    close()
+                }
+                drawPath(
+                    path = path,
+                    color = Color(0xFFFFC107).copy(alpha = 0.18f),
+                    style = androidx.compose.ui.graphics.drawscope.Fill,
+                )
+                drawPath(
+                    path = path,
+                    color = Color(0xFFFFC107),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f),
+                )
+            }
+        }
+    }
+
+    // fix40.6: rememberUpdatedState wraps the parent lambdas so the LaunchedEffect's
+    // assignment always sees the LATEST closure — without this, swapping Painted ↔ Regions
+    // (which doesn't change paintMode/activeRegion/brushRadiusWorld) left the GL view
+    // holding a stale onTriangleTapped that referenced the previous tab's tree.
+    val currentTapped by rememberUpdatedState(onTriangleTapped)
+    val currentEmptyTap by rememberUpdatedState(onEmptyTap)
+    val currentPaint by rememberUpdatedState(onPaintTriangles)
+    val currentStrokeStart by rememberUpdatedState(onBrushStrokeStart)
+    val currentLassoLoop by rememberUpdatedState(onLassoLoop)
+
+    // Wire up the GL-view callbacks every time the mode flips. Three exclusive modes:
+    //   paintMode → brush stroke (immediate paint per tick)
+    //   lassoMode → polygon lasso (path captured, auto-commit on UP)
+    //   neither   → tap-to-highlight
+    LaunchedEffect(viewerView, paintMode, lassoMode, activeRegion, brushRadiusWorld) {
+        val v = viewerView ?: return@LaunchedEffect
+        v.brushRadiusWorld = brushRadiusWorld
+        v.onBrushPaint = null
+        v.onBrushStrokeStart = null
+        v.onBrushTouchAt = null
+        v.onTriangleTapped = null
+        v.onEmptyTap = null
+        v.lassoMode = false
+        v.onLassoLoop = null
+        v.onLassoPathUpdate = null
+        when {
+            paintMode -> {
+                v.onBrushPaint = { tris -> currentPaint(tris, activeRegion) }
+                v.onBrushStrokeStart = { currentStrokeStart() }
+                v.onBrushTouchAt = { x, y ->
+                    brushTouchPx = if (x < 0f) null else x to y
+                }
+            }
+            lassoMode -> {
+                v.lassoMode = true
+                v.onLassoLoop = { tris -> currentLassoLoop(tris) }
+                v.onLassoPathUpdate = { path -> lassoPathPx = path }
+                brushTouchPx = null
+            }
+            else -> {
+                v.onTriangleTapped = { tri -> currentTapped(tri) }
+                v.onEmptyTap = { currentEmptyTap() }
+                brushTouchPx = null
+                lassoPathPx = emptyList()
+            }
+        }
+    }
+
+    LaunchedEffect(mesh, viewerView) {
+        val v = viewerView ?: return@LaunchedEffect
+        val m = mesh ?: return@LaunchedEffect
+        v.setMesh(m)
+        v.setTrianglePickingPositions(recenteredPositions)
+        fitCamera?.let { v.applyCameraState(it) }
+    }
+
+    // Three overlay modes:
+    //   * tap-to-select highlight: selected node's triangles in slot colour, rest dimmed.
+    //   * lasso selection: selected triangles yellow, rest keep their slot colour.
+    //   * none: render the natural slot palette.
+    LaunchedEffect(viewerView, state.triangleRegions, highlightedTriangles, regionPalette, lassoSelection) {
+        val v = viewerView ?: return@LaunchedEffect
+        if (state.triangleRegions.isEmpty()) return@LaunchedEffect
+        when {
+            highlightedTriangles.isNotEmpty() -> {
+                val slotCount = SegmentationCascade.TARGET_SLOTS
+                val baseSlotColours = (0 until slotCount).map { i ->
+                    regionPalette.getOrNull(i) ?: floatArrayOf(0.55f, 0.55f, 0.55f, 1f)
+                }
+                val fadedSlotColours = baseSlotColours.map { c ->
+                    floatArrayOf(
+                        c[0] * 0.25f + 0.04f,
+                        c[1] * 0.25f + 0.04f,
+                        c[2] * 0.25f + 0.04f,
+                        c[3],
+                    )
+                }
+                val overlay = ByteArray(state.triangleRegions.size) { i ->
+                    val baseSlot = (state.triangleRegions[i].toInt() and 0xFF).coerceIn(0, slotCount - 1)
+                    if (i in highlightedTriangles) baseSlot.toByte() else (baseSlot + slotCount).toByte()
+                }
+                v.updateExtruderIndices(overlay)
+                v.recolorMesh(baseSlotColours + fadedSlotColours)
+            }
+            lassoSelection.isNotEmpty() -> {
+                val highlightIdx = regionPalette.size.coerceAtMost(254)
+                val overlay = ByteArray(state.triangleRegions.size) { i ->
+                    if (i in lassoSelection) highlightIdx.toByte() else state.triangleRegions[i]
+                }
+                val extended = regionPalette + listOf(
+                    floatArrayOf(1f, 0.92f, 0.20f, 1f) // lasso highlight = yellow
+                )
+                v.updateExtruderIndices(overlay)
+                v.recolorMesh(extended)
+            }
+            else -> {
+                v.updateExtruderIndices(state.triangleRegions)
+                v.recolorMesh(AiPaintMeshBuilder.regionPalette(regionPalette))
+            }
+        }
+    }
+}
+
+/**
+ * fix41 ViewerToolbar — overlay strip at the top of the 3D viewer. Holds Select / Paint /
+ * Lasso chips plus a brush-size slider when Paint is armed. Tools live on the viewer they
+ * act on, not jumbled with the regions list below.
+ */
+@Composable
+internal fun ViewerToolbar(
+    paintMode: Boolean,
+    lassoMode: Boolean,
+    brushPct: Float,
+    onSelect: () -> Unit,
+    onTogglePaint: () -> Unit,
+    onToggleLasso: () -> Unit,
+    onBrushSizeChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val isSelectActive = !paintMode && !lassoMode
+    Column(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.medium)
+            .background(Color(0xCC181A20))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            FilterChip(
+                selected = isSelectActive,
+                onClick = onSelect,
+                label = { Text("→ Select") },
+            )
+            FilterChip(
+                selected = paintMode,
+                onClick = onTogglePaint,
+                label = { Text("🖌 Paint") },
+            )
+            FilterChip(
+                selected = lassoMode,
+                onClick = onToggleLasso,
+                label = { Text("🪄 Lasso") },
+            )
+        }
+        if (paintMode) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Brush",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 6.dp)
+                )
+                Slider(
+                    value = brushPct,
+                    onValueChange = onBrushSizeChange,
+                    valueRange = 0f..0.25f,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    "${"%.1f".format(brushPct * 100)}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp).widthIn(min = 36.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * fix41 SlotPaletteRow — "Extruders →" row below the viewer. Always visible. Tap behaviour
+ * is mode-aware (driven by the parent via [onTapSlot]).
+ */
+@Composable
+internal fun SlotPaletteRow(
+    slotPalette: List<Color>,
+    paintMode: Boolean,
+    lassoMode: Boolean,
+    activeSlot: Int,
+    hasLassoSelection: Boolean,
+    onTapSlot: (Int) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            when {
+                lassoMode && hasLassoSelection -> "Apply to →"
+                paintMode || lassoMode -> "Active →"
+                else -> "Extruders →"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        slotPalette.take(AiPaintViewModel.TARGET_SLOTS).forEachIndexed { idx, color ->
+            val isActive = (paintMode || lassoMode) && idx == activeSlot && !hasLassoSelection
+            Box(
+                Modifier
+                    .size(if (isActive) 44.dp else 40.dp)
+                    .background(color, MaterialTheme.shapes.small)
+                    .clickable { onTapSlot(idx) },
+                contentAlignment = Alignment.Center,
+            ) {
+                val tickColor = tickContrastColor(color)
+                when {
+                    isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
+                    !paintMode && !lassoMode ->
+                        Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
+                    else -> {}
+                }
+            }
+        }
+    }
+}

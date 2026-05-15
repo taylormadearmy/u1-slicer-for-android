@@ -12,8 +12,18 @@ import kotlin.math.sqrt
  */
 data class NativePreviewMesh(
     @JvmField val trianglePositions: FloatArray,
-    @JvmField val extruderIndices: ByteArray
+    @JvmField val extruderIndices: ByteArray,
 ) {
+    /** F54: per-volume triangle index ranges, in mesh build order. Populated post-construction
+     *  by NativeLibrary.getPreparePreviewMesh from JSON returned by nativeGetAllVolumeExtruders
+     *  (each volume's triangleCount). null when not supplied. When present, ranges are
+     *  disjoint, contiguous, and sum to the triangleCount. Drives the AI Paint cascade's
+     *  per-volume branch (B). Excluded from data-class equality (see equals override on the
+     *  containing AiPaintResultState; this class itself relies on default reference equality
+     *  via data-class semantics, but volumeRanges is a `var` set once after JNI returns). */
+    @JvmField
+    var volumeRanges: List<IntRange>? = null
+
     fun toMeshData(): MeshData? {
         val triangleCount = extruderIndices.size
         if (triangleCount == 0 || trianglePositions.size != triangleCount * 9) return null

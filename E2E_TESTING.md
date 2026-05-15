@@ -448,3 +448,74 @@ Results files in `c:/tmp/e2e-results/` are transient (lost on reboot). The memor
 
 - **Slow is OK.** Large files may take many minutes to load and slice.
 - **Stopping** after a red failure is OK; fix and re-run the affected file before claiming the batch is green.
+
+---
+
+## F54 Smart Paint — manual E2E scenarios
+
+Added on the f54-ai-paint branch. These scenarios exercise the redesigned Smart Paint pipeline (cascade → tree → viewer → painted 3MF round-trip). They live here rather than in `connectedDebugAndroidTest` because they hinge on touch precision, GL rendering, and HSV picker interactivity that a programmatic test can't validate.
+
+Run each on a real device with a representative 3MF loaded.
+
+### SP-1: TOPOLOGY default for painted 3MFs (fix40.5)
+
+1. Load `Goat ( Gray ).3mf` (or any painted 3MF with multiple paint states).
+2. Tap **Prepare → Smart Paint**.
+3. Wait for the result screen to settle.
+
+**Expected:** The view chip at the top of the regions panel shows **`🪨 Regions`** as selected, NOT `🎨 Painted`. Tree rows show generic "Band N" labels (or AI-named labels if AI is enabled and the provider has working vision). Painted view is the alternate, reachable via the chip toggle.
+
+**Why:** PAINT_STATE has only N ≤ 4 leaves (one per slot); tap-to-highlight selects "every triangle painted that colour" — useless for per-feature editing. fix40.5 makes TOPOLOGY the default whenever an alternate exists.
+
+### SP-2: Polygon lasso commit on close (fix42)
+
+1. Load any model into Smart Paint.
+2. Tap a slot swatch in the `Extruders →` row to pick a target colour (e.g. slot 1, blue). A tick mark should appear on that swatch.
+3. Tap the **`🪄 Lasso`** chip on the viewer toolbar.
+4. Drag your finger around the model surface to draw a closed loop — a yellow polygon with a faint fill should follow your finger.
+5. Lift your finger.
+
+**Expected:**
+- Every triangle whose centroid projects inside the loop AND faces the camera changes to the active slot's colour atomically (one undo step).
+- Triangles facing AWAY from the camera (the back of the model behind the lasso loop) do NOT change colour.
+- Selection cleared, ready for the next loop.
+
+**Why:** True polygon lasso replaces the previous brush-sweep lasso. Front-face filter (normal dot view) prevents the user from inadvertently painting hidden geometry on the other side of the model.
+
+### SP-3: Painted ↔ Regions toggle preserves edits (fix43)
+
+1. Load `colored_3DBenchy (1).3mf` (or any painted 3MF).
+2. Wait for Smart Paint to land on Regions (per SP-1).
+3. Tap a region row in the tree; in the `HighlightSlotPicker` overlay that pops up over the viewer, assign that region to a different slot (different colour from its default).
+4. Note which slot it's now on.
+5. Tap the **`🎨 Painted`** chip to switch tabs.
+6. Tap the **`🪨 Regions`** chip to switch back.
+
+**Expected:** The region you reassigned in step 3 is still showing the slot/colour you picked. Same for any paint strokes or lasso loops committed before the toggle. Undo button still works post-toggle.
+
+**Why:** fix43 added a `customSelections` replay to `switchToAlternate` so manual edits survive the tab swap. Pre-fix43 every flip wiped user edits.
+
+### SP-4: HSV picker live recolor
+
+1. Open Smart Paint on any multi-colour 3MF.
+2. Tap a slot's leading swatch in the `Extruders →` row to open the HSV picker.
+3. Drag the hue ring.
+
+**Expected:** The 3D viewer recolors continuously as you drag (no stutter > ~100 ms); the picker overlay stays interactive. After dismissing, "Use this painting →" → next session, the printer's filament list shows the new hex (persistence check via SlicerViewModel.setSlotColor).
+
+### SP-5: Full round-trip → slice → preview
+
+1. Open Smart Paint on a painted 3MF.
+2. Reassign at least one region to a different slot.
+3. Edit at least one slot's colour via the HSV picker.
+4. Tap **`Use this painting →`**.
+5. On the Prepare screen, tap **Slice**.
+6. After slicing completes, open the G-code preview.
+
+**Expected:**
+- Slicing completes without crash.
+- G-code preview shows the colours from the Smart Paint result (NOT the original painted-3MF colours).
+- Print summary tool counts (T0..T3) are non-zero on the slots that have geometry assigned.
+- The painted 3MF written to cache (`ai_paint_<timestamp>.3mf`) parses cleanly when reloaded.
+
+**Why:** This is the only manual check that the Smart Paint result actually reaches the slicer. Round-trip failure modes (3MF schema, embedded profile, per-triangle slot map) are caught here.

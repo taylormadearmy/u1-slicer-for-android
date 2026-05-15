@@ -74,6 +74,12 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingClearMesh = false
 
+    /** Pending per-triangle extruder index update. When set, the next [onDrawFrame] copies the
+     *  bytes into [MeshData.extruderIndices] in place. Used by the AI Paint brush so we can
+     *  repaint individual triangles without rebuilding the whole mesh. */
+    @Volatile
+    var pendingExtruderUpdate: ByteArray? = null
+
     @Volatile
     var preserveCameraOnNextMeshUpload = false
 
@@ -164,6 +170,19 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             pendingCameraReset = !preserveCameraOnNextMeshUpload
             preserveCameraOnNextMeshUpload = false
             pendingContentReadyDispatch = true
+        }
+
+        // Process pending per-triangle extruder index update BEFORE recolor, so the recolor
+        // step picks up the new indices when it looks up palette[index].
+        if (pendingExtruderUpdate != null) {
+            meshData?.extruderIndices?.let { existing ->
+                pendingExtruderUpdate?.let { update ->
+                    if (update.size == existing.size) {
+                        System.arraycopy(update, 0, existing, 0, update.size)
+                    }
+                    pendingExtruderUpdate = null
+                }
+            }
         }
 
         // Process pending recolor for existing mesh (no new mesh upload)
@@ -438,6 +457,54 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Intersect with Z=planeZ plane
         val t = (planeZ - nz) / dz
         return floatArrayOf(nx + dx * t, ny + dy * t)
+    }
+
+    /**
+     * Unproject a screen-space tap into a world-space ray. Returns [ox,oy,oz, dx,dy,dz]
+     * (origin + un-normalised direction) or null if the unprojection failed. Mirrors the
+     * near/far-point logic in [screenToBed] but stops short of intersecting a plane.
+     */
+    fun screenToRay(screenX: Float, screenY: Float): FloatArray? {
+        val radAz = Math.toRadians(camera.azimuth.toDouble())
+        val radEl = Math.toRadians(camera.elevation.toDouble())
+        val eyeX = (camera.targetX + camera.panX + camera.distance * cos(radEl) * cos(radAz)).toFloat()
+        val eyeY = (camera.targetY + camera.panY + camera.distance * cos(radEl) * sin(radAz)).toFloat()
+        val eyeZ = (camera.targetZ + camera.distance * sin(radEl)).toFloat()
+        val localView = FloatArray(16)
+        Matrix.setLookAtM(localView, 0, eyeX, eyeY, eyeZ,
+            (camera.targetX + camera.panX).toFloat(), (camera.targetY + camera.panY).toFloat(), camera.targetZ.toFloat(),
+            0f, 0f, 1f)
+
+        val localProj = FloatArray(16)
+        val aspect = viewportWidth.toFloat() / viewportHeight.toFloat()
+        Matrix.perspectiveM(localProj, 0, 45f, aspect,
+            (camera.distance * 0.01).coerceAtLeast(0.1).toFloat(), (camera.distance * 10.0).toFloat())
+
+        val invertedVP = FloatArray(16)
+        val vpMatrix = FloatArray(16)
+        Matrix.multiplyMM(vpMatrix, 0, localProj, 0, localView, 0)
+        if (!Matrix.invertM(invertedVP, 0, vpMatrix, 0)) return null
+
+        val ndcX = (2f * screenX / viewportWidth) - 1f
+        val ndcY = 1f - (2f * screenY / viewportHeight)
+
+        val nearW = floatArrayOf(ndcX, ndcY, -1f, 1f)
+        val nearWorld = FloatArray(4)
+        Matrix.multiplyMV(nearWorld, 0, invertedVP, 0, nearW, 0)
+        if (nearWorld[3] == 0f) return null
+        val nx = nearWorld[0] / nearWorld[3]
+        val ny = nearWorld[1] / nearWorld[3]
+        val nz = nearWorld[2] / nearWorld[3]
+
+        val farW = floatArrayOf(ndcX, ndcY, 1f, 1f)
+        val farWorld = FloatArray(4)
+        Matrix.multiplyMV(farWorld, 0, invertedVP, 0, farW, 0)
+        if (farWorld[3] == 0f) return null
+        val fx = farWorld[0] / farWorld[3]
+        val fy = farWorld[1] / farWorld[3]
+        val fz = farWorld[2] / farWorld[3]
+
+        return floatArrayOf(nx, ny, nz, fx - nx, fy - ny, fz - nz)
     }
 
     private fun setupBox() {

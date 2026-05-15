@@ -579,6 +579,7 @@ class MainActivity : ComponentActivity() {
                             sharedPreviewCameraState = sharedPreviewCameraState,
                             onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it },
                             onResetPreviewCamera = { sharedPreviewCameraState = null },
+                            onNavigateAiPaint = { navController.navigate(Routes.AI_PAINT) },
                         )
                     },
                     previewContent = {
@@ -1090,6 +1091,7 @@ fun PrepareScreen(
     sharedPreviewCameraState: com.u1.slicer.viewer.CameraViewState?,
     onSharedPreviewCameraStateChange: (com.u1.slicer.viewer.CameraViewState) -> Unit,
     onResetPreviewCamera: (() -> Unit)? = null,
+    onNavigateAiPaint: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
     val config by viewModel.config.collectAsState()
@@ -1257,6 +1259,44 @@ fun PrepareScreen(
                             var showInfoDialog by remember { mutableStateOf(false) }
                             val positions = viewModel.getPlacementPositions()
                             val loadedInfo = info
+                            // fix35: Smart Paint as a top-right overlay icon on the 3D viewer.
+                            // Replaces the two inline TextButton/OutlinedButton blocks that
+                            // previously appeared below PrintSetupSection. Both painted and
+                            // single-colour models go through the same code path now (the
+                            // pipeline branches internally based on colorMapping / paint data).
+                            val smartPaintAvailable =
+                                state is SlicerViewModel.SlicerState.ModelLoaded ||
+                                state is SlicerViewModel.SlicerState.SliceComplete
+                            val smartPaintCallback: (() -> Unit)? = if (smartPaintAvailable) {
+                                {
+                                    val container = (context.applicationContext as U1SlicerApplication).container
+                                    val path = viewModel.currentModelPath
+                                    if (path != null) {
+                                        val cachedResult = (container.aiPaintViewModel.uiState.value as? com.u1.slicer.aipaint.AiPaintUiState.Result)?.state
+                                        val isReedit = cachedResult != null &&
+                                            com.u1.slicer.aipaint.AiPaintViewModel.isSamePainting(
+                                                cachedResult.paintedModelPath, path
+                                            )
+                                        if (!isReedit) {
+                                            container.aiPaintViewModel.runPipeline(
+                                                path,
+                                                viewModel.nativeLib,
+                                                printerColours = viewModel.activeExtruderColors.value
+                                                    .takeIf { it.isNotEmpty() }
+                                            )
+                                        }
+                                        onNavigateAiPaint()
+                                    }
+                                }
+                            } else null
+                            val isReeditSmartPaint = remember(modelPath) {
+                                val container = (context.applicationContext as U1SlicerApplication).container
+                                val cachedResult = (container.aiPaintViewModel.uiState.value as? com.u1.slicer.aipaint.AiPaintUiState.Result)?.state
+                                cachedResult != null &&
+                                    com.u1.slicer.aipaint.AiPaintViewModel.isSamePainting(
+                                        cachedResult.paintedModelPath, modelPath
+                                    )
+                            }
                             InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
@@ -1292,7 +1332,9 @@ fun PrepareScreen(
                                 cachedMesh = if (viewModel.cachedPrepareMeshPath == modelPath) viewModel.cachedPrepareMesh else null,
                                 onMeshCached = { viewModel.cachedPrepareMeshPath = modelPath; viewModel.cachedPrepareMesh = it },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
-                                nativeSliceStateDirty = nativeSliceStateDirty
+                                nativeSliceStateDirty = nativeSliceStateDirty,
+                                onSmartPaint = smartPaintCallback,
+                                isReeditSmartPaint = isReeditSmartPaint,
                             )
                             if (showInfoDialog && loadedInfo != null) {
                                 ModelInfoDialog(
@@ -1368,6 +1410,8 @@ fun PrepareScreen(
                                 viewModel.setFilamentColorOverride(idx, color)
                             },
                         )
+                        // fix35: Smart Paint moved to a top-right overlay icon on InlineModelPreview
+                        // (the painted-model inline TextButton previously here is gone).
                         // Scale & copies controls
                         ScaleSection(
                             scale = modelScale,
@@ -1398,6 +1442,8 @@ fun PrepareScreen(
                                 filamentOverrides = filamentOverrides,
                             )
                         }
+                        // fix35: Smart Paint moved to the 3D-viewer overlay (top-right icon).
+                        // Single-colour Smart Paint entry previously here is gone.
                         ConfigCard(
                             config, viewModel::updateConfig,
                             slicingOverrides = slicingOverrides,
@@ -2743,7 +2789,11 @@ fun InlineModelPreview(
     // clobbered native state; skipped when nativeSliceStateDirty is false so the
     // natural load state is preserved on first preview.
     loadTimeInstanceOffsets: FloatArray = floatArrayOf(135f, 135f),
-    nativeSliceStateDirty: Boolean = false
+    nativeSliceStateDirty: Boolean = false,
+    // fix35: Smart Paint entry as a top-right overlay icon on the viewer. Null disables the
+    // icon (no model loaded, large-preview fallback, or feature unavailable).
+    onSmartPaint: (() -> Unit)? = null,
+    isReeditSmartPaint: Boolean = false,
 ) {
     // B49: initialize from ViewModel cache for instant reload on tab switch
     var mesh by remember { mutableStateOf(cachedMesh) }
@@ -3083,8 +3133,28 @@ fun InlineModelPreview(
             Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(4.dp)
+                    .padding(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (onSmartPaint != null) {
+                    // fix35: Smart Paint entry. Top-right icon overlaid on the 3D viewer in
+                    // place of the previous inline buttons. The 🪄 emoji icon doubles as a
+                    // visual cue that this is the "Smart Paint" affordance. Re-edit mode keeps
+                    // the same icon to avoid teaching the user two glyphs.
+                    androidx.compose.material3.FilledIconButton(
+                        onClick = onSmartPaint,
+                        colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                        ),
+                        modifier = Modifier.padding(end = 2.dp),
+                    ) {
+                        Text(
+                            "🪄",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
                 if (onInfoClick != null) {
                     IconButton(onClick = onInfoClick) {
                         Icon(Icons.Default.Info, "Model info",

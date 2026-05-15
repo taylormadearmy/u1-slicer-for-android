@@ -45,6 +45,11 @@ static std::string g_files_dir;  // App files directory, derived from model path
 static std::vector<std::vector<int>> g_model_preview_extruders;
 static PreviewMesh g_cached_preview_mesh;
 static bool g_preview_mesh_valid = false;
+// F54 fix36: per-volume triangle counts in mesh-build order. Populated alongside the cached
+// preview mesh during getPreparePreviewMesh; consumed by nativeGetPreviewVolumeTriangleCounts.
+// Drives AI Paint cascade Branch B (per-volume) by giving Kotlin an explicit triangle→volume
+// attribution map.
+static std::vector<int> g_preview_volume_triangle_counts;
 static std::atomic<bool> g_preview_cancel{false};
 
 // Base instance positions captured on first setModelRotation call.
@@ -450,6 +455,8 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
 
     bool has_mmu_data = false;  // B46: track if any MMU data present
     size_t object_index = 0;
+    // fix36: reset per-volume triangle-count map; populated as each volume appends.
+    std::vector<int> volume_tri_counts;
     for (const auto* object : g_model.objects) {
         if (object == nullptr || !object->printable) continue;
         if (object->instances.empty()) continue;
@@ -468,6 +475,11 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
 
             for (const auto* volume : object->volumes) {
                 if (volume == nullptr || !volume->is_model_part()) continue;
+
+                // fix36: snapshot the output index BEFORE appending this volume's triangles
+                // so we can compute how many triangles this volume contributed (works for
+                // both MMU and non-MMU paths regardless of which branch ran).
+                const size_t pre_append_indices = out.extruder_indices.size();
 
                 int fallback_extruder = volume->extruder_id();
                 if (preview_extruders != nullptr && volume_index < preview_extruders->size() &&
@@ -576,6 +588,11 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     int tri_counter = 0;
                     appendItsPreviewMesh(out, its, fallback_index, vol_stride, tri_counter);
                 }
+                // fix36: how many output triangles did this volume contribute? Stored in
+                // mesh-build order — Kotlin pairs this with nativeGetAllVolumeExtruders to
+                // form (objectIndex, volumeIndex, triangleStart, triangleCount) ranges.
+                volume_tri_counts.push_back(
+                    static_cast<int>(out.extruder_indices.size() - pre_append_indices));
                 ++volume_index;
             }
         }
@@ -592,8 +609,27 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     // Cache for instant return on tab switch
     g_cached_preview_mesh = out;
     g_preview_mesh_valid = true;
+    // fix36: stash per-volume triangle counts alongside the cached mesh so
+    // nativeGetPreviewVolumeTriangleCounts mirrors whatever the most recent build emitted.
+    g_preview_volume_triangle_counts = std::move(volume_tri_counts);
 
     return out;
+}
+
+// fix36: accessor for the per-volume triangle-count map captured during the most recent
+// getPreparePreviewMesh build. Returns the counts in mesh-build order (same as the volume
+// iteration in nativeGetAllVolumeExtruders). Kotlin combines this with the volume metadata
+// JSON to attribute each preview-mesh triangle to a volume → enables AI Paint cascade
+// Branch B.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetPreviewVolumeTriangleCounts(
+        JNIEnv* env, jobject) {
+    if (g_preview_volume_triangle_counts.empty()) return nullptr;
+    const auto& counts = g_preview_volume_triangle_counts;
+    jintArray result = env->NewIntArray(static_cast<jsize>(counts.size()));
+    if (result == nullptr) return nullptr;
+    env->SetIntArrayRegion(result, 0, static_cast<jsize>(counts.size()), counts.data());
+    return result;
 }
 
 // Accessor for sapil_print.cpp to get the app files directory
@@ -602,6 +638,7 @@ std::string getFilesDir() { return g_files_dir; }
 // Called by sapil_arrange.cpp when instances/scale change to invalidate cached preview
 void invalidatePreviewMeshCache() {
     g_preview_mesh_valid = false;
+    g_preview_volume_triangle_counts.clear();
 }
 
 void SlicerEngine::cancelPreviewMesh() {

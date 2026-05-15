@@ -47,7 +47,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import com.u1.slicer.BMAC_URL
 import com.u1.slicer.BuildConfig
 import com.u1.slicer.GITHUB_URL
@@ -685,6 +692,103 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
+            }
+
+            // ---- Smart Paint (renamed from AI Paint in fix34) ----
+            SettingsSection("Smart Paint") {
+                // F54: AI naming toggle. Off by default — pipeline uses deterministic segments
+                // from the model's own structure (paint state / volumes / objects / topology /
+                // height bands). When on, AI is also called to name and recolour the leaves.
+                val aiNaming by viewModel.aiNamingEnabled.collectAsState()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("AI naming (experimental)",
+                            style = MaterialTheme.typography.bodyMedium)
+                        Text("Send rendered views to the AI for label + colour suggestions.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked = aiNaming,
+                        onCheckedChange = { viewModel.saveAiNamingEnabled(it) },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+
+                val aiProviderName by viewModel.aiPaintProvider.collectAsState()
+                // Per-provider key — re-derived whenever the selected provider changes so each
+                // provider keeps its own key independently.
+                val keyFlow = remember(aiProviderName) { viewModel.aiPaintApiKeyFor(aiProviderName) }
+                val aiApiKey by keyFlow.collectAsState(initial = "")
+                val currentProvider = com.u1.slicer.aipaint.AiPaintProvider.fromId(aiProviderName)
+
+                // Provider dropdown
+                var providerExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = providerExpanded,
+                    onExpandedChange = { providerExpanded = it },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = currentProvider.displayName,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("AI provider (for naming)") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(providerExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = providerExpanded,
+                        onDismissRequest = { providerExpanded = false }
+                    ) {
+                        com.u1.slicer.aipaint.AiPaintProvider.entries.forEach { provider ->
+                            DropdownMenuItem(
+                                text = { Text(provider.displayName) },
+                                onClick = {
+                                    providerExpanded = false
+                                    // Only save the provider selection — NOT the key. The key
+                                    // field auto-reloads that provider's stored key (blank if
+                                    // none). Without this split, switching providers was
+                                    // copying the previous provider's key into the new slot.
+                                    viewModel.saveAiPaintProvider(provider.name)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // API key field — shown when the provider accepts a key (required or optional).
+                if (currentProvider.acceptsKey) {
+                    Spacer(Modifier.height(8.dp))
+                    var keyVisible by remember { mutableStateOf(false) }
+                    OutlinedTextField(
+                        value = aiApiKey,
+                        onValueChange = { newKey ->
+                            viewModel.saveAiPaintKey(currentProvider.name, newKey)
+                        },
+                        label = {
+                            Text(if (currentProvider.requiresKey) "API key" else "API key (optional)")
+                        },
+                        supportingText = if (!currentProvider.requiresKey) {
+                            { Text("Leave blank to use the free public tier.") }
+                        } else null,
+                        visualTransformation = if (keyVisible) VisualTransformation.None
+                                               else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { keyVisible = !keyVisible }) {
+                                Icon(
+                                    if (keyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (keyVisible) "Hide key" else "Show key"
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
 
             // ---- About ----

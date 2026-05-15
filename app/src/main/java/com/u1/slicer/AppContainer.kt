@@ -14,4 +14,8 @@ class AppContainer(context: Context) {
     val database = AppDatabase.getInstance(context)
     val filamentDao = database.filamentDao()
     val sliceJobDao = database.sliceJobDao()
+
+    val aiPaintViewModel by lazy {
+        com.u1.slicer.aipaint.AiPaintViewModel(context.applicationContext as android.app.Application)
+    }
 }

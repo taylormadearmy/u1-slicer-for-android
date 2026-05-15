@@ -205,6 +205,20 @@ class NativeLibrary {
      */
     external fun nativeGetAllVolumeExtruders(): String?
 
+    /**
+     * F54 fix36: per-volume triangle counts captured during the most recent
+     * getPreparePreviewMesh build, in the same mesh-build order as
+     * nativeGetAllVolumeExtruders enumerates them. Sum equals the total triangle count of
+     * the cached preview mesh. Returns null when no model is loaded or the preview cache
+     * has been invalidated.
+     *
+     * Used by AiPaintViewModel to populate NativePreviewMesh.volumeRanges so the cascade's
+     * per-volume branch (B) can attribute preview triangles back to model volumes.
+     *
+     * Callers MUST hold [previewMutex].
+     */
+    external fun nativeGetPreviewVolumeTriangleCounts(): IntArray?
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)

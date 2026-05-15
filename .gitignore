@@ -72,3 +72,6 @@ app/.cmake-orca-arm64/
 
 # Git worktrees
 .worktrees/
+
+# Superpowers brainstorm session artifacts (HTML mockups, state)
+.superpowers/
