@@ -71,19 +71,43 @@ internal fun AiPaintViewer(
     var lassoPathPx by remember { mutableStateOf<List<Pair<Float, Float>>>(emptyList()) }
     var viewerSizePx by remember { mutableStateOf(IntSize.Zero) }
 
-    // Recenter the mesh on the U1 build plate so it sits in frame.
-    val recenteredPositions = remember(state.trianglePositions) {
-        recenterForBed(state.trianglePositions)
+    // B115: when the cascade ran on a subsampled mesh (axolotl, korok, colored_benchy etc.),
+    // render the FULL original mesh in the viewer — not the 29k-triangle subsampled scaffold
+    // that looks like a sparse cloud of dots on a phone-sized viewport. The subsampled mesh
+    // is still used for cascade lookups (leaf.triangleIds reference subsampled indices); we
+    // translate at the tap/paint/lasso callbacks below so the viewmodel keeps operating in
+    // subsampled space.
+    val isSubsampled = state.cascadeStride > 1 && state.sourceTrianglePositions.isNotEmpty()
+    val displayPositions = if (isSubsampled) state.sourceTrianglePositions else state.trianglePositions
+    val recenteredPositions = remember(displayPositions) {
+        recenterForBed(displayPositions)
     }
     val fitCamera = remember(recenteredPositions) {
         computeFitCameraState(recenteredPositions)
     }
 
+    // Broadcast subsampled per-triangle slot ids to the full mesh by tile (each subsampled
+    // tri covers `stride` source tris). Result: every triangle in displayPositions has the
+    // slot of its representative subsampled triangle.
+    val displayRegions: ByteArray = remember(state.triangleRegions, state.cascadeStride, displayPositions.size) {
+        if (!isSubsampled) {
+            state.triangleRegions
+        } else {
+            val originalCount = displayPositions.size / 9
+            val sub = state.triangleRegions
+            val stride = state.cascadeStride
+            ByteArray(originalCount) { t ->
+                val s = (t / stride).coerceAtMost(sub.size - 1).coerceAtLeast(0)
+                if (sub.isEmpty()) 0 else sub[s]
+            }
+        }
+    }
+
     // The mesh is built ONCE per pipeline run. Subsequent paints mutate extruderIndices in
     // place via ModelViewerView.updateExtruderIndices — far cheaper than rebuilding the VBO.
-    val mesh = remember(recenteredPositions) {
-        if (state.triangleRegions.isEmpty()) null
-        else AiPaintMeshBuilder.build(recenteredPositions, state.triangleRegions)
+    val mesh = remember(recenteredPositions, displayRegions) {
+        if (displayRegions.isEmpty()) null
+        else AiPaintMeshBuilder.build(recenteredPositions, displayRegions)
     }
 
     val regionPalette = slotPaletteFloats
@@ -148,6 +172,20 @@ internal fun AiPaintViewer(
     val currentStrokeStart by rememberUpdatedState(onBrushStrokeStart)
     val currentLassoLoop by rememberUpdatedState(onLassoLoop)
 
+    // B115: when rendering the full mesh on a subsampled cascade, the picker returns
+    // original-space triangle ids (0..originalCount-1) but `currentTapped`/`currentPaint`/
+    // `currentLassoLoop` expect ids in subsampled space (so leaf.triangleIds lookups work).
+    // Translate at the callback boundary: original_id → subsampled_id = original_id / stride.
+    // De-dup so a brush stroke that covers `stride` originals → one subsampled id.
+    val mapTri: (Int) -> Int = if (isSubsampled) {
+        val stride = state.cascadeStride
+        val maxSub = state.triangleRegions.size - 1;
+        { orig -> (orig / stride).coerceIn(0, maxSub) }
+    } else { it -> it }
+    val mapTris: (List<Int>) -> List<Int> = if (isSubsampled) {
+        ({ tris -> tris.map(mapTri).distinct() })
+    } else { it -> it }
+
     // Wire up the GL-view callbacks every time the mode flips. Three exclusive modes:
     //   paintMode → brush stroke (immediate paint per tick)
     //   lassoMode → polygon lasso (path captured, auto-commit on UP)
@@ -165,7 +203,7 @@ internal fun AiPaintViewer(
         v.onLassoPathUpdate = null
         when {
             paintMode -> {
-                v.onBrushPaint = { tris -> currentPaint(tris, activeRegion) }
+                v.onBrushPaint = { tris -> currentPaint(mapTris(tris), activeRegion) }
                 v.onBrushStrokeStart = { currentStrokeStart() }
                 v.onBrushTouchAt = { x, y ->
                     brushTouchPx = if (x < 0f) null else x to y
@@ -173,12 +211,12 @@ internal fun AiPaintViewer(
             }
             lassoMode -> {
                 v.lassoMode = true
-                v.onLassoLoop = { tris -> currentLassoLoop(tris) }
+                v.onLassoLoop = { tris -> currentLassoLoop(mapTris(tris)) }
                 v.onLassoPathUpdate = { path -> lassoPathPx = path }
                 brushTouchPx = null
             }
             else -> {
-                v.onTriangleTapped = { tri -> currentTapped(tri) }
+                v.onTriangleTapped = { tri -> currentTapped(mapTri(tri)) }
                 v.onEmptyTap = { currentEmptyTap() }
                 brushTouchPx = null
                 lassoPathPx = emptyList()
@@ -198,9 +236,17 @@ internal fun AiPaintViewer(
     //   * tap-to-select highlight: selected node's triangles in slot colour, rest dimmed.
     //   * lasso selection: selected triangles yellow, rest keep their slot colour.
     //   * none: render the natural slot palette.
-    LaunchedEffect(viewerView, state.triangleRegions, highlightedTriangles, regionPalette, lassoSelection) {
+    //
+    // B115: overlays are built over `displayRegions` (length = display mesh tri count)
+    // not `state.triangleRegions` (length = subsampled count). For the membership tests,
+    // a display-space triangle is "highlighted" when its subsampled-space representative
+    // (`i / stride`) is in the parent's highlightedTriangles set.
+    LaunchedEffect(viewerView, displayRegions, highlightedTriangles, regionPalette, lassoSelection) {
         val v = viewerView ?: return@LaunchedEffect
-        if (state.triangleRegions.isEmpty()) return@LaunchedEffect
+        if (displayRegions.isEmpty()) return@LaunchedEffect
+        val strideForMembership = if (isSubsampled) state.cascadeStride else 1
+        val maxSub = (state.triangleRegions.size - 1).coerceAtLeast(0)
+        fun displayToSubsampled(i: Int): Int = (i / strideForMembership).coerceIn(0, maxSub)
         when {
             highlightedTriangles.isNotEmpty() -> {
                 val slotCount = SegmentationCascade.TARGET_SLOTS
@@ -215,17 +261,19 @@ internal fun AiPaintViewer(
                         c[3],
                     )
                 }
-                val overlay = ByteArray(state.triangleRegions.size) { i ->
-                    val baseSlot = (state.triangleRegions[i].toInt() and 0xFF).coerceIn(0, slotCount - 1)
-                    if (i in highlightedTriangles) baseSlot.toByte() else (baseSlot + slotCount).toByte()
+                val overlay = ByteArray(displayRegions.size) { i ->
+                    val baseSlot = (displayRegions[i].toInt() and 0xFF).coerceIn(0, slotCount - 1)
+                    if (displayToSubsampled(i) in highlightedTriangles) baseSlot.toByte()
+                    else (baseSlot + slotCount).toByte()
                 }
                 v.updateExtruderIndices(overlay)
                 v.recolorMesh(baseSlotColours + fadedSlotColours)
             }
             lassoSelection.isNotEmpty() -> {
                 val highlightIdx = regionPalette.size.coerceAtMost(254)
-                val overlay = ByteArray(state.triangleRegions.size) { i ->
-                    if (i in lassoSelection) highlightIdx.toByte() else state.triangleRegions[i]
+                val overlay = ByteArray(displayRegions.size) { i ->
+                    if (displayToSubsampled(i) in lassoSelection) highlightIdx.toByte()
+                    else displayRegions[i]
                 }
                 val extended = regionPalette + listOf(
                     floatArrayOf(1f, 0.92f, 0.20f, 1f) // lasso highlight = yellow
@@ -234,7 +282,7 @@ internal fun AiPaintViewer(
                 v.recolorMesh(extended)
             }
             else -> {
-                v.updateExtruderIndices(state.triangleRegions)
+                v.updateExtruderIndices(displayRegions)
                 v.recolorMesh(AiPaintMeshBuilder.regionPalette(regionPalette))
             }
         }

@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -144,17 +146,20 @@ fun U1NavGraph(
                 }
             }
 
+            // B114: launch the painted-3MF serialization off the click handler so an
+            // axolotl-sized model (880k tris taking 5-8s to write) doesn't hang the
+            // main thread and trigger Android's ANR dialog.
+            val finalizeScope = rememberCoroutineScope()
             AiPaintResultScreen(
                 uiState = uiState,
                 filamentColours = filamentColours,
                 onUsePainting = {
-                    // The painted 3MF is written ON DEMAND at this point — every paint stroke
-                    // up to now has been an in-memory update only, so the result screen stays
-                    // snappy. Block briefly while we serialise the final mesh and then load it.
-                    val finalPath = aiVm.finalizePainting()
-                    if (finalPath != null) {
-                        viewModel.loadModelFromFile(java.io.File(finalPath))
-                        navController.popBackStack(Routes.PREPARE, inclusive = false)
+                    finalizeScope.launch {
+                        val finalPath = aiVm.finalizePainting()
+                        if (finalPath != null) {
+                            viewModel.loadModelFromFile(java.io.File(finalPath))
+                            navController.popBackStack(Routes.PREPARE, inclusive = false)
+                        }
                     }
                 },
                 onRedo = {

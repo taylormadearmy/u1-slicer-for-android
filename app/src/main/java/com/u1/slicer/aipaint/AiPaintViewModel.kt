@@ -232,16 +232,24 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                 // triangles it represents. When the model wasn't subsampled (stride == 1)
                 // this is identity. Without this, accepting Smart Paint on any model > 30k
                 // triangles silently replaces the geometry with ~3% of itself.
+                //
+                // B114: PaintedMeshWriter.write on an 880k-tri axolotl takes 5-8 s. This block
+                // runs inside viewModelScope.launch which defaults to Dispatchers.Main, so the
+                // write was blocking the UI thread and triggering ANR while the user waited
+                // for the Smart Paint result screen. Wrap the write in Dispatchers.IO; control
+                // resumes on Main afterwards to set _uiState.
                 val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
-                val slotIdsForFile = broadcastSlotIdsToOriginalMesh(
-                    subsampledRegions = triangleRegions,
-                    originalTriCount = originalTriCount,
-                    stride = cascadeStride,
-                )
-                PaintedMeshWriter.write(
-                    rawMesh.trianglePositions, slotIdsForFile, slotsView, outFile,
-                    printerColours = printerColours,
-                )
+                withContext(Dispatchers.IO) {
+                    val slotIdsForFile = broadcastSlotIdsToOriginalMesh(
+                        subsampledRegions = triangleRegions,
+                        originalTriCount = originalTriCount,
+                        stride = cascadeStride,
+                    )
+                    PaintedMeshWriter.write(
+                        rawMesh.trianglePositions, slotIdsForFile, slotsView, outFile,
+                        printerColours = printerColours,
+                    )
+                }
 
                 // fix38: bake the alternate tree with printer colours so that when the user
                 // switches, the alternate already has the right slot colours. The alternate
@@ -560,43 +568,53 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = AiPaintUiState.Result(current.state.copy(highlightComponentId = componentId))
     }
 
-    fun finalizePainting(): String? {
+    /**
+     * B114: previously a blocking `fun` invoked directly from the result-screen click
+     * handler on the main thread. For an axolotl-sized model (880k tris) writing the
+     * 3MF takes 5-8 seconds → Android fires ANR. Now suspends and runs the writer on
+     * Dispatchers.IO so the click handler returns immediately and the UI thread stays
+     * responsive. Callers in NavGraph use `rememberCoroutineScope().launch { ... }`.
+     */
+    suspend fun finalizePainting(): String? {
         val current = _uiState.value as? AiPaintUiState.Result ?: return null
         val state = current.state
-        // B111: if the cascade ran on a subsampled mesh (cascadeStride > 1), write the
-        // *original* mesh with slot ids broadcast from subsampled space. Otherwise the
-        // saved 3MF would contain only ~3% of the geometry (29k of 880k triangles for
-        // the axolotl repro). When stride == 1 the source positions are unused and
-        // state.trianglePositions is already the original.
-        val exportPositions = if (state.cascadeStride > 1 && state.sourceTrianglePositions.isNotEmpty()) {
-            state.sourceTrianglePositions
-        } else {
-            state.trianglePositions
-        }
-        val exportTriCount = exportPositions.size / 9
-        val regionIds = if (state.cascadeStride > 1 && state.sourceTrianglePositions.isNotEmpty()) {
-            broadcastSlotIdsToOriginalMesh(
-                subsampledRegions = state.triangleRegions,
-                originalTriCount = exportTriCount,
-                stride = state.cascadeStride,
-            )
-        } else {
-            IntArray(state.triangleRegions.size) { state.triangleRegions[it].toInt() and 0xFF }
-        }
-        val slotsView = (0 until TARGET_SLOTS).map { s ->
-            AiRegion(
-                id = s,
-                label = "Slot ${s + 1}",
-                suggestedColour = lastPrinterColours?.getOrNull(s) ?: "#888888",
-                userColour = lastPrinterColours?.getOrNull(s)?.takeIf(::isValidHex),
-                slot = s,
-            )
-        }
         val outFile = File(app.cacheDir, "ai_paint_${System.currentTimeMillis()}.3mf")
-        PaintedMeshWriter.write(
-            exportPositions, regionIds, slotsView, outFile,
-            printerColours = lastPrinterColours,
-        )
+        // Heavy work — broadcast + serialize the painted 3MF — off the main thread.
+        withContext(Dispatchers.IO) {
+            // B111: if the cascade ran on a subsampled mesh (cascadeStride > 1), write the
+            // *original* mesh with slot ids broadcast from subsampled space. Otherwise the
+            // saved 3MF would contain only ~3% of the geometry (29k of 880k triangles for
+            // the axolotl repro). When stride == 1 the source positions are unused and
+            // state.trianglePositions is already the original.
+            val exportPositions = if (state.cascadeStride > 1 && state.sourceTrianglePositions.isNotEmpty()) {
+                state.sourceTrianglePositions
+            } else {
+                state.trianglePositions
+            }
+            val exportTriCount = exportPositions.size / 9
+            val regionIds = if (state.cascadeStride > 1 && state.sourceTrianglePositions.isNotEmpty()) {
+                broadcastSlotIdsToOriginalMesh(
+                    subsampledRegions = state.triangleRegions,
+                    originalTriCount = exportTriCount,
+                    stride = state.cascadeStride,
+                )
+            } else {
+                IntArray(state.triangleRegions.size) { state.triangleRegions[it].toInt() and 0xFF }
+            }
+            val slotsView = (0 until TARGET_SLOTS).map { s ->
+                AiRegion(
+                    id = s,
+                    label = "Slot ${s + 1}",
+                    suggestedColour = lastPrinterColours?.getOrNull(s) ?: "#888888",
+                    userColour = lastPrinterColours?.getOrNull(s)?.takeIf(::isValidHex),
+                    slot = s,
+                )
+            }
+            PaintedMeshWriter.write(
+                exportPositions, regionIds, slotsView, outFile,
+                printerColours = lastPrinterColours,
+            )
+        }
         _uiState.value = AiPaintUiState.Result(state.copy(paintedModelPath = outFile.absolutePath))
         return outFile.absolutePath
     }

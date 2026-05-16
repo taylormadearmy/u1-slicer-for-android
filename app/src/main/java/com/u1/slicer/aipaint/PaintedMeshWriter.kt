@@ -1,6 +1,9 @@
 package com.u1.slicer.aipaint
 
+import java.io.BufferedWriter
 import java.io.File
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -34,7 +37,12 @@ object PaintedMeshWriter {
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("3D/3dmodel.model"))
-            zip.write(buildModelXml(positions, regionIds).toByteArray())
+            // B116: stream the model XML directly to the zip stream instead of building
+            // a single giant StringBuilder + toString() in memory. An 880k-tri axolotl
+            // mesh would have OOM'd allocating ~80 MB for the final String; streaming
+            // keeps peak memory bounded to the vertex dedup map (~30-100 MB) plus the
+            // small per-line buffer.
+            streamModelXml(positions, regionIds, zip)
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("Metadata/model_settings.config"))
@@ -56,47 +64,85 @@ object PaintedMeshWriter {
         }
     }
 
-    private fun buildModelXml(positions: FloatArray, regionIds: IntArray): String {
+    /**
+     * B116: streams the painted-mesh 3MF model XML directly to [output]. Replaced the
+     * earlier `buildModelXml` that materialised the whole document as a StringBuilder
+     * then called `toString()` — for an 880k-tri axolotl that allocates ~80 MB twice
+     * (StringBuilder buffer + String byte[]) which OOMs the app on Pixel-class
+     * devices. Streaming keeps peak memory bounded to the vertex dedup map.
+     *
+     * Caller is responsible for opening the ZipEntry and closing it after this returns.
+     * The writer is flushed before returning so all bytes hit the zip stream.
+     */
+    internal fun streamModelXml(positions: FloatArray, regionIds: IntArray, output: OutputStream) {
         val nTri = positions.size / 9
-        val sb = StringBuilder(nTri * 120)
-        sb.append("""<?xml version="1.0" encoding="UTF-8"?>""")
-        sb.append("\n")
+        val w = BufferedWriter(OutputStreamWriter(output, Charsets.UTF_8), 64 * 1024)
+
+        // Dedup vertices using a quantised Long key (1µm precision, ±524 mm) so each entry
+        // costs ~32 bytes instead of ~150 bytes per Triple<Float,Float,Float> wrapper +
+        // boxed-Float overhead. For an 880k-tri axolotl the LinkedHashMap was burning
+        // ~70 MB by itself, eating the budget right before PaintedMeshWriter's String
+        // allocation OOM'd. Quantised keys keep the dedup under ~15 MB.
+        // Worst case: no shared vertices → nTri * 3 unique. Watertight meshes are typically
+        // closer to nTri / 2, but reserve the full capacity to avoid resizing.
+        val maxVerts = nTri * 3
+        val keyToIndex = HashMap<Long, Int>(maxVerts)
+        val orderedKeysX = FloatArray(maxVerts)
+        val orderedKeysY = FloatArray(maxVerts)
+        val orderedKeysZ = FloatArray(maxVerts)
+        var uniqueVertexCount = 0
+        val triV1 = IntArray(nTri)
+        val triV2 = IntArray(nTri)
+        val triV3 = IntArray(nTri)
+
+        fun acquireIndex(x: Float, y: Float, z: Float): Int {
+            val key = vertexKey(x, y, z)
+            val existing = keyToIndex[key]
+            if (existing != null) return existing
+            val idx = uniqueVertexCount++
+            keyToIndex[key] = idx
+            // Grow if our pre-allocated arrays would overflow (rare).
+            if (idx >= orderedKeysX.size) {
+                throw IllegalStateException("vertex count exceeded pre-allocated buffer: $idx >= ${orderedKeysX.size}")
+            }
+            orderedKeysX[idx] = x
+            orderedKeysY[idx] = y
+            orderedKeysZ[idx] = z
+            return idx
+        }
+
+        for (i in 0 until nTri) {
+            val b = i * 9
+            triV1[i] = acquireIndex(positions[b],     positions[b + 1], positions[b + 2])
+            triV2[i] = acquireIndex(positions[b + 3], positions[b + 4], positions[b + 5])
+            triV3[i] = acquireIndex(positions[b + 6], positions[b + 7], positions[b + 8])
+        }
+
+        w.write("""<?xml version="1.0" encoding="UTF-8"?>""")
+        w.write("\n")
         // xmlns:BambuStudio namespace + Application metadata set m_is_bbl_3mf=true in the
         // native BBS parser so paint_color attributes are fully honoured.
-        sb.append("""<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">""")
-        sb.append("""<metadata name="Application">BambuStudio-2.2.4</metadata>""")
-        sb.append("\n")
-        sb.append("""<resources><object id="1" type="model"><mesh>""")
-        sb.append("\n")
+        w.write("""<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021">""")
+        w.write("""<metadata name="Application">BambuStudio-2.2.4</metadata>""")
+        w.write("\n")
+        w.write("""<resources><object id="1" type="model"><mesh>""")
+        w.write("\n")
 
-        val vertexMap = LinkedHashMap<Triple<Float, Float, Float>, Int>(nTri * 2)
-        val triVerts = Array(nTri) { i ->
-            val b = i * 9
-            val v0 = Triple(positions[b],   positions[b + 1], positions[b + 2])
-            val v1 = Triple(positions[b + 3], positions[b + 4], positions[b + 5])
-            val v2 = Triple(positions[b + 6], positions[b + 7], positions[b + 8])
-            Triple(
-                vertexMap.getOrPut(v0) { vertexMap.size },
-                vertexMap.getOrPut(v1) { vertexMap.size },
-                vertexMap.getOrPut(v2) { vertexMap.size }
-            )
+        w.write("<vertices>")
+        for (idx in 0 until uniqueVertexCount) {
+            w.write("\n  ")
+            w.write("""<vertex x="${"%.4f".format(orderedKeysX[idx])}" y="${"%.4f".format(orderedKeysY[idx])}" z="${"%.4f".format(orderedKeysZ[idx])}"/>""")
         }
-
-        sb.append("<vertices>")
-        vertexMap.keys.forEach { (x, y, z) ->
-            sb.append("\n  ")
-            sb.append("""<vertex x="${"%.4f".format(x)}" y="${"%.4f".format(y)}" z="${"%.4f".format(z)}"/>""")
-        }
-        sb.append("\n</vertices>\n<triangles>")
-        triVerts.forEachIndexed { i, (a, b, c) ->
+        w.write("\n</vertices>\n<triangles>")
+        for (i in 0 until nTri) {
             val paint = PAINT_COLOR[regionIds[i].coerceIn(0, 3)]
-            sb.append("\n  ")
-            sb.append("""<triangle v1="$a" v2="$b" v3="$c" paint_color="$paint"/>""")
+            w.write("\n  ")
+            w.write("""<triangle v1="${triV1[i]}" v2="${triV2[i]}" v3="${triV3[i]}" paint_color="$paint"/>""")
         }
-        sb.append("\n</triangles></mesh></object></resources>")
-        sb.append("\n")
-        sb.append("""<build><item objectid="1"/></build></model>""")
-        return sb.toString()
+        w.write("\n</triangles></mesh></object></resources>")
+        w.write("\n")
+        w.write("""<build><item objectid="1"/></build></model>""")
+        w.flush()
     }
 
     /**
@@ -126,6 +172,18 @@ object PaintedMeshWriter {
   "filament_settings_id": [$settingsIdJson],
   "filament_count": "$n"
 }"""
+    }
+
+    /**
+     * Pack a vertex position into a single Long for HashMap dedup. 21 bits per axis at
+     * 1 µm quantisation covers ±524 mm — well outside the U1's 270×270×270 build plate.
+     * Matches the convention used in [com.u1.slicer.aipaint.MeshSegmenter.vertexKey].
+     */
+    private fun vertexKey(x: Float, y: Float, z: Float): Long {
+        val xi = (Math.round(x * 1000f).toLong() + 524_288L).coerceIn(0L, 0x1FFFFFL)
+        val yi = (Math.round(y * 1000f).toLong() + 524_288L).coerceIn(0L, 0x1FFFFFL)
+        val zi = (Math.round(z * 1000f).toLong() + 524_288L).coerceIn(0L, 0x1FFFFFL)
+        return (xi shl 42) or (yi shl 21) or zi
     }
 
     private fun sanitizeOrNull(hex: String): String? =
