@@ -2405,8 +2405,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             buildPerFilamentTypeAndTemp(it, _filamentOverrides.value, originalPresets)
         }
 
-        val resolvedTypes = perFilamentArrays?.first ?: slotTypes
-        val resolvedTemps = perFilamentArrays?.second ?: slotTemps
+        // B117: non-canonical files (STL, single-colour 3MF without per-filament
+        // metadata) don't enter the `perFilamentArrays` branch — but DC15's bug
+        // report showed users still need to override material type on Prepare for
+        // those files (e.g. printing PETG on a file that declared PLA). Apply
+        // the fileIndex=0 override to the first slot's type/temp here so the
+        // slice picks up the user's choice. See `applyNonCanonicalOverride`.
+        val (nonCanonicalTypes, nonCanonicalTemps) = applyNonCanonicalOverride(
+            slotTypes = slotTypes,
+            slotTemps = slotTemps,
+            override = if (canonical == null) _filamentOverrides.value[0] else null,
+        )
+
+        val resolvedTypes = perFilamentArrays?.first ?: nonCanonicalTypes
+        val resolvedTemps = perFilamentArrays?.second ?: nonCanonicalTemps
         // B99: a single-filament STL can still ask OrcaSlicer to print
         // supports/interface with another physical slot via support_filament
         // (1-based). Keep the file filament at index 0, then pad any
@@ -3166,13 +3178,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // materials for the physically-used slots. Using all 4 presets
                         // here wrote a 4-entry filament_type header even for single-colour
                         // prints (matched the slotTypes bug in buildProfileOverrides).
+                        // B117: prefer the Prepare-screen `_filamentOverrides[0]` material
+                        // for the FIRST slot — that's where DC15's "I want PETG on a
+                        // single-colour 3MF" override lands. Without this the G-code
+                        // header would still read PLA even though the slice used PETG.
                         val usedSlotsForPatch = toolRemapSlots
                             ?: _colorMapping.value?.distinct()?.sorted()
                             ?: listOf(_selectedExtruder.value)
-                        ftTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets)
-                        ntTemps = resolveNonCanonicalHeaderPatchTemps(
-                            usedSlotsForPatch, basePresets, filaments.value
-                        )
+                        val nonCanonicalOverride0 = _filamentOverrides.value[0]
+                        ftTypes = applyNonCanonicalOverride(
+                            slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
+                            slotTemps = resolveNonCanonicalHeaderPatchTemps(
+                                usedSlotsForPatch, basePresets, filaments.value
+                            ),
+                            override = nonCanonicalOverride0,
+                        ).first
+                        ntTemps = applyNonCanonicalOverride(
+                            slotTypes = resolveNonCanonicalHeaderPatchTypes(usedSlotsForPatch, basePresets),
+                            slotTemps = resolveNonCanonicalHeaderPatchTemps(
+                                usedSlotsForPatch, basePresets, filaments.value
+                            ),
+                            override = nonCanonicalOverride0,
+                        ).second
                     }
                     val ftPatched = fixFilamentTypeHeader(result.gcodePath, ftTypes)
                     val ntPatched = fixNozzleTemperatureHeader(result.gcodePath, ntTemps)
@@ -5579,6 +5606,37 @@ internal fun resolveNonCanonicalHeaderPatchTypes(
     presets: List<ExtruderPreset>,
 ): List<String> = usedSlots.map { slot ->
     presets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+}
+
+/**
+ * B117: apply a Prepare-screen `_filamentOverrides[0]` to the slot-derived
+ * filament_type / nozzle_temperature lists for non-canonical files (STL,
+ * single-colour 3MF without per-filament metadata).
+ *
+ * Replaces the FIRST entry of both arrays with the override's materialType +
+ * its corresponding default nozzle temp. Leaves remaining entries unchanged
+ * — those are usually padding for support_filament / wipe_tower slots that
+ * the user didn't override.
+ *
+ * When `override` is null or has no materialType set, returns the inputs
+ * unchanged. When the slot arrays are empty, returns empty (no-op).
+ */
+internal fun applyNonCanonicalOverride(
+    slotTypes: List<String>,
+    slotTemps: List<Int>,
+    override: SlicerViewModel.FilamentOverride?,
+): Pair<List<String>, List<Int>> {
+    val newType = override?.materialType
+    if (newType == null || slotTypes.isEmpty()) {
+        return slotTypes to slotTemps
+    }
+    val overriddenTypes = listOf(newType) + slotTypes.drop(1)
+    val overriddenTemps = if (slotTemps.isNotEmpty()) {
+        listOf(nozzleTempDefaultForMaterial(newType)) + slotTemps.drop(1)
+    } else {
+        slotTemps
+    }
+    return overriddenTypes to overriddenTemps
 }
 
 /**

@@ -2043,7 +2043,10 @@ fun ConfigCard(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
             InfoRow("Nozzle Diameter", "${config.nozzleDiameter} mm")
-            InfoRow("Filament", config.filamentType)
+            // B117: removed the "Filament: PLA" InfoRow. It was sourced from
+            // `config.filamentType` which is set only at file-load time and never
+            // updates after a Prepare-screen material override — so it shows stale
+            // info. The Filaments panel above is now the single source of truth.
             InfoRow("Build Volume", "270 x 270 x 270 mm")
         }
     }
@@ -3571,10 +3574,27 @@ fun PrintSetupSection(
     val _unused = onMappingChange to onAutoMap
 
     val isMultiColor = detectedColors.isNotEmpty() && colorMapping != null
-    val showSection = isMultiColor || extruderCount > 1
-    if (!showSection) return
+    // B117: previously the panel returned early for non-canonical files — single-
+    // colour 3MFs and STLs — leaving the user with no way to change the slice's
+    // filament type from the file's declared default (typically PLA). DC15
+    // reported this on a single-colour MakerWorld frog 3MF when they wanted to
+    // print PETG. Now we always render at least one filament row, synthesising
+    // a default from the first extruder preset when the file has no per-filament
+    // metadata. The override flows through to the slicer via `_filamentOverrides[0]`
+    // and the non-canonical override branch in `buildProfileOverrides`.
+    if (extruderPresets.isEmpty()) return
+    val effectiveDetectedColors: List<String> = if (detectedColors.isNotEmpty()) {
+        detectedColors
+    } else {
+        val fallbackColor = extruderPresets.firstOrNull { it.index == 0 }?.color
+            ?: extruderPresets.firstOrNull()?.color
+            ?: "#FFFFFF"
+        listOf(fallbackColor)
+    }
 
-    val mapping = remember(colorMapping) { colorMapping ?: emptyList() }
+    val mapping = remember(colorMapping, effectiveDetectedColors.size) {
+        colorMapping ?: List(effectiveDetectedColors.size) { it }
+    }
     var expanded by remember { mutableStateOf(true) }
     var editingMaterialFor by remember { mutableStateOf<Int?>(null) }
     var editingColorFor by remember { mutableStateOf<Int?>(null) }
@@ -3597,7 +3617,9 @@ fun PrintSetupSection(
                         modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        if (isMultiColor) "Filaments (${detectedColors.size})" else "Print Setup",
+                        if (isMultiColor) "Filaments (${detectedColors.size})"
+                        else if (effectiveDetectedColors.size == 1) "Filament"
+                        else "Print Setup",
                         fontWeight = FontWeight.Bold, fontSize = 16.sp,
                     )
                 }
@@ -3610,14 +3632,17 @@ fun PrintSetupSection(
 
             AnimatedVisibility(visible = expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (isMultiColor) {
-                        // Caption explaining where slot picking now lives.
-                        Text(
-                            "Slot mapping happens when you tap Map & Print →",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                        )
-                        detectedColors.forEachIndexed { colorIdx, modelColor ->
+                    // Caption explaining where slot picking happens. For multi-colour
+                    // files, mention the Map & Print step. For single-filament files,
+                    // emphasise the override use case — DC15's exact request.
+                    Text(
+                        if (isMultiColor) "Slot mapping happens when you tap Map & Print →"
+                        else "Tap the chip to change material if your loaded spool differs.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    )
+                    run {
+                        effectiveDetectedColors.forEachIndexed { colorIdx, modelColor ->
                             // Material type: prefer user override, fall back to the
                             // auto-suggested slot's ExtruderPreset material.
                             val override = filamentOverrides[colorIdx]
