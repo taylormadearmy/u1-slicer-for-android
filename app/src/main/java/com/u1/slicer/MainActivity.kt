@@ -70,16 +70,26 @@ class MainActivity : ComponentActivity() {
     private var navigateTabCallback: ((String) -> Unit)? = null
 
     private val filePickerLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri?.let {
-            viewModel.setLoadingFromPicker()
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNullOrEmpty()) return@registerForActivityResult
+        viewModel.setLoadingFromPicker()
+        // F77 (GitHub #109): multi-select picker. One file uses the legacy
+        // path; many files run through the multi-STL combiner.
+        val supportedUris = uris.filter {
             val name = viewModel.getFileDisplayName(it) ?: ""
-            if (name.isEmpty() || SlicerViewModel.isSupportedFile(name)) {
-                viewModel.loadModel(it)
-            } else {
-                viewModel.showUnsupportedFileError(name)
-            }
+            name.isEmpty() || SlicerViewModel.isSupportedFile(name)
+        }
+        val rejected = uris - supportedUris.toSet()
+        if (rejected.isNotEmpty()) {
+            val name = viewModel.getFileDisplayName(rejected.first()) ?: ""
+            viewModel.showUnsupportedFileError(name)
+            return@registerForActivityResult
+        }
+        when (supportedUris.size) {
+            0 -> Unit
+            1 -> viewModel.loadModel(supportedUris.first())
+            else -> viewModel.loadMultipleModels(supportedUris)
         }
     }
 

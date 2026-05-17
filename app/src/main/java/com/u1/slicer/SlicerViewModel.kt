@@ -1459,6 +1459,110 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * F77 (GitHub #109): load multiple STL files onto a single plate. Combines
+     * the inputs into one binary STL via [com.u1.slicer.model.MultiStlCombiner]
+     * and dispatches to the normal single-file load path so Prepare/Preview/
+     * Slice see one model object.
+     *
+     * Constraints (validated before combine):
+     *  - All files must share a supported extension. Mixed STL+3MF is rejected
+     *    because formats carry different scene semantics; per the issue body
+     *    Kevin wants both, but each batch must be homogeneous.
+     *  - 3MF multi-file load is not yet supported by the combiner. Selecting
+     *    multiple 3MFs surfaces a clear error so the user falls back to
+     *    loading one at a time.
+     */
+    fun loadMultipleModels(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (uris.size == 1) {
+            loadModel(uris.first())
+            return
+        }
+        if (!NativeLibrary.isLoaded) {
+            _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
+            return
+        }
+        beginNewModelLoad()
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val workspaceDir = transientWorkspaceDir()
+                val cleared = UpgradeDetector.clearIntermediateCache(workspaceDir)
+                if (cleared > 0) Log.i("SlicerVM", "F77: cleared $cleared intermediate cache files before multi-file load")
+
+                _state.value = SlicerState.Loading("Loading ${uris.size} files…")
+
+                val names = uris.map { uri ->
+                    normalizeIncomingFilename(getDisplayName(context, uri) ?: "model")
+                }
+                val extensions = names.map { it.substringAfterLast('.', "").lowercase() }
+                val firstExt = extensions.first()
+                if (extensions.any { it != firstExt }) {
+                    _state.value = SlicerState.Error(
+                        "Multi-file load requires every file to be the same type. " +
+                            "Selected mix: ${extensions.distinct().joinToString(", ")}"
+                    )
+                    return@launch
+                }
+                if (firstExt == "3mf") {
+                    _state.value = SlicerState.Error(
+                        "Multi-file 3MF load is coming in a follow-up. For now load one 3MF at a time."
+                    )
+                    return@launch
+                }
+                if (firstExt != "stl") {
+                    _state.value = SlicerState.Error(
+                        "Multi-file load only supports STL files (got .$firstExt)"
+                    )
+                    return@launch
+                }
+
+                val copiedFiles = mutableListOf<File>()
+                for ((index, uri) in uris.withIndex()) {
+                    val inputStream = context.contentResolver.openInputStream(uri) ?: continue
+                    val target = File(workspaceDir, "multi_${index}_${names[index]}")
+                    inputStream.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    copiedFiles += target
+                }
+                if (copiedFiles.isEmpty()) {
+                    _state.value = SlicerState.Error("Could not read any of the selected files")
+                    return@launch
+                }
+
+                val combinedName = "combined_${System.currentTimeMillis()}.stl"
+                val combinedFile = File(workspaceDir, combinedName)
+                val result = com.u1.slicer.model.MultiStlCombiner.combine(copiedFiles, combinedFile)
+                if (result == null) {
+                    _state.value = SlicerState.Error(
+                        "None of the selected STL files could be placed on the 270 mm bed."
+                    )
+                    return@launch
+                }
+                val warnings = buildList {
+                    if (result.failed.isNotEmpty()) {
+                        add("${result.failed.size} file(s) failed to parse")
+                    }
+                    if (result.oversize.isNotEmpty()) {
+                        add("${result.oversize.size} file(s) exceeded bed bounds and were skipped")
+                    }
+                }
+                if (warnings.isNotEmpty()) {
+                    Log.w("SlicerVM", "F77 multi-STL warnings: ${warnings.joinToString("; ")}")
+                }
+                Log.i("SlicerVM", "F77: combined ${result.placedParts.size} STL files into $combinedName (${result.totalTriangles} triangles)")
+                // Hand off to the normal single-file path; from here on the
+                // combined STL is just another model.
+                withContext(Dispatchers.Main) { loadModelFromFile(combinedFile) }
+            } catch (e: Exception) {
+                Log.e("SlicerVM", "F77 multi-file load failed", e)
+                _state.value = SlicerState.Error("Multi-file load failed: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
     fun loadModelFromFile(file: File) {
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")

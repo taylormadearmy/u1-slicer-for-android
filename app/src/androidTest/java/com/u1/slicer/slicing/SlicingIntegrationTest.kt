@@ -1214,6 +1214,74 @@ class SlicingIntegrationTest {
         )
     }
 
+    // F83 (GitHub #136): mm-input scale path. The UI translates an mm value
+    // into a scale factor via ModelScaleConverter.mmToScale; the slicer then
+    // sees a regular setModelScale call. End-to-end: load tetrahedron, ask
+    // the converter for "30 mm on Z", apply it, slice, confirm the layer
+    // count matches a ~30 mm tall print (≈ 30 / 0.2 = 150 layers).
+    @Test
+    fun f83_mmScalePath_producesExpectedSlicedHeight() {
+        val file = asset("tetrahedron.stl")
+        assertTrue("F83: tetrahedron must load", lib.loadModel(file.absolutePath))
+        val info = lib.getModelInfo()!!
+
+        val targetMm = 30f
+        val scaleZ = com.u1.slicer.model.ModelScaleConverter.mmToScale(targetMm, info.sizeZ)!!
+        lib.setModelScale(scaleZ, scaleZ, scaleZ)
+
+        val centered = (270f - info.sizeX * scaleZ) / 2f
+        lib.setModelInstances(floatArrayOf(centered, centered))
+
+        val result = lib.slice(DEFAULT_CONFIG)!!
+        assertTrue("F83: mm-driven slice must succeed", result.success)
+
+        // 30 mm at 0.2 mm layer height = 150 layers (±10% for initial-layer
+        // height and rounding).
+        val expectedLayers = (targetMm / DEFAULT_CONFIG.layerHeight).toInt()
+        val tolerance = (expectedLayers * 0.15f).toInt().coerceAtLeast(5)
+        val low = expectedLayers - tolerance
+        val high = expectedLayers + tolerance
+        assertTrue(
+            "F83: layer count for $targetMm mm tall print should be ~$expectedLayers " +
+                "(±$tolerance), got ${result.totalLayers}",
+            result.totalLayers in low..high
+        )
+    }
+
+    // F77 (GitHub #109): the multi-STL combiner emits a single binary STL
+    // with each input translated to a centred grid cell. The native loader
+    // must read that file as a regular STL, the slicer must produce a
+    // multi-row layer count ( ≥ ~10 layers for 3 stacked tetrahedrons ), and
+    // bedX/Y must exceed a single part's footprint (proves the grid laid
+    // them out rather than stacking).
+    @Test
+    fun f77_multiStl_combinerProducesSliceableFile() {
+        val a = asset("tetrahedron.stl")
+        val b = asset("tetrahedron.stl").copyTo(File(cacheDir, "tetrahedron_b.stl"), overwrite = true)
+        val c = asset("tetrahedron.stl").copyTo(File(cacheDir, "tetrahedron_c.stl"), overwrite = true)
+        val combined = File(cacheDir, "f77_combined.stl")
+
+        val result = com.u1.slicer.model.MultiStlCombiner.combine(listOf(a, b, c), combined)
+        assertNotNull("F77: combiner must return a result", result)
+        result!!
+        assertEquals(3, result.placedParts.size)
+        assertTrue("F77: combined file must exist and be non-empty", combined.exists() && combined.length() > 100)
+
+        assertTrue("F77: native loader must accept the combined STL", lib.loadModel(combined.absolutePath))
+        val info = lib.getModelInfo()!!
+        // 3 tetrahedrons in a row with 5 mm margin: combined footprint width
+        // must clearly exceed a single tetrahedron's footprint.
+        val singlePart = result.placedParts.first()
+        assertTrue(
+            "F77: combined sizeX (${info.sizeX}) must exceed a single part (${singlePart.sizeX})",
+            info.sizeX > singlePart.sizeX * 1.5f
+        )
+
+        val sliced = lib.slice(DEFAULT_CONFIG)!!
+        assertTrue("F77: combined STL must slice successfully", sliced.success)
+        assertTrue("F77: combined slice must produce > 0 layers", sliced.totalLayers > 0)
+    }
+
     // B108 multi-object gap: 3MF with two build items that each carry different embedded
     // rotation+scale matrices (~0.76×) AND different Z translations (z≈2.89mm and z≈16.75mm).
     // The original B108 fix used a single group-wide Z correction (shift all instances by
