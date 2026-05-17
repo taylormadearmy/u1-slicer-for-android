@@ -466,9 +466,26 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     @Volatile var cachedPrepareMesh: com.u1.slicer.viewer.MeshData? = null
     @Volatile var cachedPrepareMeshPath: String? = null
 
+    // B109 review #1+#2 (2026-05-17, v2.2.7): pre-scale (Width, Depth) AABB of the
+    // live native preview mesh, with rotation baked in. Fed by InlineModelPreview
+    // after each `getPreparePreviewMesh()` returns; consumed by
+    // [getPlacementPositions] (auto-center) and [setCopyCount] (bed-warning) so they
+    // agree with the renderer's drawn footprint instead of using the over-conservative
+    // box-rotation approximation. Cleared in [setModelRotation] / [invalidatePrepareMeshCache]
+    // so a stale value never leaks across a rotation change — until the next
+    // preview-mesh fetch repopulates it, callers fall back to the box approximation
+    // via [CopyArrangeCalculator.effectivePlacementFootprint].
+    private val _rotatedMeshSizeXY = MutableStateFlow<Pair<Float, Float>?>(null)
+    val rotatedMeshSizeXY: StateFlow<Pair<Float, Float>?> = _rotatedMeshSizeXY.asStateFlow()
+
+    fun setRotatedMeshSize(width: Float, depth: Float) {
+        _rotatedMeshSizeXY.value = width to depth
+    }
+
     fun invalidatePrepareMeshCache() {
         cachedPrepareMesh = null
         cachedPrepareMeshPath = null
+        _rotatedMeshSizeXY.value = null
     }
 
     /** Reset toolRemapSlots so a fresh load doesn't carry stale slot state forward. */
@@ -2135,15 +2152,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setCopyCount(count: Int) {
         _copyCount.value = count.coerceIn(1, 16)
-        // B65: use scaled + rotated dimensions for bed warning
+        // B65 + B109 review: use the mesh-AABB-aware effective footprint when
+        // available so the bed-warning chip doesn't false-positive at off-axis
+        // rotations on non-box meshes (e.g. Dragon Scale 45°, where the box
+        // approximation reports a much larger footprint than the actual rotated
+        // mesh, triggering a "may overlap" warning even when the model clearly
+        // fits).
         val mi = lastModelInfo
         val s = _modelScale.value
         val rot = _modelRotation.value
         _copyBedWarning.value = if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
-            val (rotW, rotH) = CopyArrangeCalculator.computeRotatedFootprint(
-                mi.sizeX * s.x, mi.sizeY * s.y, mi.sizeZ * s.z, rot.x, rot.y, rot.z
+            val (effW, effH) = CopyArrangeCalculator.effectivePlacementFootprint(
+                rotatedMeshSizeXY = _rotatedMeshSizeXY.value,
+                loadTimeSizeX = mi.sizeX, loadTimeSizeY = mi.sizeY, loadTimeSizeZ = mi.sizeZ,
+                scaleX = s.x, scaleY = s.y,
+                rotationXDeg = rot.x, rotationYDeg = rot.y, rotationZDeg = rot.z,
             )
-            CopyArrangeCalculator.copyBedWarning(rotW, rotH, _copyCount.value)
+            CopyArrangeCalculator.copyBedWarning(effW, effH, _copyCount.value)
         } else null
         customObjectPositions = null // reset custom positions when count changes
         _sliceStale.value = true
@@ -2162,16 +2187,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** Returns initial positions for inline 3D placement (custom or auto-calculated).
-     *  Uses rotated + scaled model footprint so the model centers correctly after rotation (B109). */
+     *  Uses the mesh-AABB-aware effective footprint so the auto-center matches the
+     *  renderer's drawn position at any rotation (B109 review #2). When the rotated
+     *  preview mesh hasn't been fetched yet (cold-load gap), falls back to the
+     *  box-rotation approximation — the next mesh refresh updates
+     *  `_rotatedMeshSizeXY` and the composable re-collects, re-evaluating this
+     *  function with the refined bounds. */
     fun getPlacementPositions(): FloatArray {
         customObjectPositions?.let { return it }
         val mi = lastModelInfo ?: return floatArrayOf(135f, 135f)
         val s = _modelScale.value
         val rot = _modelRotation.value
-        val (rotW, rotH) = CopyArrangeCalculator.computeRotatedFootprint(
-            mi.sizeX * s.x, mi.sizeY * s.y, mi.sizeZ * s.z, rot.x, rot.y, rot.z
+        val (effW, effH) = CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = _rotatedMeshSizeXY.value,
+            loadTimeSizeX = mi.sizeX, loadTimeSizeY = mi.sizeY, loadTimeSizeZ = mi.sizeZ,
+            scaleX = s.x, scaleY = s.y,
+            rotationXDeg = rot.x, rotationYDeg = rot.y, rotationZDeg = rot.z,
         )
-        return CopyArrangeCalculator.calculate(rotW, rotH, _copyCount.value)
+        return CopyArrangeCalculator.calculate(effW, effH, _copyCount.value)
     }
 
     fun updateConfig(updater: (SliceConfig) -> SliceConfig) {

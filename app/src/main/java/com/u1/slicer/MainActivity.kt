@@ -1257,6 +1257,15 @@ fun PrepareScreen(
                             modelPath.endsWith(".3mf", ignoreCase = true)
                         )) {
                             var showInfoDialog by remember { mutableStateOf(false) }
+                            // B109 review: observe rotatedMeshSizeXY so this composable
+                            // recomposes when the rotated preview mesh's AABB updates
+                            // (typically ~300ms after the user rotates). On recomposition
+                            // `getPlacementPositions()` re-evaluates with the refined
+                            // bounds, snapping the auto-centered position to where the
+                            // renderer actually draws the rotated model. Unused locally —
+                            // the observation alone is what triggers recomposition.
+                            @Suppress("UNUSED_VARIABLE")
+                            val rotatedMeshSizeXY by viewModel.rotatedMeshSizeXY.collectAsState()
                             val positions = viewModel.getPlacementPositions()
                             val loadedInfo = info
                             // fix35: Smart Paint as a top-right overlay icon on the 3D viewer.
@@ -1330,7 +1339,19 @@ fun PrepareScreen(
                                 resolvedFilamentColors = resolvedFilamentColors,
                                 meshAlignedFilamentColors = meshAlignedFilamentColors,
                                 cachedMesh = if (viewModel.cachedPrepareMeshPath == modelPath) viewModel.cachedPrepareMesh else null,
-                                onMeshCached = { viewModel.cachedPrepareMeshPath = modelPath; viewModel.cachedPrepareMesh = it },
+                                onMeshCached = { mesh ->
+                                    viewModel.cachedPrepareMeshPath = modelPath
+                                    viewModel.cachedPrepareMesh = mesh
+                                    // B109 review: feed the mesh's rotated AABB to the
+                                    // ViewModel so getPlacementPositions / setCopyCount
+                                    // can use it for auto-center + bed-warning math
+                                    // (matches what the renderer draws). Pre-scale —
+                                    // the helper applies modelScale.
+                                    viewModel.setRotatedMeshSize(
+                                        mesh.maxX - mesh.minX,
+                                        mesh.maxY - mesh.minY,
+                                    )
+                                },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
                                 nativeSliceStateDirty = nativeSliceStateDirty,
                                 onSmartPaint = smartPaintCallback,
@@ -2834,14 +2855,31 @@ fun InlineModelPreview(
     var towerX by remember(wipeTowerX) { mutableFloatStateOf(wipeTowerX) }
     var towerY by remember(wipeTowerY) { mutableFloatStateOf(wipeTowerY) }
 
-    // B109: compute effective placement footprint after rotation+scale so drag bounds
-    // allow the model to reach the far edge of the bed after any rotation.
-    val (effPlaceSizeX, effPlaceSizeY) = remember(modelSizeX, modelSizeY, modelSizeZ, modelScale, modelRotation) {
-        val (rotW, rotH) = com.u1.slicer.model.CopyArrangeCalculator.computeRotatedFootprint(
-            modelSizeX, modelSizeY, modelSizeZ,
-            modelRotation.x, modelRotation.y, modelRotation.z
+    // B109: compute the effective placement footprint after rotation+scale via the
+    // pure helper [CopyArrangeCalculator.effectivePlacementFootprint]. The helper
+    // prefers the live native preview-mesh AABB when present (matches what the
+    // renderer draws at any rotation) and falls back to the box-rotation
+    // approximation otherwise. See the helper's KDoc for the full rationale. Note
+    // that both STL and 3MF go through the rotation effect at line ~2977, so once
+    // a mesh has been fetched the AABB reflects rotation for both file types —
+    // no file-type gate needed.
+    val (effPlaceSizeX, effPlaceSizeY) = remember(
+        mesh,
+        modelSizeX, modelSizeY, modelSizeZ,
+        modelScale, modelRotation,
+    ) {
+        val m = mesh
+        com.u1.slicer.model.CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = m?.let { Pair(it.maxX - it.minX, it.maxY - it.minY) },
+            loadTimeSizeX = modelSizeX,
+            loadTimeSizeY = modelSizeY,
+            loadTimeSizeZ = modelSizeZ,
+            scaleX = modelScale.x,
+            scaleY = modelScale.y,
+            rotationXDeg = modelRotation.x,
+            rotationYDeg = modelRotation.y,
+            rotationZDeg = modelRotation.z,
         )
-        Pair(rotW * modelScale.x, rotH * modelScale.y)
     }
 
     LaunchedEffect(modelFilePath, extruderMap, colorMapping?.size) {
@@ -3040,7 +3078,26 @@ fun InlineModelPreview(
     }
 
     // Update renderer with placement data
-    LaunchedEffect(viewerView, placementEnabled, objPositions, towerX, towerY, placementConfig.wipeTowerVisible) {
+    //
+    // B109 follow-up (2026-05-17, GitHub #135 reopen): the v.onObjectMoved
+    // lambda captures `effPlaceSizeX` / `effPlaceSizeY` as primitive Float
+    // values at the moment this block runs. Those derive from `modelRotation`
+    // via `remember(...modelRotation)` above, but if rotation isn't a key
+    // here, the lambda keeps closing over the PRE-rotation values until some
+    // other key (objPositions, towerX, …) changes. User rotates → footprint
+    // recomputes → bed bounds NOT updated in the drag callback → drag still
+    // clamped to load-time AABB. Add effPlaceSizeX/Y to the key list so the
+    // callback re-captures on rotation.
+    LaunchedEffect(
+        viewerView, placementEnabled, objPositions,
+        towerX, towerY, placementConfig.wipeTowerVisible,
+        effPlaceSizeX, effPlaceSizeY,
+        // B109 review: the wipe-tower drag clamp inside this lambda closes over
+        // wipeTowerWidth/wipeTowerDepth (lines below). Without them as keys the
+        // callback keeps a stale value if the user changes Prime Tower Width or
+        // Depth mid-session — same class of bug as the earlier B109 reopen.
+        wipeTowerWidth, wipeTowerDepth,
+    ) {
         val v = viewerView ?: return@LaunchedEffect
         if (placementEnabled) {
             v.placementMode = true

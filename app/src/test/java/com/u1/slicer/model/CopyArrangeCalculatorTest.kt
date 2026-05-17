@@ -343,4 +343,107 @@ class CopyArrangeCalculatorTest {
         // 9 copies should not warn
         assertNull(CopyArrangeCalculator.copyBedWarning(80f, 80f, 9))
     }
+
+    // --- B109 v2.2.6 review: `effectivePlacementFootprint` unit tests ---
+    // Replaces the brittle structural-grep tests that asserted MainActivity
+    // closure shape. The helper is now the single source of truth for the
+    // rotated+scaled footprint used by drag-clamp, auto-center, and
+    // bed-warning callers.
+
+    @Test
+    fun `effectivePlacementFootprint prefers mesh AABB when supplied`() {
+        // 100x50 load-time box; mesh AABB reports actual rotated 80x60 (e.g. a real
+        // organic mesh that doesn't fill the box-rotation envelope). Helper must
+        // pick the mesh AABB scaled — the box-rotation envelope is irrelevant.
+        val (w, h) = CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = 80f to 60f,
+            loadTimeSizeX = 100f, loadTimeSizeY = 50f, loadTimeSizeZ = 30f,
+            scaleX = 1f, scaleY = 1f,
+            rotationXDeg = 0f, rotationYDeg = 0f, rotationZDeg = 45f,
+        )
+        assertEquals(80f, w, 0.01f)
+        assertEquals(60f, h, 0.01f)
+    }
+
+    @Test
+    fun `effectivePlacementFootprint scales mesh AABB`() {
+        // Scale must multiply the mesh AABB, since the renderer applies scale after
+        // centering the mesh. 80x60 * (2,1.5) → 160x90.
+        val (w, h) = CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = 80f to 60f,
+            loadTimeSizeX = 100f, loadTimeSizeY = 50f, loadTimeSizeZ = 30f,
+            scaleX = 2f, scaleY = 1.5f,
+            rotationXDeg = 0f, rotationYDeg = 0f, rotationZDeg = 45f,
+        )
+        assertEquals(160f, w, 0.01f)
+        assertEquals(90f, h, 0.01f)
+    }
+
+    @Test
+    fun `effectivePlacementFootprint falls back to box rotation when mesh null`() {
+        // No mesh yet (cold load before native preview returns) — must use the
+        // box-rotation approximation. 100x50 box rotated 90°Z → 50x100 (axis swap).
+        val (w, h) = CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = null,
+            loadTimeSizeX = 100f, loadTimeSizeY = 50f, loadTimeSizeZ = 30f,
+            scaleX = 1f, scaleY = 1f,
+            rotationXDeg = 0f, rotationYDeg = 0f, rotationZDeg = 90f,
+        )
+        assertEquals(50f, w, 0.01f)
+        assertEquals(100f, h, 0.01f)
+    }
+
+    @Test
+    fun `effectivePlacementFootprint fallback applies scale after rotation`() {
+        // 100x50 box rotated 90°Z → 50x100, then scaled (2, 1) → 100x100.
+        val (w, h) = CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = null,
+            loadTimeSizeX = 100f, loadTimeSizeY = 50f, loadTimeSizeZ = 30f,
+            scaleX = 2f, scaleY = 1f,
+            rotationXDeg = 0f, rotationYDeg = 0f, rotationZDeg = 90f,
+        )
+        assertEquals(100f, w, 0.01f)
+        assertEquals(100f, h, 0.01f)
+    }
+
+    @Test
+    fun `effectivePlacementFootprint with mesh null and zero rotation returns load time size`() {
+        // Initial-load shape: no mesh yet, rotation=0,0,0 — must return load-time
+        // size (× scale). Asserts the no-rotation shortcut path.
+        val (w, h) = CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = null,
+            loadTimeSizeX = 100f, loadTimeSizeY = 50f, loadTimeSizeZ = 30f,
+            scaleX = 1f, scaleY = 1f,
+            rotationXDeg = 0f, rotationYDeg = 0f, rotationZDeg = 0f,
+        )
+        assertEquals(100f, w, 0.01f)
+        assertEquals(50f, h, 0.01f)
+    }
+
+    @Test
+    fun `effectivePlacementFootprint dragonScale45deg matches mesh AABB not box envelope`() {
+        // DC15's Dragon Scale repro — 200x80x20mm visible mesh rotated 45°Z.
+        // Box-rotation envelope: ~(200+80)/√2 = ~198 on each axis (over-estimate).
+        // True rotated mesh AABB (organic, doesn't fill the corners): say 160x140.
+        // Helper must report 160x140 so the drag clamp matches what the renderer draws.
+        val boxRotated = CopyArrangeCalculator.computeRotatedFootprint(
+            200f, 80f, 20f, 0f, 0f, 45f
+        )
+        val meshAabb = 160f to 140f
+        val (w, h) = CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = meshAabb,
+            loadTimeSizeX = 200f, loadTimeSizeY = 80f, loadTimeSizeZ = 20f,
+            scaleX = 1f, scaleY = 1f,
+            rotationXDeg = 0f, rotationYDeg = 0f, rotationZDeg = 45f,
+        )
+        assertEquals(meshAabb.first, w, 0.01f)
+        assertEquals(meshAabb.second, h, 0.01f)
+        // Sanity-check that the box envelope would have been bigger — proves
+        // the over-estimation that this helper avoids.
+        assertTrue(
+            "box-rotation envelope (${boxRotated.first}) must exceed true mesh " +
+                "AABB (${meshAabb.first}) — that's the whole point of preferring mesh AABB",
+            boxRotated.first > meshAabb.first
+        )
+    }
 }

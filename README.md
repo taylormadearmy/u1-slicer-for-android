@@ -6,7 +6,7 @@ Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 ex
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v2.2.4` (`versionCode 277`)
+Current release: `v2.2.6` (`versionCode 279`)
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -18,6 +18,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 
 - **STL and 3MF slicing** — single-color, multi-color (up to 4 extruders), and paint-based (SEMM)
 - **Bambu 3MF support** — multi-plate extraction, profile embedding, sanitization pipeline
+- **Smart Paint** — one-tap multi-colour segmentation via a 6-stage cascade with optional AI-driven region naming (see [below](#smart-paint))
 - **3D model viewer** — OpenGL ES 3.0, drag-to-place models on bed, scale, copies
 - **3D G-code viewer** — per-layer toolpath rendering with Gouraud shading; feature-type color mode (outer wall, infill, support, etc.)
 - **Wipe tower auto-positioning** — evaluates 8 candidates, picks spot with most clearance
@@ -27,6 +28,21 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 - **Filament library** — manage profiles with temps, speeds, retraction settings
 - **Settings backup/restore** — export and import all app settings as JSON
 - **Background slicing** — foreground service keeps slicing alive when app is backgrounded
+
+### Smart Paint
+
+Tap **Smart Paint** on the Prepare screen and the model is split into up to 4 paintable regions automatically. Smart Paint runs a cascade and takes the first stage that produces useful regions:
+
+1. **Painted (from the file)** — uses paint data already baked into MMU-style 3MFs (OrcaSlicer / Bambu Studio exports). No computation — the creator's intent is preserved.
+2. **Per-volume** — multi-volume 3MFs (e.g. Bambu Studio designs with per-volume extruder assignments) split along their volume boundaries.
+3. **Per-object** — multi-object plates get one region per object.
+4. **Triangle indices** — legacy paint formats with per-triangle extruder hints.
+5. **Topology** — dihedral-angle flood-fill on the raw mesh: sharp creases become region boundaries (hull ↔ deck, body ↔ limbs). Oversized smooth components get spatial K-means subdivision so a goat's body splits into face/neck/legs by proximity.
+6. **Height bands** — fallback: 12 equal-height slices. Always succeeds; useful for Hueforge tiles and props with no sharp features.
+
+After the auto-segmentation you can tap regions to assign slots, fix mistakes with **tap-to-paint** or the **Lasso** (draw a closed polygon, everything inside commits to the selected slot), or toggle **Painted ↔ Regions** to see your work against the segmentation tree.
+
+Optional **AI region naming** sends 4 angle screenshots to a vision LLM so generic "Region 1/2/3" labels become semantic ("head", "wing", "base"). The segmentation itself is local and deterministic — only the naming is AI-driven, and it's optional. Supported providers: Pollinations (anonymous, free, optional key for higher rate limits), Google Gemini (free 1k/day), OpenRouter, Claude, OpenAI.
 
 ## Architecture
 
@@ -70,11 +86,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 1178 JVM unit tests
+./gradlew testDebugUnitTest              # 1190 JVM unit tests
 ./gradlew connectedDebugAndroidTest      # 304 instrumented tests (ARM64 device required)
 ```
 
-**1482 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament list, and more.
+**1494 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament list, and more.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

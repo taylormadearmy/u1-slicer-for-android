@@ -173,6 +173,64 @@ object CopyArrangeCalculator {
     }
 
     /**
+     * Single source of truth for the effective placement footprint (XY, in mm) used
+     * by every B109 caller — drag clamp, auto-center, and bed-warning. Prefers the
+     * caller's live native preview-mesh AABB when available because it reflects the
+     * **actual** rotated mesh geometry; falls back to the box-rotation approximation
+     * via [computeRotatedFootprint] otherwise.
+     *
+     * The two routes diverge for non-box meshes at off-axis rotations. For a sphere
+     * rotated 45° around Z, the rotated mesh AABB is unchanged (still a circle) but
+     * the rotated **box** AABB grows by √2 because the box corners sweep out a wider
+     * span. Dragon Scale and most organic prints fall in between, with the box
+     * approximation over-estimating the actual footprint by up to ~40% at 45°. The
+     * renderer draws the model using the mesh AABB ([com.u1.slicer.viewer.ModelRenderer.drawModelAt]
+     * reads `mesh.maxX - mesh.minX`), so clamps / centers computed from the box
+     * approximation visibly disagree with the rendered model — that's the v2.2.6
+     * reopen of [GitHub #135](https://github.com/taylormadearmy/u1-slicer-for-android/issues/135).
+     *
+     * Pass [rotatedMeshSizeXY] = null when no mesh has been fetched yet (cold load
+     * before the first `getPreparePreviewMesh()` returns) — the box-rotation
+     * approximation is conservative but matches the only signal we have.
+     *
+     * @param rotatedMeshSizeXY (rotatedSizeX, rotatedSizeY) read from the live native
+     *   preview mesh **before** user scale is applied. Null when unavailable.
+     * @param loadTimeSizeX load-time model width (mm)
+     * @param loadTimeSizeY load-time model depth (mm)
+     * @param loadTimeSizeZ load-time model height (mm)
+     * @param scaleX user scale on X
+     * @param scaleY user scale on Y
+     * @param rotationXDeg rotation around X axis in degrees
+     * @param rotationYDeg rotation around Y axis in degrees
+     * @param rotationZDeg rotation around Z axis in degrees
+     * @return Pair(effectiveWidth, effectiveDepth) in mm, ready to feed into
+     *   `coerceIn` drag bounds or `calculate(...)` auto-centering.
+     */
+    fun effectivePlacementFootprint(
+        rotatedMeshSizeXY: Pair<Float, Float>?,
+        loadTimeSizeX: Float,
+        loadTimeSizeY: Float,
+        loadTimeSizeZ: Float,
+        scaleX: Float,
+        scaleY: Float,
+        rotationXDeg: Float,
+        rotationYDeg: Float,
+        rotationZDeg: Float,
+    ): Pair<Float, Float> {
+        if (rotatedMeshSizeXY != null) {
+            return Pair(
+                rotatedMeshSizeXY.first * scaleX,
+                rotatedMeshSizeXY.second * scaleY,
+            )
+        }
+        val (rotW, rotH) = computeRotatedFootprint(
+            loadTimeSizeX, loadTimeSizeY, loadTimeSizeZ,
+            rotationXDeg, rotationYDeg, rotationZDeg,
+        )
+        return Pair(rotW * scaleX, rotH * scaleY)
+    }
+
+    /**
      * Computes the axis-aligned XY footprint (width × height) of a box after applying
      * ZYX Euler rotation (same convention as setModelRotation in native code).
      *
