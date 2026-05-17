@@ -4,7 +4,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B119: Buzz Lightyear cold load is 92–93s — predates F54, perf regression unbisected — OPEN
+### B119: Buzz Lightyear cold load is 92–93s — predates F54, perf regression unbisected (GitHub #137) — OPEN
 - **Symptom**: `PreparePreviewViewModelTest#buzzLightyear_coldLoad_skipsFullFileEmbedOnMultiPlate` consistently runs 92.5–93.0s on Pixel 8a (43211JEKB16931), well over the original 90s budget. Logcat breakdown shows nearly all of the time is in `BambuSanitizer.process()` + the initial `ThreeMfParser.parse()` of the 73 MB Buzz file (10 plates, 296k paint_color attributes).
 - **Discovered**: v2.2.4 instrumented sweep, 2026-05-17. Test budget caught a slowdown that had been quietly present for many releases.
 - **Bisection**: built worktrees at f639561 (B108, pre-F54) and 435ef9e (v2.2.0 F54 merge). Both run at 92.7–93.2s on the same device today. The slowdown predates F54 — it appeared somewhere between v1.6.11 (where the 42s baseline was set by B93 phase 2, and the 90s budget calibrated with 2x margin) and the B108 era. Native `.so` size between v1.6.11 (20,764,520 bytes) and current (20,809,192 bytes) differs by only 44 KB — small structural difference, large timing difference.
