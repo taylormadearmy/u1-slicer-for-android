@@ -148,5 +148,3 @@ If new functionality depends on native C++ changes, it is OK to rebuild the `.so
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-or-later).
-
-See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for third-party dependency licenses.
