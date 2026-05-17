@@ -471,6 +471,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F84: Upload filename should preserve the original model name (GitHub #138)
+- Upload filenames today are derived from the on-disk transient G-code (typically `output_<epoch>.gcode` or `output.remapped_<epoch>.gcode`), so prints in the printer's file browser are indistinguishable.
+- **Proposal**: upload filename `{modelBaseName}_{epochMillis}.gcode`, where `modelBaseName` is the originally-loaded file name with extension stripped + the existing `buildPrinterUploadFilename` sanitisation applied.
+- **Examples**: `Jumping_frog.3mf` → `Jumping_frog_1778999503284.gcode`; `Dragon Scale infinity.3mf` → `Dragon_Scale_infinity_1778999503284.gcode`.
+- **Implementation**: `SlicerViewModel.currentModelName` already holds the original filename. Flow it to `PrinterViewModel.sendAndPrint` / `sendUploadOnly` and pass through to `PrinterRepository.uploadAndPrint` / `uploadOnly` (which already accept a `filename` parameter — currently `file.name` from the on-disk gcode). The `buildPrinterUploadFilename` helper itself doesn't change.
+- **Tests**: update `PrinterRepositoryTest#upload filename sanitization and unique suffix generation` to use model-like names; add a unit test confirming `sendAndPrint`/`sendUploadOnly` pass the model name (not the gcode name) to the repo; manual on-device confirm the printer's file browser shows the model name.
+- **Out of scope**: per-print custom naming; renaming files already on the printer.
+
 ### F83: Scale model by absolute dimension (mm) in addition to percentage (GitHub #136)
 - Today the Prepare screen only allows scaling by percentage (1% increments per F74). Users often want a specific final size (e.g. "50mm tall") without doing the percentage math.
 - **Proposal**: add a dimension-input mode alongside the percentage field — user types target X, Y, or Z in mm; other axes follow proportionally under uniform scaling.
