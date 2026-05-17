@@ -85,4 +85,30 @@ class AppEventNotifierTest {
     fun `navigate target for model loaded is null`() {
         assertEquals(null, AppEventNotifier.navigateTargetFor(AppEventNotifier.Event.ModelLoaded("x")))
     }
+
+    // --- F81: notifications for loading stages (GitHub #120) ---
+
+    @Test
+    fun `f81 bambu pipeline ready title and body`() {
+        val e = AppEventNotifier.Event.BambuPipelineReady("Buzz.3mf")
+        assertEquals("3MF processed", AppEventNotifier.titleFor(e))
+        assertEquals("Buzz.3mf sanitised and embedded", AppEventNotifier.bodyFor(e))
+    }
+
+    @Test
+    fun `f81 prepare preview ready title and body`() {
+        val e = AppEventNotifier.Event.PreparePreviewReady("Dragon.3mf")
+        assertEquals("Preview ready", AppEventNotifier.titleFor(e))
+        assertEquals("Dragon.3mf preview rendered", AppEventNotifier.bodyFor(e))
+    }
+
+    @Test
+    fun `f81 bambu pipeline ready has no navigate target`() {
+        assertEquals(null, AppEventNotifier.navigateTargetFor(AppEventNotifier.Event.BambuPipelineReady("x")))
+    }
+
+    @Test
+    fun `f81 prepare preview ready has no navigate target`() {
+        assertEquals(null, AppEventNotifier.navigateTargetFor(AppEventNotifier.Event.PreparePreviewReady("x")))
+    }
 }

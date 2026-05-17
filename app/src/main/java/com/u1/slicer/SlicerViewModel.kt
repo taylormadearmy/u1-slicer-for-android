@@ -972,7 +972,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 when {
                     prevState is SlicerState.Loading && newState is SlicerState.ModelLoaded -> {
                         val filename = (newState as SlicerState.ModelLoaded).info.filename
-                        AppEventNotifier.notify(ctx, AppEventNotifier.Event.ModelLoaded(filename))
+                        // F81: ModelLoaded fires only for large files (>= 5 MB). Anything
+                        // smaller loads fast enough that a notification is noise.
+                        val fileBytes = currentModelFile?.length() ?: 0L
+                        if (fileBytes >= LARGE_FILE_NOTIFY_BYTES) {
+                            AppEventNotifier.notify(ctx, AppEventNotifier.Event.ModelLoaded(filename))
+                        }
                     }
                     prevState is SlicerState.Slicing && newState is SlicerState.SliceComplete -> {
                         val filename = currentModelFile?.name ?: "model"
@@ -986,6 +991,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 prevState = newState
             }
         }
+    }
+
+    /**
+     * F81 (GitHub #120): called from the InlineModelPreview `onMeshCached`
+     * callback once the Prepare preview mesh is built. Fires a background
+     * notification when the mesh is large enough that the build took time.
+     */
+    fun onPreparePreviewReady(triangleCount: Int) {
+        if (triangleCount < PREVIEW_NOTIFY_TRIANGLE_THRESHOLD) return
+        val filename = currentModelName.ifEmpty { currentModelFile?.name ?: "model" }
+        AppEventNotifier.notify(
+            getApplication<android.app.Application>(),
+            AppEventNotifier.Event.PreparePreviewReady(filename)
+        )
     }
 
     private fun refreshMappedPreviewColors(presets: List<ExtruderPreset>) {
@@ -2315,6 +2334,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val firstPlateId = if (origInfo.isBambu && mergedInfo.plates.isNotEmpty())
                 mergedInfo.plates.first().plateId else null
             embedProfile(processed, mergedInfo, workspaceDir, plateId = firstPlateId)
+        }
+        // F81 (GitHub #120): notify when the Bambu sanitize+embed pipeline
+        // finishes — this is the long-running stage distinct from raw load,
+        // and only Bambu files pay this cost. Non-Bambu STL/3MF skip it.
+        if (origInfo.isBambu) {
+            AppEventNotifier.notify(
+                getApplication<android.app.Application>(),
+                AppEventNotifier.Event.BambuPipelineReady(sourceFile.name)
+            )
         }
         return PreparedModelArtifacts(
             rawFile = sourceFile,
@@ -4677,6 +4705,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     companion object {
+        /**
+         * F81 (GitHub #120): "large" file gate for the ModelLoaded notification.
+         * Files smaller than this load fast enough that a background-state
+         * notification is more noise than signal.
+         */
+        internal const val LARGE_FILE_NOTIFY_BYTES: Long = 5L * 1024 * 1024
+
+        /**
+         * F81: trigger threshold for PreparePreviewReady. The decimator caps
+         * the preview mesh around 500 K triangles; anything above that took
+         * meaningful time to build and is worth notifying about.
+         */
+        internal const val PREVIEW_NOTIFY_TRIANGLE_THRESHOLD: Int = 500_000
+
         /**
          * Convert a hex color string (#RRGGBB or RRGGBB) to a FloatArray of [R, G, B, 1f].
          * Returns a neutral grey on parse failure. Callable without a ViewModel instance.

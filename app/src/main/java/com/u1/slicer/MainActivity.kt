@@ -804,12 +804,13 @@ class MainActivity : ComponentActivity() {
                                                 output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
                                                 colorMapping = expanded,
                                             )
+                                            val modelName = viewModel.modelFileName.value
                                             withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 when (pending.action) {
                                                     PendingMappingSend.Action.PrintAndUpload ->
-                                                        printerViewModel.sendAndPrint(physical)
+                                                        printerViewModel.sendAndPrint(physical, modelName)
                                                     PendingMappingSend.Action.UploadOnly ->
-                                                        printerViewModel.sendUploadOnly(physical)
+                                                        printerViewModel.sendUploadOnly(physical, modelName)
                                                 }
                                             }
                                         }
@@ -843,12 +844,13 @@ class MainActivity : ComponentActivity() {
                                     sourceFile, exportedFile, mapping = null
                                 )
                                 val physical = com.u1.slicer.gcode.PhysicalGcodePath.of(exportedFile)
+                                val modelName = viewModel.modelFileName.value
                                 withContext(kotlinx.coroutines.Dispatchers.Main) {
                                     when (pending.action) {
                                         PendingMappingSend.Action.PrintAndUpload ->
-                                            printerViewModel.sendAndPrint(physical)
+                                            printerViewModel.sendAndPrint(physical, modelName)
                                         PendingMappingSend.Action.UploadOnly ->
-                                            printerViewModel.sendUploadOnly(physical)
+                                            printerViewModel.sendUploadOnly(physical, modelName)
                                     }
                                 }
                             }
@@ -1351,6 +1353,10 @@ fun PrepareScreen(
                                         mesh.maxX - mesh.minX,
                                         mesh.maxY - mesh.minY,
                                     )
+                                    // F81: notify when a large preview mesh finishes
+                                    // building so background users know Prepare is ready.
+                                    val tris = (mesh.vertices.limit() / 10 / 3)
+                                    viewModel.onPreparePreviewReady(tris)
                                 },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
                                 nativeSliceStateDirty = nativeSliceStateDirty,
@@ -1441,7 +1447,8 @@ fun PrepareScreen(
                             onSetCopyCount = viewModel::setCopyCount,
                             copyBedWarning = copyBedWarning,
                             rotation = modelRotation,
-                            onRotationChange = { viewModel.setModelRotation(it) }
+                            onRotationChange = { viewModel.setModelRotation(it) },
+                            loadTimeSize = modelInfo?.let { Triple(it.sizeX, it.sizeY, it.sizeZ) }
                         )
                         // Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour models
                         // (STL, single-filament 3MF) get a one-row Filament list,
@@ -3872,12 +3879,18 @@ fun ScaleSection(
     onSetCopyCount: (Int) -> Unit = {},
     copyBedWarning: String? = null,
     rotation: SlicerViewModel.ModelRotation = SlicerViewModel.ModelRotation(),
-    onRotationChange: (SlicerViewModel.ModelRotation) -> Unit = {}
+    onRotationChange: (SlicerViewModel.ModelRotation) -> Unit = {},
+    // F83 (GitHub #136): load-time XYZ size in mm enables the absolute-mm
+    // input mode. Null = no model loaded → mm mode is disabled.
+    loadTimeSize: Triple<Float, Float, Float>? = null
 ) {
     var uniformMode by remember { mutableStateOf(true) }
     var uniformValue by remember(scale) { mutableFloatStateOf(scale.uniform) }
     var expanded by remember { mutableStateOf(true) }
     var selectedTab by remember { mutableIntStateOf(0) }
+    // F83: input-unit toggle — "%" (legacy) vs "mm" (absolute). Defaults to
+    // percent so existing users keep the familiar control.
+    var mmMode by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3926,6 +3939,20 @@ fun ScaleSection(
                                 Text("Copies: $copyCount", style = MaterialTheme.typography.labelMedium)
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                // F83: unit toggle. mm only available with a loaded model.
+                                if (loadTimeSize != null) {
+                                    Text(
+                                        "mm",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    Switch(
+                                        checked = mmMode,
+                                        onCheckedChange = { mmMode = it }
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                }
                                 Text("Uniform", style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                                 Spacer(Modifier.width(4.dp))
@@ -3947,29 +3974,68 @@ fun ScaleSection(
                         }
                         Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         val focusManager = LocalFocusManager.current
+                        // F83: mm-mode references the load-time axis sizes captured at file load.
+                        val sizeX = loadTimeSize?.first ?: 0f
+                        val sizeY = loadTimeSize?.second ?: 0f
+                        val sizeZ = loadTimeSize?.third ?: 0f
+                        val mmActive = mmMode && loadTimeSize != null
+                        fun formatField(scaleFactor: Float, axisSize: Float): String =
+                            if (mmActive) "%.1f".format(scaleFactor * axisSize)
+                            else "%.0f".format(scaleFactor * 100)
+                        // mm warning when scaled size exceeds the 270 mm bed on any axis.
+                        val mmBedWarning = if (mmActive) listOfNotNull(
+                            "X".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.x, sizeX) },
+                            "Y".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.y, sizeY) },
+                            "Z".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.z, sizeZ) }
+                        ).takeIf { it.isNotEmpty() }?.let {
+                            "Exceeds 270 mm bed on ${it.joinToString("/")}"
+                        } else null
                         if (uniformMode) {
-                            var uniformText by remember(uniformValue) {
-                                mutableStateOf("%.0f".format(uniformValue * 100))
+                            // Reference axis for uniform mm input is Z (height) — the most
+                            // natural reference per GitHub #136.
+                            val uniformAxisSize = if (mmActive) sizeZ else 1f
+                            var uniformText by remember(uniformValue, mmActive) {
+                                mutableStateOf(formatField(uniformValue, uniformAxisSize))
                             }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Scale", style = MaterialTheme.typography.labelMedium)
+                                Column {
+                                    Text("Scale", style = MaterialTheme.typography.labelMedium)
+                                    if (mmActive) {
+                                        Text(
+                                            "= %.0f%%".format(uniformValue * 100),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        )
+                                    } else if (loadTimeSize != null) {
+                                        Text(
+                                            "= %.1f mm Z".format(uniformValue * sizeZ),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                }
                                 OutlinedTextField(
                                     value = uniformText,
                                     onValueChange = { uniformText = it },
-                                    suffix = { Text("%") },
+                                    suffix = { Text(if (mmActive) "mm" else "%") },
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Number,
                                         imeAction = ImeAction.Done
                                     ),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val v = uniformText.toFloatOrNull()
-                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: uniformValue
+                                        val parsed = uniformText.toFloatOrNull()
+                                        val v = if (mmActive && parsed != null) {
+                                            com.u1.slicer.model.ModelScaleConverter
+                                                .mmToScale(parsed, uniformAxisSize) ?: uniformValue
+                                        } else {
+                                            parsed?.div(100f)?.coerceIn(0.1f, 3f) ?: uniformValue
+                                        }
                                         uniformValue = v
-                                        uniformText = "%.0f".format(v * 100)
+                                        uniformText = formatField(v, uniformAxisSize)
                                         onScaleChange(SlicerViewModel.ModelScale(v, v, v))
                                         focusManager.clearFocus()
                                     }),
@@ -3981,20 +4047,20 @@ fun ScaleSection(
                                 value = uniformValue,
                                 onValueChange = { v ->
                                     uniformValue = v
-                                    uniformText = "%.0f".format(v * 100)
+                                    uniformText = formatField(v, uniformAxisSize)
                                     onScaleChange(SlicerViewModel.ModelScale(v, v, v))
                                 },
                                 valueRange = 0.1f..3f
                             )
                         } else {
-                            var xText by remember(scale.x) {
-                                mutableStateOf("%.0f".format(scale.x * 100))
+                            var xText by remember(scale.x, mmActive) {
+                                mutableStateOf(formatField(scale.x, sizeX))
                             }
-                            var yText by remember(scale.y) {
-                                mutableStateOf("%.0f".format(scale.y * 100))
+                            var yText by remember(scale.y, mmActive) {
+                                mutableStateOf(formatField(scale.y, sizeY))
                             }
-                            var zText by remember(scale.z) {
-                                mutableStateOf("%.0f".format(scale.z * 100))
+                            var zText by remember(scale.z, mmActive) {
+                                mutableStateOf(formatField(scale.z, sizeZ))
                             }
                             // X
                             Row(
@@ -4006,15 +4072,20 @@ fun ScaleSection(
                                 OutlinedTextField(
                                     value = xText,
                                     onValueChange = { xText = it },
-                                    suffix = { Text("%") },
+                                    suffix = { Text(if (mmActive) "mm" else "%") },
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Number,
                                         imeAction = ImeAction.Done
                                     ),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val v = xText.toFloatOrNull()
-                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.x
-                                        xText = "%.0f".format(v * 100)
+                                        val parsed = xText.toFloatOrNull()
+                                        val v = if (mmActive && parsed != null) {
+                                            com.u1.slicer.model.ModelScaleConverter
+                                                .mmToScale(parsed, sizeX) ?: scale.x
+                                        } else {
+                                            parsed?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.x
+                                        }
+                                        xText = formatField(v, sizeX)
                                         onScaleChange(scale.copy(x = v))
                                         focusManager.clearFocus()
                                     }),
@@ -4025,7 +4096,7 @@ fun ScaleSection(
                             Slider(
                                 value = scale.x,
                                 onValueChange = { nv ->
-                                    xText = "%.0f".format(nv * 100)
+                                    xText = formatField(nv, sizeX)
                                     onScaleChange(scale.copy(x = nv))
                                 },
                                 valueRange = 0.1f..3f
@@ -4040,15 +4111,20 @@ fun ScaleSection(
                                 OutlinedTextField(
                                     value = yText,
                                     onValueChange = { yText = it },
-                                    suffix = { Text("%") },
+                                    suffix = { Text(if (mmActive) "mm" else "%") },
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Number,
                                         imeAction = ImeAction.Done
                                     ),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val v = yText.toFloatOrNull()
-                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.y
-                                        yText = "%.0f".format(v * 100)
+                                        val parsed = yText.toFloatOrNull()
+                                        val v = if (mmActive && parsed != null) {
+                                            com.u1.slicer.model.ModelScaleConverter
+                                                .mmToScale(parsed, sizeY) ?: scale.y
+                                        } else {
+                                            parsed?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.y
+                                        }
+                                        yText = formatField(v, sizeY)
                                         onScaleChange(scale.copy(y = v))
                                         focusManager.clearFocus()
                                     }),
@@ -4059,7 +4135,7 @@ fun ScaleSection(
                             Slider(
                                 value = scale.y,
                                 onValueChange = { nv ->
-                                    yText = "%.0f".format(nv * 100)
+                                    yText = formatField(nv, sizeY)
                                     onScaleChange(scale.copy(y = nv))
                                 },
                                 valueRange = 0.1f..3f
@@ -4074,15 +4150,20 @@ fun ScaleSection(
                                 OutlinedTextField(
                                     value = zText,
                                     onValueChange = { zText = it },
-                                    suffix = { Text("%") },
+                                    suffix = { Text(if (mmActive) "mm" else "%") },
                                     keyboardOptions = KeyboardOptions(
                                         keyboardType = KeyboardType.Number,
                                         imeAction = ImeAction.Done
                                     ),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val v = zText.toFloatOrNull()
-                                            ?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.z
-                                        zText = "%.0f".format(v * 100)
+                                        val parsed = zText.toFloatOrNull()
+                                        val v = if (mmActive && parsed != null) {
+                                            com.u1.slicer.model.ModelScaleConverter
+                                                .mmToScale(parsed, sizeZ) ?: scale.z
+                                        } else {
+                                            parsed?.div(100f)?.coerceIn(0.1f, 3f) ?: scale.z
+                                        }
+                                        zText = formatField(v, sizeZ)
                                         onScaleChange(scale.copy(z = v))
                                         focusManager.clearFocus()
                                     }),
@@ -4093,10 +4174,17 @@ fun ScaleSection(
                             Slider(
                                 value = scale.z,
                                 onValueChange = { nv ->
-                                    zText = "%.0f".format(nv * 100)
+                                    zText = formatField(nv, sizeZ)
                                     onScaleChange(scale.copy(z = nv))
                                 },
                                 valueRange = 0.1f..3f
+                            )
+                        }
+                        if (mmBedWarning != null) {
+                            Text(
+                                mmBedWarning,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
                             )
                         }
                         if (scale.x != 1f || scale.y != 1f || scale.z != 1f) {

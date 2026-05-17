@@ -16,12 +16,17 @@ object AppEventNotifier {
 
     private const val CHANNEL_SLICE = "slice_events"
     private const val CHANNEL_PRINTER = "printer_events"
+    private const val CHANNEL_LOAD = "load_events"
     private const val ID_SLICE = 10
     private const val ID_PRINTER = 11
+    private const val ID_LOAD = 12
     const val EXTRA_NAVIGATE_TO = "navigate_to"
 
     sealed class Event {
         data class ModelLoaded(val filename: String) : Event()
+        // F81 (GitHub #120): long-running load stages.
+        data class BambuPipelineReady(val filename: String) : Event()
+        data class PreparePreviewReady(val filename: String) : Event()
         data class SliceComplete(val filename: String) : Event()
         data class SliceFailed(val error: String) : Event()
         data class UploadComplete(val filename: String) : Event()
@@ -40,7 +45,11 @@ object AppEventNotifier {
 
         val channelId = channelFor(event)
         createChannels(context)
-        val notifId = if (event is Event.ModelLoaded || event is Event.SliceComplete || event is Event.SliceFailed) ID_SLICE else ID_PRINTER
+        val notifId = when (event) {
+            is Event.ModelLoaded, is Event.BambuPipelineReady, is Event.PreparePreviewReady -> ID_LOAD
+            is Event.SliceComplete, is Event.SliceFailed -> ID_SLICE
+            else -> ID_PRINTER
+        }
         val navigateTo = navigateTargetFor(event)
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -64,6 +73,8 @@ object AppEventNotifier {
 
     internal fun titleFor(event: Event): String = when (event) {
         is Event.ModelLoaded -> "Model ready"
+        is Event.BambuPipelineReady -> "3MF processed"
+        is Event.PreparePreviewReady -> "Preview ready"
         is Event.SliceComplete -> "Slice complete"
         is Event.SliceFailed -> "Slice failed"
         is Event.UploadComplete -> "Upload complete"
@@ -76,6 +87,8 @@ object AppEventNotifier {
 
     internal fun bodyFor(event: Event): String = when (event) {
         is Event.ModelLoaded -> "${event.filename} loaded and ready to slice"
+        is Event.BambuPipelineReady -> "${event.filename} sanitised and embedded"
+        is Event.PreparePreviewReady -> "${event.filename} preview rendered"
         is Event.SliceComplete -> "${event.filename} is ready to send to printer"
         is Event.SliceFailed -> event.error.take(100)
         is Event.UploadComplete -> "${event.filename} sent to printer"
@@ -97,7 +110,8 @@ object AppEventNotifier {
     }
 
     private fun channelFor(event: Event): String = when (event) {
-        is Event.ModelLoaded, is Event.SliceComplete, is Event.SliceFailed -> CHANNEL_SLICE
+        is Event.ModelLoaded, is Event.BambuPipelineReady, is Event.PreparePreviewReady -> CHANNEL_LOAD
+        is Event.SliceComplete, is Event.SliceFailed -> CHANNEL_SLICE
         else -> CHANNEL_PRINTER
     }
 
@@ -106,9 +120,11 @@ object AppEventNotifier {
         val manager = context.getSystemService(NotificationManager::class.java)
         listOf(
             NotificationChannel(CHANNEL_SLICE, "Slice events", NotificationManager.IMPORTANCE_DEFAULT)
-                .apply { description = "Notifications for model loading and slicing" },
+                .apply { description = "Notifications for slicing completion and failure" },
             NotificationChannel(CHANNEL_PRINTER, "Printer events", NotificationManager.IMPORTANCE_DEFAULT)
-                .apply { description = "Notifications for printer upload, print progress, and completion" }
+                .apply { description = "Notifications for printer upload, print progress, and completion" },
+            NotificationChannel(CHANNEL_LOAD, "Load events", NotificationManager.IMPORTANCE_LOW)
+                .apply { description = "Notifications for long-running model load stages" }
         ).forEach { channel ->
             if (manager.getNotificationChannel(channel.id) == null) manager.createNotificationChannel(channel)
         }
