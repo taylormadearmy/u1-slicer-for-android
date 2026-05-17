@@ -34,7 +34,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **STL behaviour** (clarification — earlier BACKLOG drafts had this wrong): both STL and 3MF go through the same `getPreparePreviewMesh()` native path after `setModelRotation`. Native bakes rotation into the vertices it returns (`its_transform(its, instance_matrix, …)` in `sapil_model.cpp:516,560`), so the renderer just translates+scales — no rotation matrix in `ModelRenderer.drawModelAt`. The mesh-AABB-aware fix applies equally to STL.
 - **Tests**: 5 unit tests in `CopyArrangeCalculatorTest` for `computeRotatedFootprint` (zero/90°/45°/symmetry/180° rotation cases) guard the box-rotation math; 6 unit tests for `effectivePlacementFootprint` guard mesh-vs-fallback selection, scale handling, and the Dragon-Scale-class divergence. 2 minimal structural-grep tests in `InlineModelPreviewRotationKeysTest` guard the Compose-only LaunchedEffect key contract (one for `effPlaceSizeX/Y`, one for `wipeTowerWidth/Depth`).
 
-### B108: Scale-down doesn't re-anchor model to bed — empty initial layer / model floats in air (GitHub #134) — FIXED v2.1.3
+### B108: Scale-down doesn't re-anchor model to bed — empty initial layer / model floats in air (GitHub #134) — FIXED v2.2.0
 - **Symptom**: Scaling a model to 60–90% before slicing triggered *"One object has empty initial layer and can't be printed. Please Cut the bottom or enable supports."* Model also appeared way too small (embedded 5.083× scale was being overwritten by user scale instead of multiplied).
 - **Reported by**: DC15 (Discord), v2.1.2 (versionCode 272). Model: `Articulated+Fish+(3).3mf` (MakerWorld, 2.21 MB).
 - **Root cause**: `setModelScale()` called `inst->set_scaling_factor(user_scale)` absolutely, overwriting the file's embedded 5.083× scale with 0.6 (producing a 4mm model instead of 21mm). The Z offset (17.5mm) was then unchanged, so world-space bottom = −3.44 × 0.6 + 17.5 = 15.4mm above bed. The multi-object `setModelInstances` path sets `delta.z = 0` (no Z correction for multi-object groups), leaving the model floating.
@@ -43,14 +43,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Tests**: `SlicingIntegrationTest#b108_articulatedFish_scaledTo60pct_slicesWithModelOnBed`, `SlicingIntegrationTest#b108_skywingMultiObject_perInstanceZOffsets_bedSnappedAfterScale`; B73 scale-placement regression and `SetModelInstancesOffsetTest` (7 tests) still pass.
 - **Related**: distinct from B73 (fixed v1.5.65, XY drift on scale); this is Z re-snap + multiplicative scale from embedded file transform.
 
-### B107: STL bed temp silently bumped +5°C above user setting (GitHub #123) — FIXED v2.1.2
+### B107: STL bed temp silently bumped +5°C above user setting (GitHub #123) — FIXED v2.2.0
 - **Symptom**: User sets bedTemp to 65°C, printer bed runs at 70°C for the entire print.
 - **Root cause**: `applyConfigToPrusa()` hardcoded `hot_plate_temp_initial_layer = bedTemp + 5`. The Snapmaker U1 `machine_start_gcode` uses `{bed_temperature_initial_layer_single}` which resolves to 70°C. No subsequent M190 drops the bed back to 65°C. Bambu 3MF files with embedded profiles were unaffected (profile_keys[] overrides the value).
 - **Fix**: Removed +5. Both `hot_plate_temp` and `hot_plate_temp_initial_layer` now use `config.bed_temp` exactly. Native `.so` rebuilt.
 - **Tests**: `SlicingIntegrationTest#b107_stlSlice_bedTemp65_initialLayerNotBumped`.
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/123
 
-### B106: STL print with non-E1 extruder selected sends wrong extruder + missing PRINT_START (GitHub #122) — FIXED v2.1.0
+### B106: STL print with non-E1 extruder selected sends wrong extruder + missing PRINT_START (GitHub #122) — FIXED v2.2.0
 - **Symptom 1**: Slicing an STL with E3 selected in Filament Mapping → G-code contains T0 (E1) tool changes instead of T2 (E3). Wrong extruder heats and prints. E4 temp anomaly reported on physical printer.
 - **Symptom 2**: STL G-code starts with bare `G28` instead of PRINT_START + SM_PRINT_AUTO_FEED + SM_PRINT_FLOW_CALIBRATE macros, causing print failure.
 - **Root cause (Bug 1)**: `resolveCanonicalExportMapping()` returned `null` (identity, no rewrite) when `canonicalSize == 0` (STL files have no canonical filament list). T0 was never rewritten to T2 at send time.
@@ -60,14 +60,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Tests**: `CanonicalExportMappingTest` — 4 B106 tests: E1 identity (null), E2/E3/E4 slot remap for STL non-canonical path.
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/122
 
-### B105: Single-slot STL slice emits multi-element nozzle_temperature / filament_type arrays (GitHub #121) — FIXED v2.1.0
+### B105: Single-slot STL slice emits multi-element nozzle_temperature / filament_type arrays (GitHub #121) — FIXED v2.2.0
 - **Symptom**: Slicing an STL with a single extruder slot active produced G-code with incorrectly sized `nozzle_temperature` and `filament_type` header arrays (more than 1 element for a 1-extruder slice).
 - **Root cause**: `buildProfileOverrides()` did not clamp array sizes to 1 when extruder count was 1 (single-slot STL path).
 - **Fix**: Added 1-element guard for `nozzle_temperature` and `filament_type` in the single-slot case.
 - **Tests**: `SlicingOverridesTest` B105 single-slot guard; `FilamentTypeHeaderPatchTest` B105 resolveNonCanonicalHeaderPatchTypes.
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/121
 
-### B104: Single-plate Bambu files fail to slice after re-embed includes off-plate garbage objects (GitHub #119) — FIXED v2.0.4
+### B104: Single-plate Bambu files fail to slice after re-embed includes off-plate garbage objects (GitHub #119) — FIXED v2.1.1
 - **Symptom**: `OreoProj+1.3mf` fails with "No layers were detected." after auto-color-mapping triggers a re-embed at slice time. The slicer loads a 987×510×1268mm model and aborts with "Model too large for bed."
 - **Root cause**: The 3MF has 5 build items but only 2 are on the print plate. Initial load correctly applies `filterModelToPlate` via `prepareImportedModelArtifacts(plateId = firstPlateId)`. But `_currentPlateId` is never updated for single-plate files (they skip the plate selector, so `recoveryPlateId` stays at `-1`). When re-embed triggers at slice time, `reembedPlateId = null` → no plate filter → all 5 objects included → oversized bounding box → abort.
 - **Fix**: In both `loadModel(uri)` and `loadModelFromFile(file)`, after the single-plate Bambu path: capture `firstPlateId` from `prepared.mergedInfo.plates.first().plateId`, then set `recoveryPlateId = firstPlateId` after `loadNativeModel()`. Ensures re-embeds use the same plate filter as the initial load.
