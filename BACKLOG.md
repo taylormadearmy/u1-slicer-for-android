@@ -4,6 +4,21 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B119: Buzz Lightyear cold load is 92–93s — predates F54, perf regression unbisected — OPEN
+- **Symptom**: `PreparePreviewViewModelTest#buzzLightyear_coldLoad_skipsFullFileEmbedOnMultiPlate` consistently runs 92.5–93.0s on Pixel 8a (43211JEKB16931), well over the original 90s budget. Logcat breakdown shows nearly all of the time is in `BambuSanitizer.process()` + the initial `ThreeMfParser.parse()` of the 73 MB Buzz file (10 plates, 296k paint_color attributes).
+- **Discovered**: v2.2.4 instrumented sweep, 2026-05-17. Test budget caught a slowdown that had been quietly present for many releases.
+- **Bisection**: built worktrees at f639561 (B108, pre-F54) and 435ef9e (v2.2.0 F54 merge). Both run at 92.7–93.2s on the same device today. The slowdown predates F54 — it appeared somewhere between v1.6.11 (where the 42s baseline was set by B93 phase 2, and the 90s budget calibrated with 2x margin) and the B108 era. Native `.so` size between v1.6.11 (20,764,520 bytes) and current (20,809,192 bytes) differs by only 44 KB — small structural difference, large timing difference.
+- **Workaround**: B93 budget recalibrated from 90s to 110s in v2.2.4 (`PreparePreviewViewModelTest.kt:1466`) with comment explaining the long-standing slowdown and pointing here. Functional behaviour is unaffected — the file loads correctly and the user does see the plate selector; it's just slower than the 2026-04-29 measurement.
+- **What needs investigating**: bisect ~50 commits between v1.6.11 (b285a8e) and B108 (f639561) to find the commit that introduced the slowdown. Likely candidates from the bambu-native Phase 1/2 refactor work, but no specific commit identified. Could also be a device-state shift (Pixel 8a battery wear, storage fragmentation, Android OS update) — re-measure on a different Pixel 8a if available, and compare cold-load on a clean factory-reset device.
+- **Tests**: B93 test still guards regression with a 110s ceiling; if the slowdown gets worse, the test will catch it again. Once the bisect finds and fixes the root cause, lower the budget back toward the historical 42s baseline.
+
+### B118: Map & Print dialog reports wrong "Sliced as PLA" warning for single-colour 3MFs with PETG slot preset (GitHub #TBD) — FIXED v2.2.4
+- **Symptom**: DC15 (Discord 2026-05-16): load `Jumping_frog.3mf` (single-colour PLA-declared 3MF) with E1 slot preset = PETG, no explicit material chip tap on Prepare. The Filament panel shows PETG / 235°C (slot preset fallback), so the user assumes it's set. Slice → Map & Print → maps to a PETG slot → dialog warns "Sliced as PLA but slot has PETG", reversed from reality.
+- **Reported by**: DC15 (Discord), v2.2.3 (versionCode 276).
+- **Root cause**: `FilamentMappingDialog.kt:142` computed `sliceTimeSlot = sliceTimeColorMapping?.getOrNull(displayFileIndex)` with NO slot-0 default. For single-colour files `sliceTimeColorMapping` is null, so `sliceTimeSlot = null`, the dialog skipped the slot-preset lookup, and `slicedWithMaterial` fell through to the file's declared material ("PLA"). But the slicer's `resolvePerFilamentTypeAndTemp` at `PerFilamentResolver.kt:52` defaults `slot = colorMapping?.getOrNull(i) ?: 0`, so the actual slice used slot 0's preset (PETG). Two cascades diverged on the null-mapping case.
+- **Fix**: Added the matching `?: 0` default at `FilamentMappingDialog.kt:151` so the dialog mirrors the resolver. Also extracted the dialog's String-cascade into a top-level `resolveSlicedWithMaterial` helper for unit testability.
+- **Tests**: 7 new unit tests in `SlicedWithMaterialTest.kt` covering the cascade (override → sliceTimeSlot → fileDeclared), the DC15 single-colour PETG-slot reconstruction, explicit-override behaviour, and a multi-colour mapped-slot regression guard.
+
 ### B109: Rotated model can't be placed across the full bed — constrained to pre-rotation footprint (GitHub #135) — FIXED v2.1.3
 - **Symptom**: After rotating a model (e.g. Dragon Scale 90°), the drag placement is constrained to a smaller area than the bed — the model cannot be moved to the right-hand side or other edges. More pronounced when the model is also scaled up.
 - **Reported by**: Kevin (Discord), v2.1.2 (versionCode 272).

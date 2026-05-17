@@ -139,7 +139,16 @@ fun FilamentMappingDialog(
                         // labels must read "Filament 2", "Filament 3" — NOT
                         // "Filament 1", "Filament 2".
                         val displayFileIndex = plateFileIndices?.getOrNull(idx) ?: idx
-                        val sliceTimeSlot = sliceTimeColorMapping?.getOrNull(displayFileIndex)
+                        // B118: mirror PerFilamentResolver.resolvePerFilamentTypeAndTemp's
+                        // `colorMapping?.getOrNull(i) ?: 0` default. Without the `?: 0`
+                        // here, single-colour 3MFs (which carry null colorMapping) made
+                        // `sliceTimeSlot = null` → sliceTimeSlotMaterial = null →
+                        // `slicedWithMaterial` fell through to the file's declared
+                        // material ("PLA") even though the slicer's resolver actually
+                        // ran with slot-0's preset material (e.g. PETG). DC15's report:
+                        // Jumping_frog.3mf sliced with E1=PETG slot showed "Sliced as
+                        // PLA but slot has PETG" warning when mapped to a PETG slot.
+                        val sliceTimeSlot = sliceTimeColorMapping?.getOrNull(displayFileIndex) ?: 0
                         val sliceTimeSlotMaterial = extruderPresets
                             .firstOrNull { it.index == sliceTimeSlot }?.materialType
                         FilamentMappingRow(
@@ -253,7 +262,11 @@ private fun FilamentMappingRow(
     // has now picked in this dialog differs from that sliced-with material,
     // meaning the loaded spool's temperature profile won't match the G-code.
     val slotMaterial = selectedPreset?.materialType
-    val slicedWithMaterial = overrideMaterial ?: sliceTimeSlotMaterial ?: filamentMaterial
+    val slicedWithMaterial = resolveSlicedWithMaterial(
+        overrideMaterial = overrideMaterial,
+        sliceTimeSlotMaterial = sliceTimeSlotMaterial,
+        filamentMaterial = filamentMaterial,
+    )
     val mismatch = slicedWithMaterial != null
         && slotMaterial != null
         && !slicedWithMaterial.equals(slotMaterial, ignoreCase = true)
@@ -368,6 +381,29 @@ private fun FilamentMappingRow(
         }
     }
 }
+
+/**
+ * B118 — pure helper for the Map & Print dialog's "Sliced as X but slot has Y"
+ * warning. Mirrors [com.u1.slicer.data.resolvePerFilamentTypeAndTemp]'s
+ * cascade so the dialog's reported material agrees with what the slicer
+ * actually used.
+ *
+ * Caller is responsible for resolving `sliceTimeSlotMaterial` from the
+ * extruder presets, using the slot-0 default when `sliceTimeColorMapping`
+ * is null or has no entry at the row's fileIndex — matching the resolver's
+ * `colorMapping?.getOrNull(i) ?: 0`.
+ *
+ * Reported by DC15 (Discord 2026-05-16): single-colour 3MF (Jumping_frog)
+ * sliced with E1=PETG showed "Sliced as PLA but slot has PETG" when the user
+ * mapped to a PETG slot at print time, because the helper was falling
+ * through to the file's declared material instead of consulting the slot
+ * preset that the slicer had actually used.
+ */
+internal fun resolveSlicedWithMaterial(
+    overrideMaterial: String?,
+    sliceTimeSlotMaterial: String?,
+    filamentMaterial: String?,
+): String? = overrideMaterial ?: sliceTimeSlotMaterial ?: filamentMaterial
 
 private fun sourceShortLabel(source: FilamentSource): String? = when (source) {
     FilamentSource.PAINT_DERIVED -> "paint segment"

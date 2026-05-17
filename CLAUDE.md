@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v2.2.3` (`versionCode 276`)
+Current release: `v2.2.4` (`versionCode 277`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -68,7 +68,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1042 JVM unit tests
+./gradlew testDebugUnitTest                        # 1178 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 295 instrumented tests — uses Orchestrator
 ```
 
@@ -78,7 +78,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1042 tests across 79 classes
+### Unit tests (`app/src/test/`) - 1178 tests across 80 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -139,6 +139,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `SlicerColorOrderTest.kt` (9) — B92 computeSlicerColorOrder: null for non-paint / H2C / single colour / size mismatch / default at index 0 / tied dominant extruder; Buzz plate 8 shape permutes to `[1, 0]`; three-colour object-default-at-top case permutes
 - `FilamentTypeHeaderPatchTest.kt` (14) — B63 fixFilamentTypeHeader: single/multi-extruder replacement, absent line guard, empty list guard, missing file, first-occurrence-only, B99 header patch canonical padding for support/interface slots beyond canonical size, B102 sparse colorMapping produces physical-slot-indexed filament_type, B105 resolveNonCanonicalHeaderPatchTypes single/multi-slot, unknown-slot fallback
 - `ui/SupportFilamentOptionTest.kt` (5) — B99 support/interface filament option labels and config values for H2C, STL, non-identity, and sparse color mappings
+- `ui/SlicedWithMaterialTest.kt` (7) — B118 Map & Print dialog material-mismatch cascade: override priority, sliceTime-slot priority, file-declared fallback, DC15 single-colour PETG-slot repro, explicit override on single-colour, multi-colour mapped-slot resolution
 - `network/UpdateCheckerTest.kt` (12) — F70 GitHub release JSON parsing, semantic version comparison, download URL extraction
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
