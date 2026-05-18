@@ -554,4 +554,85 @@ class CopyArrangeCalculatorTest {
         assertEquals(6, positions.size)
         assertEquals(90f, positions[5], 0.01f)  // y2 = 5 + 80 + 5
     }
+
+    // --- placeAdditionalObject: incremental add without disturbing existing objects ---
+
+    @Test fun `placeAdditionalObject single existing object places new one to the right`() {
+        // Existing: 60x50mm object at (5, 5). New: 40x30mm.
+        // maxRight = 5 + 60 = 65; tryX = 65 + 5 = 70; fits (70 + 40 = 110 <= 270).
+        val currentPos = floatArrayOf(5f, 5f)
+        val boxes = floatArrayOf(60f, 50f, 10f, 40f, 30f, 10f)
+        val result = CopyArrangeCalculator.placeAdditionalObject(currentPos, boxes)
+        assertEquals(4, result.size)
+        assertEquals(5f, result[0], 0.01f)   // existing object unchanged
+        assertEquals(5f, result[1], 0.01f)
+        assertEquals(70f, result[2], 0.01f)  // 5 + 60 + 5
+        assertEquals(5f, result[3], 0.01f)   // aligned to rightmost Y
+    }
+
+    @Test fun `placeAdditionalObject falls below when no room to the right`() {
+        // Existing: 220x50mm object at (5, 5). New: 80x40mm.
+        // maxRight = 5 + 220 = 225; tryX = 225 + 5 = 230; 230 + 80 = 310 > 270 → fall below.
+        // maxBottom = 5 + 50 = 55; result y = 55 + 5 = 60.
+        val currentPos = floatArrayOf(5f, 5f)
+        val boxes = floatArrayOf(220f, 50f, 10f, 80f, 40f, 10f)
+        val result = CopyArrangeCalculator.placeAdditionalObject(currentPos, boxes)
+        assertEquals(4, result.size)
+        assertEquals(5f, result[0], 0.01f)   // existing unchanged
+        assertEquals(5f, result[1], 0.01f)
+        assertEquals(5f, result[2], 0.01f)   // leftX = existing x
+        assertEquals(60f, result[3], 0.01f)  // 5 + 50 + 5
+    }
+
+    @Test fun `placeAdditionalObject preserves all existing positions`() {
+        // Two existing objects; adding a third preserves first two.
+        val currentPos = floatArrayOf(5f, 5f, 70f, 5f)
+        val boxes = floatArrayOf(60f, 50f, 10f, 60f, 50f, 10f, 40f, 30f, 10f)
+        val result = CopyArrangeCalculator.placeAdditionalObject(currentPos, boxes)
+        assertEquals(6, result.size)
+        assertEquals(5f, result[0], 0.01f)    // object 0 x
+        assertEquals(5f, result[1], 0.01f)    // object 0 y
+        assertEquals(70f, result[2], 0.01f)   // object 1 x
+        assertEquals(5f, result[3], 0.01f)    // object 1 y
+    }
+
+    @Test fun `placeAdditionalObject new object stays within bed bounds`() {
+        // Single existing object placed to the right such that all results are within 0..270.
+        val currentPos = floatArrayOf(5f, 5f)
+        val boxes = floatArrayOf(60f, 50f, 10f, 40f, 30f, 10f)
+        val result = CopyArrangeCalculator.placeAdditionalObject(currentPos, boxes)
+        val newX = result[2]; val newY = result[3]
+        val newSizeX = boxes[3]; val newSizeY = boxes[4]
+        assertTrue("new object right edge must be within bed: ${newX + newSizeX}", newX + newSizeX <= 270f)
+        assertTrue("new object bottom edge must be within bed: ${newY + newSizeY}", newY + newSizeY <= 270f)
+    }
+
+    @Test fun `placeAdditionalObject with one object uses buildMultiObjectPositions`() {
+        // When objectCount == 1 (no existing objects yet), falls back to placing first object.
+        val currentPos = floatArrayOf()
+        val boxes = floatArrayOf(60f, 50f, 10f)
+        val result = CopyArrangeCalculator.placeAdditionalObject(currentPos, boxes)
+        // With one object total, center on bed or at margin — just verify not off-bed.
+        assertEquals(2, result.size)
+        assertTrue("x within bed: ${result[0]}", result[0] in 0f..270f)
+        assertTrue("y within bed: ${result[1]}", result[1] in 0f..270f)
+    }
+
+    // --- computeWipeTowerPositionForObjects: per-object sizes ---
+
+    @Test fun `computeWipeTowerPositionForObjects avoids all objects`() {
+        // Two objects: one at (5,5) 100x80, one at (115,5) 100x80.
+        // Best tower candidate should not overlap either.
+        val positions = floatArrayOf(5f, 5f, 115f, 5f)
+        val boxes = floatArrayOf(100f, 80f, 10f, 100f, 80f, 10f)
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPositionForObjects(positions, boxes)
+        // Tower default size 60x60. Verify it doesn't overlap either object.
+        val tMaxX = tx + 60f; val tMaxY = ty + 60f
+        val obj0OverlapX = tx < 105f && tMaxX > 5f
+        val obj0OverlapY = ty < 85f && tMaxY > 5f
+        assertFalse("Tower must not overlap object 0", obj0OverlapX && obj0OverlapY)
+        val obj1OverlapX = tx < 215f && tMaxX > 115f
+        val obj1OverlapY = ty < 85f && tMaxY > 5f
+        assertFalse("Tower must not overlap object 1", obj1OverlapX && obj1OverlapY)
+    }
 }

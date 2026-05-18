@@ -1147,7 +1147,11 @@ fun PrepareScreen(
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
     val pendingAddFile by viewModel.pendingAddFile.collectAsState()
 
-    // Plate selector dialog — initial load
+    // Plate selector dialogs — mutually exclusive: only one can be shown at a time.
+    // If the initial-load selector is open and the user also triggers an add-to-bed
+    // on a multi-plate 3MF, we show the initial-load selector until it is dismissed
+    // (the add-to-bed pending state is preserved and will show next).
+    val addPending = pendingAddFile
     if (showPlateSelector && multiPlatePlates.isNotEmpty()) {
         com.u1.slicer.ui.PlateSelectDialog(
             plates = multiPlatePlates,
@@ -1155,11 +1159,8 @@ fun PrepareScreen(
             onDismiss = { viewModel.dismissPlateSelector() },
             info = threeMfInfo
         )
-    }
-
-    // F85: plate selector dialog — "Add to bed" multi-plate 3MF
-    val addPending = pendingAddFile
-    if (addPending != null && addPending.plates.isNotEmpty()) {
+    } else if (addPending != null && addPending.plates.isNotEmpty()) {
+        // F85: plate selector dialog — "Add to bed" multi-plate 3MF
         com.u1.slicer.ui.PlateSelectDialog(
             plates = addPending.plates,
             onSelect = { viewModel.confirmAddPlate(it) },
@@ -3215,8 +3216,10 @@ fun InlineModelPreview(
                     // otherwise fall back to the single-model rotated+scaled footprint (B109).
                     val i = index
                     val hasPerObj = perObjectSizes.size / 3 == count
-                    val sizeX = if (hasPerObj) perObjectSizes[i * 3] else effPlaceSizeX
-                    val sizeY = if (hasPerObj) perObjectSizes[i * 3 + 1] else effPlaceSizeY
+                    // perObjectSizes are load-time (pre-scale) native bounding boxes; multiply
+                    // by modelScale to match the size the renderer draws at.
+                    val sizeX = if (hasPerObj) perObjectSizes[i * 3] * modelScale.x else effPlaceSizeX
+                    val sizeY = if (hasPerObj) perObjectSizes[i * 3 + 1] * modelScale.y else effPlaceSizeY
                     objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - sizeX))
                     objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - sizeY))
                     v.renderer.instancePositions = objPositions.copyOf()

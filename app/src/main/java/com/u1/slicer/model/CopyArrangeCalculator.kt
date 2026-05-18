@@ -178,6 +178,64 @@ object CopyArrangeCalculator {
     }
 
     /**
+     * Per-object overload: avoids using a single shared size for all objects.
+     * Each object's footprint is taken directly from [objectBoxes] (same flat
+     * [sX0,sY0,sZ0,...] format as [getObjectBoundingBoxes]).
+     */
+    fun computeWipeTowerPositionForObjects(
+        objectPositions: FloatArray,
+        objectBoxes: FloatArray,
+        towerWidth: Float = 60f,
+        towerDepth: Float = towerWidth,
+        bedSizeX: Float = 270f,
+        bedSizeY: Float = 270f,
+    ): Pair<Float, Float> {
+        val objectCount = minOf(objectPositions.size / 2, objectBoxes.size / 3)
+        if (objectCount == 0) return computeWipeTowerPosition(floatArrayOf(), 0f, 0f, towerWidth, towerDepth, bedSizeX, bedSizeY)
+        val flatPositions = FloatArray(objectCount * 2) { i -> objectPositions[i] }
+        // Synthesize a unified-size proxy for the candidate scoring loop by
+        // building the real per-object box list inline. We reuse the existing
+        // candidate-scoring logic but pass per-object sizes directly.
+        val bedCenter = bedSizeX / 2f
+        val edgeMargin = 10f
+        val candidates = listOf(
+            bedCenter - towerWidth / 2f to bedSizeY - towerDepth - edgeMargin,
+            edgeMargin to bedSizeY - towerDepth - edgeMargin,
+            bedSizeX - towerWidth - edgeMargin to bedSizeY - towerDepth - edgeMargin,
+            edgeMargin to bedCenter - towerDepth / 2f,
+            bedSizeX - towerWidth - edgeMargin to bedCenter - towerDepth / 2f,
+            bedCenter - towerWidth / 2f to edgeMargin,
+            edgeMargin to edgeMargin,
+            bedSizeX - towerWidth - edgeMargin to edgeMargin
+        )
+        val objectBoxesList = (0 until objectCount).map { i ->
+            val ox = objectPositions[i * 2]
+            val oy = objectPositions[i * 2 + 1]
+            val sx = objectBoxes[i * 3]
+            val sy = objectBoxes[i * 3 + 1]
+            floatArrayOf(ox, oy, ox + sx, oy + sy)
+        }
+        var best = candidates[0]
+        var bestDist = Float.NEGATIVE_INFINITY
+        for ((cx, cy) in candidates) {
+            val tMaxX = cx + towerWidth; val tMaxY = cy + towerDepth
+            var minDist = Float.MAX_VALUE
+            for (box in objectBoxesList) {
+                val dx = maxOf(box[0] - tMaxX, cx - box[2], 0f)
+                val dy = maxOf(box[1] - tMaxY, cy - box[3], 0f)
+                val dist = if (dx == 0f && dy == 0f) {
+                    val overlapX = minOf(tMaxX - box[0], box[2] - cx)
+                    val overlapY = minOf(tMaxY - box[1], box[3] - cy)
+                    -minOf(overlapX, overlapY)
+                } else dx + dy
+                minDist = minOf(minDist, dist)
+            }
+            if (minDist > bestDist) { bestDist = minDist; best = cx to cy }
+        }
+        return best
+    }
+
+    /**
      * Single source of truth for the effective placement footprint (XY, in mm) used
      * by every B109 caller — drag clamp, auto-center, and bed-warning. Prefers the
      * caller's live native preview-mesh AABB when available because it reflects the

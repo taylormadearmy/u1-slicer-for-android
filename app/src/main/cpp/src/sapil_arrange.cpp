@@ -92,6 +92,7 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
                     offset.z()
                 ));
             }
+            obj->invalidate_bounding_box();
         }
     } else {
         // Single object, possibly multiple copies: preserve first instance's
@@ -250,6 +251,7 @@ bool SlicerEngine::setModelScale(float x, float y, float z) {
         }
     }
 
+    for (auto* obj : model.objects) obj->invalidate_bounding_box();
     invalidatePreviewMeshCache();
     SAPIL_LOGI("Set model scale: %.3f, %.3f, %.3f (center: %.1f, %.1f, %.1f)",
         x, y, z, center.x(), center.y(), center.z());
@@ -367,6 +369,7 @@ bool SlicerEngine::setModelRotation(float rx_deg, float ry_deg, float rz_deg) {
         allInsts[i]->set_offset(pivot + rotated);
     }
 
+    for (auto* obj : model.objects) obj->invalidate_bounding_box();
     invalidatePreviewMeshCache();
     SAPIL_LOGI("Set model rotation: %.1f, %.1f, %.1f deg (pivot: %.1f, %.1f)",
         rx_deg, ry_deg, rz_deg, pivot.x(), pivot.y());

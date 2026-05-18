@@ -268,6 +268,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         customObjectPositions = null
         _multiObjectPositions.value = null
         additionalModelFiles.clear()
+        _pendingAddFile.value?.copiedFile?.delete()
+        _pendingAddFile.value = null
     }
 
     /**
@@ -1747,6 +1749,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
             native.setObjectPositions(positions)
             customObjectPositions = positions
+
+            // Recompute wipe tower position using all object footprints so the
+            // tower doesn't overlap any added object. Uses the per-object overload
+            // so objects of different sizes each contribute their real footprint.
+            if (customWipeTowerPos != null) {
+                val tw = resolveWipeTowerWidth(_config.value, slicingOverrides.value)
+                val td = resolveWipeTowerDepth(lastModelInfo?.sizeZ ?: 0f, slicingOverrides.value)
+                customWipeTowerPos = com.u1.slicer.model.CopyArrangeCalculator
+                    .computeWipeTowerPositionForObjects(positions, boxes, towerWidth = tw, towerDepth = td)
+            }
 
             invalidatePrepareMeshCache()
             _sliceStale.value = true
@@ -3307,6 +3319,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 "objectCountAfter" to reAddObjectCount,
                                 "allOk" to allReAddOk,
                             ))
+                            if (!allReAddOk) {
+                                _state.value = SlicerState.Error(
+                                    "One or more added files could not be reloaded before slicing. " +
+                                    "Try adding them again."
+                                )
+                                return@launch
+                            }
                         }
                     }
                 }
@@ -4492,6 +4511,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _copyCount.value = 1
         customObjectPositions = null
         customWipeTowerPos = null
+        additionalModelFiles.clear()
+        hasMultipleDistinctObjects = false
+        _objectBoundingBoxes.value = floatArrayOf()
+        _multiObjectPositions.value = null
+        _pendingAddFile.value?.copiedFile?.delete()
+        _pendingAddFile.value = null
         resetToolRemapState()
         // Reset multi-extruder config to single extruder
         _config.value = _config.value.copy(
@@ -5519,6 +5544,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 objectExtruderMap = plateScopedObjectExtruderMap
             )
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        cancelPendingAdd()
     }
 
 }
