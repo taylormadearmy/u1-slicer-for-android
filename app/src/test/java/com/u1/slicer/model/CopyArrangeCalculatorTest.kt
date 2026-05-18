@@ -193,7 +193,12 @@ class CopyArrangeCalculatorTest {
 
         for ((objPos, size) in testCases) {
             val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(
-                objPos, size.first, size.second, towerWidth, bedSize, bedSize
+                objectPositions = objPos,
+                objectSizeX = size.first,
+                objectSizeY = size.second,
+                towerWidth = towerWidth,
+                bedSizeX = bedSize,
+                bedSizeY = bedSize
             )
             assertTrue(
                 "Tower at ($tx,$ty): left edge too close to bed (need ${skirtClearance}mm for skirt)",
@@ -228,6 +233,56 @@ class CopyArrangeCalculatorTest {
         )
         // Tower placed to the right: x should be >= 135 + some margin
         assertTrue("Tower X should be right of model: ${result.first}", result.first >= 140f)
+    }
+
+    // --- F75: Prime tower defaults to back of plate (GitHub #90) ---
+
+    @Test fun `f75 tower defaults to back half for centered small model`() {
+        // Centered 20x20 model: all 4 corners tie on clearance (110), all 4
+        // edge midpoints tie (55). Before F75, bottom-left (front) won by
+        // virtue of being the first candidate. After F75, back-of-plate
+        // candidates are listed first so a back position wins the tie.
+        val objPos = floatArrayOf(125f, 125f)
+        val (_, ty) = CopyArrangeCalculator.computeWipeTowerPosition(
+            objectPositions = objPos,
+            objectSizeX = 20f,
+            objectSizeY = 20f,
+            towerWidth = 60f,
+            towerDepth = 60f
+        )
+        // Back of plate = Y in upper half; tower minY should be >= bed center (135).
+        assertTrue("F75: tower must default to back of plate, got ty=$ty", ty >= 135f)
+    }
+
+    @Test fun `f75 tower defaults to back of plate when no objects`() {
+        // Empty objectPositions edge case: tower should land at back-center.
+        val (tx, ty) = CopyArrangeCalculator.computeWipeTowerPosition(
+            objectPositions = floatArrayOf(),
+            objectSizeX = 0f,
+            objectSizeY = 0f,
+            towerWidth = 60f,
+            towerDepth = 60f
+        )
+        // Expect back-center: bedCenterX - towerWidth/2 = 135-30 = 105;
+        // back Y = 270 - 60 - 10 (edgeMargin) = 200.
+        assertEquals(105f, tx, 0.01f)
+        assertEquals(200f, ty, 0.01f)
+    }
+
+    @Test fun `f75 model at back forces tower to front - file-position-style intent preserved`() {
+        // When the model occupies the back of the bed, F75 must NOT force a
+        // back tower — front candidates have more clearance, so they still
+        // win on merit. This proves the default applies only as a tie-breaker.
+        val objPos = floatArrayOf(110f, 200f)  // model at back-center
+        val (_, ty) = CopyArrangeCalculator.computeWipeTowerPosition(
+            objectPositions = objPos,
+            objectSizeX = 50f,
+            objectSizeY = 50f,
+            towerWidth = 60f,
+            towerDepth = 60f
+        )
+        // Tower should land in the front half (Y < 135) because back is occupied.
+        assertTrue("Tower should prefer front when back is occupied, got ty=$ty", ty < 135f)
     }
 
     @Test fun `computeWipeTowerPosition accepts separate towerDepth`() {
@@ -445,5 +500,58 @@ class CopyArrangeCalculatorTest {
                 "AABB (${meshAabb.first}) — that's the whole point of preferring mesh AABB",
             boxRotated.first > meshAabb.first
         )
+    }
+
+    // --- buildMultiObjectPositions: additive multi-file bed packing ---
+
+    @Test fun `buildMultiObjectPositions empty input returns empty`() {
+        val positions = CopyArrangeCalculator.buildMultiObjectPositions(floatArrayOf())
+        assertEquals(0, positions.size)
+    }
+
+    @Test fun `buildMultiObjectPositions single object placed at margin`() {
+        // One 50x40mm object: x=5 (margin), y=5 (margin)
+        val boxes = floatArrayOf(50f, 40f, 10f)
+        val positions = CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+        assertEquals(2, positions.size)
+        assertEquals(5f, positions[0], 0.01f)
+        assertEquals(5f, positions[1], 0.01f)
+    }
+
+    @Test fun `buildMultiObjectPositions two objects in same row`() {
+        // Two 60x50mm objects: first at (5,5), second at (5+60+5=70, 5)
+        val boxes = floatArrayOf(60f, 50f, 10f, 60f, 50f, 10f)
+        val positions = CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+        assertEquals(4, positions.size)
+        assertEquals(5f, positions[0], 0.01f)   // x0
+        assertEquals(5f, positions[1], 0.01f)   // y0
+        assertEquals(70f, positions[2], 0.01f)  // x1 = 5 + 60 + 5
+        assertEquals(5f, positions[3], 0.01f)   // y1 same row
+    }
+
+    @Test fun `buildMultiObjectPositions wraps to next row when exceeding bed`() {
+        // 5mm margin, 270mm bed. Two 200mm objects can't fit in one row (5+200+5+200 = 410 > 265).
+        // First at (5,5), second wraps to next row: x=5, y=5+50+5=60 (rowMaxY = sizeY of first).
+        val boxes = floatArrayOf(200f, 50f, 10f, 200f, 50f, 10f)
+        val positions = CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+        assertEquals(4, positions.size)
+        assertEquals(5f, positions[0], 0.01f)   // x0
+        assertEquals(5f, positions[1], 0.01f)   // y0
+        assertEquals(5f, positions[2], 0.01f)   // x1 wrapped to start
+        assertEquals(60f, positions[3], 0.01f)  // y1 = 5 + 50 + 5
+    }
+
+    @Test fun `buildMultiObjectPositions row height tracks tallest object`() {
+        // Row has a short (20mm deep) and a tall (80mm deep) object; the next row
+        // should start at margin + tallest row height + margin = 5 + 80 + 5 = 90.
+        // Objects are narrow enough to fit in one row but we add a third to trigger wrap.
+        val boxes = floatArrayOf(
+            100f, 20f, 10f,   // short object
+            100f, 80f, 10f,   // tall object  (rowMaxY becomes 80)
+            250f, 30f, 10f,   // wide: forces wrap; this is > 265f at curX=210
+        )
+        val positions = CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+        assertEquals(6, positions.size)
+        assertEquals(90f, positions[5], 0.01f)  // y2 = 5 + 80 + 5
     }
 }

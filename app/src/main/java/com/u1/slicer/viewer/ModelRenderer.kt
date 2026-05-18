@@ -54,6 +54,18 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     // null = single instance at model's original position (no offset applied)
     @Volatile var instancePositions: FloatArray? = null
 
+    // Per-object bounding box sizes: flat [sizeX0,sizeY0,sizeZ0, sizeX1,...].
+    // When non-null and size matches instancePositions, hit test uses per-object sizes
+    // instead of the merged mesh AABB (needed when objects from different files have
+    // different footprints).
+    @Volatile var perObjectSizes: FloatArray? = null
+
+    // When true, the preview mesh vertices are already in world/bed coordinates (instance
+    // transforms baked in by setObjectPositions). Draw the mesh ONCE at origin instead of
+    // once per instancePositions entry — the per-entry loop would otherwise multiply the
+    // N-object combined mesh by N positions, showing N² objects on screen.
+    @Volatile var multiObjectMode: Boolean = false
+
     // Wipe tower placement (null = not shown)
     @Volatile var wipeTower: WipeTowerInfo? = null
 
@@ -95,6 +107,32 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     var pendingCameraReset = false
 
     data class WipeTowerInfo(val x: Float, val y: Float, val width: Float, val depth: Float)
+
+    /**
+     * Describes a contiguous vertex range in the (sorted) combined VBO belonging to one object,
+     * along with that object's world-space bounding box. Used by [drawObjectRange] to apply an
+     * independent model matrix per object so drag feedback is immediate (no mesh re-fetch needed).
+     */
+    data class ObjectMeshRange(
+        val vertexStart: Int,
+        val vertexCount: Int,
+        val minX: Float, val maxX: Float,
+        val minY: Float, val maxY: Float,
+        val minZ: Float, val maxZ: Float,
+    )
+
+    // Per-object vertex ranges. Non-null when a sorted multi-object mesh has been uploaded.
+    @Volatile var objectMeshRanges: List<ObjectMeshRange>? = null
+
+    // Pending ranges applied atomically with the pending mesh on the GL thread.
+    // hasPendingObjectMeshRanges=true means a change (possibly null=clear) is pending.
+    @Volatile private var hasPendingObjectMeshRanges: Boolean = false
+    @Volatile private var pendingObjectMeshRanges: List<ObjectMeshRange>? = null
+
+    internal fun setPendingObjectMeshRanges(ranges: List<ObjectMeshRange>?) {
+        pendingObjectMeshRanges = ranges
+        hasPendingObjectMeshRanges = true
+    }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         GLES30.glClearColor(0.059f, 0.059f, 0.118f, 1f)
@@ -154,6 +192,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (pendingClearMesh) {
             pendingClearMesh = false
             meshData = null
+            objectMeshRanges = null
             highlightIndex = -1
         }
 
@@ -167,6 +206,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             uploadMesh(mesh)
             meshData = mesh
             pendingMesh = null
+            if (hasPendingObjectMeshRanges) {
+                objectMeshRanges = pendingObjectMeshRanges
+                pendingObjectMeshRanges = null
+                hasPendingObjectMeshRanges = false
+            }
             pendingCameraReset = !preserveCameraOnNextMeshUpload
             preserveCameraOnNextMeshUpload = false
             pendingContentReadyDispatch = true
@@ -224,7 +268,26 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         meshData?.let { mesh ->
             val positions = instancePositions
             val colors = instanceColors
-            if (positions != null && positions.size >= 2) {
+            if (multiObjectMode) {
+                val ranges = objectMeshRanges
+                if (ranges != null && positions != null && ranges.size == positions.size / 2) {
+                    // Per-object rendering: each sub-range drawn at its current instancePositions[i].
+                    // The drawObjectRange matrix centers on the range's own committed bounds and
+                    // repositions to the live drag position — no mesh re-fetch needed during drag.
+                    for (i in ranges.indices) {
+                        val r = ranges[i]
+                        val px = positions[i * 2]
+                        val py = positions[i * 2 + 1]
+                        val highlighted = (highlightIndex == i)
+                        val color = colors?.getOrNull(i) ?: colors?.getOrNull(0) ?: modelColorDefault
+                        drawObjectRange(mesh, r, px, py, highlighted, color)
+                    }
+                } else {
+                    // Fallback: no per-object ranges yet (pre-first fetch). Draw combined mesh
+                    // at origin — it's already in world/bed coordinates from setObjectPositions.
+                    drawModel(mesh, colors?.getOrNull(0) ?: modelColorDefault)
+                }
+            } else if (positions != null && positions.size >= 2) {
                 val count = positions.size / 2
                 for (i in 0 until count) {
                     val px = positions[i * 2]
@@ -366,6 +429,38 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
+        GLES30.glBindVertexArray(0)
+    }
+
+    private fun drawObjectRange(
+        mesh: MeshData, range: ObjectMeshRange,
+        x: Float, y: Float, highlighted: Boolean, baseColor: FloatArray
+    ) {
+        val shader = modelShader ?: return
+        shader.use()
+
+        val modelMatrix = FloatArray(16)
+        Matrix.setIdentityM(modelMatrix, 0)
+        val s = modelScale
+        val halfW = (range.maxX - range.minX) / 2f
+        val halfH = (range.maxY - range.minY) / 2f
+        val halfD = (range.maxZ - range.minZ) / 2f
+        // Same centering+reposition math as drawModelAt, using per-object range bounds.
+        // Net effect: the object's committed world position is removed and replaced with x,y.
+        Matrix.translateM(modelMatrix, 0, x + halfW * s[0], y + halfH * s[1], halfD * s[2])
+        Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
+        Matrix.translateM(modelMatrix, 0, -range.minX - halfW, -range.minY - halfH, -range.minZ - halfD)
+
+        camera.computeMVP(modelMatrix)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
+
+        val color = if (highlighted) floatArrayOf(1f, 0.6f, 0.2f, 1f) else baseColor
+        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
+        GLES30.glUniform1f(useVertexColorLoc, if (mesh.hasPerVertexColor) 1f else 0f)
+
+        GLES30.glBindVertexArray(modelVAO)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, range.vertexStart, range.vertexCount)
         GLES30.glBindVertexArray(0)
     }
 
@@ -769,5 +864,97 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindVertexArray(0)
         GLES30.glDisable(GLES30.GL_POLYGON_OFFSET_FILL)
         GLES30.glDisable(GLES30.GL_BLEND)
+    }
+
+    companion object {
+        /**
+         * Splits a combined world-space mesh into per-object vertex ranges for independent rendering.
+         *
+         * Returns a new [MeshData] with vertices sorted (object 0 first, object 1 next, …) and a
+         * matching list of [ObjectMeshRange] entries describing each object's vertex range and
+         * world-space bounding box. The bounding boxes let [drawObjectRange] compute the correct
+         * centering matrix independently of the combined mesh bounds.
+         *
+         * Triangles are assigned to the nearest object centre (by XY centroid). For well-separated
+         * objects this is exact; for touching/overlapping objects it degrades gracefully to
+         * a best-guess split that at least prevents the worst visual artefacts.
+         */
+        fun splitMeshByObjects(
+            mesh: MeshData,
+            positions: FloatArray,
+            sizes: FloatArray,
+        ): Pair<MeshData, List<ObjectMeshRange>>? {
+            val objectCount = positions.size / 2
+            if (objectCount < 2 || mesh.vertexCount == 0) return null
+            val fpp = MeshData.FLOATS_PER_VERTEX
+            val triCount = mesh.vertexCount / 3
+
+            // Classify each triangle to the nearest object centre
+            val triObjects = IntArray(triCount)
+            for (tri in 0 until triCount) {
+                val b = tri * 3 * fpp
+                val cx = (mesh.vertices.get(b) + mesh.vertices.get(b + fpp) + mesh.vertices.get(b + fpp * 2)) / 3f
+                val cy = (mesh.vertices.get(b + 1) + mesh.vertices.get(b + fpp + 1) + mesh.vertices.get(b + fpp * 2 + 1)) / 3f
+                var bestObj = 0; var bestDist = Float.MAX_VALUE
+                for (i in 0 until objectCount) {
+                    val ox = positions[i * 2] + sizes[i * 3] / 2f
+                    val oy = positions[i * 2 + 1] + sizes[i * 3 + 1] / 2f
+                    val d = (cx - ox) * (cx - ox) + (cy - oy) * (cy - oy)
+                    if (d < bestDist) { bestDist = d; bestObj = i }
+                }
+                triObjects[tri] = bestObj
+            }
+
+            // Group triangle indices by object
+            val triLists = Array(objectCount) { mutableListOf<Int>() }
+            for (tri in 0 until triCount) triLists[triObjects[tri]].add(tri)
+
+            // Build sorted vertex buffer and compute per-object ranges + bounds
+            val newBuf = MeshData.allocateBuffer(triCount)
+            val newExtruderIdx = mesh.extruderIndices?.let { ByteArray(triCount) }
+            val ranges = mutableListOf<ObjectMeshRange>()
+            var destTriIdx = 0
+
+            for (i in 0 until objectCount) {
+                val tris = triLists[i]
+                val rangeStart = destTriIdx * 3
+                var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
+                var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+                var minZ = Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+
+                for (tri in tris) {
+                    val srcBase = tri * 3 * fpp
+                    for (v in 0 until 3) {
+                        val vBase = srcBase + v * fpp
+                        val vx = mesh.vertices.get(vBase)
+                        val vy = mesh.vertices.get(vBase + 1)
+                        val vz = mesh.vertices.get(vBase + 2)
+                        if (vx < minX) minX = vx; if (vx > maxX) maxX = vx
+                        if (vy < minY) minY = vy; if (vy > maxY) maxY = vy
+                        if (vz < minZ) minZ = vz; if (vz > maxZ) maxZ = vz
+                        for (f in 0 until fpp) newBuf.put(mesh.vertices.get(vBase + f))
+                    }
+                    newExtruderIdx?.set(destTriIdx, mesh.extruderIndices!![tri])
+                    destTriIdx++
+                }
+
+                // Guard empty range (shouldn't happen but avoids NaN in matrix math)
+                if (tris.isEmpty()) {
+                    minX = positions[i * 2]; maxX = minX + sizes[i * 3]
+                    minY = positions[i * 2 + 1]; maxY = minY + sizes[i * 3 + 1]
+                    minZ = 0f; maxZ = 1f
+                }
+                ranges.add(ObjectMeshRange(rangeStart, tris.size * 3, minX, maxX, minY, maxY, minZ, maxZ))
+            }
+
+            newBuf.rewind()
+            val sortedMesh = MeshData(
+                vertices = newBuf, vertexCount = mesh.vertexCount,
+                minX = mesh.minX, minY = mesh.minY, minZ = mesh.minZ,
+                maxX = mesh.maxX, maxY = mesh.maxY, maxZ = mesh.maxZ,
+                extruderIndices = newExtruderIdx,
+            )
+            return Pair(sortedMesh, ranges)
+        }
     }
 }

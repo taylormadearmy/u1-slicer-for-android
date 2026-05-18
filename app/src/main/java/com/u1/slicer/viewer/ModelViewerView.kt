@@ -35,6 +35,11 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     // Callback when an object/tower is moved: (index, deltaX, deltaY) in bed mm
     var onObjectMoved: ((Int, Float, Float) -> Unit)? = null
 
+    // Fired once when a drag interaction ends (ACTION_UP after draggingIndex >= 0).
+    // Used by multi-object mode to batch native position updates to drag-end rather
+    // than re-applying on every MOVE event.
+    var onDragEnded: (() -> Unit)? = null
+
     // Callback when the user taps a triangle (single tap, no drag). Receives the triangle index
     // into the FloatArray supplied to setTrianglePickingPositions. Disabled when null.
     var onTriangleTapped: ((Int) -> Unit)? = null
@@ -108,7 +113,8 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         renderMode = RENDERMODE_WHEN_DIRTY
     }
 
-    fun setMesh(mesh: MeshData) {
+    fun setMesh(mesh: MeshData, objectRanges: List<ModelRenderer.ObjectMeshRange>? = null) {
+        renderer.setPendingObjectMeshRanges(objectRanges)
         renderer.pendingMesh = mesh
         requestRender()
     }
@@ -314,6 +320,7 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             draggingIndex = -1
             renderer.highlightIndex = -1
             requestRender()
+            onDragEnded?.invoke()
         }
         // fix42 lasso: UP closes the polygon and emits the enclosed front-facing triangles.
         // Need ≥ 3 distinct points to form a meaningful loop; below that we treat it as a
@@ -496,12 +503,14 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
 
         val count = positions.size / 2
         val s = renderer.modelScale
-        val sizeX = mesh.sizeX * s[0]
-        val sizeY = mesh.sizeY * s[1]
+        val perSizes = renderer.perObjectSizes
+        val usePerObject = perSizes != null && perSizes.size / 3 == count
 
         for (i in (0 until count).reversed()) {
             val ox = positions[i * 2]
             val oy = positions[i * 2 + 1]
+            val sizeX = if (usePerObject) perSizes!![i * 3] else mesh.sizeX * s[0]
+            val sizeY = if (usePerObject) perSizes!![i * 3 + 1] else mesh.sizeY * s[1]
             if (bx >= ox && bx <= ox + sizeX && by >= oy && by <= oy + sizeY) return i
         }
 

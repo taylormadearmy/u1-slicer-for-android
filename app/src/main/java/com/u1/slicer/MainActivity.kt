@@ -93,6 +93,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val addToBedLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) viewModel.addModelFile(uri)
+    }
+
     private val gcodeSaveLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
@@ -568,6 +574,7 @@ class MainActivity : ComponentActivity() {
                         PrepareScreen(
                             viewModel = viewModel,
                             onPickFile = { filePickerLauncher.launch(pickFileMimeTypes) },
+                            onAddFileToBed = { addToBedLauncher.launch(pickFileMimeTypes) },
                             onBrowseMakerWorld = { navController.navigate(Routes.MAKERWORLD_BROWSER) },
                             onNavigatePrepare = { },
                             onNavigatePreview = { navigateTab(Routes.PREVIEW) },
@@ -1090,6 +1097,7 @@ fun RowScope.U1BottomNavItems(
 fun PrepareScreen(
     viewModel: SlicerViewModel,
     onPickFile: () -> Unit,
+    onAddFileToBed: () -> Unit = {},
     onBrowseMakerWorld: () -> Unit = {},
     onNavigatePrepare: () -> Unit,
     onNavigatePreview: () -> Unit,
@@ -1126,6 +1134,9 @@ fun PrepareScreen(
     val modelRotation by viewModel.modelRotation.collectAsState()
     val loadTimeInstanceOffsets by viewModel.loadTimeInstanceOffsets.collectAsState()
     val nativeSliceStateDirty by viewModel.nativeSliceStateDirty.collectAsState()
+    val objectBoundingBoxes by viewModel.objectBoundingBoxes.collectAsState()
+    val modelAddVersion by viewModel.modelAddVersion.collectAsState()
+    val multiObjectPositions by viewModel.multiObjectPositions.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
@@ -1134,14 +1145,26 @@ fun PrepareScreen(
     val meshAlignedFilamentColors by viewModel.meshAlignedFilamentColors.collectAsState()
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
+    val pendingAddFile by viewModel.pendingAddFile.collectAsState()
 
-    // Plate selector dialog
+    // Plate selector dialog — initial load
     if (showPlateSelector && multiPlatePlates.isNotEmpty()) {
         com.u1.slicer.ui.PlateSelectDialog(
             plates = multiPlatePlates,
             onSelect = { viewModel.selectPlate(it) },
             onDismiss = { viewModel.dismissPlateSelector() },
             info = threeMfInfo
+        )
+    }
+
+    // F85: plate selector dialog — "Add to bed" multi-plate 3MF
+    val addPending = pendingAddFile
+    if (addPending != null && addPending.plates.isNotEmpty()) {
+        com.u1.slicer.ui.PlateSelectDialog(
+            plates = addPending.plates,
+            onSelect = { viewModel.confirmAddPlate(it) },
+            onDismiss = { viewModel.cancelPendingAdd() },
+            info = null
         )
     }
 
@@ -1370,6 +1393,9 @@ fun PrepareScreen(
                                 },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
                                 nativeSliceStateDirty = nativeSliceStateDirty,
+                                perObjectSizes = objectBoundingBoxes,
+                                modelAddVersion = modelAddVersion,
+                                multiObjectPositions = multiObjectPositions,
                                 onSmartPaint = smartPaintCallback,
                                 isReeditSmartPaint = isReeditSmartPaint,
                             )
@@ -1407,6 +1433,17 @@ fun PrepareScreen(
                                         }
                                     )
                                 }
+                                AssistChip(
+                                    onClick = onAddFileToBed,
+                                    label = { Text("Add to bed") },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Default.Add,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                )
                                 val displayName = currentModelName
                                     .removeSuffix(".3mf")
                                     .removeSuffix(".stl")
@@ -2831,6 +2868,16 @@ fun InlineModelPreview(
     // natural load state is preserved on first preview.
     loadTimeInstanceOffsets: FloatArray = floatArrayOf(135f, 135f),
     nativeSliceStateDirty: Boolean = false,
+    // Per-object bounding boxes [sizeX0,sizeY0,sizeZ0, ...] for correct per-object hit-testing
+    // when multiple distinct files have been added to the bed. Empty = use merged mesh AABB.
+    perObjectSizes: FloatArray = floatArrayOf(),
+    // Incremented when a model is added to the bed or multi-object positions change.
+    // Used as a LaunchedEffect key so the prepare preview mesh re-fetches after an add or drag.
+    modelAddVersion: Int = 0,
+    // Current per-object positions [x0,y0,x1,y1,...] when multiple files are on the bed.
+    // Re-applied inside the rotation LaunchedEffect so setObjectPositions survives the
+    // nativeSliceStateDirty→setModelInstances reset that happens after a prior slice.
+    multiObjectPositions: FloatArray? = null,
     // fix35: Smart Paint entry as a top-right overlay icon on the viewer. Null disables the
     // icon (no model loaded, large-preview fallback, or feature unavailable).
     onSmartPaint: (() -> Unit)? = null,
@@ -2863,6 +2910,9 @@ fun InlineModelPreview(
     // Track whether we've already uploaded this mesh to avoid redundant VBO re-uploads
     // when only colors/mapping change (B22 fix).
     var lastSetMesh by remember { mutableStateOf<com.u1.slicer.viewer.MeshData?>(null) }
+    // Per-object vertex ranges for the current mesh (non-null when in multi-object mode).
+    // Set alongside mesh in the rotation LaunchedEffect; passed to v.setMesh() below.
+    var objectMeshRanges by remember { mutableStateOf<List<com.u1.slicer.viewer.ModelRenderer.ObjectMeshRange>?>(null) }
     val placementEnabled = placementConfig.objectPlacementEnabled
 
     // Mutable copies of positions for drag interaction
@@ -2917,6 +2967,7 @@ fun InlineModelPreview(
         if ((cachedMesh == null && mesh == null) || !isNativePreviewPath) {
             viewerLoading = true
             mesh = null
+            objectMeshRanges = null
             lastSetMesh = null
             viewerView?.clearMesh()
         }
@@ -2924,7 +2975,11 @@ fun InlineModelPreview(
             try {
                 val file = java.io.File(modelFilePath)
                 when {
-                    modelFilePath.endsWith(".stl", ignoreCase = true) ->
+                    modelFilePath.endsWith(".stl", ignoreCase = true) && perObjectSizes.size / 3 <= 1 ->
+                        // In multi-object mode the rotation LaunchedEffect fetches the combined
+                        // world-space mesh via getPreparePreviewMesh() — parsing only the first
+                        // file here would show a stale single-object mesh before the full fetch
+                        // completes, causing a visible "bottom-left" flash.
                         com.u1.slicer.viewer.StlParser.parse(file)
                     modelFilePath.endsWith(".3mf", ignoreCase = true) ->
                         // B46: all 3MF models use the native getPreparePreviewMesh() path
@@ -2956,7 +3011,7 @@ fun InlineModelPreview(
         if (m != null && v != null) {
             // Only call setMesh when the mesh instance actually changed
             if (m !== lastSetMesh) {
-                v.setMesh(m)
+                v.setMesh(m, objectMeshRanges)
                 cameraState?.let { v.applyCameraState(it) }
                 lastSetMesh = m
             }
@@ -3029,7 +3084,7 @@ fun InlineModelPreview(
     // Without debouncing, each intermediate value cancels the previous LaunchedEffect,
     // wasting the 30s computation and restarting.  The initial call (rot=0,0,0) skips
     // the delay so model load isn't slowed.
-    LaunchedEffect(modelRotation, modelFilePath) {
+    LaunchedEffect(modelRotation, modelFilePath, modelAddVersion) {
         val rot = modelRotation
 
         // B49: reuse cached mesh if available (instant reload on tab switch).
@@ -3078,7 +3133,15 @@ fun InlineModelPreview(
                     // re-derives the offset from meshBB.min, shifting the mesh off-centre.
                     if (nativeSliceStateDirty) {
                         lib.setModelScale(1f, 1f, 1f)
-                        lib.setModelInstances(loadTimeInstanceOffsets)
+                        val multiPos = multiObjectPositions
+                        if (perObjectSizes.size > 3 && multiPos != null) {
+                            // Multi-object bed: set per-object positions directly.
+                            // Do NOT call setModelInstances — it creates N copies of object 0,
+                            // producing phantom duplicates when there are N distinct loaded objects.
+                            lib.setObjectPositions(multiPos)
+                        } else {
+                            lib.setModelInstances(loadTimeInstanceOffsets)
+                        }
                     }
                     lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)?.toMeshData()
                 } catch (_: Throwable) {
@@ -3087,8 +3150,17 @@ fun InlineModelPreview(
             }
         }
         if (newMesh != null) {
-            mesh = newMesh
-            onMeshCached?.invoke(newMesh)  // B49: save to ViewModel cache
+            // In multi-object mode, split the combined world-space mesh into per-object
+            // vertex ranges so each object can be drawn independently (enables smooth drag).
+            val multiPos = multiObjectPositions
+            val splitResult = if (perObjectSizes.size / 3 > 1 && multiPos != null
+                && multiPos.size >= (perObjectSizes.size / 3) * 2
+            ) {
+                com.u1.slicer.viewer.ModelRenderer.splitMeshByObjects(newMesh, multiPos, perObjectSizes)
+            } else null
+            mesh = splitResult?.first ?: newMesh
+            objectMeshRanges = splitResult?.second
+            onMeshCached?.invoke(mesh!!)  // B49: save to ViewModel cache
             lastSetMesh = null  // force setMesh() on the GL thread
         }
         if (!isInitialFetch) viewerLoading = false
@@ -3114,6 +3186,8 @@ fun InlineModelPreview(
         // callback keeps a stale value if the user changes Prime Tower Width or
         // Depth mid-session — same class of bug as the earlier B109 reopen.
         wipeTowerWidth, wipeTowerDepth,
+        // Multi-object: per-object footprints change when files are added/removed.
+        perObjectSizes,
     ) {
         val v = viewerView ?: return@LaunchedEffect
         if (placementEnabled) {
@@ -3123,6 +3197,8 @@ fun InlineModelPreview(
             // azimuth/elevation/pan mid-drag, corrupting subsequent screenToBed calculations).
             val firstPlacement = v.renderer.instancePositions == null
             v.renderer.instancePositions = objPositions
+            v.renderer.perObjectSizes = perObjectSizes.takeIf { it.isNotEmpty() }
+            v.renderer.multiObjectMode = perObjectSizes.size / 3 > 1
             if (firstPlacement) v.renderer.pendingCameraReset = true
             if (placementConfig.wipeTowerVisible) {
                 v.renderer.wipeTower = com.u1.slicer.viewer.ModelRenderer.WipeTowerInfo(
@@ -3131,15 +3207,25 @@ fun InlineModelPreview(
             } else {
                 v.renderer.wipeTower = null
             }
+            val isMultiObjectBed = perObjectSizes.size / 3 > 1
             v.onObjectMoved = { index, dx, dy ->
                 val count = objPositions.size / 2
                 if (index < count) {
-                    // Move object — use rotated+scaled footprint for correct bed bounds (B109)
+                    // Move object — use per-object footprint when available (multi-file bed),
+                    // otherwise fall back to the single-model rotated+scaled footprint (B109).
                     val i = index
-                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - effPlaceSizeX))
-                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - effPlaceSizeY))
+                    val hasPerObj = perObjectSizes.size / 3 == count
+                    val sizeX = if (hasPerObj) perObjectSizes[i * 3] else effPlaceSizeX
+                    val sizeY = if (hasPerObj) perObjectSizes[i * 3 + 1] else effPlaceSizeY
+                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - sizeX))
+                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - sizeY))
                     v.renderer.instancePositions = objPositions.copyOf()
-                    onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY))
+                    // Multi-object: the combined world-space mesh can't respond to per-object
+                    // position updates during drag (mesh re-fetch is async). Batch position
+                    // updates to drag-end via onDragEnded so the mesh only re-fetches once.
+                    if (!isMultiObjectBed) {
+                        onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY))
+                    }
                 } else {
                     // Move wipe tower
                     towerX = (towerX + dx).coerceIn(0f, 270f - wipeTowerWidth)
@@ -3150,10 +3236,17 @@ fun InlineModelPreview(
                     onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY))
                 }
             }
+            // Multi-object: fire one applyPlacementPositions call when drag ends so native
+            // setObjectPositions + mesh re-fetch happen once instead of on every MOVE event.
+            v.onDragEnded = if (isMultiObjectBed) {
+                { onPositionsChanged?.invoke(objPositions.copyOf(), Pair(towerX, towerY)) }
+            } else null
             v.requestRender()
         } else {
             v.placementMode = false
             v.renderer.instancePositions = null
+            v.renderer.multiObjectMode = false
+            v.onDragEnded = null
             v.renderer.wipeTower = if (placementConfig.wipeTowerVisible) {
                 com.u1.slicer.viewer.ModelRenderer.WipeTowerInfo(
                     towerX, towerY, wipeTowerWidth, wipeTowerDepth

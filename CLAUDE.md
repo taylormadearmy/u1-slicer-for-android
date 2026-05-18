@@ -68,8 +68,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1190 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 295 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 1196 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 307 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -104,7 +104,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/PrinterStatusBadgeTest.kt` (14) — Printer status badge text, color, and icon mapping for all printer states
 - `ui/ModelInfoDialogScrollTest.kt` (2) — B89 structural guard: ModelInfoDialog content Column applies `verticalScroll(rememberScrollState())` (source-grep test, no Compose UI harness in project)
 - `FilePickerValidationTest.kt` (8) — isSupportedFile extension matching for 3MF, STL, OBJ, STEP; rejects unsupported types
-- `model/CopyArrangeCalculatorTest.kt` (32) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance, B109 computeRotatedFootprint (5 rotation cases), B109 v2.2.6 effectivePlacementFootprint (6 cases: mesh-AABB priority, scale handling, null fallback, fallback applies scale, zero-rotation shortcut, Dragon-Scale-class divergence proof)
+- `model/CopyArrangeCalculatorTest.kt` (37) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance, B109 computeRotatedFootprint (5 rotation cases), B109 v2.2.6 effectivePlacementFootprint (6 cases: mesh-AABB priority, scale handling, null fallback, fallback applies scale, zero-rotation shortcut, Dragon-Scale-class divergence proof), F77 buildMultiObjectPositions (5 cases: empty, single, two-in-row, row-wrap, row-height tracking)
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 - `MergeThreeMfInfoTest.kt` (49) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates), B60 hasPaintSupports preservation, B82 per-plate layer-tool secondary colour matching (palette-match = real, off-palette = artefact)
@@ -140,19 +140,19 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `FilamentTypeHeaderPatchTest.kt` (14) — B63 fixFilamentTypeHeader: single/multi-extruder replacement, absent line guard, empty list guard, missing file, first-occurrence-only, B99 header patch canonical padding for support/interface slots beyond canonical size, B102 sparse colorMapping produces physical-slot-indexed filament_type, B105 resolveNonCanonicalHeaderPatchTypes single/multi-slot, unknown-slot fallback
 - `ui/SupportFilamentOptionTest.kt` (5) — B99 support/interface filament option labels and config values for H2C, STL, non-identity, and sparse color mappings
 - `ui/SlicedWithMaterialTest.kt` (7) — B118 Map & Print dialog material-mismatch cascade: override priority, sliceTime-slot priority, file-declared fallback, DC15 single-colour PETG-slot repro, explicit override on single-colour, multi-colour mapped-slot resolution
-- `ui/InlineModelPreviewRotationKeysTest.kt` (3) — B109 Compose-only structural guards: (a) placement LaunchedEffect lists `effPlaceSizeX/Y` so the object drag callback re-captures the rotated footprint on rotation, (b) placement LaunchedEffect lists `wipeTowerWidth/Depth` so the wipe-tower drag callback re-captures on prime-tower dimension change, (c) the `onMeshCached` lambda calls `setRotatedMeshSize` so the ViewModel's rotated-AABB cache repopulates after each mesh fetch. The math itself is unit-tested in `CopyArrangeCalculatorTest.effectivePlacementFootprint_*`.
+- `ui/InlineModelPreviewRotationKeysTest.kt` (4) — B109 Compose-only structural guards: (a) placement LaunchedEffect lists `effPlaceSizeX/Y` so the object drag callback re-captures the rotated footprint on rotation, (b) placement LaunchedEffect lists `wipeTowerWidth/Depth` so the wipe-tower drag callback re-captures on prime-tower dimension change, (c) the `onMeshCached` lambda calls `setRotatedMeshSize` so the ViewModel's rotated-AABB cache repopulates after each mesh fetch, (d) F77 placement LaunchedEffect lists `perObjectSizes` so the drag clamp re-captures per-object footprints when files are added to the bed. The math itself is unit-tested in `CopyArrangeCalculatorTest.effectivePlacementFootprint_*`.
 - `PrepareMeshCacheInvalidationTest.kt` (3) — B109 v2.2.6 lifecycle guard: `SlicerViewModel.invalidatePrepareMeshCache()` must clear `cachedPrepareMesh`, `cachedPrepareMeshPath`, AND `_rotatedMeshSizeXY` so stale rotated bounds never leak across a rotation change.
 - `network/UpdateCheckerTest.kt` (12) — F70 GitHub release JSON parsing, semantic version comparison, download URL extraction
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
 
-### Instrumented tests (`app/src/androidTest/`) - 296 tests across 33 classes
+### Instrumented tests (`app/src/androidTest/`) - 307 tests across 33 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
 - `native/NativeLibrarySymbolTest.kt` (6) — JNI symbol smoke tests
-- `native/NativeLibraryCorrectnessTest.kt` (14) — JNI correctness checks + Phase 1 sub-plan #1 accessors (`nativeGetObjectCount`, `nativeGetVolumeCount`, `nativeGetObjectModelId`, `nativeGetVolumeScalars`, `nativeGetPaintStateCounts` for both mmu and supports kinds) + sub-plan #5 accessor (`nativeGetProjectConfig` populated JSON + null on no-model) + sub-plan #2b `loadModelForPlate` smoke (single-plate match + plateIdx=-1 all-plates alias)
+- `native/NativeLibraryCorrectnessTest.kt` (15) — JNI correctness checks + Phase 1 sub-plan #1 accessors (`nativeGetObjectCount`, `nativeGetVolumeCount`, `nativeGetObjectModelId`, `nativeGetVolumeScalars`, `nativeGetPaintStateCounts` for both mmu and supports kinds) + sub-plan #5 accessor (`nativeGetProjectConfig` populated JSON + null on no-model) + sub-plan #2b `loadModelForPlate` smoke (single-plate match + plateIdx=-1 all-plates alias) + F85 re-add regression (`addModelForPlate_readdWithSamePlate_givesConsistentObjectCount`)
 - `native/NativePlateDataTest.kt` (5) — Phase 1 sub-plan #2 per-plate JNI accessors (`nativeGetPlateCount`, `nativeGetPlateData`): no-model null/zero, colored_3DBenchy single-plate shape, Buzz multi-plate positional sanity + OOR guard, flippy painted fixture customGcode non-empty
 - `native/NativeObjectExtruderMapTest.kt` (3) — Phase 1 sub-plan #4 full-objects JNI accessor (`nativeGetObjectExtruderMap`): no-model null, colored_3DBenchy merged component-ref objects, Flarewing array length matches `nativeGetObjectCount`
 - `slicing/SlicingIntegrationTest.kt` (49) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation, B55 slice cancel, v1.5.63 nozzle temp JNI path (PLA=220, PETG=235), B73 scale-down placement correctness, B75 parked extruder cooldown, B79 tree support type + filament type for STL, brim_type no_brim guard, resolveInto→JNI chain, B99 support/interface filament G-code guards including app-placed Benchy STL with PETG support E2/interface E3, F71 tetrahedron EXCLUDE_OBJECT_DEFINE in G-code, B107 bed temp no +5 bump, B106 machine_start_gcode injection, B106 send-time E3 remap T0→T2, B108 articulated fish scale-down model-on-bed, B108 skywing multi-object per-instance Z offsets bed-snapped after scale
@@ -320,8 +320,8 @@ If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous 
 Create a new build directory configured directly for Release with NDK 26:
 
 ```bash
-CMAKE=C:/Users/kevin/AppData/Local/Android/Sdk/cmake/3.22.1/bin/cmake.exe
-NDK=C:/Users/kevin/AppData/Local/Android/Sdk/ndk/26.1.10909125
+CMAKE=D:/Android/Sdk/cmake/3.22.1/bin/cmake.exe
+NDK=D:/Android/Sdk/ndk/26.1.10909125
 BUILD_DIR=app/.cxx/Debug/ndk26release/arm64-v8a
 mkdir -p "$BUILD_DIR"
 "$CMAKE" \
@@ -334,7 +334,7 @@ mkdir -p "$BUILD_DIR"
   -DANDROID_NDK="$NDK" \
   -DCMAKE_ANDROID_NDK="$NDK" \
   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
-  -DCMAKE_MAKE_PROGRAM=C:/Users/kevin/AppData/Local/Android/Sdk/cmake/3.22.1/bin/ninja.exe \
+  -DCMAKE_MAKE_PROGRAM=D:/Android/Sdk/cmake/3.22.1/bin/ninja.exe \
   -DCMAKE_BUILD_TYPE=Release \
   -B"$BUILD_DIR" \
   -GNinja \

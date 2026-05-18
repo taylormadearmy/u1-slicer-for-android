@@ -130,4 +130,20 @@ class InlineModelPreviewRotationKeysTest {
             keys.contains("wipeTowerDepth")
         )
     }
+
+    @Test
+    fun placementLaunchedEffect_keysOnPerObjectSizes() {
+        // Multi-object: when the user adds a second file to the bed,
+        // `perObjectSizes` changes and the onObjectMoved drag clamp must
+        // re-capture per-object footprints. Without this key the callback
+        // would keep the empty floatArrayOf() from the initial load and
+        // fall back to single-model bounds for every dragged object.
+        val keys = placementLaunchedEffectKeys()
+        assertTrue(
+            "Multi-object: placement LaunchedEffect must list `perObjectSizes` " +
+                "as a key so the drag callback re-captures per-object footprints " +
+                "when additional files are added to the bed. Got keys: $keys",
+            keys.contains("perObjectSizes")
+        )
+    }
 }

@@ -231,6 +231,58 @@ Java_com_u1_slicer_NativeLibrary_getInstanceWorldZMins(
     return result;
 }
 
+// ---- Additive model loading ----
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_addModel(JNIEnv* env, jobject, jstring jpath) {
+    if (!g_engine) return JNI_FALSE;
+    const char* path = env->GetStringUTFChars(jpath, nullptr);
+    bool result = g_engine->addModel(std::string(path));
+    env->ReleaseStringUTFChars(jpath, path);
+    return result ? JNI_TRUE : JNI_FALSE;
+}
+
+// F85: add a specific plate of a 3MF into the existing model.
+// plateIdx = -1 → all plates (same as addModel); plateIdx >= 0 → 1-based BBS plate_id = plateIdx+1.
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_addModelForPlate(JNIEnv* env, jobject, jstring jpath, jint jplate_idx) {
+    if (!g_engine) return JNI_FALSE;
+    const int plate_id = (jplate_idx < 0) ? 0 : static_cast<int>(jplate_idx) + 1;
+    const char* path = env->GetStringUTFChars(jpath, nullptr);
+    bool result = g_engine->addModel(std::string(path), plate_id);
+    env->ReleaseStringUTFChars(jpath, path);
+    return result ? JNI_TRUE : JNI_FALSE;
+}
+
+// Returns flat [sizeX0, sizeY0, sizeZ0, sizeX1, sizeY1, sizeZ1, ...] for all objects.
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_getObjectBoundingBoxes(JNIEnv* env, jobject) {
+    if (!g_engine) return env->NewFloatArray(0);
+    auto boxes = g_engine->getObjectBoundingBoxes();
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(boxes.size()));
+    if (!boxes.empty()) {
+        env->SetFloatArrayRegion(result, 0, static_cast<jsize>(boxes.size()), boxes.data());
+    }
+    return result;
+}
+
+// positions: flat [x0, y0, x1, y1, ...] in mm — one lower-left corner per object.
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_setObjectPositions(JNIEnv* env, jobject, jfloatArray jpositions) {
+    if (!g_engine) return JNI_FALSE;
+    if (!jpositions) return JNI_FALSE;
+    jsize len = env->GetArrayLength(jpositions);
+    if (len == 0 || len % 2 != 0) return JNI_FALSE;
+    jfloat* data = env->GetFloatArrayElements(jpositions, nullptr);
+    std::vector<std::pair<float, float>> positions;
+    positions.reserve(len / 2);
+    for (int i = 0; i + 1 < len; i += 2) {
+        positions.push_back({data[i], data[i + 1]});
+    }
+    env->ReleaseFloatArrayElements(jpositions, data, JNI_ABORT);
+    bool result = g_engine->setObjectPositions(positions);
+    return result ? JNI_TRUE : JNI_FALSE;
+}
+
 // ---- Cancellation ----
 JNIEXPORT void JNICALL
 Java_com_u1_slicer_NativeLibrary_cancelPreviewMesh(JNIEnv*, jobject) {

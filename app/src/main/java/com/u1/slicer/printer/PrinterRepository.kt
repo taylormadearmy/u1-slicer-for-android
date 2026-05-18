@@ -191,6 +191,17 @@ class PrinterRepository(
             }
         }
 
+        /**
+         * F84 (GitHub #138): pick the most user-meaningful base name for the
+         * upload. Prefer the original model filename (e.g. `Jumping_frog.3mf`)
+         * over the on-disk G-code name (`output.gcode`) so the printer's file
+         * browser shows recognisable per-job names. Falls back to the gcode
+         * name if the model name is null or blank.
+         */
+        internal fun resolveUploadBaseName(modelName: String?, gcodeFileName: String): String {
+            return if (modelName != null && modelName.isNotBlank()) modelName else gcodeFileName
+        }
+
         internal fun buildPrinterUploadFilename(sourceName: String, nowMillis: Long = System.currentTimeMillis()): String {
             val base = sourceName
                 .substringBeforeLast('.', sourceName)

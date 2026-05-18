@@ -674,6 +674,160 @@ void SlicerEngine::clearModel() {
     SAPIL_LOGI("Model cleared");
 }
 
+bool SlicerEngine::addModel(const std::string& filepath) {
+    if (!g_model_loaded) {
+        SAPIL_LOGE("addModel: no primary model loaded — call loadModel first");
+        return false;
+    }
+
+    std::string ext = filepath.substr(filepath.find_last_of('.') + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext != "stl" && ext != "3mf" && ext != "obj" && ext != "step" && ext != "stp") {
+        SAPIL_LOGE("addModel: unsupported format: %s", ext.c_str());
+        return false;
+    }
+    {
+        std::ifstream f(filepath);
+        if (!f.good()) {
+            SAPIL_LOGE("addModel: file not found: %s", filepath.c_str());
+            return false;
+        }
+    }
+
+    try {
+        Slic3r::DynamicPrintConfig tmp_config;
+        Slic3r::ConfigSubstitutionContext tmp_subs(Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
+        Slic3r::PlateDataPtrs tmp_plates;
+        std::vector<Slic3r::Preset*> tmp_presets;
+        bool tmp_is_bbl = false;
+        Slic3r::Semver tmp_ver;
+
+        Slic3r::Model tmp_model = Slic3r::Model::read_from_file(
+            filepath, &tmp_config, &tmp_subs,
+            Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::AddDefaultInstances,
+            &tmp_plates, &tmp_presets, &tmp_is_bbl, &tmp_ver,
+            nullptr, nullptr, nullptr, 0);
+
+        Slic3r::release_PlateData_list(tmp_plates);
+
+        if (tmp_model.objects.empty()) {
+            SAPIL_LOGE("addModel: no objects in %s", filepath.c_str());
+            return false;
+        }
+
+        for (const auto* obj : tmp_model.objects) {
+            auto* new_obj = g_model.add_object(*obj);
+            // Snap Z to bed plane for each added object
+            if (!new_obj->instances.empty()) {
+                const Slic3r::Transform3d inst_full =
+                    new_obj->instances[0]->get_transformation().get_matrix();
+                Slic3r::BoundingBoxf3 bb;
+                for (const auto* v : new_obj->volumes) {
+                    if (v->is_model_part()) {
+                        bb.merge(v->mesh().transformed_bounding_box(inst_full * v->get_matrix()));
+                    }
+                }
+                if (bb.defined && bb.min.z() != 0.0) {
+                    auto off = new_obj->instances[0]->get_offset();
+                    new_obj->instances[0]->set_offset(
+                        Slic3r::Vec3d(off.x(), off.y(), off.z() - bb.min.z()));
+                }
+            }
+        }
+
+        // Rotation base and scale snapshots must be re-taken after object count changes
+        g_rotation_base_positions.clear();
+        g_rotation_base_rotations.clear();
+        { extern void resetLastRotation(); resetLastRotation(); }
+        { extern void resetLoadTimeScaleFactors(); resetLoadTimeScaleFactors(); }
+        g_preview_mesh_valid = false;
+        g_cached_preview_mesh = PreviewMesh();
+
+        SAPIL_LOGI("addModel: appended %d object(s) from %s, g_model now has %d",
+            (int)tmp_model.objects.size(), filepath.c_str(), (int)g_model.objects.size());
+        return true;
+    } catch (const std::exception& e) {
+        SAPIL_LOGE("addModel: exception loading %s: %s", filepath.c_str(), e.what());
+        return false;
+    }
+}
+
+bool SlicerEngine::addModel(const std::string& filepath, int plate_id) {
+    if (!g_model_loaded) {
+        SAPIL_LOGE("addModel(plate): no primary model loaded — call loadModel first");
+        return false;
+    }
+
+    std::string ext = filepath.substr(filepath.find_last_of('.') + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext != "stl" && ext != "3mf" && ext != "obj" && ext != "step" && ext != "stp") {
+        SAPIL_LOGE("addModel(plate): unsupported format: %s", ext.c_str());
+        return false;
+    }
+    {
+        std::ifstream f(filepath);
+        if (!f.good()) {
+            SAPIL_LOGE("addModel(plate): file not found: %s", filepath.c_str());
+            return false;
+        }
+    }
+
+    try {
+        Slic3r::DynamicPrintConfig tmp_config;
+        Slic3r::ConfigSubstitutionContext tmp_subs(Slic3r::ForwardCompatibilitySubstitutionRule::Enable);
+        Slic3r::PlateDataPtrs tmp_plates;
+        std::vector<Slic3r::Preset*> tmp_presets;
+        bool tmp_is_bbl = false;
+        Slic3r::Semver tmp_ver;
+
+        Slic3r::Model tmp_model = Slic3r::Model::read_from_file(
+            filepath, &tmp_config, &tmp_subs,
+            Slic3r::LoadStrategy::LoadModel | Slic3r::LoadStrategy::AddDefaultInstances,
+            &tmp_plates, &tmp_presets, &tmp_is_bbl, &tmp_ver,
+            nullptr, nullptr, nullptr, plate_id);
+
+        Slic3r::release_PlateData_list(tmp_plates);
+
+        if (tmp_model.objects.empty()) {
+            SAPIL_LOGE("addModel(plate): no objects in %s (plate_id=%d)", filepath.c_str(), plate_id);
+            return false;
+        }
+
+        for (const auto* obj : tmp_model.objects) {
+            auto* new_obj = g_model.add_object(*obj);
+            if (!new_obj->instances.empty()) {
+                const Slic3r::Transform3d inst_full =
+                    new_obj->instances[0]->get_transformation().get_matrix();
+                Slic3r::BoundingBoxf3 bb;
+                for (const auto* v : new_obj->volumes) {
+                    if (v->is_model_part()) {
+                        bb.merge(v->mesh().transformed_bounding_box(inst_full * v->get_matrix()));
+                    }
+                }
+                if (bb.defined && bb.min.z() != 0.0) {
+                    auto off = new_obj->instances[0]->get_offset();
+                    new_obj->instances[0]->set_offset(
+                        Slic3r::Vec3d(off.x(), off.y(), off.z() - bb.min.z()));
+                }
+            }
+        }
+
+        g_rotation_base_positions.clear();
+        g_rotation_base_rotations.clear();
+        { extern void resetLastRotation(); resetLastRotation(); }
+        { extern void resetLoadTimeScaleFactors(); resetLoadTimeScaleFactors(); }
+        g_preview_mesh_valid = false;
+        g_cached_preview_mesh = PreviewMesh();
+
+        SAPIL_LOGI("addModel(plate=%d): appended %d object(s) from %s, g_model now has %d",
+            plate_id, (int)tmp_model.objects.size(), filepath.c_str(), (int)g_model.objects.size());
+        return true;
+    } catch (const std::exception& e) {
+        SAPIL_LOGE("addModel(plate): exception loading %s: %s", filepath.c_str(), e.what());
+        return false;
+    }
+}
+
 std::vector<Slic3r::Vec3d>& getRotationBasePositions() {
     return g_rotation_base_positions;
 }

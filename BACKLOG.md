@@ -471,6 +471,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F85: Plate selector when adding a 3MF to the bed (GitHub #140)
+- When a 3MF file is selected via **Add to bed**, the current path calls `native.addModel(path)` which loads all plates rather than showing the plate-selector dialog.
+- **Proposal**: detect 3MF extension in `addModelFile`/`addModelFromFile`, parse plates with `ThreeMfParser`, show the existing plate-selector dialog, then load only the chosen plate.
+- **Implementation options**: (a) new `nativeAddModelForPlate(path, plateId)` JNI method analogous to `loadModelForPlate`; or (b) pre-extract the target plate via `BambuSanitizer.extractPlate` to a temp file and pass to `addModel`.
+- Option (b) is simpler (no native rebuild required) but wastes disk; option (a) is cleaner.
+
 ### F84: Upload filename should preserve the original model name (GitHub #138)
 - Upload filenames today are derived from the on-disk transient G-code (typically `output_<epoch>.gcode` or `output.remapped_<epoch>.gcode`), so prints in the printer's file browser are indistinguishable.
 - **Proposal**: upload filename `{modelBaseName}_{epochMillis}.gcode`, where `modelBaseName` is the originally-loaded file name with extension stripped + the existing `buildPrinterUploadFilename` sanitisation applied.
@@ -514,11 +520,17 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Single active connection at a time (no parallel monitoring v1). Notifications include printer nickname.
 - **Tests**: unit tests on list model + migration; instrumented test for active-printer switch + WebSocket re-target.
 
-### F77: Load multiple STL files at once onto a single plate (GitHub #109)
-- File picker switches to multi-select for STL/OBJ/mesh-only formats; rejects 3MF/STEP in a multi-select batch.
-- Auto-arrange via existing `CopyArrangeCalculator`; per-part extruder assignment via Prepare picker (default E1).
-- Edge cases: parts exceeding bed bounds rejected with warning; parse failures listed post-load; QEM budget fallback.
-- **Tests**: unit tests for multi-STL arrange + bed-bounds reject; instrumented test loading 3 STLs and asserting merged layout.
+### F77: Add multiple files to the print bed independently (GitHub #109) — IN PROGRESS
+- **Redesigned** from original flat-binary-STL-combiner approach to an additive JNI loading model that preserves the primary file's embedded settings and allows independent per-object movement.
+- **Primary load**: works unchanged — any supported format (STL, 3MF, OBJ, STEP). Settings/profiles from the primary file are preserved.
+- **"Add to bed" button**: appears below the 3D viewer once a model is loaded. Opens a file picker; adds the selected file as a new independent object via `NativeLibrary.addModel()`. Preserves all primary file's config. Multiple files can be added sequentially.
+- **Independent movement**: each object can be dragged to any bed position independently. Drag clamping uses per-object bounding boxes (`NativeLibrary.getObjectBoundingBoxes()`).
+- **Slice path**: `prepareSlicer()` uses `NativeLibrary.setObjectPositions()` instead of `setModelInstances()` when `hasMultipleDistinctObjects` is true.
+- **Grid packing**: initial positions from `CopyArrangeCalculator.buildMultiObjectPositions()` — row-packing with 5mm margin. Pure-Kotlin, unit-tested.
+- **Native additions**: `addModel(path)`, `getObjectBoundingBoxes()`, `setObjectPositions(positions)` — new JNI methods in `sapil_model.cpp` + `sapil_arrange.cpp` + `slicer_wrapper.cpp`.
+- **Bug fixed (2026-05-18)**: When primary is a multi-extruder 3MF, `prepareSlicer()` was re-embedding and reloading the native model before slice, losing the added objects. Fix: `additionalModelFiles` list tracks each added file; after embed reload, all are re-added via `addModel()` before `setObjectPositions()`. Manual E2E confirmed all 4 combos pass (3MF+3MF, STL+3MF, 3MF+STL, STL+STL). `addModelFromFile(File)` added to `SlicerViewModel`; `ADD_FILE` broadcast added to `TestCommandReceiver` for ADB-driven testing.
+- **Still to do**: per-object extruder assignment UI (currently all objects slice with primary file's extruder config); instrumented test for addModelFile slice pipeline.
+- **Tests**: `CopyArrangeCalculatorTest` — 5 `buildMultiObjectPositions` cases (empty, single, two-in-row, row-wrap, row-height tracking); `InlineModelPreviewRotationKeysTest` — `perObjectSizes` key guard added.
 
 ### F75: Prime tower should default to back of plate (GitHub #90)
 - Default auto-placed prime tower to back of bed instead of current default; prefer embedded 3MF position when present; user can still move freely.

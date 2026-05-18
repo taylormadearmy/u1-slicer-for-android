@@ -118,15 +118,20 @@ object CopyArrangeCalculator {
         // Margin from bed edge: prime_tower_brim_width (3mm) + skirt_distance (6mm)
         // + 1 skirt loop (~0.5mm) ≈ 9.5mm. Use 10mm to be safe.
         val edgeMargin = 10f
+        // F75 (GitHub #90): default the prime tower to the back of the bed when
+        // the source 3MF doesn't pin a position. Candidates are listed back-first
+        // so that on tie clearance the back-of-plate position wins. When the model
+        // occupies the back, front candidates still beat them on raw clearance and
+        // the model dictates placement as before.
         val candidates = listOf(
-            edgeMargin to edgeMargin,                                                        // bottom-left
-            bedSizeX - towerWidth - edgeMargin to edgeMargin,                                // bottom-right
+            bedCenter - towerWidth / 2f to bedSizeY - towerDepth - edgeMargin,               // top-center  (back, default)
             edgeMargin to bedSizeY - towerDepth - edgeMargin,                                // top-left
             bedSizeX - towerWidth - edgeMargin to bedSizeY - towerDepth - edgeMargin,        // top-right
-            bedCenter - towerWidth / 2f to edgeMargin,                                       // bottom-center
-            bedCenter - towerWidth / 2f to bedSizeY - towerDepth - edgeMargin,               // top-center
             edgeMargin to bedCenter - towerDepth / 2f,                                       // left-center
-            bedSizeX - towerWidth - edgeMargin to bedCenter - towerDepth / 2f                // right-center
+            bedSizeX - towerWidth - edgeMargin to bedCenter - towerDepth / 2f,               // right-center
+            bedCenter - towerWidth / 2f to edgeMargin,                                       // bottom-center
+            edgeMargin to edgeMargin,                                                        // bottom-left
+            bedSizeX - towerWidth - edgeMargin to edgeMargin                                 // bottom-right
         )
 
         // Build list of object bounding boxes [minX, minY, maxX, maxY]
@@ -285,5 +290,99 @@ object CopyArrangeCalculator {
             }
         }
         return Pair((maxX - minX).toFloat(), (maxY - minY).toFloat())
+    }
+
+    /**
+     * Assigns initial row-packing positions for N distinct objects on the print bed.
+     *
+     * Objects are placed left-to-right with [margin] gaps, wrapping to the next row
+     * when the current row would overflow. The returned array is flat [x0,y0,x1,y1,...]
+     * in mm (bed-space lower-left convention), suitable for `setObjectPositions`.
+     *
+     * @param boxes flat [sizeX0,sizeY0,sizeZ0, sizeX1,...] bounding box array from
+     *   `NativeLibrary.getObjectBoundingBoxes()`.
+     * @param bedSize bed edge length (default 270mm for Snapmaker U1).
+     * @param margin gap between objects in mm (default 5mm).
+     */
+    /**
+     * Places a newly added Nth object on the bed without disturbing objects 0..(N-2).
+     *
+     * Existing objects stay at [currentPositions]. The new object is placed to the right
+     * of the rightmost existing object (aligned to its Y), or below all existing objects
+     * if it doesn't fit to the right.
+     *
+     * @param currentPositions flat [x0,y0,...] for the already-placed N-1 objects
+     * @param boxes flat [sX0,sY0,sZ0,...] sizes for ALL N objects (including the new one)
+     */
+    fun placeAdditionalObject(
+        currentPositions: FloatArray,
+        boxes: FloatArray,
+        bedSize: Float = 270f,
+        margin: Float = 5f,
+    ): FloatArray {
+        val objectCount = boxes.size / 3
+        if (objectCount <= 1) return currentPositions.copyOf().takeIf { it.size >= 2 }
+            ?: floatArrayOf(maxOf(0f, (bedSize - boxes[0]) / 2f), maxOf(0f, (bedSize - boxes[1]) / 2f))
+        val existingCount = currentPositions.size / 2
+        val newIdx = objectCount - 1
+        val newSizeX = boxes[newIdx * 3]
+        val newSizeY = boxes[newIdx * 3 + 1]
+
+        val result = FloatArray(objectCount * 2)
+        currentPositions.copyInto(result, 0, 0, minOf(currentPositions.size, existingCount * 2))
+
+        // Find rightmost X edge; use that object's Y for alignment
+        var maxRight = 0f
+        var alignY = margin
+        for (i in 0 until existingCount) {
+            val right = result[i * 2] + boxes[i * 3]
+            if (right > maxRight) { maxRight = right; alignY = result[i * 2 + 1] }
+        }
+
+        // Try to the right of all existing objects
+        val tryX = maxRight + margin
+        if (tryX + newSizeX <= bedSize) {
+            result[newIdx * 2] = tryX
+            result[newIdx * 2 + 1] = alignY
+            return result
+        }
+
+        // Doesn't fit to the right — place below all existing objects
+        var maxBottom = 0f
+        var leftX = margin
+        for (i in 0 until existingCount) {
+            val bottom = result[i * 2 + 1] + boxes[i * 3 + 1]
+            if (bottom > maxBottom) { maxBottom = bottom; leftX = result[i * 2] }
+        }
+        result[newIdx * 2] = leftX
+        result[newIdx * 2 + 1] = maxBottom + margin
+        return result
+    }
+
+    fun buildMultiObjectPositions(
+        boxes: FloatArray,
+        bedSize: Float = 270f,
+        margin: Float = 5f,
+    ): FloatArray {
+        val count = boxes.size / 3
+        if (count == 0) return floatArrayOf()
+        val positions = FloatArray(count * 2)
+        var curX = margin
+        var curY = margin
+        var rowMaxY = 0f
+        for (i in 0 until count) {
+            val sizeX = boxes[i * 3]
+            val sizeY = boxes[i * 3 + 1]
+            if (i > 0 && curX + sizeX > bedSize - margin) {
+                curX = margin
+                curY += rowMaxY + margin
+                rowMaxY = 0f
+            }
+            positions[i * 2] = curX
+            positions[i * 2 + 1] = curY
+            curX += sizeX + margin
+            if (sizeY > rowMaxY) rowMaxY = sizeY
+        }
+        return positions
     }
 }

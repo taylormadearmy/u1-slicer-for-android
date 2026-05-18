@@ -22,4 +22,54 @@ class PrinterRepositoryTest {
         assertTrue(name.endsWith("_99.gcode"))
         assertEquals("print_99.gcode", fallback)
     }
+
+    // --- F84: upload filename preserves model name (GitHub #138) ---
+
+    @Test
+    fun buildPrinterUploadFilename_preservesModelNameFromIssueExamples() {
+        val frog = PrinterRepository.buildPrinterUploadFilename("Jumping_frog.3mf", nowMillis = 1L)
+        val dragon = PrinterRepository.buildPrinterUploadFilename("Dragon Scale infinity.3mf", nowMillis = 2L)
+        val benchy = PrinterRepository.buildPrinterUploadFilename("3DBenchy.stl", nowMillis = 3L)
+
+        assertEquals("Jumping_frog_1.gcode", frog)
+        assertEquals("Dragon_Scale_infinity_2.gcode", dragon)
+        assertEquals("3DBenchy_3.gcode", benchy)
+    }
+
+    @Test
+    fun resolveUploadBaseName_prefersModelNameWhenPresent() {
+        val name = PrinterRepository.resolveUploadBaseName(
+            modelName = "Jumping_frog.3mf",
+            gcodeFileName = "output.gcode"
+        )
+        assertEquals("Jumping_frog.3mf", name)
+    }
+
+    @Test
+    fun resolveUploadBaseName_fallsBackToGcodeNameWhenModelNameBlank() {
+        assertEquals(
+            "output.gcode",
+            PrinterRepository.resolveUploadBaseName(modelName = null, gcodeFileName = "output.gcode")
+        )
+        assertEquals(
+            "output.gcode",
+            PrinterRepository.resolveUploadBaseName(modelName = "", gcodeFileName = "output.gcode")
+        )
+        assertEquals(
+            "output.gcode",
+            PrinterRepository.resolveUploadBaseName(modelName = "   ", gcodeFileName = "output.gcode")
+        )
+    }
+
+    @Test
+    fun resolveUploadBaseName_modelNameWithSpacesPassesThroughSanitizer() {
+        // Spaces are preserved at this helper layer; buildPrinterUploadFilename
+        // does the actual character sanitization. End-to-end:
+        val base = PrinterRepository.resolveUploadBaseName(
+            modelName = "Dragon Scale infinity.3mf",
+            gcodeFileName = "output.gcode"
+        )
+        val full = PrinterRepository.buildPrinterUploadFilename(base, nowMillis = 42L)
+        assertEquals("Dragon_Scale_infinity_42.gcode", full)
+    }
 }

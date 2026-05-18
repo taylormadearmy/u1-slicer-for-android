@@ -409,4 +409,74 @@ std::vector<float> SlicerEngine::getInstanceWorldZMins() const {
     return result;
 }
 
+std::vector<float> SlicerEngine::getObjectBoundingBoxes() const {
+    std::vector<float> result;
+    if (!isModelLoaded()) return result;
+    const Slic3r::Model& model = getGlobalModel();
+    for (const auto* obj : model.objects) {
+        if (obj->instances.empty()) {
+            result.push_back(0); result.push_back(0); result.push_back(0);
+            continue;
+        }
+        const Slic3r::Transform3d inst_no_offset =
+            obj->instances[0]->get_transformation().get_matrix_no_offset();
+        Slic3r::BoundingBoxf3 bb;
+        for (const auto* v : obj->volumes) {
+            if (v->is_model_part()) {
+                bb.merge(v->mesh().transformed_bounding_box(inst_no_offset * v->get_matrix()));
+            }
+        }
+        if (bb.defined) {
+            result.push_back(static_cast<float>(bb.max.x() - bb.min.x()));
+            result.push_back(static_cast<float>(bb.max.y() - bb.min.y()));
+            result.push_back(static_cast<float>(bb.max.z() - bb.min.z()));
+        } else {
+            result.push_back(0); result.push_back(0); result.push_back(0);
+        }
+    }
+    return result;
+}
+
+bool SlicerEngine::setObjectPositions(const std::vector<std::pair<float, float>>& positions) {
+    if (!isModelLoaded()) {
+        SAPIL_LOGE("setObjectPositions: no model loaded");
+        return false;
+    }
+    Slic3r::Model& model = getGlobalModel();
+    if (positions.size() != model.objects.size()) {
+        SAPIL_LOGE("setObjectPositions: positions count %d != object count %d",
+            (int)positions.size(), (int)model.objects.size());
+        return false;
+    }
+    for (size_t i = 0; i < model.objects.size(); ++i) {
+        auto* obj = model.objects[i];
+        if (obj->instances.empty()) continue;
+        const Slic3r::Transform3d inst_no_offset =
+            obj->instances[0]->get_transformation().get_matrix_no_offset();
+        Slic3r::BoundingBoxf3 effectiveBB;
+        for (const auto* v : obj->volumes) {
+            if (v->is_model_part()) {
+                effectiveBB.merge(
+                    v->mesh().transformed_bounding_box(inst_no_offset * v->get_matrix()));
+            }
+        }
+        if (!effectiveBB.defined) continue;
+        obj->instances[0]->set_offset(Slic3r::Vec3d(
+            static_cast<double>(positions[i].first)  - effectiveBB.min.x(),
+            static_cast<double>(positions[i].second) - effectiveBB.min.y(),
+            -effectiveBB.min.z()
+        ));
+        // ModelInstance::set_offset() does not invalidate the parent ModelObject's
+        // bounding-box cache (m_bounding_box_exact_valid). Without this, the auto-center
+        // guard in slice() calls bounding_box_exact() and gets a stale value from before
+        // the first setObjectPositions call (e.g. the benchy's default offset=0 after
+        // loadModel), thinks the model is off-bed, and applies a spurious auto-center
+        // delta that corrupts all object positions.
+        obj->invalidate_bounding_box();
+    }
+    invalidatePreviewMeshCache();
+    SAPIL_LOGI("setObjectPositions: positioned %d objects", (int)positions.size());
+    return true;
+}
+
 } // namespace sapil

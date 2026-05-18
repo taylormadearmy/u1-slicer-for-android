@@ -194,6 +194,32 @@ public:
     // on the bed after setModelScale.
     std::vector<float> getInstanceWorldZMins() const;
 
+    // Append objects from an additional file into the already-loaded g_model.
+    // The primary file's embedded config (g_model_config) is preserved unchanged.
+    // Caller must call setObjectPositions() afterwards to lay out all objects.
+    // Returns false if no primary model is loaded or the file fails to parse.
+    bool addModel(const std::string& filepath);
+
+    /**
+     * Append objects from a specific plate of a 3MF file into the already-loaded g_model.
+     *
+     * @param plate_id 0 = load all plates (same as addModel(path));
+     *                 >0 = 1-based plate_id — only objects from that plate are appended.
+     * Used by F85 to add a user-selected plate from a multi-plate 3MF without replacing
+     * the primary model.
+     */
+    bool addModel(const std::string& filepath, int plate_id);
+
+    // Returns flat [sizeX0, sizeY0, sizeZ0, sizeX1, sizeY1, sizeZ1, ...] for each
+    // object in g_model, computed from instance[0]'s scale+rotation without
+    // translation offset. Empty if no model is loaded.
+    std::vector<float> getObjectBoundingBoxes() const;
+
+    // Set XY bed-space lower-left position for each object independently.
+    // positions[i*2], positions[i*2+1] is the lower-left corner for g_model.objects[i].
+    // positions.size() / 2 must equal g_model.objects.size().
+    bool setObjectPositions(const std::vector<std::pair<float, float>>& positions);
+
 private:
     struct Impl;
     Impl* pImpl;

@@ -74,6 +74,22 @@ class NativeLibrary {
     // ---- G-code ----
     external fun getGcodePreview(maxLines: Int = 100): String
 
+    // ---- Additive model loading ----
+    // Append objects from an additional file into the already-loaded model.
+    // Primary file's embedded config is preserved. Call setObjectPositions() after.
+    external fun addModel(path: String): Boolean
+
+    // F85: append objects from a specific plate of a 3MF. plateIdx is 0-based;
+    // -1 means all plates (same as addModel). Primary config is preserved.
+    external fun addModelForPlate(path: String, plateIdx: Int): Boolean
+
+    // Returns flat [sizeX0, sizeY0, sizeZ0, sizeX1, ...] per object (no offset applied).
+    external fun getObjectBoundingBoxes(): FloatArray
+
+    // Set per-object XY lower-left positions: [x0, y0, x1, y1, ...], one pair per object.
+    // positions.size / 2 must equal object count.
+    external fun setObjectPositions(positions: FloatArray): Boolean
+
     // ---- Multiple copies ----
     // positions: flat array [x0, y0, x1, y1, ...] in mm (bed-space)
     external fun setModelInstances(positions: FloatArray): Boolean

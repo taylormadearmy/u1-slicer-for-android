@@ -263,6 +263,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _canonicalFilamentList.value = null
         canonicalCacheSourcePath = null
         _filamentOverrides.value = emptyMap()
+        _objectBoundingBoxes.value = floatArrayOf()
+        hasMultipleDistinctObjects = false
+        customObjectPositions = null
+        _multiObjectPositions.value = null
+        additionalModelFiles.clear()
     }
 
     /**
@@ -321,6 +326,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _showPlateSelector = MutableStateFlow(false)
     val showPlateSelector: StateFlow<Boolean> = _showPlateSelector.asStateFlow()
+
+    // F85: pending "Add to bed" plate selection — set when a multi-plate 3MF is picked
+    // via addModelFile; cleared when user picks a plate (confirmAddPlate) or dismisses.
+    data class PendingAddFile(val copiedFile: java.io.File, val displayName: String, val plates: List<ThreeMfPlate>)
+    private val _pendingAddFile = MutableStateFlow<PendingAddFile?>(null)
+    val pendingAddFile: StateFlow<PendingAddFile?> = _pendingAddFile.asStateFlow()
 
     // Multi-color state — dialog only shown when user explicitly requests reassignment
     private val _showMultiColorDialog = MutableStateFlow(false)
@@ -442,6 +453,30 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private var customObjectPositions: FloatArray? = null
     // Custom wipe tower position (null = use config defaults)
     private var customWipeTowerPos: Pair<Float, Float>? = null
+
+    // Per-object bounding boxes: flat [sizeX0,sizeY0,sizeZ0, sizeX1,...] populated from
+    // native.getObjectBoundingBoxes() after each load or addModelFile call.
+    private val _objectBoundingBoxes = MutableStateFlow<FloatArray>(floatArrayOf())
+    val objectBoundingBoxes: StateFlow<FloatArray> = _objectBoundingBoxes.asStateFlow()
+    // True when multiple distinct objects from different files are on the bed.
+    // Switches placement to setObjectPositions instead of setModelInstances at slice time.
+    private var hasMultipleDistinctObjects = false
+
+    // Current multi-object positions [x0,y0,x1,y1,...] as a StateFlow so InlineModelPreview
+    // can pass them into the rotation LaunchedEffect for setObjectPositions re-application.
+    private val _multiObjectPositions = MutableStateFlow<FloatArray?>(null)
+    val multiObjectPositions: StateFlow<FloatArray?> = _multiObjectPositions.asStateFlow()
+
+    // Incremented each time a model is added via addModelFile / addModelFromFile, or when
+    // multi-object positions change via applyPlacementPositions.  Used as a LaunchedEffect
+    // key in InlineModelPreview so the prepare preview mesh re-fetches after an add or drag.
+    private val _modelAddVersion = MutableStateFlow(0)
+    val modelAddVersion: StateFlow<Int> = _modelAddVersion.asStateFlow()
+
+    // Files added via "Add to bed", paired with their plateIdx (-1 = all plates).
+    // Re-used after a 3MF re-embed reload; plateIdx preserved so plate-selected adds
+    // reload the same plate instead of all plates.
+    private val additionalModelFiles = mutableListOf<Pair<File, Int>>()
 
     // Tool remap: maps compact T-index (0,1,…) → actual printer slot index (e.g. 2,3 for E3+E4).
     // Null / identity mapping → no post-processing needed.
@@ -1563,6 +1598,179 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Add a file to the currently loaded model, placing both objects independently on the bed.
+     * Requires a model to already be loaded. The primary file's embedded config is preserved.
+     */
+    fun addModelFile(uri: Uri) {
+        if (!NativeLibrary.isLoaded) {
+            _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
+            return
+        }
+        if (lastModelInfo == null) {
+            _state.value = SlicerState.Error("Load a model first before adding files to the bed")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val context = getApplication<Application>()
+                val displayName = normalizeIncomingFilename(getDisplayName(context, uri) ?: "model.stl")
+                _state.value = SlicerState.Loading("Adding $displayName…")
+
+                val workspaceDir = transientWorkspaceDir()
+                val copiedFile = File(workspaceDir, "added_${System.currentTimeMillis()}_$displayName")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    copiedFile.outputStream().use { output -> input.copyTo(output) }
+                } ?: run {
+                    _state.value = SlicerState.Error("Could not read $displayName")
+                    return@launch
+                }
+
+                // F85: multi-plate 3MF — show plate selector before adding.
+                if (displayName.endsWith(".3mf", ignoreCase = true)) {
+                    val info3mf = runCatching { ThreeMfParser.parse(copiedFile) }.getOrNull()
+                    if (info3mf != null && info3mf.plates.size > 1) {
+                        _pendingAddFile.value = PendingAddFile(copiedFile, displayName, info3mf.plates)
+                        withContext(Dispatchers.Main) {
+                            val info = lastModelInfo
+                            if (info != null) _state.value = SlicerState.ModelLoaded(info)
+                        }
+                        return@launch  // confirmAddPlate() continues from here
+                    }
+                }
+
+                doAddFile(copiedFile, displayName, plateIdx = -1)
+            } catch (e: Exception) {
+                Log.e("SlicerVM", "addModelFile failed", e)
+                _state.value = SlicerState.Error("Failed to add file: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    fun addModelFromFile(file: File) {
+        if (!NativeLibrary.isLoaded) {
+            _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
+            return
+        }
+        if (lastModelInfo == null) {
+            _state.value = SlicerState.Error("Load a model first before adding files to the bed")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val displayName = normalizeIncomingFilename(file.name)
+                _state.value = SlicerState.Loading("Adding $displayName…")
+                doAddFile(file, displayName, plateIdx = -1)
+            } catch (e: Exception) {
+                Log.e("SlicerVM", "addModelFromFile failed", e)
+                _state.value = SlicerState.Error("Failed to add file: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    /** Debug/test: add a specific plate of a 3MF without going through the plate-selector UI. */
+    fun addModelFromFileForPlate(file: File, plateIdx: Int) {
+        if (!NativeLibrary.isLoaded) {
+            _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
+            return
+        }
+        if (lastModelInfo == null) {
+            _state.value = SlicerState.Error("Load a model first before adding files to the bed")
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val displayName = normalizeIncomingFilename(file.name)
+                _state.value = SlicerState.Loading("Adding $displayName (plate ${plateIdx + 1})…")
+                doAddFile(file, displayName, plateIdx = plateIdx)
+            } catch (e: Exception) {
+                Log.e("SlicerVM", "addModelFromFileForPlate failed", e)
+                _state.value = SlicerState.Error("Failed to add file: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    /**
+     * F85: called when the user confirms a plate from the add-plate selector dialog.
+     * plateId is 1-based (from ThreeMfPlate.plateId); converted to 0-based plateIdx for JNI.
+     */
+    fun confirmAddPlate(plateId: Int) {
+        val pending = _pendingAddFile.value ?: return
+        _pendingAddFile.value = null
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _state.value = SlicerState.Loading("Adding ${pending.displayName}…")
+                doAddFile(pending.copiedFile, pending.displayName, plateIdx = plateId - 1)
+            } catch (e: Exception) {
+                Log.e("SlicerVM", "confirmAddPlate failed", e)
+                _state.value = SlicerState.Error("Failed to add file: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    /** F85: dismiss the add-plate selector without adding anything. */
+    fun cancelPendingAdd() {
+        _pendingAddFile.value?.copiedFile?.delete()
+        _pendingAddFile.value = null
+    }
+
+    /**
+     * Shared implementation for addModelFile / addModelFromFile / confirmAddPlate.
+     * Must be called from an IO coroutine. plateIdx = -1 means all plates (addModel);
+     * plateIdx >= 0 means that specific plate (addModelForPlate).
+     */
+    private suspend fun doAddFile(file: File, displayName: String, plateIdx: Int) {
+        val existingPos = if (hasMultipleDistinctObjects) {
+            customObjectPositions?.copyOf()
+        } else {
+            getPlacementPositions().let { p -> if (p.size >= 2) floatArrayOf(p[0], p[1]) else null }
+        }
+        var addOk = false
+        NativeLibrary.previewMutex.withLock {
+            val ok = if (plateIdx >= 0) native.addModelForPlate(file.absolutePath, plateIdx)
+                     else native.addModel(file.absolutePath)
+            if (!ok) {
+                _state.value = SlicerState.Error("Failed to add $displayName to the bed")
+                return@withLock
+            }
+
+            addOk = true
+            additionalModelFiles.add(file to plateIdx)
+            hasMultipleDistinctObjects = true
+            val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
+            _objectBoundingBoxes.value = boxes
+
+            val positions = if (existingPos != null) {
+                com.u1.slicer.model.CopyArrangeCalculator.placeAdditionalObject(existingPos, boxes)
+            } else {
+                com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+            }
+            native.setObjectPositions(positions)
+            customObjectPositions = positions
+
+            invalidatePrepareMeshCache()
+            _sliceStale.value = true
+            _nativeSliceStateDirty.value = true
+        }
+
+        if (!addOk) return
+        val publishPositions = customObjectPositions
+        if (publishPositions != null) _multiObjectPositions.value = publishPositions
+        _modelAddVersion.value++
+        val objectCount = _objectBoundingBoxes.value.size / 3
+        Log.i("SlicerVM", "Added $displayName (plateIdx=$plateIdx) — $objectCount objects on bed")
+        diagnostics.recordEvent("add_model_to_bed", mapOf(
+            "filename" to displayName,
+            "plateIdx" to plateIdx,
+            "objectCount" to objectCount,
+        ))
+        withContext(Dispatchers.Main) {
+            currentModelName = "${_modelFileName.value} + $displayName"
+            val info = lastModelInfo
+            if (info != null) _state.value = SlicerState.ModelLoaded(info)
+        }
+    }
+
     fun loadModelFromFile(file: File) {
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
@@ -1946,6 +2154,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             if (info != null) {
                 lastModelInfo = info
                 _modelInfo.value = info
+                _objectBoundingBoxes.value = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
                 if (!preserveTransforms) {
                     _modelScale.value = ModelScale()  // reset to 1× on each new load
                     _modelRotation.value = ModelRotation()
@@ -2307,6 +2516,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             wipeTowerY = wipeTowerPos.second
         )
         Log.i("SlicerVM", "Custom placement applied: ${positions.size / 2} objects, tower=(${wipeTowerPos.first},${wipeTowerPos.second})")
+        // In multi-object mode the preview mesh is world-positioned, so keep native offsets
+        // in sync with the drag. Bump modelAddVersion so InlineModelPreview's rotation
+        // LaunchedEffect re-fetches the mesh at the new world positions.
+        if (hasMultipleDistinctObjects) {
+            _multiObjectPositions.value = positions
+            viewModelScope.launch(Dispatchers.IO) {
+                NativeLibrary.previewMutex.withLock {
+                    native.setObjectPositions(positions)
+                }
+                invalidatePrepareMeshCache()
+                _modelAddVersion.value++
+            }
+        }
     }
 
     /** Returns initial positions for inline 3D placement (custom or auto-calculated).
@@ -3061,6 +3283,31 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             lastModelInfo = reloadedInfo
                         }
                         profileNeedsReEmbed = false
+
+                        // Re-add any extra files that were on the bed before the embed reload
+                        // cleared the native model. Without this, Combo 1/3 (3MF primary with
+                        // extruderCount > 1) would fail at setObjectPositions with a count mismatch.
+                        if (hasMultipleDistinctObjects && additionalModelFiles.isNotEmpty()) {
+                            var allReAddOk = true
+                            NativeLibrary.previewMutex.withLock {
+                                for ((f, pIdx) in additionalModelFiles) {
+                                    val reAddOk = if (pIdx >= 0) native.addModelForPlate(f.absolutePath, pIdx)
+                                                  else native.addModel(f.absolutePath)
+                                    if (!reAddOk) {
+                                        Log.w("SlicerVM", "Re-add after embed failed for ${f.name}")
+                                        allReAddOk = false
+                                    }
+                                }
+                            }
+                            val reAddObjectCount = NativeLibrary.previewMutex.withLock { native.nativeGetObjectCount() }
+                            Log.i("SlicerVM", "Re-added ${additionalModelFiles.size} extra file(s) after 3MF re-embed")
+                            diagnostics.recordEvent("re_add_after_embed", mapOf(
+                                "fileCount" to additionalModelFiles.size,
+                                "files" to additionalModelFiles.map { (f, pIdx) -> "${f.name}:plate$pIdx" },
+                                "objectCountAfter" to reAddObjectCount,
+                                "allOk" to allReAddOk,
+                            ))
+                        }
                     }
                 }
 
@@ -3106,7 +3353,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
 
-                if (custom != null) {
+                if (custom != null && hasMultipleDistinctObjects) {
+                    val ok = native.setObjectPositions(custom)
+                    Log.i("SlicerVM", "Multi-object placement: ${custom.size / 2} objects (ok=$ok)")
+                    diagnostics.recordEvent(
+                        "set_model_instances_for_slice",
+                        mapOf("success" to ok, "mode" to "multi_object", "objectCount" to (custom.size / 2))
+                    )
+                } else if (custom != null) {
                     val ok = native.setModelInstances(custom)
                     Log.i("SlicerVM", "Using custom placement: ${custom.size / 2} instances (ok=$ok)")
                     diagnostics.recordEvent(

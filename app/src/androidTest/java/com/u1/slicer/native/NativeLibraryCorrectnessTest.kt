@@ -424,4 +424,68 @@ class NativeLibraryCorrectnessTest {
             fixture.delete()
         }
     }
+
+    /**
+     * F85 re-add regression: addModelForPlate(file, plateIdx) followed by a
+     * simulate-re-embed (clear + reload primary + re-add with same plateIdx) must
+     * give the same native object count as the initial plate-selected add.
+     *
+     * The old re-add code always called addModel(all plates), which loads every
+     * plate's objects. For a multi-plate 3MF this gives a higher object count than
+     * addModelForPlate(plate0), causing setObjectPositions to fail silently (count
+     * mismatch) and produce a G-code footprint that did not overlap the expected
+     * model footprint — the error the user saw on NF22E1.
+     *
+     * Dragon Scale infinity.3mf has 3 plates; plate 0 adds fewer objects than all
+     * plates combined, so the mismatch is unambiguous.
+     */
+    @Test
+    fun addModelForPlate_readdWithSamePlate_givesConsistentObjectCount() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+
+        val primary = File(targetContext.cacheDir, "f85_primary.stl")
+        assetContext.assets.open("3DBenchy.stl").use { it.copyTo(primary.outputStream()) }
+
+        val multiPlate = File(targetContext.cacheDir, "f85_multiplate.3mf")
+        assetContext.assets.open("Dragon Scale infinity.3mf").use { it.copyTo(multiPlate.outputStream()) }
+
+        try {
+            // Step 1: load primary + add plate 0 of multi-plate file.
+            assertTrue("loadModel primary", lib.loadModel(primary.absolutePath))
+            val primaryCount = lib.nativeGetObjectCount()
+            assertTrue("addModelForPlate(plateIdx=0) must succeed", lib.addModelForPlate(multiPlate.absolutePath, 0))
+            val countAfterPlate0Add = lib.nativeGetObjectCount()
+            assertTrue("plate 0 must contribute at least 1 object", countAfterPlate0Add > primaryCount)
+
+            // Step 2: simulate re-embed — clear + reload primary + re-add with same plateIdx.
+            lib.clearModel()
+            assertTrue(lib.loadModel(primary.absolutePath))
+            assertTrue(lib.addModelForPlate(multiPlate.absolutePath, 0))
+            val countAfterReAdd = lib.nativeGetObjectCount()
+
+            assertEquals(
+                "Re-add with same plateIdx=0 must yield same object count as initial add " +
+                    "(got $countAfterReAdd, expected $countAfterPlate0Add). " +
+                    "A mismatch means setObjectPositions would fail and G-code footprint check triggers.",
+                countAfterPlate0Add, countAfterReAdd
+            )
+
+            // Step 3: verify addModel(all plates) gives a DIFFERENT count — proving the old bug.
+            lib.clearModel()
+            assertTrue(lib.loadModel(primary.absolutePath))
+            assertTrue(lib.addModel(multiPlate.absolutePath))
+            val countAllPlates = lib.nativeGetObjectCount()
+
+            assertTrue(
+                "Dragon Scale infinity.3mf must be multi-plate: all-plates load " +
+                    "($countAllPlates objects) must add more than single-plate load " +
+                    "($countAfterPlate0Add objects), confirming the old re-add bug was real.",
+                countAllPlates > countAfterPlate0Add
+            )
+        } finally {
+            primary.delete()
+            multiPlate.delete()
+        }
+    }
 }

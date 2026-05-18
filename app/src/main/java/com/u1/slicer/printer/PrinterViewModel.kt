@@ -263,7 +263,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
      * confirm the source is already in physical-slot space) before
      * reaching this function. The compiler enforces it.
      */
-    fun sendAndPrint(physical: com.u1.slicer.gcode.PhysicalGcodePath) {
+    fun sendAndPrint(physical: com.u1.slicer.gcode.PhysicalGcodePath, modelName: String? = null) {
         _sendingState.value = SendingState.Uploading
         viewModelScope.launch(Dispatchers.IO) {
             val file = physical.toFile()
@@ -271,7 +271,9 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 _sendingState.value = SendingState.Error("G-code file not found")
                 return@launch
             }
-            val filename = file.name
+            // F84: prefer the original model name over the on-disk gcode name
+            // so the printer's file browser shows distinct, recognisable jobs.
+            val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
             val ok = printerRepo.uploadAndPrint(file, filename)
             _sendingState.value = if (ok) {
                 SendingState.PrintStarted
@@ -285,7 +287,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
      * Phase 2 B.1 (2026-04-28) — accepts only [com.u1.slicer.gcode.PhysicalGcodePath].
      * See [sendAndPrint] for the type-safety rationale.
      */
-    fun sendUploadOnly(physical: com.u1.slicer.gcode.PhysicalGcodePath) {
+    fun sendUploadOnly(physical: com.u1.slicer.gcode.PhysicalGcodePath, modelName: String? = null) {
         _sendingState.value = SendingState.Uploading
         viewModelScope.launch(Dispatchers.IO) {
             val file = physical.toFile()
@@ -293,12 +295,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 _sendingState.value = SendingState.Error("G-code file not found")
                 return@launch
             }
-            val ok = printerRepo.uploadOnly(file, file.name)
+            val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
+            val ok = printerRepo.uploadOnly(file, filename)
             _sendingState.value = if (ok) SendingState.UploadComplete else SendingState.Error("Upload failed")
             if (ok) {
                 com.u1.slicer.AppEventNotifier.notify(
                     getApplication(),
-                    com.u1.slicer.AppEventNotifier.Event.UploadComplete(file.name)
+                    com.u1.slicer.AppEventNotifier.Event.UploadComplete(filename)
                 )
             }
         }

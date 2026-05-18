@@ -96,6 +96,8 @@ class TestCommandReceiver(
         const val ACTION_DUMP_EMBEDDED_CONFIG = "${PREFIX}DUMP_EMBEDDED_CONFIG"
         const val ACTION_IMPORT_BACKUP = "${PREFIX}IMPORT_BACKUP"
         const val ACTION_EXPORT_GCODE = "${PREFIX}EXPORT_GCODE"
+        const val ACTION_ADD_FILE = "${PREFIX}ADD_FILE"
+        const val ACTION_ADD_FILE_FOR_PLATE = "${PREFIX}ADD_FILE_FOR_PLATE"
 
         fun intentFilter(): IntentFilter = IntentFilter().apply {
             addAction(ACTION_LOAD_FILE)
@@ -110,6 +112,8 @@ class TestCommandReceiver(
             addAction(ACTION_DUMP_EMBEDDED_CONFIG)
             addAction(ACTION_IMPORT_BACKUP)
             addAction(ACTION_EXPORT_GCODE)
+            addAction(ACTION_ADD_FILE)
+            addAction(ACTION_ADD_FILE_FOR_PLATE)
         }
     }
 
@@ -138,6 +142,8 @@ class TestCommandReceiver(
             ACTION_DUMP_EMBEDDED_CONFIG -> handleDumpEmbeddedConfig(context)
             ACTION_IMPORT_BACKUP -> handleImportBackup(context, intent)
             ACTION_EXPORT_GCODE -> handleExportGcode()
+            ACTION_ADD_FILE -> handleAddFile(context, intent)
+            ACTION_ADD_FILE_FOR_PLATE -> handleAddFileForPlate(context, intent)
             else -> Log.w(TAG, "Unknown action: $action")
         }
     }
@@ -349,6 +355,61 @@ class TestCommandReceiver(
             Log.e(TAG, "Error reading embedded 3MF: ${e.message}")
         }
         Log.i(TAG, "=== END DUMP_EMBEDDED_CONFIG ===")
+    }
+
+    private fun handleAddFile(context: Context, intent: Intent) {
+        val path = intent.getStringExtra("path")
+        if (path.isNullOrBlank()) {
+            Log.e(TAG, "ADD_FILE: missing --es path")
+            return
+        }
+
+        val file = if (File(path).isAbsolute) {
+            val absFile = File(path)
+            if (absFile.canRead()) absFile
+            else {
+                val relFile = File(context.filesDir, path)
+                if (relFile.canRead()) relFile else null
+            }
+        } else {
+            File(context.filesDir, path)
+        }
+
+        if (file == null || !file.exists()) {
+            Log.e(TAG, "ADD_FILE: cannot read file at '$path'")
+            return
+        }
+
+        Log.i(TAG, "ADD_FILE: adding ${file.absolutePath} (${file.length() / 1024}KB)")
+        mainHandler.post { slicerViewModel.addModelFromFile(file) }
+    }
+
+    private fun handleAddFileForPlate(context: Context, intent: Intent) {
+        val path = intent.getStringExtra("path")
+        if (path.isNullOrBlank()) {
+            Log.e(TAG, "ADD_FILE_FOR_PLATE: missing --es path")
+            return
+        }
+        val plateIdx = intent.getIntExtra("plate", -1)
+
+        val file = if (File(path).isAbsolute) {
+            val absFile = File(path)
+            if (absFile.canRead()) absFile
+            else {
+                val relFile = File(context.filesDir, path)
+                if (relFile.canRead()) relFile else null
+            }
+        } else {
+            File(context.filesDir, path)
+        }
+
+        if (file == null || !file.exists()) {
+            Log.e(TAG, "ADD_FILE_FOR_PLATE: cannot read file at '$path'")
+            return
+        }
+
+        Log.i(TAG, "ADD_FILE_FOR_PLATE: adding ${file.absolutePath} (${file.length() / 1024}KB), plateIdx=$plateIdx")
+        mainHandler.post { slicerViewModel.addModelFromFileForPlate(file, plateIdx) }
     }
 
     private fun handleImportBackup(context: Context, intent: Intent) {

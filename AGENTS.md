@@ -11,15 +11,22 @@
 
 **Test:**
 ```bash
-./gradlew testDebugUnitTest                 # 1018 JVM unit tests
-./gradlew connectedDebugAndroidTest         # 288 instrumented tests
+./gradlew testDebugUnitTest                 # 1190 JVM unit tests
+./gradlew connectedDebugAndroidTest         # 304 instrumented tests
 ```
 
-**Target device:** See `AGENTS.local.md` for local device IDs and adb targets.
+**Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs and adb targets.
 **Public-safe rule:** never deploy automated tests to personal or non-phone devices.
 
 **App ID:** `com.u1.slicer.orca`
-**Current release:** `v2.0.1` (`versionCode 261`)
+**Current release:** `v2.2.6` (`versionCode 279`)
+
+**SDK / Gradle / AVD locations:** the user has moved these to `D:` to keep `C:` free.
+The persistent user env vars `ANDROID_HOME=D:\Android\Sdk`,
+`ANDROID_AVD_HOME=D:\Android\avd`, `GRADLE_USER_HOME=D:\.gradle` are set in the
+Windows registry — every fresh shell + Studio launch picks them up automatically.
+`local.properties` also points at `D:\Android\Sdk`. No need to override anything
+in build commands.
 
 ## Backlog
 
