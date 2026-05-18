@@ -509,10 +509,11 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         for (i in (0 until count).reversed()) {
             val ox = positions[i * 2]
             val oy = positions[i * 2 + 1]
-            // perObjectSizes are load-time (pre-scale); multiply by modelScale so the
-            // hit zone matches the rendered footprint, same as the non-per-object path.
-            val sizeX = if (usePerObject) perSizes!![i * 3] * s[0] else mesh.sizeX * s[0]
-            val sizeY = if (usePerObject) perSizes!![i * 3 + 1] * s[1] else mesh.sizeY * s[1]
+            // perObjectSizes come from native getObjectBoundingBoxes() which includes instance
+            // scale — already reflects user scale, so use directly. Single-object path uses
+            // unscaled mesh.sizeX/Y and must multiply by modelScale.
+            val sizeX = if (usePerObject) perSizes!![i * 3] else mesh.sizeX * s[0]
+            val sizeY = if (usePerObject) perSizes!![i * 3 + 1] else mesh.sizeY * s[1]
             if (bx >= ox && bx <= ox + sizeX && by >= oy && by <= oy + sizeY) return i
         }
 

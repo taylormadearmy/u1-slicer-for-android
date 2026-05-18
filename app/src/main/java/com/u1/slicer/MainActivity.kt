@@ -3216,10 +3216,12 @@ fun InlineModelPreview(
                     // otherwise fall back to the single-model rotated+scaled footprint (B109).
                     val i = index
                     val hasPerObj = perObjectSizes.size / 3 == count
-                    // perObjectSizes are load-time (pre-scale) native bounding boxes; multiply
-                    // by modelScale to match the size the renderer draws at.
-                    val sizeX = if (hasPerObj) perObjectSizes[i * 3] * modelScale.x else effPlaceSizeX
-                    val sizeY = if (hasPerObj) perObjectSizes[i * 3 + 1] * modelScale.y else effPlaceSizeY
+                    // perObjectSizes come from native getObjectBoundingBoxes() which uses
+                    // get_matrix_no_offset() — includes instance scale — so they already
+                    // reflect the user's chosen scale. Use them directly; do NOT multiply
+                    // by modelScale again (double-apply).
+                    val sizeX = if (hasPerObj) perObjectSizes[i * 3] else effPlaceSizeX
+                    val sizeY = if (hasPerObj) perObjectSizes[i * 3 + 1] else effPlaceSizeY
                     objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - sizeX))
                     objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - sizeY))
                     v.renderer.instancePositions = objPositions.copyOf()

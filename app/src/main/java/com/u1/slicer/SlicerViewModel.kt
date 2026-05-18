@@ -1923,6 +1923,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         selectPlateJob?.cancel()
         slicingJob?.cancel()
         _showPlateSelector.value = false
+        cancelPendingAdd()
         // Always extract from the full processed multi-plate file so that switching plates
         // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
         // _multiPlateSourceFile is set once on load and never overwritten (B83 fix).
