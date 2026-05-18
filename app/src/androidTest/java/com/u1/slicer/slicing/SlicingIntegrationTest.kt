@@ -510,6 +510,48 @@ class SlicingIntegrationTest {
         )
     }
 
+    /**
+     * F77: load two STLs onto the same bed, place them at explicit non-overlapping
+     * positions, slice, and verify every G-code move stays within the 270×270mm bed.
+     *
+     * This is the end-to-end regression for the addModel() → setObjectPositions() →
+     * slice() pipeline introduced by F77. The bounding-box invalidation fix in
+     * sapil_arrange.cpp (obj->invalidate_bounding_box() after setObjectPositions) is
+     * the root-cause guard: without it, OrcaSlicer's auto-center reads a stale bbox
+     * and applies a spurious shift that pushes objects outside the bed.
+     */
+    @Test
+    fun f77_twoStls_placeAndSlice_gcodeWithinBedBounds() {
+        val tet = asset("tetrahedron.stl")
+        assertTrue("First STL must load", lib.loadModel(tet.absolutePath))
+        // addModel accepts the same path — produces a second independent object
+        assertTrue("Second STL must add via addModel", lib.addModel(tet.absolutePath))
+        assertEquals("Both STLs must appear as separate objects", 2, lib.nativeGetObjectCount())
+
+        // Place explicitly: both tetrahedra are small (~20mm), set well within the bed.
+        // Object 0 at lower-left (10, 10), Object 1 at (60, 10) — 50mm gap.
+        assertTrue(
+            "setObjectPositions must succeed for 2-object bed",
+            lib.setObjectPositions(floatArrayOf(10f, 10f, 60f, 10f))
+        )
+
+        val result = lib.slice(DEFAULT_CONFIG)
+        assertNotNull("Slice must return a result", result)
+        assertTrue(
+            "Slice must succeed for two-STL bed, got: ${result!!.errorMessage}",
+            result.success
+        )
+
+        val gcode = File(result.gcodePath).readText()
+        val bounds = GcodeValidator.checkBedBounds(gcode)
+        assertTrue(
+            "All G-code X/Y moves must stay within the 270×270mm bed. " +
+                "X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}. " +
+                "Violations: ${bounds.violatingLines.take(3)}",
+            bounds.withinBounds
+        )
+    }
+
     // ─── resolveInto / SlicingOverrides integration ───────────────────────────
 
     /**

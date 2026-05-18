@@ -539,4 +539,135 @@ class NativeLibraryCorrectnessTest {
             multiPlate.delete()
         }
     }
+
+    // ─── F77: multi-file add-to-bed ───────────────────────────────────────────
+
+    /**
+     * F77: addModel() with a second STL must increase the object count to 2 and
+     * return a bounding-box array with one entry per object (6 floats total).
+     * All per-object dimensions must be positive — no zero-size ghost objects.
+     */
+    @Test
+    fun f77_addModel_twoStls_objectCountAndBoundingBoxesCorrect() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+
+        val tet1 = File(targetContext.cacheDir, "f77_tet1.stl")
+        val tet2 = File(targetContext.cacheDir, "f77_tet2.stl")
+        assetContext.assets.open("tetrahedron.stl").use { it.copyTo(tet1.outputStream()) }
+        assetContext.assets.open("tetrahedron.stl").use { it.copyTo(tet2.outputStream()) }
+
+        try {
+            assertTrue("First STL must load", lib.loadModel(tet1.absolutePath))
+            assertEquals("After first load: 1 object", 1, lib.nativeGetObjectCount())
+
+            assertTrue("addModel must succeed for second STL", lib.addModel(tet2.absolutePath))
+            assertEquals("After addModel: 2 objects on bed", 2, lib.nativeGetObjectCount())
+
+            val boxes = lib.getObjectBoundingBoxes()
+            assertEquals("getObjectBoundingBoxes must return 6 floats for 2 objects", 6, boxes.size)
+            for (i in boxes.indices) {
+                assertTrue("boxes[$i] must be > 0 (no zero-size objects), got ${boxes[i]}", boxes[i] > 0f)
+            }
+            // Both are the same geometry — X/Y/Z sizes must agree within 0.5 mm
+            assertEquals("Both copies share geometry — X sizes must match", boxes[0], boxes[3], 0.5f)
+            assertEquals("Both copies share geometry — Y sizes must match", boxes[1], boxes[4], 0.5f)
+            assertEquals("Both copies share geometry — Z sizes must match", boxes[2], boxes[5], 0.5f)
+        } finally {
+            tet1.delete()
+            tet2.delete()
+        }
+    }
+
+    /**
+     * F77 / bbox-invalidation: setModelScale() must cause getObjectBoundingBoxes() to
+     * return sizes that reflect the new scale on all objects.
+     *
+     * Regression for the sapil_arrange.cpp fix that adds obj->invalidate_bounding_box()
+     * after setModelScale(). Without that call the OrcaSlicer bbox cache is not cleared
+     * and getObjectBoundingBoxes() still returns pre-scale sizes, causing the placement
+     * clamp and wipe-tower collision avoidance to work with wrong dimensions.
+     */
+    @Test
+    fun f77_setModelScale_afterAddModel_boundingBoxesReflectNewScale() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+
+        val tet1 = File(targetContext.cacheDir, "f77_scale_tet1.stl")
+        val tet2 = File(targetContext.cacheDir, "f77_scale_tet2.stl")
+        assetContext.assets.open("tetrahedron.stl").use { it.copyTo(tet1.outputStream()) }
+        assetContext.assets.open("tetrahedron.stl").use { it.copyTo(tet2.outputStream()) }
+
+        try {
+            assertTrue(lib.loadModel(tet1.absolutePath))
+            assertTrue(lib.addModel(tet2.absolutePath))
+
+            val unscaled = lib.getObjectBoundingBoxes()
+            assertEquals("Need 2 objects (6 floats) for this test", 6, unscaled.size)
+
+            lib.setModelScale(0.5f, 0.5f, 0.5f)
+
+            val scaled = lib.getObjectBoundingBoxes()
+            assertEquals("Scaled boxes must still have 6 floats", 6, scaled.size)
+
+            // Each dimension must be ~50% of the unscaled value (±5% tolerance).
+            for (i in 0..5) {
+                assertEquals(
+                    "boxes[$i]: scaled size must be ~50% of unscaled " +
+                        "(expected ${unscaled[i] * 0.5f}, got ${scaled[i]})",
+                    unscaled[i] * 0.5f, scaled[i], unscaled[i] * 0.05f
+                )
+            }
+        } finally {
+            tet1.delete()
+            tet2.delete()
+        }
+    }
+
+    /**
+     * F85: addModelForPlate() with plateIdx=2 (the 3rd plate of Dragon Scale infinity.3mf)
+     * must increase the object count above the primary-only baseline and return a valid
+     * bounding-box array. Complements the plateIdx=0 coverage in
+     * addModelForPlate_readdWithSamePlate_givesConsistentObjectCount by exercising a
+     * non-zero plate index — the path exposed by the plate-selector dialog.
+     */
+    @Test
+    fun f85_addModelForPlate_plateIdx2_addsObjectsFromPlate3() {
+        val assetContext = InstrumentationRegistry.getInstrumentation().context
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+
+        val primary = File(targetContext.cacheDir, "f85_p2_primary.stl")
+        val multiPlate = File(targetContext.cacheDir, "f85_p2_multiplate.3mf")
+        assetContext.assets.open("tetrahedron.stl").use { it.copyTo(primary.outputStream()) }
+        assetContext.assets.open("Dragon Scale infinity.3mf").use { it.copyTo(multiPlate.outputStream()) }
+
+        try {
+            assertTrue("Primary STL must load", lib.loadModel(primary.absolutePath))
+            val baseCount = lib.nativeGetObjectCount()
+            assertEquals("Baseline must be 1 object (tetrahedron)", 1, baseCount)
+
+            assertTrue(
+                "addModelForPlate(plateIdx=2) must succeed on Dragon Scale infinity.3mf",
+                lib.addModelForPlate(multiPlate.absolutePath, 2)
+            )
+            val countAfterAdd = lib.nativeGetObjectCount()
+            assertTrue(
+                "Adding plate 2 must increase object count above baseline " +
+                    "(got $countAfterAdd, expected > $baseCount)",
+                countAfterAdd > baseCount
+            )
+
+            val boxes = lib.getObjectBoundingBoxes()
+            assertEquals(
+                "getObjectBoundingBoxes must return ${countAfterAdd * 3} floats for $countAfterAdd objects",
+                countAfterAdd * 3, boxes.size
+            )
+            for (i in boxes.indices) {
+                assertTrue("boxes[$i] must be > 0 (no zero-size objects), got ${boxes[i]}", boxes[i] > 0f)
+            }
+        } finally {
+            primary.delete()
+            multiPlate.delete()
+        }
+    }
 }
