@@ -68,7 +68,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1196 JVM unit tests
+./gradlew testDebugUnitTest                        # 1232 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 311 instrumented tests — uses Orchestrator
 ```
 
@@ -78,7 +78,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1190 tests across 82 classes
+### Unit tests (`app/src/test/`) - 1232 tests across 83 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -118,6 +118,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `PreparePreviewPlacementTest.kt` (5) — native 3MF wipe tower visibility, object-placement rules, and large-preview fallback state retention
 - `viewer/NativePreviewMeshTest.kt` (4) — preview budget guardrails, MAX_DECIMATED_TRIANGLES constant, F48 subsampled mesh vertex count, B88 toMeshData compaction contract
 - `viewer/NativePreviewMeshCompactionTest.kt` (6) — B88 `compactExtruderIndices`: sparse high indices → compact 0..N-1, already-compact no-op, sparse gaps, single index, empty input, full-byte range
+- `viewer/SplitMeshByObjectsTest.kt` (3) — `splitMeshByObjects` AABB-first triangle classification: edge triangle of large object stays with owner not closer neighbour, well-separated objects, gap triangle nearest-centre fallback
 - iewer/ModelViewerViewTest.kt (3) — Prepare selection falls back from face-plane to bed-plane hit-testing when needed
 
 - `ui/MakerWorldBrowserUtilsTest.kt` (10) — sanitizeFilename path traversal, hasAuthCookies heuristic

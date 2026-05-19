@@ -889,12 +889,32 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val fpp = MeshData.FLOATS_PER_VERTEX
             val triCount = mesh.vertexCount / 3
 
-            // Classify each triangle to the nearest object centre
+            // Classify each triangle using AABB containment first, nearest centre as fallback.
+            // Pure nearest-centre misclassifies edge triangles when a neighbour's centre is
+            // closer than the owning object's centre (causes fragment-sticks-to-wrong-object
+            // visual bug during drag). Objects on the bed don't overlap, so AABB containment
+            // is unambiguous for the vast majority of triangles.
             val triObjects = IntArray(triCount)
             for (tri in 0 until triCount) {
                 val b = tri * 3 * fpp
                 val cx = (mesh.vertices.get(b) + mesh.vertices.get(b + fpp) + mesh.vertices.get(b + fpp * 2)) / 3f
                 val cy = (mesh.vertices.get(b + 1) + mesh.vertices.get(b + fpp + 1) + mesh.vertices.get(b + fpp * 2 + 1)) / 3f
+
+                // First pass: unambiguous AABB containment
+                var aabbMatch = -1
+                for (i in 0 until objectCount) {
+                    val minX = positions[i * 2]
+                    val minY = positions[i * 2 + 1]
+                    if (cx >= minX && cx <= minX + sizes[i * 3] &&
+                        cy >= minY && cy <= minY + sizes[i * 3 + 1]
+                    ) {
+                        if (aabbMatch == -1) aabbMatch = i
+                        else { aabbMatch = -2; break } // overlapping AABBs — use fallback
+                    }
+                }
+                if (aabbMatch >= 0) { triObjects[tri] = aabbMatch; continue }
+
+                // Fallback: nearest centre (gap triangles or overlapping AABBs)
                 var bestObj = 0; var bestDist = Float.MAX_VALUE
                 for (i in 0 until objectCount) {
                     val ox = positions[i * 2] + sizes[i * 3] / 2f
