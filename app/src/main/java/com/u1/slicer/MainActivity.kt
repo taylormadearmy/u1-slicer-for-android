@@ -1434,17 +1434,28 @@ fun PrepareScreen(
                                         }
                                     )
                                 }
-                                AssistChip(
-                                    onClick = onAddFileToBed,
-                                    label = { Text("Add to bed") },
-                                    leadingIcon = {
-                                        Icon(
-                                            Icons.Default.Add,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
+                                BadgedBox(
+                                    badge = {
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.secondary,
+                                            contentColor = MaterialTheme.colorScheme.onSecondary
+                                        ) {
+                                            Text("BETA", fontSize = 7.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
-                                )
+                                ) {
+                                    AssistChip(
+                                        onClick = onAddFileToBed,
+                                        label = { Text("Add to bed") },
+                                        leadingIcon = {
+                                            Icon(
+                                                Icons.Default.Add,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    )
+                                }
                                 val displayName = currentModelName
                                     .removeSuffix(".3mf")
                                     .removeSuffix(".stl")
