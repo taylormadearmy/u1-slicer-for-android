@@ -2719,7 +2719,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // slicer without normalizePerFilamentArrays needing to truncate
         // them. Caller-side guarantee for the contract that the embedder
         // no longer enforces.
-        val canonicalSize = getCanonicalFilamentList()?.size ?: 0
+        // Exclude PAINT_DERIVED entries — those are AMS2/AMS3 overflow states that fold
+        // back to states 1-4 via ThreeMfParser's modulo. Counting them would inflate
+        // targetCount beyond the declared filament range (e.g. colored Benchy: 4 declared
+        // colours but states up to 10 → canonical size=10 → T0-T9 emitted instead of T0-T3).
+        // B95 high-AMS models are handled correctly by computeEmbedTargetCount via
+        // maxSourceFilamentIndex — they don't need the canonical size path.
+        val canonicalSize = getCanonicalFilamentList()
+            ?.filaments?.count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
+            ?: 0
         val targetCount = maxOf(computedTarget, canonicalSize)
         // Phase 2 (S-Buttons mesh-diversity fix): the embed-time extruder remap is
         // disabled because the post-slice tool remap is also disabled
@@ -3691,6 +3699,45 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // and its `skipSliceTimeRemap=true` const-true gate
                     // (~50 LOC) were dead-but-still-computed before; now
                     // both helpers + the gate are deleted.
+                    //
+                    // SEMM paint-state fold — AMS2/AMS3 PAINT_DERIVED overflow.
+                    //
+                    // Bambu multi-AMS files encode AMS2/AMS3 states 5-12+ in paint_color.
+                    // The native slicer emits T4-T11+ even with a 4-extruder profile because
+                    // it reads raw paint_color bit values as extruder indices. The canonical
+                    // list has N FILE_COLOUR entries + M PAINT_DERIVED overflow entries; fold
+                    // T(N)..T(N+M) → T(i%N) to compress them back to the base range.
+                    //
+                    // H2C models are excluded: H2C has colorMapping.size > distinctSlots
+                    // intentionally (e.g. 7 model colours → 4 physical slots). Their T4+
+                    // indices are semantically distinct swatch indices, not aliases, and must
+                    // survive for PrintTimeRemap at send time. Models like old.3mf also take
+                    // this path (6 model colours → 4 distinct physical slots via
+                    // colorMapping=[2,3,0,1,0,3]) — their T4/T5 are correct Phase 2 canonical
+                    // G-code that PrintTimeRemap collapses at send time. H2C is identified via
+                    // _colorMapping (mirrors isH2cStyle in applyMultiColorAssignments):
+                    // distinctSlots >= 4 AND colorMapping.size > distinctSlots. toolRemapSlots
+                    // is not used here because it is null for both H2C and identity mappings.
+                    val cm = _colorMapping.value
+                    val cmDistinct = cm?.distinct()?.size ?: 0
+                    val isH2cPaint = cmDistinct >= 4 && (cm?.size ?: 0) > cmDistinct
+                    val semmCanonicalList = getCanonicalFilamentList()
+                    if (_threeMfInfo.value?.hasPaintData == true && !isH2cPaint &&
+                            semmCanonicalList != null) {
+                        val semmCanonicalSize = semmCanonicalList.size
+                        val baseColorCount = semmCanonicalList.filaments
+                            .count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
+                        val paintMaxIndex = semmCanonicalList.filaments
+                            .filter { it.source == com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
+                            .maxOfOrNull { it.fileIndex } ?: -1
+                        if (baseColorCount >= 1 && paintMaxIndex >= baseColorCount) {
+                            val foldSlots = (0 until semmCanonicalSize).map { it % baseColorCount }
+                            GcodeToolRemapper.remap(result.gcodePath, foldSlots)
+                            Log.i("SlicerVM", "SEMM fold: T$baseColorCount..T${semmCanonicalSize - 1}" +
+                                " → T(N%%$baseColorCount) [base=$baseColorCount," +
+                                " paintMax=$paintMaxIndex, canonical=$semmCanonicalSize, h2c=false]")
+                        }
+                    }
                     val outputValidation = validateSliceOutput(
                         result,
                         buildExpectedModelFootprint(mi, copies, custom),
@@ -5014,9 +5061,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // is the BACKGROUND extruder for unpainted geometry (e.g. slip-
             // slide-spin plate 3 native [2,3,4] + object default {1} → 4
             // physical extruders actually used). Adding it is correct here.
-            (usedExtruders + sourcePlateObjectExtruders).toSortedSet()
+            // B120: also union filamentMapSlots — non-layer-tool plates can
+            // declare multiple AMS slots in filament_maps that aren't captured
+            // by native per-object extruder assignments (jons-bug plate 2:
+            // native+objectMap gives TPU only; PETG lives in filamentMapSlots).
+            val filExtruders = sourcePlate?.filamentMapSlots?.filter { it > 0 } ?: emptyList()
+            (usedExtruders + sourcePlateObjectExtruders + filExtruders).toSortedSet()
         } else {
-            usedExtruders.toSortedSet()
+            // B120: same fix for the bare fallback path (no object extruder map,
+            // no layer-tool — filament_maps still declares additional AMS slots).
+            val filExtruders = sourcePlate?.filamentMapSlots?.filter { it > 0 } ?: emptyList()
+            (usedExtruders + filExtruders).toSortedSet()
         }
 
         // Canonical-driven narrowing: convert each 1-based extruder/paint-state

@@ -1869,4 +1869,58 @@ class PreparePreviewViewModelTest {
             modelFile.delete()
         }
     }
+
+    /**
+     * B120: jons-bug.3mf plate 2 has `filament_maps = "1 1"` — both file-filament
+     * positions reference AMS slot 1 (PETG), but the model itself contains TPU
+     * via per-object extruder assignments (native slot 2). Pre-fix, only TPU was
+     * detected because `filamentMapSlots` was only unioned in the layer-tool+paint
+     * branch of `buildThreeMfInfoFromNative`. Post-fix, both PETG and TPU are
+     * unioned into `enrichedExtruders` for the per-object branch as well.
+     */
+    @Test
+    fun b120_jonsBug_plate2_detectsBothFilaments_viewModelPath() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("jons-bug.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("jons-bug plate selector visible") {
+                viewModel.showPlateSelector.value
+            }
+
+            viewModel.selectPlate(2)
+
+            waitUntil("jons-bug plate 2 loaded with color mapping", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                    viewModel.colorMapping.value != null
+            }
+
+            val info = viewModel.threeMfInfo.value
+            val mapping = viewModel.colorMapping.value
+
+            assertNotNull("B120: jons-bug plate 2 info should be available", info)
+            assertNotNull("B120: jons-bug plate 2 color mapping should be available", mapping)
+            info!!
+            mapping!!
+
+            assertEquals(
+                "B120: jons-bug plate 2 must detect 2 filaments (PETG + TPU). " +
+                    "Pre-fix: only 1 chip (TPU) because PETG in filamentMapSlots was not " +
+                    "unioned in the per-object branch of buildThreeMfInfoFromNative. " +
+                    "got detectedColors=${info.detectedColors}",
+                2, info.detectedColors.size
+            )
+            assertEquals(
+                "B120: jons-bug plate 2 colorMapping must reference 2 distinct slots. " +
+                    "got mapping.distinct()=${mapping.distinct()}",
+                2, mapping.distinct().size
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
 }
