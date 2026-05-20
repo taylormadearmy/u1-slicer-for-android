@@ -4,6 +4,43 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B121: Filament Mapping dialog shows only model filament when STL is sliced with support on a different extruder (GitHub #142) — FIXED v2.2.10
+- **Symptom**: Slice an STL with the model on E1 (TPU) and support on E2 (PLA). Slice Summary correctly shows 2 extruders (TPU + PLA) and the G-code preview renders both. But tapping Map & Print / Map & Upload shows only "Filament 1 · TPU (STL default)" in the Filament Mapping dialog — the PLA support row is absent. The user sends a remapped G-code with only E1 mapped; the support extruder is not remapped.
+- **Reported by**: Kevin (screenshots 2026-05-19, v2.2.9).
+- **Screenshots**: Show 1-row mapping dialog (E1·TPU) vs slice summary listing "Filament 1·TPU 6492mm + Filament 2·PLA 4792mm".
+- **Root cause — two bugs:**
+  1. `computePlateFileIndices()` (MainActivity.kt:951–955) returns `null` when any active G-code canonical index ≥ `canonicalSize`. For a single-colour STL (canonicalSize=1) sliced with support on canonical index 1, `nonZero.any { it >= 1 }` is true → null. In the `plateNarrowed` remember block (line 753), `null` is treated as "no narrowing needed" and falls back to `full to (0 until full.size).toList()` — a 1-entry list. Dialog gets 1 row.
+  2. Even if the dialog somehow showed 2 rows, the `onConfirm` expansion guard `fileIdx in 0 until canonicalSize` (line 808) would silently drop the support slot mapping (fileIdx=1 ≥ canonicalSize=1). Only the model slot would reach `applyPrintTimeRemap`.
+- **Siblings affected by the same pattern:**
+  - **Multi-file STL load** (F77): N STL models → canonicalSize=N. Support configured on slot N+1 → canonical index N ≥ N → same null → same missing row.
+  - **3MF with support beyond declared filaments**: if user manually sets support/interface to a slot beyond the 3MF canonical list, same null path.
+  - **Mismatch check false positive**: once dialog is fixed to show the support row, the existing `sliceTimeSlot = sliceTimeColorMapping?.getOrNull(displayFileIndex) ?: 0` falls back to slot 0 (E1) for the support row (index 1 is beyond the size-1 colorMapping). This shows a spurious "Sliced as TPU but slot has PLA" warning even when the user correctly maps support to E2.
+- **Fix outline:**
+  1. Add `SUPPORT_FILAMENT` to `FilamentSource` enum + `sourceShortLabel` case ("support").
+  2. Extract `buildWideGcodeMapping(canonical, perExtruderFilamentMm, extruderPresets)` — when G-code has active indices ≥ canonicalSize, synthesise `FilamentEntry` for those slots from extruder presets with `source=SUPPORT_FILAMENT`.
+  3. In `plateNarrowed`, when `computePlateFileIndices` returns null, try `buildWideGcodeMapping` before falling back to the 1-entry list.
+  4. In `onConfirm`, derive `expandedSize = max(canonicalSize, maxFileIdx + 1)` and change guard to `fileIdx in 0 until expandedSize`.
+  5. In `FilamentMappingDialog`, change `?: 0` to `?: displayFileIndex` for `sliceTimeSlot` so the support row's mismatch check uses the canonical index as the default physical slot (avoiding the false E1/TPU fallback).
+- **Tests**: unit test for `buildWideGcodeMapping` (pure function); existing `SlicedWithMaterialTest.kt` already covers B118 mismatch; add a case covering the `?: displayFileIndex` change.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/142
+- **Source**: Kevin (Discord/screenshots), 2026-05-19.
+
+### B120: Multi-plate Bambu 3MF with TPU on plate 2 slices "as one thing" + material/temps warning on v2.2.6 (GitHub #141) — FIXED v2.2.10
+- **Symptom**: Loading a multi-plate Bambu 3MF where plate 2 is a TPU end piece, selecting plate 2, and slicing produces a material/temperatures mismatch warning. Jon described it as the app "slicing as one thing" — implying either the plate filter is not being applied (all plates' objects are included) or the material type detection for the plate is wrong (e.g. TPU plate detected as PLA), triggering the Map & Print warning cascade. Jon had a 30+ hour print depending on this and did not send it.
+- **Reported by**: Jon (Discord), v2.2.6 (versionCode TBD). 2026-05-18.
+- **Jon's words**: "I seem to be having the slice as one thing and it warning about materials and temps problem on 2.2.6. … Printing plate 2, the end piece in TPU." + "This is on 2.2.6 as well. I assumed that is what was just fixed. Afraid to send for a 30+ hour print."
+- **Artifacts**: `.3mf` file (Discord 2026-05-18T00:53 UTC), 2 screenshots (`Screenshot_20260517-204856.png`, `Screenshot_20260517-204915.png`), `clipper_investigation_bundle.txt`, `output.share.gcode` (Discord 2026-05-19T13:02–13:03 UTC).
+- **Root cause**: `ThreeMfParser.kt:1158–1163` parsed `filament_maps = "1 1"` by collecting the VALUES ("1", "1") as filament indices, calling `.filter { it > 0 }.toSet()` to get `{1}`, then mapping via `it - 1` to canonical index `{0}` (PETG only). But `filament_maps` values are AMS slot assignments, not filament indices. The active filaments for the plate are the POSITIONS with non-zero slot values: for `"1 1"`, positions 0 and 1 both have non-zero values → both PETG (canonical 0) and TPU (canonical 1) are active. Old parse: `{0}` only → plate 2 appeared PETG-only → Prepare screen showed only 1 chip → override flowed to canonical 0 (PETG), not canonical 1 (TPU) → slicer produced TPU G-code but dialog reported PETG → warning fire.
+- **Fix**: Two-part fix in `ThreeMfParser.kt` + consumer updates:
+  1. `ThreeMfPlate` gains `filamentMapSlots: Set<Int>` = unique non-zero AMS slot VALUES (physical extruder IDs for enrichment). `filamentIndices` now stores 1-indexed POSITIONS of non-zero entries (file-filament IDs for `computePlateFileIndices`). For `"1 1"`: `filamentIndices = {1, 2}` (both positions active), `filamentMapSlots = {1}` (one physical slot used).
+  2. All enrichment / extruder-set-building consumers (`BambuPlateStateEnrichment.enrich`, `buildThreeMfInfoFromNative`, `mergeThreeMfInfoForPlate`, `buildSelectedPlateInfo`) now read `filamentMapSlots`. `computePlateFileIndices` keeps reading `filamentIndices`. This separation prevents the B120 fix from inflating enriched extruder counts for files where multiple file-filaments map to the same AMS slot (flippy painted plate 5 / F1 calendar plate 1 regressions in the first fix attempt).
+- **Regression guards**: 
+  - Unit test in `ComputePlateFileIndicesTest.kt` (`B120 filament_maps same-slot assignment detects both file filaments`): `filamentIndices = setOf(1, 2)` → `computePlateFileIndices` returns `[0, 1]`.
+  - Instrumented test in `BambuPipelineIntegrationTest.kt` (`b120_jonsBug_plate2_detectsBothFilaments`): parses Jon's actual file, asserts plate 2 `filamentIndices` contains both 1 and 2, and `computePlateFileIndices` returns `[0, 1]`.
+  - Jon's `jons-bug.3mf` added to `app/src/androidTest/assets/`.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/141
+- **Source**: Discord, 2026-05-18 (Jon).
+
 ### B119: Buzz Lightyear cold load is 92–93s — predates F54, perf regression unbisected (GitHub #137) — OPEN
 - **Symptom**: `PreparePreviewViewModelTest#buzzLightyear_coldLoad_skipsFullFileEmbedOnMultiPlate` consistently runs 92.5–93.0s on Pixel 8a (43211JEKB16931), well over the original 90s budget. Logcat breakdown shows nearly all of the time is in `BambuSanitizer.process()` + the initial `ThreeMfParser.parse()` of the 73 MB Buzz file (10 plates, 296k paint_color attributes).
 - **Discovered**: v2.2.4 instrumented sweep, 2026-05-17. Test budget caught a slowdown that had been quietly present for many releases.

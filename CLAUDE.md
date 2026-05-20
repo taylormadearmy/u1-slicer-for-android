@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v2.2.9` (`versionCode 282`)
+Current release: `v2.2.10` (`versionCode 283`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -68,8 +68,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1232 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 311 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 1240 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 314 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -78,7 +78,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1232 tests across 83 classes
+### Unit tests (`app/src/test/`) - 1240 tests across 83 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -113,7 +113,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `printer/PrinterViewModelTest.kt` (4) — camera keepalive idempotency helper and LED-sync connection-edge helper
 - `AppEventNotifierTest.kt` (13) — notification title/body/channel/navigate-target for all event types
 - `PreviewSummaryMappingTest.kt` (7) — preview summary data class mapping, F65 resolveExtruderMaterialType by slot, F68 single-colour material label
-- `ComputePlateFileIndicesTest.kt` (18) — post-slice summary slot narrowing for Bambu/SEMM sparse canonical lists, plus B99 STL support/interface raw-G-code fallback when active support extruders exceed the one-filament STL canonical list
+- `ComputePlateFileIndicesTest.kt` (25) — post-slice summary slot narrowing for Bambu/SEMM sparse canonical lists; B99 STL support/interface raw-G-code fallback; B121 buildWideGcodeMapping: single-STL+support, STL+support+interface, multi-STL+support, no-expansion guard, all-zero guard, sparse-active-slots guard; B120 filament_maps same-slot-assignment detects both file filaments
 - `PreviewColorNormalizationTest.kt` (10) — preview colour normalization, B92 Buzz plate 8 slicer-tool-order palette alignment + identity + legacy paths
 - `PreparePreviewPlacementTest.kt` (5) — native 3MF wipe tower visibility, object-placement rules, and large-preview fallback state retention
 - `viewer/NativePreviewMeshTest.kt` (4) — preview budget guardrails, MAX_DECIMATED_TRIANGLES constant, F48 subsampled mesh vertex count, B88 toMeshData compaction contract
@@ -140,7 +140,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `SlicerColorOrderTest.kt` (9) — B92 computeSlicerColorOrder: null for non-paint / H2C / single colour / size mismatch / default at index 0 / tied dominant extruder; Buzz plate 8 shape permutes to `[1, 0]`; three-colour object-default-at-top case permutes
 - `FilamentTypeHeaderPatchTest.kt` (14) — B63 fixFilamentTypeHeader: single/multi-extruder replacement, absent line guard, empty list guard, missing file, first-occurrence-only, B99 header patch canonical padding for support/interface slots beyond canonical size, B102 sparse colorMapping produces physical-slot-indexed filament_type, B105 resolveNonCanonicalHeaderPatchTypes single/multi-slot, unknown-slot fallback
 - `ui/SupportFilamentOptionTest.kt` (5) — B99 support/interface filament option labels and config values for H2C, STL, non-identity, and sparse color mappings
-- `ui/SlicedWithMaterialTest.kt` (7) — B118 Map & Print dialog material-mismatch cascade: override priority, sliceTime-slot priority, file-declared fallback, DC15 single-colour PETG-slot repro, explicit override on single-colour, multi-colour mapped-slot resolution
+- `ui/SlicedWithMaterialTest.kt` (8) — B118 Map & Print dialog material-mismatch cascade: override priority, sliceTime-slot priority, file-declared fallback, DC15 single-colour PETG-slot repro, explicit override on single-colour, multi-colour mapped-slot resolution; B121 support-row uses displayFileIndex not slot-0 when colorMapping too short
 - `ui/InlineModelPreviewRotationKeysTest.kt` (4) — B109 Compose-only structural guards: (a) placement LaunchedEffect lists `effPlaceSizeX/Y` so the object drag callback re-captures the rotated footprint on rotation, (b) placement LaunchedEffect lists `wipeTowerWidth/Depth` so the wipe-tower drag callback re-captures on prime-tower dimension change, (c) the `onMeshCached` lambda calls `setRotatedMeshSize` so the ViewModel's rotated-AABB cache repopulates after each mesh fetch, (d) F77 placement LaunchedEffect lists `perObjectSizes` so the drag clamp re-captures per-object footprints when files are added to the bed. The math itself is unit-tested in `CopyArrangeCalculatorTest.effectivePlacementFootprint_*`.
 - `PrepareMeshCacheInvalidationTest.kt` (3) — B109 v2.2.6 lifecycle guard: `SlicerViewModel.invalidatePrepareMeshCache()` must clear `cachedPrepareMesh`, `cachedPrepareMeshPath`, AND `_rotatedMeshSizeXY` so stale rotated bounds never leak across a rotation change.
 - `network/UpdateCheckerTest.kt` (12) — F70 GitHub release JSON parsing, semantic version comparison, download URL extraction
@@ -148,7 +148,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
 
-### Instrumented tests (`app/src/androidTest/`) - 311 tests across 33 classes
+### Instrumented tests (`app/src/androidTest/`) - 314 tests across 33 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/GcodeSaveTruncationTest.kt` (2) — Save truncation regression
@@ -157,8 +157,8 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `native/NativePlateDataTest.kt` (5) — Phase 1 sub-plan #2 per-plate JNI accessors (`nativeGetPlateCount`, `nativeGetPlateData`): no-model null/zero, colored_3DBenchy single-plate shape, Buzz multi-plate positional sanity + OOR guard, flippy painted fixture customGcode non-empty
 - `native/NativeObjectExtruderMapTest.kt` (3) — Phase 1 sub-plan #4 full-objects JNI accessor (`nativeGetObjectExtruderMap`): no-model null, colored_3DBenchy merged component-ref objects, Flarewing array length matches `nativeGetObjectCount`
 - `slicing/SlicingIntegrationTest.kt` (50) — STL/3MF load→slice, temps, layer count, metadata, SlicingOverrides E2E, F57 rotation smoke test, rotation preview mesh invalidation, multi-object group rotation distance preservation, rotation cache skip, embedded rotation preservation, B55 slice cancel, v1.5.63 nozzle temp JNI path (PLA=220, PETG=235), B73 scale-down placement correctness, B75 parked extruder cooldown, B79 tree support type + filament type for STL, brim_type no_brim guard, resolveInto→JNI chain, B99 support/interface filament G-code guards including app-placed Benchy STL with PETG support E2/interface E3, F71 tetrahedron EXCLUDE_OBJECT_DEFINE in G-code, B107 bed temp no +5 bump, B106 machine_start_gcode injection, B106 send-time E3 remap T0→T2, B108 articulated fish scale-down model-on-bed, B108 skywing multi-object per-instance Z offsets bed-snapped after scale, F77 two-STL place-and-slice bed-bounds E2E
-- `slicing/BambuPipelineIntegrationTest.kt` (40) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing, B54 modifier volume subtype preservation, B82 per-plate layer-tool chip count (standard + painted flippy all plates), B99 Leo support fixture support/interface PETG regression, B100 layer_height sentinel respects embedded profile (die-single-colour.3mf), B104 single-plate Bambu plate-filter regression (Oreo+Proj+1.3mf)
-- `slicing/SemmSlicingTest.kt` (8) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard, B64 Flarewing Dragon colour permutation remap, B99 support/interface PETG crash guards for colored and H2C Benchy
+- `slicing/BambuPipelineIntegrationTest.kt` (41) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing, B54 modifier volume subtype preservation, B82 per-plate layer-tool chip count (standard + painted flippy all plates), B99 Leo support fixture support/interface PETG regression, B100 layer_height sentinel respects embedded profile (die-single-colour.3mf), B104 single-plate Bambu plate-filter regression (Oreo+Proj+1.3mf), B120 jons-bug.3mf plate 2 detects both PETG+TPU filaments
+- `slicing/SemmSlicingTest.kt` (10) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard, B64 Flarewing Dragon colour permutation remap, B99 support/interface PETG crash guards for colored and H2C Benchy, crash regression for 2-colour H2C shoe (TPU model + PLA support/interface)
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
@@ -238,6 +238,7 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 - `objectExtruderMap` on `ThreeMfInfo` — `Map<String, Int>` of per-object extruder assignments parsed from `model_settings.config`; feeds the native per-triangle colouring path for multi-extruder Bambu models
 - `NativeLibrary.loadModelForPlate(path, plateIdx)` (Phase 1 sub-plan #2b) — plate-aware 3MF loader. `plateIdx = -1` → BBS `plate_id=0` (all plates, same as `loadModel`); `plateIdx >= 0` → BBS `plate_id = plateIdx + 1` (1-based). Used by `SlicerViewModel.selectPlate` so the BBS importer filters `m_plater_data[plate_id].obj_inst_map` at load time (`bbs_3mf.cpp:1921`), eliminating the need for Kotlin to feed a pre-extracted single-plate 3MF to the native slicer.
 - `ProfileEmbedder.embed(..., plateId: Int?)` — when `plateId` is supplied (from `SlicerViewModel.selectPlate`), `Metadata/custom_gcode_per_layer.xml` is filtered to the target plate via `BambuSanitizer.filterCustomGcodePerLayer` instead of being dropped. Keeps sub-plan #3's `LayerToolPauseInjector` XML fallback plate-scoped on painted multi-plate fixtures.
+- `ThreeMfPlate.filamentIndices` vs `ThreeMfPlate.filamentMapSlots` (B120) — two semantically distinct fields parsed from `filament_maps` in `model_settings.config`. `filamentIndices` stores **1-indexed file-filament POSITIONS** of non-zero entries (for `computePlateFileIndices` which does `it - 1` to get 0-indexed canonical). `filamentMapSlots` stores **unique non-zero AMS slot VALUES** (physical extruder IDs for enrichment: `BambuPlateStateEnrichment`, `buildThreeMfInfoFromNative`, `mergeThreeMfInfoForPlate`, `buildSelectedPlateInfo`). For `filament_maps = "1 1"`: `filamentIndices = {1, 2}`, `filamentMapSlots = {1}`. Never pass `filamentIndices` to enrichment — it over-counts extruders when multiple file-filaments share one AMS slot.
 - `ThreeMfPlate.hasPaintData` (Phase 1 sub-plan #2c) — per-plate paint flag populated by `ThreeMfParser.parse` / `parseForPlateSelection` from the `computeVisualColorCountByPlate` pass. Consumed by `SlicerViewModel.mergeThreeMfInfoForPlate` (B81 guard) and `SlicerViewModel.buildSelectedPlateInfo` — lets the plate-selection path derive plate-local paint state without running `BambuSanitizer.extractPlate` + `parseForPlateSelection` on disk.
 - `SlicerViewModel.buildSelectedPlateInfo(sourceInfo, plateId)` (Phase 1 sub-plan #2c) — synthesises a single-plate `ThreeMfInfo` view from the stable source parse. Replaces the pre-#2c `BambuSanitizer.extractPlate` → `restructurePlateFile` → `ThreeMfParser.parseForPlateSelection(plateFile)` chain in `selectPlate`. `extractPlate` + `restructurePlateFile` are `@Deprecated` — production no longer reaches them; only dedicated Kotlin-pipeline regression tests still exercise them.
 

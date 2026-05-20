@@ -130,6 +130,47 @@ class SlicedWithMaterialTest {
     }
 
     /**
+     * B121 — support/interface row uses displayFileIndex as default slot, not 0.
+     *
+     * For an STL sliced with TPU on E1 (canonical index 0) and PLA support on
+     * E2 (canonical index 1), the support row's displayFileIndex = 1. Since
+     * sliceTimeColorMapping has size 1, getOrNull(1) = null. The B121 fix
+     * uses `?: displayFileIndex` (= 1 → E2 = PLA) instead of `?: 0` (= E1 = TPU).
+     *
+     * Without the fix: sliceTimeSlot = 0 → sliceTimeSlotMaterial = "TPU" →
+     * false mismatch "Sliced as TPU but slot has PLA" when user correctly picks E2.
+     *
+     * With the fix: sliceTimeSlot = 1 → sliceTimeSlotMaterial = "PLA" → no
+     * mismatch when user picks E2 = PLA. ✓
+     */
+    @Test
+    fun `B121 support row uses displayFileIndex not slot 0 when colorMapping too short`() {
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FF0000", materialType = "TPU"),
+            ExtruderPreset(index = 1, color = "#AAAAAA", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#0000FF", materialType = "PLA"),
+            ExtruderPreset(index = 3, color = "#FFFFFF", materialType = "PLA"),
+        )
+        // Single-colour STL: colorMapping has only 1 entry covering the model.
+        val sliceTimeColorMapping = listOf(0)
+        val displayFileIndex = 1  // support row
+
+        // B121 fix: use displayFileIndex as fallback, not 0.
+        val sliceTimeSlot = sliceTimeColorMapping.getOrNull(displayFileIndex) ?: displayFileIndex
+        val sliceTimeSlotMaterial = presets.firstOrNull { it.index == sliceTimeSlot }?.materialType
+
+        // sliceTimeSlot should be 1 (E2 = PLA), not 0 (E1 = TPU).
+        assertEquals(1, sliceTimeSlot)
+        assertEquals("PLA", sliceTimeSlotMaterial)
+
+        // Selecting E2 (slot 1, PLA) for support → no mismatch.
+        val selectedSlotMaterial = presets.firstOrNull { it.index == 1 }?.materialType
+        val result = resolveSlicedWithMaterial(null, sliceTimeSlotMaterial, filamentMaterial = "PLA")
+        assertEquals("PLA", result)
+        assertEquals(result, selectedSlotMaterial)  // no mismatch
+    }
+
+    /**
      * Regression guard: multi-colour file with explicit colorMapping uses
      * the mapped slot's material, not the slot-0 default.
      */

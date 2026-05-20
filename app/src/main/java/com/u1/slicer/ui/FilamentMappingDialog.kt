@@ -148,7 +148,13 @@ fun FilamentMappingDialog(
                         // ran with slot-0's preset material (e.g. PETG). DC15's report:
                         // Jumping_frog.3mf sliced with E1=PETG slot showed "Sliced as
                         // PLA but slot has PETG" warning when mapped to a PETG slot.
-                        val sliceTimeSlot = sliceTimeColorMapping?.getOrNull(displayFileIndex) ?: 0
+                        // B121: for support/interface rows (displayFileIndex ≥ size of
+                        // sliceTimeColorMapping), fall back to displayFileIndex rather
+                        // than 0. For a single-colour STL, canonical index 1 (support)
+                        // was sliced on physical slot 1 (E2); using 0 incorrectly
+                        // reports "Sliced as E1 material" for the support row.
+                        val sliceTimeSlot = sliceTimeColorMapping?.getOrNull(displayFileIndex)
+                            ?: displayFileIndex
                         val sliceTimeSlotMaterial = extruderPresets
                             .firstOrNull { it.index == sliceTimeSlot }?.materialType
                         FilamentMappingRow(
@@ -411,6 +417,7 @@ private fun sourceShortLabel(source: FilamentSource): String? = when (source) {
     FilamentSource.STL_DEFAULT -> "STL default"
     FilamentSource.OBJECT_DEFAULT -> "object default"
     FilamentSource.FILE_COLOUR -> null  // most common, hide label
+    FilamentSource.SUPPORT_FILAMENT -> "support"
 }
 
 /**

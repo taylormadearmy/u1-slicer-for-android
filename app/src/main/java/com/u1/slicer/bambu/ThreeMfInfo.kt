@@ -5,6 +5,13 @@ data class ThreeMfPlate(
     val name: String,
     val objectIds: List<String>,
     val filamentIndices: Set<Int> = emptySet(),
+    /**
+     * Unique non-zero AMS slot values from `filament_maps`, i.e. which physical extruder
+     * slots are active on this plate. Used by enrichment and extruder-set-building code.
+     * Contrast with [filamentIndices] which stores 1-indexed FILE-FILAMENT POSITIONS
+     * (used by [computePlateFileIndices]).
+     */
+    val filamentMapSlots: Set<Int> = emptySet(),
     val printable: Boolean = true,
     val transform: FloatArray = floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f),
     val thumbnailBytes: ByteArray? = null,

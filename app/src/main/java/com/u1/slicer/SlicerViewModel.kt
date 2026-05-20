@@ -4957,7 +4957,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         //   1. Native is authoritative when post-load — it ran the BBS
         //      importer and knows what the slicer will actually emit.
         //   2. Pre-load metadata (sourcePlate.layerToolExtruders,
-        //      .filamentIndices, sourcePlateObjectExtruders) can include
+        //      .filamentMapSlots, sourcePlateObjectExtruders) can include
         //      phantom extruders that the slicer ignores — Shashibo plate 5:
         //      native=[1,2] is correct; layer-tool metadata=[2,3] adds
         //      phantom 3 → pre-fix showed 3 chips for a 2-filament print.
@@ -4999,14 +4999,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 if (plateHasPaintData) {
                     (usedExtruders +
                         sourcePlate.paintExtruderStates.filter { it > 0 } +
-                        sourcePlate.filamentIndices.filter { it > 0 } +
+                        sourcePlate.filamentMapSlots.filter { it > 0 } +
                         sourcePlateObjectExtruders).toSortedSet()
                 } else {
                     usedExtruders.toSortedSet()
                 }
             } else {
                 val ltExtruders = sourcePlate.layerToolExtruders.filter { it > 0 }
-                val filExtruders = sourcePlate.filamentIndices.filter { it > 0 }
+                val filExtruders = sourcePlate.filamentMapSlots.filter { it > 0 }
                 (ltExtruders + filExtruders + sourcePlateObjectExtruders).toSortedSet()
             }
         } else if (sourcePlateObjectExtruders.isNotEmpty()) {
@@ -5198,7 +5198,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val sourcePlateFilamentIndices = selectedPlateId?.let { plateId ->
                 sourceInfo.plates
                     .firstOrNull { it.plateId == plateId }
-                    ?.filamentIndices
+                    ?.filamentMapSlots
                     ?.filter { it > 0 }
                     ?.toSet()
                     ?: emptySet()
@@ -5210,7 +5210,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 ?.toSet()
                 ?: emptySet()
             val plateFilamentIndices = plateInfo.plates
-                .flatMap { it.filamentIndices }
+                .flatMap { it.filamentMapSlots }
                 .filter { it > 0 }
                 .toSet()
             val mergedUsedExtruderIndices = if (sourceInfo.hasLayerToolChanges) {
@@ -5513,12 +5513,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val plateUsedExtruders = if (sourcePlate.hasPaintData) {
                 (plateObjectExtruders +
                     sourcePlate.paintExtruderStates.filter { it > 0 } +
-                    sourcePlate.filamentIndices.filter { it > 0 } +
+                    sourcePlate.filamentMapSlots.filter { it > 0 } +
                     sourcePlate.layerToolExtruders.filter { it > 0 }).toSortedSet()
                     .ifEmpty { sourceInfo.usedExtruderIndices }
             } else {
                 (plateObjectExtruders +
-                    sourcePlate.filamentIndices.filter { it > 0 } +
+                    sourcePlate.filamentMapSlots.filter { it > 0 } +
                     sourcePlate.layerToolExtruders.filter { it > 0 }).toSortedSet()
             }
             // Sub-plan #2c blocker fix: narrow objectExtruderMap to the selected plate's

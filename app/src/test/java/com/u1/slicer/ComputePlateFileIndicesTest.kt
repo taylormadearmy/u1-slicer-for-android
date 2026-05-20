@@ -2,6 +2,10 @@ package com.u1.slicer
 
 import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfPlate
+import com.u1.slicer.data.CanonicalFilamentList
+import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentEntry
+import com.u1.slicer.data.FilamentSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -334,5 +338,152 @@ class ComputePlateFileIndicesTest {
             canonicalSize = 6,
         )
         assertEquals(listOf(0, 1, 2, 3, 4, 5), result)
+    }
+
+    /**
+     * B120 regression — `filament_maps = "1 1"` in a 2-filament file (PETG + TPU)
+     * was previously parsed as values {1} → canonical {0} (only PETG). The fix
+     * collects positions-of-non-zero-values so both positions 0 and 1 are recorded
+     * as active → filamentIndices = {1, 2} (1-indexed) → canonical {0, 1}.
+     *
+     * Jon's file: plate 2 has one object with `extruder: 2` (TPU, canonical 1),
+     * but `filament_maps = "1 1"` was parsed as canonical 0 only → plate selector
+     * showed only PETG, override flowed to wrong canonical slot, slice-time dialog
+     * reported PETG instead of TPU.
+     */
+    @Test
+    fun `B120 filament_maps same-slot assignment detects both file filaments`() {
+        // Parsed result of `filament_maps = "1 1"` with the fix:
+        // positions 0,1 both non-zero → stored as {1, 2} (1-indexed).
+        val plate = ThreeMfPlate(
+            plateId = 2,
+            name = "Plate 2",
+            objectIds = listOf("6"),
+            filamentIndices = setOf(1, 2),  // B120 fix: positions-of-nonzero, 1-indexed
+        )
+        val result = computePlateFileIndices(
+            info = info(
+                plates = listOf(plate),
+                usedExtruderIndices = setOf(1, 2),
+            ),
+            plateId = 2,
+            canonicalSize = 2,  // PETG (0) + TPU (1)
+        )
+        // Pre-fix returned [0] (PETG only) — missed the TPU object on plate 2.
+        assertEquals(listOf(0, 1), result)
+    }
+}
+
+/**
+ * B121 unit tests for [buildWideGcodeMapping].
+ *
+ * Verifies that the helper synthesises [FilamentSource.SUPPORT_FILAMENT] entries
+ * for G-code canonical slots beyond the model's declared canonical list, so the
+ * Filament Mapping dialog shows all active extruders when an STL (or multi-STL)
+ * is sliced with support/interface on a different extruder.
+ */
+class BuildWideGcodeMappingTest {
+
+    private fun presets(vararg specs: Pair<String, String>) = specs.mapIndexed { i, (color, mat) ->
+        ExtruderPreset(index = i, color = color, materialType = mat)
+    }
+
+    private fun canonical(vararg entries: FilamentEntry) = CanonicalFilamentList(
+        filaments = entries.toList(),
+    )
+
+    private fun entry(idx: Int, color: String = "#FF0000", mat: String? = "TPU") = FilamentEntry(
+        fileIndex = idx,
+        color = color,
+        materialType = mat,
+        source = FilamentSource.STL_DEFAULT,
+    )
+
+    @Test
+    fun `single STL model with PLA support on E2 expands to two rows`() {
+        val canon = canonical(entry(0, "#FF0000", "TPU"))
+        val presetList = presets("#FF0000" to "TPU", "#00FF00" to "PLA", "#0000FF" to "PLA", "#FFFFFF" to "PLA")
+        // G-code used canonical index 0 (TPU model) and 1 (PLA support)
+        val (expanded, indices) = buildWideGcodeMapping(
+            canon, listOf(6492f, 4792f), presetList
+        )!!
+        assertEquals(listOf(0, 1), indices)
+        assertEquals(2, expanded.filaments.size)
+        // Row 0: existing canonical entry preserved
+        assertEquals(FilamentSource.STL_DEFAULT, expanded.filaments[0].source)
+        assertEquals("TPU", expanded.filaments[0].materialType)
+        // Row 1: synthesised from E2 preset
+        assertEquals(FilamentSource.SUPPORT_FILAMENT, expanded.filaments[1].source)
+        assertEquals("PLA", expanded.filaments[1].materialType)
+        assertEquals("#00FF00", expanded.filaments[1].color)
+    }
+
+    @Test
+    fun `single STL model plus support and interface produces three rows`() {
+        val canon = canonical(entry(0, "#FF0000", "TPU"))
+        val presetList = presets("#FF0000" to "TPU", "#AAAAAA" to "PLA", "#BBBBBB" to "PETG", "#CCCCCC" to "PLA")
+        val (expanded, indices) = buildWideGcodeMapping(
+            canon, listOf(3950f, 1899f, 25f), presetList
+        )!!
+        assertEquals(listOf(0, 1, 2), indices)
+        assertEquals(3, expanded.filaments.size)
+        assertEquals(FilamentSource.STL_DEFAULT, expanded.filaments[0].source)
+        assertEquals(FilamentSource.SUPPORT_FILAMENT, expanded.filaments[1].source)
+        assertEquals("PLA", expanded.filaments[1].materialType)
+        assertEquals(FilamentSource.SUPPORT_FILAMENT, expanded.filaments[2].source)
+        assertEquals("PETG", expanded.filaments[2].materialType)
+    }
+
+    @Test
+    fun `two STL models with support on E3 expands correctly`() {
+        // F77 multi-STL: canonical has 2 entries (model A on E1, model B on E2);
+        // support configured on E3 (canonical index 2).
+        val canon = canonical(entry(0, "#FF0000", "PLA"), entry(1, "#00FF00", "PLA"))
+        val presetList = presets("#FF0000" to "PLA", "#00FF00" to "PLA", "#0000FF" to "PETG", "#FFFFFF" to "PLA")
+        val (expanded, indices) = buildWideGcodeMapping(
+            canon, listOf(5000f, 3000f, 800f), presetList
+        )!!
+        assertEquals(listOf(0, 1, 2), indices)
+        assertEquals(3, expanded.filaments.size)
+        assertEquals(FilamentSource.STL_DEFAULT, expanded.filaments[0].source)
+        assertEquals(FilamentSource.STL_DEFAULT, expanded.filaments[1].source)
+        assertEquals(FilamentSource.SUPPORT_FILAMENT, expanded.filaments[2].source)
+        assertEquals("PETG", expanded.filaments[2].materialType)
+    }
+
+    @Test
+    fun `returns null when no active indices beyond canonical size`() {
+        // All G-code active slots are within canonical — no expansion needed.
+        val canon = canonical(entry(0, "#FF0000", "PLA"), entry(1, "#00FF00", "PETG"))
+        val presetList = presets("#FF0000" to "PLA", "#00FF00" to "PETG")
+        val result = buildWideGcodeMapping(
+            canon, listOf(5000f, 3000f), presetList
+        )
+        assertEquals(null, result)
+    }
+
+    @Test
+    fun `returns null when perExtruderFilamentMm is all zero`() {
+        val canon = canonical(entry(0))
+        val presetList = presets("#FF0000" to "TPU", "#00FF00" to "PLA")
+        val result = buildWideGcodeMapping(
+            canon, listOf(0f, 0f), presetList
+        )
+        assertEquals(null, result)
+    }
+
+    @Test
+    fun `sparse active slots — only non-zero indices included`() {
+        // G-code used canonical slots 0 (model) and 2 (support); slot 1 is unused.
+        val canon = canonical(entry(0, "#FF0000", "PLA"))
+        val presetList = presets("#FF0000" to "PLA", "#AAAAAA" to "unused", "#0000FF" to "PETG", "#FFFFFF" to "PLA")
+        val (expanded, indices) = buildWideGcodeMapping(
+            canon, listOf(5000f, 0f, 800f), presetList
+        )!!
+        assertEquals(listOf(0, 2), indices)
+        assertEquals(2, expanded.filaments.size)
+        assertEquals(FilamentSource.STL_DEFAULT, expanded.filaments[0].source)
+        assertEquals(FilamentSource.SUPPORT_FILAMENT, expanded.filaments[1].source)
+        assertEquals("PETG", expanded.filaments[1].materialType)
     }
 }

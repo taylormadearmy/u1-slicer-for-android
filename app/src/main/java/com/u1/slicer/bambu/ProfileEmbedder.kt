@@ -551,9 +551,13 @@ class ProfileEmbedder(private val context: Context) {
                                 // MUST NOT skip when hasPaintData: cleanModelXmlForOrcaSlicer()
                                 // converts slic3rpe:mmu_segmentation → paint_color= for PrusaSlicer SEMM.
                                 rawCopyEntry(srcZip, entry, destZip)
-                            } else if (name != "3D/3dmodel.model" && entry.size > 50_000_000L) {
-                                // Large component (>50MB): stream-clean to avoid OOM.
-                                // Uses line-by-line processing like BambuSanitizer.copyZipEntry().
+                            } else if (name != "3D/3dmodel.model" && entry.size > 20_000_000L) {
+                                // Component (>20MB): stream-clean to avoid OOM buffering.
+                                // Shoe-class models have two ~33MB component files; reading them
+                                // into memory plus String allocation (2× UTF-16) OOMs the test
+                                // process. The streaming path processes line-by-line and is
+                                // safe for any size. Threshold 20MB leaves typical small
+                                // models (benchy, Flarewing <5MB each) on the fast in-memory path.
                                 streamCleanEntry(srcZip, entry, destZip, info.hasPaintData)
                             } else {
                                 val content = srcZip.getInputStream(entry).readBytes()

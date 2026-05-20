@@ -125,6 +125,7 @@ object ThreeMfParser {
                 val extruderAssignments = mutableMapOf<String, Int>()
                 val plateObjectMap = mutableMapOf<Int, MutableList<String>>()
                 val plateFilamentMap = mutableMapOf<Int, Set<Int>>()
+                val plateFilamentSlotsMap = mutableMapOf<Int, Set<Int>>()
 
                 val allExtruderValuesMain = mutableSetOf<Int>()
                 val objectPartExtrudersMain = mutableMapOf<String, MutableSet<Int>>()
@@ -137,6 +138,7 @@ object ThreeMfParser {
                             plateNames, objectNames, extruderAssignments,
                             plateObjectMap,
                             plateFilamentMap,
+                            plateFilamentSlotsMap,
                             allExtruderValues = allExtruderValuesMain,
                             objectPartExtruders = objectPartExtrudersMain,
                             compoundPartParents = compoundPartParentsMain
@@ -373,6 +375,7 @@ object ThreeMfParser {
                             name = name,
                             objectIds = objIds,
                             filamentIndices = plateFilamentMap[plateId] ?: emptySet(),
+                            filamentMapSlots = plateFilamentSlotsMap[plateId] ?: emptySet(),
                             printable = firstItem?.printable ?: true,
                             transform = firstItem?.transform ?: floatArrayOf(1f,0f,0f, 0f,1f,0f, 0f,0f,1f, 0f,0f,0f),
                             thumbnailBytes = thumbnailBytes,
@@ -398,6 +401,7 @@ object ThreeMfParser {
                             name = name,
                             objectIds = listOf(item.objectId),
                             filamentIndices = plateFilamentMap[plateId] ?: emptySet(),
+                            filamentMapSlots = plateFilamentSlotsMap[plateId] ?: emptySet(),
                             printable = item.printable,
                             transform = item.transform,
                             thumbnailBytes = thumbnailBytes
@@ -473,6 +477,7 @@ object ThreeMfParser {
                 val extruderAssignments = mutableMapOf<String, Int>()
                 val plateObjectMap = mutableMapOf<Int, MutableList<String>>()
                 val plateFilamentMap = mutableMapOf<Int, Set<Int>>()
+                val plateFilamentSlotsMapLite = mutableMapOf<Int, Set<Int>>()
 
                 // Check model_settings.config first, then Slic3r_PE_model.config
                 // (restructurePlateFile writes the latter for compound objects)
@@ -487,6 +492,7 @@ object ThreeMfParser {
                         plateNames, objectNames, extruderAssignments,
                         plateObjectMap,
                         plateFilamentMap,
+                        plateFilamentSlotsMapLite,
                         allExtruderValues = allExtruderValues,
                         objectPartExtruders = objectPartExtrudersLite,
                         compoundPartParents = compoundPartParentsLite
@@ -514,6 +520,7 @@ object ThreeMfParser {
                         name = plateNames[plateId] ?: "Plate $plateId",
                         objectIds = plateObjectMap[plateId]?.toList() ?: emptyList(),
                         filamentIndices = plateFilamentMap[plateId] ?: emptySet(),
+                        filamentMapSlots = plateFilamentSlotsMapLite[plateId] ?: emptySet(),
                         // Sub-plan #2c: per-plate paint state so mergeThreeMfInfoForPlate
                         // can derive hasPaintData from sourceInfo directly instead of
                         // re-running extractPlate + parseForPlateSelection on disk.
@@ -1096,6 +1103,7 @@ object ThreeMfParser {
         extruderAssignments: MutableMap<String, Int>,
         plateObjectMap: MutableMap<Int, MutableList<String>> = mutableMapOf(),
         plateFilamentMap: MutableMap<Int, Set<Int>> = mutableMapOf(),
+        plateFilamentSlotsMap: MutableMap<Int, Set<Int>> = mutableMapOf(),
         allExtruderValues: MutableSet<Int>? = null,
         objectPartExtruders: MutableMap<String, MutableSet<Int>>? = null,
         compoundPartParents: MutableMap<String, String>? = null
@@ -1155,14 +1163,37 @@ object ThreeMfParser {
                                     }
                                     key == "filament_maps" && currentPlateId != null -> {
                                         currentPlateId?.toIntOrNull()?.let { id ->
-                                            val filamentIndices = value
-                                                .trim()
-                                                .split(Regex("\\s+"))
+                                            // filament_maps values are AMS-slot assignments, one per
+                                            // file-filament position (e.g. "1 1" = both filaments
+                                            // mapped to AMS slot 1).
+                                            //
+                                            // plateFilamentMap: POSITIONS of non-zero entries (1-indexed)
+                                            // → which file-filaments are active on this plate.
+                                            // Consumed by computePlateFileIndices (subtracts 1 to get
+                                            // 0-indexed canonical positions). "1 1" → {1, 2} (both
+                                            // file-filament 0 and 1 are active). B120 fix: collecting
+                                            // values instead of positions broke when multiple filaments
+                                            // shared the same AMS slot ("1 1" → {1} → only canonical 0).
+                                            //
+                                            // plateFilamentSlotsMap: UNIQUE non-zero slot VALUES
+                                            // → which physical extruder slots are in use on this plate.
+                                            // Consumed by enrichment and extruder-set builders.
+                                            // "1 1" → {1} (only 1 physical AMS slot used).
+                                            val tokens = value.trim().split(Regex("\\s+"))
+                                            val filamentIndices = tokens
+                                                .mapIndexedNotNull { idx, token ->
+                                                    if ((token.toIntOrNull() ?: 0) > 0) idx + 1 else null
+                                                }
+                                                .toSet()
+                                            val filamentSlots = tokens
                                                 .mapNotNull { token -> token.toIntOrNull() }
                                                 .filter { it > 0 }
                                                 .toSet()
                                             if (filamentIndices.isNotEmpty()) {
                                                 plateFilamentMap[id] = filamentIndices
+                                            }
+                                            if (filamentSlots.isNotEmpty()) {
+                                                plateFilamentSlotsMap[id] = filamentSlots
                                             }
                                         }
                                     }

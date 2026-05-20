@@ -83,14 +83,16 @@ internal object BambuPlateStateEnrichment {
 
         val layerToolExtruders = sourcePlate?.layerToolExtruders.orEmpty()
             .filter { it > 0 }.toSet()
-        val filamentIndices = sourcePlate?.filamentIndices.orEmpty()
+        // Use filamentMapSlots (unique AMS slot values = physical extruder IDs), NOT
+        // filamentIndices (file-filament positions used by computePlateFileIndices).
+        val filamentSlots = sourcePlate?.filamentMapSlots.orEmpty()
             .filter { it > 0 }.toSet()
 
         val foldedNativeUsed = state.usedExtruders.map(::foldToPhysicalSlot).toSet()
         val foldedPerPart = perPartExtruders.map(::foldToPhysicalSlot).toSet()
         val foldedPaint = paintExtruders.map(::foldToPhysicalSlot).toSet()
         val foldedLayerTool = layerToolExtruders.map(::foldToPhysicalSlot).toSet()
-        val foldedFilamentIndices = filamentIndices.map(::foldToPhysicalSlot).toSet()
+        val foldedFilamentIndices = filamentSlots.map(::foldToPhysicalSlot).toSet()
 
         return (foldedNativeUsed + foldedPerPart + foldedPaint + foldedLayerTool + foldedFilamentIndices)
             .filter { it > 0 }.toSortedSet()

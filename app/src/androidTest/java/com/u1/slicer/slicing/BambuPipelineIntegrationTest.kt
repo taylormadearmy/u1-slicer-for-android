@@ -1557,4 +1557,58 @@ class BambuPipelineIntegrationTest {
         assertTrue("Must have at least 1 layer", result.totalLayers > 0)
     }
 
+    // ─── B120: filament_maps same-slot parsing ────────────────────────────────
+
+    /**
+     * B120 regression — Jon's multi-plate 3MF (scraper head + TPU end piece).
+     *
+     * The file declares 2 filaments: PETG (canonical 0) and TPU (canonical 1).
+     * Plate 2's model_settings.config assigns `extruder: 2` (= TPU) to the
+     * scraper-head object, and its plate XML carries `filament_maps = "1 1"` —
+     * both file-filaments mapped to AMS slot 1.
+     *
+     * Old parsing treated the VALUES ("1", "1") as filament indices → {1} →
+     * after -1 → canonical {0} (PETG only).  The parser now collects the
+     * POSITIONS of non-zero values instead (positions 0 and 1 both non-zero →
+     * stored as {1, 2} → canonical {0, 1}), correctly representing both PETG
+     * and TPU as active on plate 2.
+     */
+    @Test
+    fun b120_jonsBug_plate2_detectsBothFilaments() {
+        val input = asset("jons-bug.3mf")
+        val info = ThreeMfParser.parse(input)
+
+        assertTrue("jons-bug.3mf must be detected as Bambu format", info.isBambu)
+        assertTrue("jons-bug.3mf must be multi-plate", info.isMultiPlate)
+
+        val plate2 = info.plates.firstOrNull { it.plateId == 2 }
+        assertNotNull("Plate 2 must be present in jons-bug.3mf", plate2)
+        plate2!!
+
+        // Pre-fix: filamentIndices was {1} (PETG only); post-fix must be {1, 2} (both).
+        assertTrue(
+            "Plate 2 must include canonical index 0 (PETG, filamentIndices contains 1), " +
+                "got ${plate2.filamentIndices}",
+            plate2.filamentIndices.contains(1)
+        )
+        assertTrue(
+            "Plate 2 must include canonical index 1 (TPU, filamentIndices contains 2), " +
+                "got ${plate2.filamentIndices} — pre-fix this was missing due to " +
+                "'filament_maps = 1 1' being parsed as values {1} instead of positions {0,1}",
+            plate2.filamentIndices.contains(2)
+        )
+
+        // computePlateFileIndices must return [0, 1] — not [0] — for plate 2.
+        val canonical = com.u1.slicer.computePlateFileIndices(
+            info = info,
+            plateId = 2,
+            canonicalSize = info.detectedColors.size.coerceAtLeast(2),
+        )
+        assertNotNull("computePlateFileIndices must not return null for plate 2", canonical)
+        assertTrue(
+            "computePlateFileIndices must include 0 (PETG) and 1 (TPU), got $canonical",
+            canonical!!.containsAll(listOf(0, 1))
+        )
+    }
+
 }

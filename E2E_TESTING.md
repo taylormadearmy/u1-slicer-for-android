@@ -258,6 +258,58 @@ These classes are unit-tested via `CanonicalExportLeakGuardTest`
 net — flag any divergence between Prepare colours, dialog row count,
 and Slice Summary chips.
 
+### Manual regression checks (v2.2.10 — B121: STL sliced with support on a different extruder)
+
+Run after any change to: `computePlateFileIndices`, `buildWideGcodeMapping`, `FilamentMappingDialog`,
+`resolveSlicedWithMaterial`, or the `plateNarrowed` remember block in MainActivity.
+
+**Setup:** In the Extruder Presets settings, confirm E1 = PLA and E2 = PETG (or set them).
+In Print Setup, set **Support Filament → E2** and **Interface Filament → E2**.
+
+- **B121-1 — Dialog shows 2 rows for STL+support:** Load `3DBenchy.stl`. Enable supports in
+  Print Setup, set Support to E2 (PETG). Slice. Tap **Map & Upload**. The Filament Mapping
+  dialog **must show 2 rows**: one for the model (PLA · STL default) and one for support
+  (PETG · support). **Fail** = only 1 row — B121 regression.
+
+- **B121-2 — Support row labelled "support":** In the 2-row dialog, the second row must carry
+  a `support` label chip (like the `paint segment` / `layer tool` chips on Bambu rows).
+  **Fail** = second row unlabelled or missing entirely.
+
+- **B121-3 — No false mismatch when support slot matches:** With E2 = PETG and support on E2,
+  select E2 for the support row in the dialog. **No** "Sliced as PLA but slot has PETG" warning
+  should appear (B121 fix: `?: displayFileIndex` fallback stops false E1 lookup).
+  **Fail** = spurious warning fires on the support row even though the slot is correct.
+
+- **B121-4 — Correct mismatch when support slot is wrong:** Select E1 (PLA) for the support row
+  (the model row, not the support row). The mismatch warning **should** appear since the slicer
+  used PETG for support and you're mapping it to PLA. **Fail** = no warning (detector is dead).
+
+- **B121-5 — Upload completes:** With both rows mapped, confirm **Map & Upload** completes
+  without crash and logcat shows no fatal error or unresolved tool remapping.
+
+### Manual regression checks (v2.2.10 — B120: multi-plate Bambu 3MF same-slot filament detection)
+
+Run after any change to: `ThreeMfParser.parseModelSettingsConfig`, `ThreeMfPlate.filamentIndices`,
+`computePlateFileIndices`, or the plate selector's `effectiveFilaments` union.
+
+**Fixture:** `jons-bug.3mf` — two-plate file, plate 2 is a TPU scraper head. Canonical filaments:
+PETG (index 0, yellow-ish) + TPU (index 1, black). Both mapped to AMS slot 1 in `filament_maps`.
+
+- **B120-1 — Plate selector shows 2 chips for plate 2:** After loading the file, the plate
+  selector dialog must show plate 2 with **2 filament colour chips** (PETG + TPU). **Fail** =
+  only 1 chip (PETG) — B120 regression: parser read value {1} instead of positions {0,1}.
+
+- **B120-2 — Prepare shows 2 filament rows for plate 2:** After selecting plate 2, the
+  Prepare screen's filament panel must list **2 filaments** (PETG + TPU). **Fail** = 1 row.
+
+- **B120-3 — Dialog shows 2 rows after slice:** Slice plate 2. Tap **Map & Upload**. The
+  Filament Mapping dialog must show **2 rows** (one per filament). **Fail** = 1 row.
+
+- **B120-4 — No false mismatch when TPU slot selected for TPU row:** With a TPU-configured
+  extruder selected for the TPU row, **no** temperature-mismatch warning should appear.
+  Pre-fix: dialog thought plate 2 was PETG-only, so selecting a TPU slot for "PETG" fired
+  a spurious mismatch. **Fail** = warning appears on the TPU row with correct slot.
+
 ### Manual regression checks (v2.1.x — B106/B107: STL non-E1 extruder + bed temp)
 
 Run after any change to: `PrintTimeRemap.resolveCanonicalExportMapping`, `applyPrintTimeRemap`,
@@ -433,6 +485,8 @@ Run through **every** file under `app/src/androidTest/assets/` at least once. Kn
 | `u1-auxiliary-fan-cover-hex_mw.3mf` | MakerWorld-style embed |
 | `old.3mf` | Legacy-format preview |
 | `3DBenchy.stl`, `tetrahedron.stl` | STL single-material / override |
+| `3DBenchy.stl` **(+E2 support — B121)** | Enable supports in Print Setup → Support Filament = E2 (PETG preset); slice; dialog must show **2 rows** (model + support), support row labelled "support", no false mismatch when E2 selected for support row |
+| `jons-bug.3mf` — **plate 2** | B120 canary: multi-plate PETG+TPU with same AMS slot; plate selector shows **2 chips** for plate 2 (not 1); Prepare lists 2 filaments; dialog shows 2 rows; no false mismatch when TPU-preset slot selected for TPU row |
 | `Bambu PLA Basic @BBL P1S 0.4 nozzle.json`, `test-filament-profile.json` | Filament JSON only if you test import UI |
 
 **Also** include the **large** priority manual files from the table above (`2026+F1+CALENDAR…`, `super clean.3mf`) if you keep them outside `assets`—they are part of the **important** set even when not committed.

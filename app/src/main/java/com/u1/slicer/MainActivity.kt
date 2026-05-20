@@ -742,24 +742,37 @@ class MainActivity : ComponentActivity() {
                     // mapping back to canonical-fileIndex space for
                     // applyPrintTimeRemap (which keys by full canonical fileIdx).
                     val plateNarrowed: Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? =
-                        remember(canonical, threeMfInfo, viewModel.recoveryPlateId, parsedGcodeForDialog) {
+                        remember(canonical, threeMfInfo, viewModel.recoveryPlateId, parsedGcodeForDialog, extruderPresets) {
                             val full = canonical ?: return@remember null
+                            val perMm = parsedGcodeForDialog?.perExtruderFilamentMm
                             val plateFileIndices = computePlateFileIndices(
                                 threeMfInfo,
                                 viewModel.recoveryPlateId,
                                 full.size,
-                                perExtruderFilamentMm = parsedGcodeForDialog?.perExtruderFilamentMm,
+                                perExtruderFilamentMm = perMm,
                             )
-                            if (plateFileIndices == null || plateFileIndices.size == full.size) {
-                                full to (0 until full.size).toList()
-                            } else {
-                                val filtered = plateFileIndices.mapNotNull { idx ->
-                                    full.filaments.getOrNull(idx)
+                            when {
+                                // B121: computePlateFileIndices returns null when G-code has
+                                // active canonical indices beyond the canonical list size
+                                // (e.g. STL sliced with support/interface on a different
+                                // extruder). Expand the canonical list with synthetic entries
+                                // for those extra slots so the Filament Mapping dialog shows
+                                // all active extruders, not just the model filament.
+                                plateFileIndices == null && perMm != null -> {
+                                    buildWideGcodeMapping(full, perMm, extruderPresets)
+                                        ?: (full to (0 until full.size).toList())
                                 }
-                                if (filtered.size == plateFileIndices.size) {
-                                    full.copy(filaments = filtered) to plateFileIndices
-                                } else {
+                                plateFileIndices == null || plateFileIndices.size == full.size ->
                                     full to (0 until full.size).toList()
+                                else -> {
+                                    val filtered = plateFileIndices.mapNotNull { idx ->
+                                        full.filaments.getOrNull(idx)
+                                    }
+                                    if (filtered.size == plateFileIndices.size) {
+                                        full.copy(filaments = filtered) to plateFileIndices
+                                    } else {
+                                        full to (0 until full.size).toList()
+                                    }
                                 }
                             }
                         }
@@ -801,11 +814,17 @@ class MainActivity : ComponentActivity() {
                                         // (positioning each plate row's
                                         // slot at the matching canonical
                                         // fileIdx).
+                                        // B121: for STL+support, plateFileIndices may contain
+                                        // indices ≥ canonical.size (support/interface slots
+                                        // beyond the model's 1-entry canonical list). Use
+                                        // expandedSize so those entries aren't dropped.
                                         val canonicalSize = canonical.size
-                                        val expanded = MutableList(canonicalSize) { fileIdx -> fileIdx % 4 }
+                                        val maxFileIdx = plateFileIndices.maxOrNull() ?: (canonicalSize - 1)
+                                        val expandedSize = maxOf(canonicalSize, maxFileIdx + 1)
+                                        val expanded = MutableList(expandedSize) { fileIdx -> fileIdx % 4 }
                                         plateFileIndices.forEachIndexed { posInPlate, fileIdx ->
                                             val slot = plateMapping.getOrNull(posInPlate)
-                                            if (slot != null && fileIdx in 0 until canonicalSize) {
+                                            if (slot != null && fileIdx in 0 until expandedSize) {
                                                 // Clamp slot to U1's physical 0..3 range
                                                 // (defends against malformed mapping). The
                                                 // explicit if/else avoids tripping the grep
@@ -904,6 +923,38 @@ internal sealed class CanonicalLookup {
     object Loading : CanonicalLookup()
     object Absent : CanonicalLookup()
     data class Present(val list: com.u1.slicer.data.CanonicalFilamentList) : CanonicalLookup()
+}
+
+/**
+ * B121 — when [computePlateFileIndices] returns null because the G-code used
+ * canonical indices beyond [canonical]'s declared size (e.g. an STL sliced
+ * with support/interface on a different extruder), this function synthesises
+ * the missing [com.u1.slicer.data.FilamentEntry] rows so the Filament Mapping
+ * dialog shows all active extruders, not just the model filament.
+ *
+ * Returns a [Pair] of the expanded [com.u1.slicer.data.CanonicalFilamentList]
+ * and the active canonical indices, or null when [perExtruderFilamentMm] has
+ * no active entries beyond [canonical].size (no expansion needed).
+ */
+internal fun buildWideGcodeMapping(
+    canonical: com.u1.slicer.data.CanonicalFilamentList,
+    perExtruderFilamentMm: List<Float>,
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+): Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? {
+    val activeIndices = perExtruderFilamentMm.indices
+        .filter { perExtruderFilamentMm[it] > 0f }
+        .sorted()
+    if (activeIndices.isEmpty() || activeIndices.none { it >= canonical.size }) return null
+    val syntheticEntries = activeIndices.map { idx ->
+        canonical.filaments.getOrNull(idx)
+            ?: com.u1.slicer.data.FilamentEntry(
+                fileIndex = idx,
+                color = extruderPresets.getOrNull(idx)?.color ?: "#808080",
+                materialType = extruderPresets.getOrNull(idx)?.materialType,
+                source = com.u1.slicer.data.FilamentSource.SUPPORT_FILAMENT,
+            )
+    }
+    return canonical.copy(filaments = syntheticEntries) to activeIndices
 }
 
 /**

@@ -59,7 +59,8 @@ class MergeThreeMfInfoTest {
                     plateId = 3,
                     name = "4 Colour",
                     objectIds = listOf("58"),
-                    filamentIndices = setOf(1, 2)
+                    filamentIndices = setOf(1, 2),
+                    filamentMapSlots = setOf(1, 2)
                 )
             ),
             isBambu = true,
@@ -90,7 +91,8 @@ class MergeThreeMfInfoTest {
                     plateId = 3,
                     name = "4 Colour",
                     objectIds = listOf("58"),
-                    filamentIndices = setOf(1, 2)
+                    filamentIndices = setOf(1, 2),
+                    filamentMapSlots = setOf(1, 2)
                 )
             ),
             isBambu = true,
@@ -158,7 +160,8 @@ class MergeThreeMfInfoTest {
                     plateId = 5,
                     name = "Textured",
                     objectIds = listOf("58"),
-                    filamentIndices = setOf(1, 2)
+                    filamentIndices = setOf(1, 2),
+                    filamentMapSlots = setOf(1, 2)
                 )
             ),
             isBambu = true,
@@ -193,7 +196,8 @@ class MergeThreeMfInfoTest {
                     plateId = 5,
                     name = "Selected Plate",
                     objectIds = listOf("58"),
-                    filamentIndices = setOf(1, 2)
+                    filamentIndices = setOf(1, 2),
+                    filamentMapSlots = setOf(1, 2)
                 )
             ),
             isBambu = true,
@@ -229,7 +233,8 @@ class MergeThreeMfInfoTest {
                     plateId = 5,
                     name = "Selected Plate",
                     objectIds = listOf("58"),
-                    filamentIndices = setOf(1)
+                    filamentIndices = setOf(1),
+                    filamentMapSlots = setOf(1)
                 )
             ),
             isBambu = true,
@@ -804,7 +809,8 @@ class MergeThreeMfInfoTest {
         val sourceInfo = ThreeMfInfo(
             objects = emptyList(),
             plates = listOf(
-                ThreeMfPlate(5, "Textured", listOf("5"), filamentIndices = setOf(1))
+                ThreeMfPlate(5, "Textured", listOf("5"), filamentIndices = setOf(1),
+                    filamentMapSlots = setOf(1))
             ),
             isBambu = true, isMultiPlate = true,
             hasLayerToolChanges = true,

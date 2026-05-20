@@ -677,6 +677,82 @@ class SemmSlicingTest {
     }
 
     /**
+     * Crash regression: large Bambu H2C-printer shoe file (TPU model + PLA support on E2)
+     * must slice without crashing. The shoe has ~820k triangles in 2 component files
+     * (~33MB each), no paint data (single-colour TPU), filament_map=["1"], and
+     * support_filament=2 / support_interface_filament=2 embedded in project_settings.
+     *
+     * The crash (SIGKILL/OOM) was observed when the B120/B121 changes correctly propagated
+     * support_filament=2. Pre-B120, support_filament defaulted to 0/1, avoiding the heavier
+     * multi-extruder support path. This test verifies the full pipeline handles the large
+     * model without crashing, accepting either a successful slice or a graceful error.
+     */
+    @Test
+    fun h2cShoe_tpuModelPlaSupportFilament_slicesWithoutCrash() {
+        val input = asset("1890038_xav01_H2C_279_104.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        // Shoe is a large single-colour TPU model (no paint data; H2C = printer type, not paint)
+        assertFalse("H2C printer shoe must NOT have hasPaintData (single-colour model)", origInfo.hasPaintData)
+        assertTrue("Shoe must have at least one plate", origInfo.plates.isNotEmpty())
+
+        // Work on plate 1 (the first plate)
+        val sourcePlate = origInfo.plates.firstOrNull()
+        val plateId = sourcePlate?.plateId ?: 1
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val embedOverrides: Map<String, Any> = mapOf(
+            "enable_support" to "1",
+            "support_type" to "normal(auto)",
+            "support_threshold_angle" to "45",
+            "support_interface_top_layers" to "3",
+            "support_interface_bottom_layers" to "0",
+            "support_filament" to "2",
+            "support_interface_filament" to "2",
+            "filament_type" to mutableListOf("TPU", "PLA"),
+            "nozzle_temperature" to mutableListOf("230", "220"),
+            "nozzle_temperature_initial_layer" to mutableListOf("230", "220"),
+        )
+        val config = embedder.buildConfig(
+            info = origInfo,
+            sourceConfig = sourceConfig,
+            overrides = embedOverrides,
+            targetExtruderCount = 2
+        )
+        assertEquals("2", config["support_filament"].toString())
+        assertEquals("2", config["support_interface_filament"].toString())
+
+        val embedded = embedder.embed(processed, config, outDir, origInfo, plateId = plateId)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        // Scale to 20% to keep the layer count manageable for the test
+        lib.setModelScale(0.2f, 0.2f, 0.2f)
+
+        val sliceConfig = makeConfig(2).copy(
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            supportFilament = 2,
+            supportInterfaceFilament = 2,
+            extruderTemps = intArrayOf(230, 220),
+        )
+        val result = lib.slice(sliceConfig)
+        // Primary goal: no crash (null = SIGKILL was not caught, process died).
+        assertNotNull("slice() must not return null — SIGKILL means OOM crash still present", result)
+        result!!
+        if (result.success) {
+            val gcode = File(result.gcodePath).readText()
+            assertTrue("support_filament=2 in G-code", gcode.contains("support_filament = 2"))
+            assertTrue("support_interface_filament=2 in G-code", gcode.contains("support_interface_filament = 2"))
+        } else {
+            // Graceful failure (e.g. B122 complexity guard) is acceptable — crash is not.
+            assertFalse(
+                "slice() returned failure with null errorMessage",
+                result.errorMessage.isNullOrEmpty()
+            )
+        }
+    }
+
+    /**
      * B87: Skywing / Seawing / Silkwing Dragon 3MF — SEMM model with paint_color
      * states up to 8 but only 3 declared filaments (#6FCAEF cyan, #482960 purple,
      * #FFFFFF white). User reports that "black" bottom layers in the Prepare
