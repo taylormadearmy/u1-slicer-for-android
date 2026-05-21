@@ -1988,4 +1988,104 @@ class PreparePreviewViewModelTest {
             modelFile.delete()
         }
     }
+
+    /**
+     * B124 drag position test: a single multi-volume 3MF (Button-for-S-trousers, 40 volumes)
+     * must honour a user drag when sliced. Pre-fix this model was visually stuck at the bed
+     * origin because `perObjectSizes` was populated unconditionally from `objectBoundingBoxes`,
+     * which tripped `multiObjectMode = true` in the renderer and prevented the drag path
+     * (`setModelInstances`) from being exercised visually. The slice path was correct, but a
+     * regression there would be silent without this test.
+     *
+     * Test flow: load Button plate 1, assert `hasMultipleDistinctObjects = false`, drag far to
+     * the right, slice, verify the G-code print moves land in the dragged X region.
+     */
+    @Test
+    fun buttonForSTrousers_dragToRight_preservesPositionThroughSlice() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Button-for-S-trousers.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("Button plate selector visible") { viewModel.showPlateSelector.value }
+            viewModel.selectPlate(1)
+            waitUntil("Button plate 1 loaded", timeoutMs = 120_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+
+            val loadState = viewModel.state.value
+            if (loadState is SlicerViewModel.SlicerState.Error)
+                throw AssertionError("Button-for-S-trousers load failed: ${loadState.message}")
+            Thread.sleep(400) // let mapping settle
+
+            assertFalse(
+                "B124: hasMultipleDistinctObjects must be false for a single multi-volume 3MF",
+                viewModel.hasMultipleDistinctObjects.value
+            )
+
+            val modelInfo = viewModel.modelInfo.value
+            assertNotNull("modelInfo must be available after load", modelInfo)
+            val sizeX = modelInfo!!.sizeX
+            val sizeY = modelInfo.sizeY
+            val defaultX = maxOf(0f, (270f - sizeX) / 2f)
+            val dragX = (270f - sizeX).coerceAtLeast(defaultX + 40f)
+            val dragY = maxOf(0f, (270f - sizeY) / 2f)
+            assertTrue(
+                "B124: dragX=$dragX must sit right of default X=$defaultX",
+                dragX > defaultX + 20f
+            )
+
+            val wipeTowerPos = Pair(
+                viewModel.config.value.wipeTowerX,
+                viewModel.config.value.wipeTowerY
+            )
+            viewModel.applyPlacementPositions(floatArrayOf(dragX, dragY), wipeTowerPos)
+
+            viewModel.startSlicing()
+            waitUntil("Button slice complete", timeoutMs = 300_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val sliceState = viewModel.state.value
+            if (sliceState is SlicerViewModel.SlicerState.Error)
+                throw AssertionError("Button-for-S-trousers slice failed: ${sliceState.message}")
+
+            val result = (sliceState as SlicerViewModel.SlicerState.SliceComplete).result
+            val gcode = java.io.File(result.gcodePath).readText()
+
+            val moveRe = Regex("""^G1\s+(?:X([\d.]+))?.*?E""")
+            var maxX = Float.NEGATIVE_INFINITY
+            var currentX = 0f
+            var inWipeTower = false
+            for (raw in gcode.lineSequence()) {
+                val line = raw.trim()
+                if (line.startsWith("; FEATURE:")) {
+                    inWipeTower = line.contains("Prime tower", ignoreCase = true) ||
+                        line.contains("Wipe", ignoreCase = true)
+                    continue
+                }
+                if (!line.startsWith("G1")) continue
+                val m = moveRe.find(line) ?: continue
+                val xStr = m.groupValues.getOrNull(1).orEmpty()
+                if (xStr.isNotBlank()) currentX = xStr.toFloatOrNull() ?: currentX
+                if (!inWipeTower && currentX > maxX) maxX = currentX
+            }
+
+            val noDragRightEdge = defaultX + sizeX
+            val dragRightEdge = dragX + sizeX
+            val midpoint = (noDragRightEdge + dragRightEdge) / 2f
+            val diag = "B124 diag: sizeX=$sizeX defaultX=$defaultX dragX=$dragX maxX=$maxX " +
+                "noDragEdge=$noDragRightEdge dragEdge=$dragRightEdge midpoint=$midpoint"
+            assertTrue(
+                "B124: sliced G-code must reflect drag to X=$dragX (right edge ~$dragRightEdge). " +
+                    "maxX should be above midpoint $midpoint. $diag",
+                maxX >= midpoint
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
 }

@@ -5789,34 +5789,52 @@ internal fun buildProfileOverridesImpl(
     }
 
     // Support keys: when mode is USE_FILE and the file has its own config (Bambu 3MF),
-    // omit these keys so the file's original enable_support / support_threshold_angle
-    // survive through ProfileEmbedder's preserve path. Without this, cfg.supportEnabled
-    // defaults to false and stomps the file's embedded support=true (B10 fix).
-    // For STL/non-Bambu files (no source config), always emit — cfg.supportEnabled IS
-    // the user's intent and there's no file value to preserve.
-    if (ov.supports.mode != OverrideMode.USE_FILE || !hasSourceConfig) {
+    // omit enable_support so the file's original value survives through ProfileEmbedder's
+    // preserve path. Without this, cfg.supportEnabled defaults to false and stomps the
+    // file's embedded support=true (B10 fix). For STL/non-Bambu files (no source config),
+    // always emit — cfg.supportEnabled IS the user's intent.
+    //
+    // Sub-settings (type, angle, speed, etc.) each emit when the full support block is
+    // active OR when the user has explicitly set that particular setting to OVERRIDE mode.
+    // This prevents stale OVERRIDE state from being silently dropped when the user later
+    // reverts the top-level supports toggle back to USE_FILE (B125 siblings).
+    val supportBlockActive = ov.supports.mode != OverrideMode.USE_FILE || !hasSourceConfig
+    if (supportBlockActive) {
         result["enable_support"] = if (supportEnabled) "1" else "0"
+    }
+    if (supportBlockActive || ov.supportAngle.mode == OverrideMode.OVERRIDE)
         result["support_threshold_angle"] = supportAngle.toString()
+    if (supportBlockActive || ov.supportType.mode == OverrideMode.OVERRIDE)
         result["support_type"] = supportType
+    if (supportBlockActive || ov.supportBuildPlateOnly.mode == OverrideMode.OVERRIDE)
         result["support_on_build_plate_only"] = if (supportBuildPlateOnly) "1" else "0"
+    if (supportBlockActive || ov.supportPattern.mode == OverrideMode.OVERRIDE)
         result["support_base_pattern"] = supportPattern
+    if (supportBlockActive || ov.supportPatternSpacing.mode == OverrideMode.OVERRIDE)
         result["support_base_pattern_spacing"] = supportPatternSpacing.toString()
+    if (supportBlockActive || ov.supportInterfaceTopLayers.mode == OverrideMode.OVERRIDE)
         result["support_interface_top_layers"] = supportInterfaceTopLayers.toString()
+    if (supportBlockActive || ov.supportInterfaceBottomLayers.mode == OverrideMode.OVERRIDE)
         result["support_interface_bottom_layers"] = supportInterfaceBottomLayers.toString()
+    if (supportBlockActive || ov.supportXyDistance.mode == OverrideMode.OVERRIDE)
         result["support_object_xy_distance"] = supportXyDistance.toString()
+    if (supportBlockActive || ov.supportInterfacePattern.mode == OverrideMode.OVERRIDE)
         result["support_interface_pattern"] = supportInterfacePattern
+    if (supportBlockActive || ov.supportInterfaceSpacing.mode == OverrideMode.OVERRIDE)
         result["support_interface_spacing"] = supportInterfaceSpacing.toString()
-        // support_speed 0 = auto; only emit positive values
-        if (supportSpeed > 0) {
-            result["support_speed"] = supportSpeed.toString()
-        }
-        // Tree support parameters — only relevant when support type is tree
-        val isTree = supportType.startsWith("tree")
-        if (isTree) {
+    // support_speed 0 = auto; only emit positive values
+    if ((supportBlockActive || ov.supportSpeed.mode == OverrideMode.OVERRIDE) && supportSpeed > 0)
+        result["support_speed"] = supportSpeed.toString()
+    // Tree support parameters — only relevant when support type is tree
+    val isTree = supportType.startsWith("tree") &&
+        (supportBlockActive || ov.supportType.mode == OverrideMode.OVERRIDE)
+    if (isTree) {
+        if (supportBlockActive || ov.treeSupportBranchAngle.mode == OverrideMode.OVERRIDE)
             result["tree_support_branch_angle"] = treeSupportBranchAngle.toString()
+        if (supportBlockActive || ov.treeSupportBranchDistance.mode == OverrideMode.OVERRIDE)
             result["tree_support_branch_distance"] = treeSupportBranchDistance.toString()
+        if (supportBlockActive || ov.treeSupportBranchDiameter.mode == OverrideMode.OVERRIDE)
             result["tree_support_branch_diameter"] = treeSupportBranchDiameter.toString()
-        }
     }
 
     // support_filament / support_interface_filament: emit whenever the user has
@@ -5824,7 +5842,6 @@ internal fun buildProfileOverridesImpl(
     // USE_FILE or the file has a source config. The gate above only preserves the
     // file's enable_support value; it must not suppress an explicit extruder choice
     // (B125: H2C shoe with USE_FILE + hasSourceConfig silently dropped E4 support).
-    val supportBlockActive = ov.supports.mode != OverrideMode.USE_FILE || !hasSourceConfig
     if (supportFilament > 0 &&
         (ov.supportFilament.mode == OverrideMode.OVERRIDE || supportBlockActive)) {
         result["support_filament"] = supportFilament.toString()

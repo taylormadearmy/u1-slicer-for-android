@@ -512,6 +512,43 @@ class SlicingOverridesTest {
         assertEquals("support_filament must be emitted for STL when OVERRIDE", "3", result["support_filament"])
     }
 
+    // --- B125 siblings: support sub-settings emitted when their own mode is OVERRIDE ---
+
+    @Test
+    fun `B125 siblings support_type emitted for Bambu file when OVERRIDE even with supports USE_FILE`() {
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.USE_FILE),
+            supportType = OverrideValue(OverrideMode.OVERRIDE, "tree(auto)")
+        )
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 4, hasSourceConfig = true)
+        assertEquals("B125 sibling: support_type must be emitted when OVERRIDE", "tree(auto)", result["support_type"])
+        assertFalse("enable_support must remain omitted", result.containsKey("enable_support"))
+    }
+
+    @Test
+    fun `B125 siblings support_type omitted for Bambu file when USE_FILE and supports USE_FILE`() {
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.USE_FILE),
+            supportType = OverrideValue(OverrideMode.USE_FILE)
+        )
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 4, hasSourceConfig = true)
+        assertFalse("B125 sibling: support_type must be omitted when both USE_FILE + hasSourceConfig", result.containsKey("support_type"))
+    }
+
+    @Test
+    fun `B125 siblings supportSpeed emitted for Bambu file when OVERRIDE even with supports USE_FILE`() {
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.USE_FILE),
+            supportSpeed = OverrideValue(OverrideMode.OVERRIDE, 80)
+        )
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 4, hasSourceConfig = true)
+        assertEquals("B125 sibling: support_speed must be emitted when OVERRIDE", "80", result["support_speed"])
+        assertFalse("enable_support must remain omitted", result.containsKey("enable_support"))
+    }
+
     // --- B100: layer_height override handling in buildProfileOverrides ---
 
     @Test
