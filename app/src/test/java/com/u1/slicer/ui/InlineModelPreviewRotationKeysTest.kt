@@ -146,4 +146,32 @@ class InlineModelPreviewRotationKeysTest {
             keys.contains("perObjectSizes")
         )
     }
+
+    /**
+     * B124: a single multi-volume 3MF (e.g. Button-for-S-trousers, 40 volumes) has many
+     * objectBoundingBoxes entries but must NOT trigger multiObjectMode in the renderer.
+     * The fix: `perObjectSizes` passed to InlineModelPreview is gated on
+     * `hasMultipleDistinctObjects` — empty array for single-file loads so the renderer
+     * uses drawModelAt() (position-respecting) rather than the multi-object origin fallback.
+     */
+    @Test
+    fun inlineModelPreview_perObjectSizesGatedOnHasMultipleDistinctObjects() {
+        val src = mainActivitySource()
+        // Find the InlineModelPreview composable call — anchored by the unique
+        // parameter that follows perObjectSizes in the call site.
+        val anchor = "perObjectSizes = "
+        val at = src.indexOf(anchor)
+        require(at >= 0) { "perObjectSizes parameter not found in InlineModelPreview call" }
+        val lineEnd = src.indexOf('\n', at)
+        val line = src.substring(at, if (lineEnd >= 0) lineEnd else src.length)
+        assertTrue(
+            "B124: perObjectSizes passed to InlineModelPreview must be gated on " +
+                "`hasMultipleDistinctObjects` so that a single multi-volume 3MF " +
+                "(e.g. Button-for-S-trousers, 40 volumes) does not set multiObjectMode=true " +
+                "in the renderer, which would draw at origin and ignore drag positions. " +
+                "Expected: `if (hasMultipleDistinctObjects) objectBoundingBoxes else floatArrayOf()`. " +
+                "Got: $line",
+            line.contains("hasMultipleDistinctObjects")
+        )
+    }
 }

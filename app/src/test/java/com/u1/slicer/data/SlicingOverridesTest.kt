@@ -465,6 +465,53 @@ class SlicingOverridesTest {
         assertEquals("30", result["support_threshold_angle"])
     }
 
+    // --- B125: support_filament emitted even when supports=USE_FILE + hasSourceConfig=true ---
+
+    @Test
+    fun `B125 support_filament emitted for Bambu file when supportFilament is OVERRIDE`() {
+        // Regression: H2C shoe with USE_FILE + hasSourceConfig=true silently dropped E4 support extruder.
+        // support_filament must be emitted whenever the user explicitly chose a slot, regardless of
+        // whether the supports block itself is gated by USE_FILE+hasSourceConfig.
+        val cfg = SliceConfig(supportFilament = 4, supportInterfaceFilament = 4)
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.USE_FILE),  // preserve file's support settings
+            supportFilament = OverrideValue(OverrideMode.OVERRIDE, 4),
+            supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, 4)
+        )
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 4, hasSourceConfig = true)
+        assertEquals("support_filament must be emitted when OVERRIDE", "4", result["support_filament"])
+        assertEquals("support_interface_filament must be emitted when OVERRIDE", "4", result["support_interface_filament"])
+        // The main support enable/angle keys should still be omitted (USE_FILE + hasSourceConfig)
+        assertFalse("enable_support should still be omitted", result.containsKey("enable_support"))
+    }
+
+    @Test
+    fun `B125 support_filament omitted for Bambu file when supportFilament is USE_FILE`() {
+        // When the user hasn't explicitly chosen a support filament (USE_FILE), don't emit the key —
+        // the embedded file value takes effect as before.
+        val cfg = SliceConfig(supportFilament = 2)
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.USE_FILE),
+            supportFilament = OverrideValue(OverrideMode.USE_FILE)
+        )
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 2, hasSourceConfig = true)
+        assertFalse("support_filament should be omitted when USE_FILE + hasSourceConfig", result.containsKey("support_filament"))
+    }
+
+    @Test
+    fun `B125 support_filament emitted for STL file when OVERRIDE mode`() {
+        // STL (hasSourceConfig=false) + explicit OVERRIDE → supportBlockActive path + OVERRIDE
+        // both true; value must be emitted. (USE_FILE on STL resolves to 0 so nothing emits —
+        // the file has no embedded config and OrcaSlicer uses its own default.)
+        val cfg = SliceConfig()
+        val ov = SlicingOverrides(
+            supports = OverrideValue(OverrideMode.USE_FILE),
+            supportFilament = OverrideValue(OverrideMode.OVERRIDE, 3)
+        )
+        val result = buildProfileOverridesImpl(cfg, ov, slotCount = 3, hasSourceConfig = false)
+        assertEquals("support_filament must be emitted for STL when OVERRIDE", "3", result["support_filament"])
+    }
+
     // --- B100: layer_height override handling in buildProfileOverrides ---
 
     @Test

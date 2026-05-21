@@ -264,7 +264,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         canonicalCacheSourcePath = null
         _filamentOverrides.value = emptyMap()
         _objectBoundingBoxes.value = floatArrayOf()
-        hasMultipleDistinctObjects = false
+        hasMultipleDistinctObjectsVar = false
         customObjectPositions = null
         _multiObjectPositions.value = null
         additionalModelFiles.clear()
@@ -462,7 +462,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val objectBoundingBoxes: StateFlow<FloatArray> = _objectBoundingBoxes.asStateFlow()
     // True when multiple distinct objects from different files are on the bed.
     // Switches placement to setObjectPositions instead of setModelInstances at slice time.
-    private var hasMultipleDistinctObjects = false
+    // Exposed as a StateFlow so InlineModelPreview can gate perObjectSizes on it — a single
+    // multi-volume 3MF (e.g. Button-for-S-trousers, 40 volumes) has many objectBoundingBoxes
+    // but is NOT multi-file, so it must not trigger multiObjectMode in the renderer (B124).
+    private val _hasMultipleDistinctObjects = MutableStateFlow(false)
+    val hasMultipleDistinctObjects: StateFlow<Boolean> = _hasMultipleDistinctObjects.asStateFlow()
+    private var hasMultipleDistinctObjectsVar: Boolean
+        get() = _hasMultipleDistinctObjects.value
+        set(value) { _hasMultipleDistinctObjects.value = value }
 
     // Current multi-object positions [x0,y0,x1,y1,...] as a StateFlow so InlineModelPreview
     // can pass them into the rotation LaunchedEffect for setObjectPositions re-application.
@@ -1722,7 +1729,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * plateIdx >= 0 means that specific plate (addModelForPlate).
      */
     private suspend fun doAddFile(file: File, displayName: String, plateIdx: Int) {
-        val existingPos = if (hasMultipleDistinctObjects) {
+        val existingPos = if (hasMultipleDistinctObjectsVar) {
             customObjectPositions?.copyOf()
         } else {
             getPlacementPositions().let { p -> if (p.size >= 2) floatArrayOf(p[0], p[1]) else null }
@@ -1738,7 +1745,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
             addOk = true
             additionalModelFiles.add(file to plateIdx)
-            hasMultipleDistinctObjects = true
+            hasMultipleDistinctObjectsVar = true
             val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
             _objectBoundingBoxes.value = boxes
 
@@ -2532,7 +2539,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // In multi-object mode the preview mesh is world-positioned, so keep native offsets
         // in sync with the drag. Bump modelAddVersion so InlineModelPreview's rotation
         // LaunchedEffect re-fetches the mesh at the new world positions.
-        if (hasMultipleDistinctObjects) {
+        if (hasMultipleDistinctObjectsVar) {
             _multiObjectPositions.value = positions
             viewModelScope.launch(Dispatchers.IO) {
                 NativeLibrary.previewMutex.withLock {
@@ -3308,7 +3315,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // Re-add any extra files that were on the bed before the embed reload
                         // cleared the native model. Without this, Combo 1/3 (3MF primary with
                         // extruderCount > 1) would fail at setObjectPositions with a count mismatch.
-                        if (hasMultipleDistinctObjects && additionalModelFiles.isNotEmpty()) {
+                        if (hasMultipleDistinctObjectsVar && additionalModelFiles.isNotEmpty()) {
                             var allReAddOk = true
                             NativeLibrary.previewMutex.withLock {
                                 for ((f, pIdx) in additionalModelFiles) {
@@ -3381,7 +3388,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     return@launch
                 }
 
-                if (custom != null && hasMultipleDistinctObjects) {
+                if (custom != null && hasMultipleDistinctObjectsVar) {
                     val ok = native.setObjectPositions(custom)
                     Log.i("SlicerVM", "Multi-object placement: ${custom.size / 2} objects (ok=$ok)")
                     diagnostics.recordEvent(
@@ -4564,7 +4571,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         customObjectPositions = null
         customWipeTowerPos = null
         additionalModelFiles.clear()
-        hasMultipleDistinctObjects = false
+        hasMultipleDistinctObjectsVar = false
         _objectBoundingBoxes.value = floatArrayOf()
         _multiObjectPositions.value = null
         _pendingAddFile.value?.copiedFile?.delete()
@@ -5803,12 +5810,6 @@ internal fun buildProfileOverridesImpl(
         if (supportSpeed > 0) {
             result["support_speed"] = supportSpeed.toString()
         }
-        if (supportFilament > 0) {
-            result["support_filament"] = supportFilament.toString()
-        }
-        if (supportInterfaceFilament > 0) {
-            result["support_interface_filament"] = supportInterfaceFilament.toString()
-        }
         // Tree support parameters — only relevant when support type is tree
         val isTree = supportType.startsWith("tree")
         if (isTree) {
@@ -5816,6 +5817,21 @@ internal fun buildProfileOverridesImpl(
             result["tree_support_branch_distance"] = treeSupportBranchDistance.toString()
             result["tree_support_branch_diameter"] = treeSupportBranchDiameter.toString()
         }
+    }
+
+    // support_filament / support_interface_filament: emit whenever the user has
+    // explicitly chosen a filament slot — regardless of whether ov.supports is
+    // USE_FILE or the file has a source config. The gate above only preserves the
+    // file's enable_support value; it must not suppress an explicit extruder choice
+    // (B125: H2C shoe with USE_FILE + hasSourceConfig silently dropped E4 support).
+    val supportBlockActive = ov.supports.mode != OverrideMode.USE_FILE || !hasSourceConfig
+    if (supportFilament > 0 &&
+        (ov.supportFilament.mode == OverrideMode.OVERRIDE || supportBlockActive)) {
+        result["support_filament"] = supportFilament.toString()
+    }
+    if (supportInterfaceFilament > 0 &&
+        (ov.supportInterfaceFilament.mode == OverrideMode.OVERRIDE || supportBlockActive)) {
+        result["support_interface_filament"] = supportInterfaceFilament.toString()
     }
 
     return result

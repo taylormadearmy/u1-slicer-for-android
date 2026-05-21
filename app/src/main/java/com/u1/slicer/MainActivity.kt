@@ -1186,6 +1186,7 @@ fun PrepareScreen(
     val loadTimeInstanceOffsets by viewModel.loadTimeInstanceOffsets.collectAsState()
     val nativeSliceStateDirty by viewModel.nativeSliceStateDirty.collectAsState()
     val objectBoundingBoxes by viewModel.objectBoundingBoxes.collectAsState()
+    val hasMultipleDistinctObjects by viewModel.hasMultipleDistinctObjects.collectAsState()
     val modelAddVersion by viewModel.modelAddVersion.collectAsState()
     val multiObjectPositions by viewModel.multiObjectPositions.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
@@ -1445,7 +1446,7 @@ fun PrepareScreen(
                                 },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
                                 nativeSliceStateDirty = nativeSliceStateDirty,
-                                perObjectSizes = objectBoundingBoxes,
+                                perObjectSizes = if (hasMultipleDistinctObjects) objectBoundingBoxes else floatArrayOf(),
                                 modelAddVersion = modelAddVersion,
                                 multiObjectPositions = multiObjectPositions,
                                 onSmartPaint = smartPaintCallback,
