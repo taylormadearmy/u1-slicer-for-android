@@ -2153,11 +2153,11 @@ class PreparePreviewViewModelTest {
             val result = (sliceState as SlicerViewModel.SlicerState.SliceComplete).result
             val gcode = java.io.File(result.gcodePath).readText()
 
-            // extruder_count must be >= 2 in the embedded header
+            // support_filament must appear in the embedded G-code header (same pattern as B122)
             assertTrue(
-                "B125: embedded G-code header must declare extruder_count >= 2 " +
-                    "(got 1 means targetCount was incorrectly 1 and arrays were truncated)",
-                Regex("""extruder_count\s*=\s*([2-9])""").containsMatchIn(gcode)
+                "B125: G-code header must contain 'support_filament = 2' — " +
+                    "if absent, the support_filament override was not embedded",
+                gcode.contains("support_filament = 2")
             )
 
             val lines = gcode.lines()
