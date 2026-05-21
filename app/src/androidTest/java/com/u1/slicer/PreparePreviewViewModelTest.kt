@@ -250,6 +250,71 @@ class PreparePreviewViewModelTest {
     }
 
     /**
+     * B124 regression guard: Button-for-S-trousers is a single 3MF file with 40 volumes.
+     *
+     * Before the fix (F85 / v2.2.7), loading any multi-volume single-file 3MF populated
+     * objectBoundingBoxes with N entries (N = volume count) and passed all of them as
+     * perObjectSizes to InlineModelPreview unconditionally. The renderer interpreted
+     * perObjectSizes.size / 3 > 1 as multiObjectMode=true, but with no splitMeshByObjects
+     * ranges (only set for genuine multi-file loads), it fell back to drawModel() at world
+     * origin — instancePositions was ignored and dragging had no visual effect.
+     *
+     * Contract after the fix:
+     * (a) hasMultipleDistinctObjects MUST be false for a single-file load — this is the
+     *     gate that causes MainActivity to pass floatArrayOf() to InlineModelPreview so
+     *     the renderer stays in single-object mode.
+     * (b) objectBoundingBoxes MUST still be populated (size / 3 > 1) — confirming that
+     *     the gate is genuinely meaningful and would cause multiObjectMode without the fix.
+     *
+     * Together (a) + (b) prove the structural grep in InlineModelPreviewRotationKeysTest
+     * has something real to protect against.
+     */
+    @Test
+    fun buttonForSTrousers_singleFile_hasMultipleDistinctObjectsFalse_withMultiVolumeBboxes() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Button-for-S-trousers.3mf")
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("S-Buttons plate selector visible") {
+                viewModel.showPlateSelector.value
+            }
+
+            viewModel.selectPlate(1)
+
+            waitUntil("S-Buttons plate 1 loaded", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+
+            // (a) Single-file load must NOT set hasMultipleDistinctObjects — that flag is
+            // only set by doAddFile() when a SECOND file is explicitly added to the bed.
+            assertFalse(
+                "B124: hasMultipleDistinctObjects must be false for a single multi-volume 3MF. " +
+                    "If true, InlineModelPreview passes objectBoundingBoxes as perObjectSizes " +
+                    "and ModelRenderer enters multiObjectMode=true — drag has no visual effect.",
+                viewModel.hasMultipleDistinctObjects.value
+            )
+
+            // (b) objectBoundingBoxes must still be populated — Button has 40 volumes,
+            // so there are 40 × 3 = 120 floats. Without the gate, this WOULD trigger
+            // multiObjectMode and break drag. Confirming the data is real is what makes
+            // (a) a meaningful regression guard.
+            val bboxCount = viewModel.objectBoundingBoxes.value.size / 3
+            assertTrue(
+                "B124: objectBoundingBoxes must have > 1 entry for Button-for-S-trousers " +
+                    "(expected 40 volumes, got $bboxCount). Without the hasMultipleDistinctObjects " +
+                    "gate this count alone would have triggered multiObjectMode.",
+                bboxCount > 1
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
      * B86: S-Buttons Prepare preview shows 3 colours instead of 4 (pink/E4 appears white).
      *
      * Root cause hypothesis: when the user has E2=white AND E4=pink, the auto colour-mapping
