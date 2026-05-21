@@ -68,7 +68,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1240 JVM unit tests
+./gradlew testDebugUnitTest                        # 1249 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 315 instrumented tests — uses Orchestrator
 ```
 
@@ -136,8 +136,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/HsvColorPickerTest.kt` (9) — F64 HSV↔hex color conversion round-trips: hsvToHex, hexToHsv, red/green/blue/white/black, inverse property
 - `SliceStalenessTest.kt` (4) — F67 _sliceStale StateFlow contract: initial false, config mutation sets true, startSlicing resets false, extruderPresets drop(1) skips startup
 - `SliceCancelTest.kt` (5) — B55 cancel state machine: SliceResult.cancelled field, Cancelling state singleton
-- `SemmColorPermutationTest.kt` (11) — B64 computeSemmColorPermutation: identity/permuted/H2C/non-SEMM/sparse guards; composeSemmRemap: priority, both-present, both-null
-- `SlicerColorOrderTest.kt` (9) — B92 computeSlicerColorOrder: null for non-paint / H2C / single colour / size mismatch / default at index 0 / tied dominant extruder; Buzz plate 8 shape permutes to `[1, 0]`; three-colour object-default-at-top case permutes
+- `SemmFoldSlotsTest.kt` (9) — B123 computeSemmFoldSlots: Shape A (PAINT_DERIVED overflow), Shape B (all FILE_COLOUR with cm.size < canonical — colored_3DBenchy fix), null-cm fallback, no-fold guards (canonical==cm.size, cm>canonical, single entry), cm.size < FILE_COLOUR count (user assigns fewer slots than file declares — cm wins)
 - `FilamentTypeHeaderPatchTest.kt` (14) — B63 fixFilamentTypeHeader: single/multi-extruder replacement, absent line guard, empty list guard, missing file, first-occurrence-only, B99 header patch canonical padding for support/interface slots beyond canonical size, B102 sparse colorMapping produces physical-slot-indexed filament_type, B105 resolveNonCanonicalHeaderPatchTypes single/multi-slot, unknown-slot fallback
 - `ui/SupportFilamentOptionTest.kt` (5) — B99 support/interface filament option labels and config values for H2C, STL, non-identity, and sparse color mappings
 - `ui/SlicedWithMaterialTest.kt` (8) — B118 Map & Print dialog material-mismatch cascade: override priority, sliceTime-slot priority, file-declared fallback, DC15 single-colour PETG-slot repro, explicit override on single-colour, multi-colour mapped-slot resolution; B121 support-row uses displayFileIndex not slot-0 when colorMapping too short

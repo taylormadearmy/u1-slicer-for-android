@@ -3700,13 +3700,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // (~50 LOC) were dead-but-still-computed before; now
                     // both helpers + the gate are deleted.
                     //
-                    // SEMM paint-state fold — AMS2/AMS3 PAINT_DERIVED overflow.
+                    // SEMM paint-state fold — folds T(N)..T(canonical-1) → T(i%N).
                     //
-                    // Bambu multi-AMS files encode AMS2/AMS3 states 5-12+ in paint_color.
-                    // The native slicer emits T4-T11+ even with a 4-extruder profile because
-                    // it reads raw paint_color bit values as extruder indices. The canonical
-                    // list has N FILE_COLOUR entries + M PAINT_DERIVED overflow entries; fold
-                    // T(N)..T(N+M) → T(i%N) to compress them back to the base range.
+                    // Two shapes require folding:
+                    //
+                    // Shape A — PAINT_DERIVED overflow (AMS2/AMS3):
+                    //   Bambu multi-AMS files encode states 5-12+ in paint_color. The
+                    //   canonical list has N FILE_COLOUR entries + M PAINT_DERIVED overflow
+                    //   entries. cm.size == N in these cases (user maps N distinct slots).
+                    //
+                    // Shape B — FILE_COLOUR-only overflow (colored benchy, B123):
+                    //   Some SEMM files declare all paint states as explicit filament_colour
+                    //   entries in project_settings (e.g. 10 FILE_COLOUR for a 4-colour
+                    //   painted model). The canonical list has 10 entries, all FILE_COLOUR;
+                    //   cm.size == 4 (only 4 user-facing slots). The old PAINT_DERIVED-based
+                    //   condition never fired for these files. Fix: prefer cm.size as the
+                    //   base count when cm.size < semmCanonicalSize.
                     //
                     // H2C models are excluded: H2C has colorMapping.size > distinctSlots
                     // intentionally (e.g. 7 model colours → 4 physical slots). Their T4+
@@ -3724,18 +3733,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val semmCanonicalList = getCanonicalFilamentList()
                     if (_threeMfInfo.value?.hasPaintData == true && !isH2cPaint &&
                             semmCanonicalList != null) {
-                        val semmCanonicalSize = semmCanonicalList.size
-                        val baseColorCount = semmCanonicalList.filaments
-                            .count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
-                        val paintMaxIndex = semmCanonicalList.filaments
-                            .filter { it.source == com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
-                            .maxOfOrNull { it.fileIndex } ?: -1
-                        if (baseColorCount >= 1 && paintMaxIndex >= baseColorCount) {
-                            val foldSlots = (0 until semmCanonicalSize).map { it % baseColorCount }
+                        val foldSlots = computeSemmFoldSlots(cm, semmCanonicalList)
+                        if (foldSlots != null) {
+                            val baseColorCount = foldSlots.distinct().size
                             GcodeToolRemapper.remap(result.gcodePath, foldSlots)
-                            Log.i("SlicerVM", "SEMM fold: T$baseColorCount..T${semmCanonicalSize - 1}" +
+                            Log.i("SlicerVM", "SEMM fold: T$baseColorCount..T${semmCanonicalList.size - 1}" +
                                 " → T(N%%$baseColorCount) [base=$baseColorCount," +
-                                " paintMax=$paintMaxIndex, canonical=$semmCanonicalSize, h2c=false]")
+                                " canonical=${semmCanonicalList.size}, h2c=false, cmSize=${cm?.size}]")
                         }
                     }
                     val outputValidation = validateSliceOutput(
@@ -6014,6 +6018,40 @@ internal fun computeEmbedTargetCount(
 // callers after `1e95c7d` made `applyConfigToPrusa` respect the embed for
 // per-filament tuning. Their unit tests (SlicerColorOrderTest,
 // SemmColorPermutationTest, ExpandedGcodeRemapTest) were removed alongside.
+
+/**
+ * B123 — computes the fold-slot mapping for SEMM models where the slicer emits
+ * more T-indices than the user's filament mapping (cm) declares.
+ *
+ * Two shapes are handled:
+ * - Shape A (PAINT_DERIVED overflow): canonical has N FILE_COLOUR + M PAINT_DERIVED
+ *   entries. cm.size == N. Fold T(N)..T(N+M-1) → T(i%N).
+ * - Shape B (FILE_COLOUR-only overflow, e.g. colored_3DBenchy): all canonical entries
+ *   are FILE_COLOUR but cm.size < canonical.size (file declares 10 paint states as
+ *   explicit filament colours; user maps only 4). Fold T(4)..T(9) → T(i%4).
+ *
+ * When cm.size < non-PAINT_DERIVED count (e.g. 4 FILE_COLOUR + 3 PAINT_DERIVED,
+ * cm=[0,1,2]): the user has deliberately assigned fewer slots than the file declares;
+ * cm.size wins as the base so T(cm.size)..T(canonical-1) all collapse. The 4th
+ * FILE_COLOUR entry is treated as an overflow alias, not a distinct colour.
+ *
+ * When [cm] is null or its size already covers all canonical entries, returns null
+ * (nothing to fold). Does NOT apply to H2C models — callers must exclude those.
+ */
+internal fun computeSemmFoldSlots(
+    cm: List<Int>?,
+    semmCanonicalList: com.u1.slicer.data.CanonicalFilamentList,
+): List<Int>? {
+    val semmCanonicalSize = semmCanonicalList.size
+    val baseColorCount = if (cm != null && cm.size in 1 until semmCanonicalSize) {
+        cm.size
+    } else {
+        semmCanonicalList.filaments
+            .count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
+    }
+    if (baseColorCount < 1 || semmCanonicalSize <= baseColorCount) return null
+    return (0 until semmCanonicalSize).map { it % baseColorCount }
+}
 
 internal fun resolveFilamentTypesForHeaderPatch(
     canonical: com.u1.slicer.data.CanonicalFilamentList,
