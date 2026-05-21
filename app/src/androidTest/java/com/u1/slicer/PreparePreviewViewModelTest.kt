@@ -4,6 +4,9 @@ import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.OverrideMode
+import com.u1.slicer.data.OverrideValue
+import com.u1.slicer.data.SlicingOverrides
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -2084,6 +2087,89 @@ class PreparePreviewViewModelTest {
                 maxX >= midpoint
             )
         } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    /**
+     * B125 regression — single-colour model with supportFilament=OVERRIDE(2) must produce
+     * a slice with T1 moves (support on E2).
+     *
+     * Root cause: embedProfile() computed targetCount=1 for single-colour models, causing
+     * normalizePerFilamentArrays to truncate filament_type/nozzle_temperature to 1 entry and
+     * set extruder_count=1. OrcaSlicer then silently ignores support_filament=2 because
+     * extruder 2 is out of range. Fix: targetCount=max(computed, canonical, maxSupportSlot).
+     */
+    @Test
+    fun h2cShoe_supportFilamentOverride_embedsCorrectExtruderCount_and_producesT1InGcode() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("1890038_xav01_H2C_279_104.3mf")
+        val overridesBefore = viewModel.slicingOverrides.value
+        try {
+            viewModel.loadModelFromFile(modelFile)
+
+            waitUntil("H2C shoe plate selector visible") { viewModel.showPlateSelector.value }
+            viewModel.selectPlate(1)
+            waitUntil("H2C shoe plate 1 loaded", timeoutMs = 120_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+
+            assertFalse(
+                "B125: H2C shoe must NOT have paint data (single-colour model)",
+                viewModel.threeMfInfo.value?.hasPaintData ?: false
+            )
+
+            // Set support overrides AFTER model load — saveSlicingOverrides sets profileNeedsReEmbed=true
+            // so the next slice re-calls embedProfile() with the updated targetCount.
+            val overrides = SlicingOverrides(
+                supports = OverrideValue(OverrideMode.OVERRIDE, true),
+                supportType = OverrideValue(OverrideMode.OVERRIDE, "normal(auto)"),
+                supportAngle = OverrideValue(OverrideMode.OVERRIDE, 45),
+                supportFilament = OverrideValue(OverrideMode.OVERRIDE, 2),
+                supportInterfaceFilament = OverrideValue(OverrideMode.OVERRIDE, 2)
+            )
+            viewModel.saveSlicingOverrides(overrides)
+            // Wait for DataStore to emit the new value so slicingOverrides.value is up-to-date
+            // when embedProfile() reads it during the re-embed triggered by profileNeedsReEmbed.
+            waitUntil("slicingOverrides updated with support override", timeoutMs = 5_000L) {
+                viewModel.slicingOverrides.value.supportFilament.mode == OverrideMode.OVERRIDE
+            }
+
+            // Scale down to 20% so the slice completes in reasonable time
+            viewModel.setModelScale(SlicerViewModel.ModelScale(0.2f, 0.2f, 0.2f))
+            Thread.sleep(500)
+
+            viewModel.startSlicing()
+            waitUntil("H2C shoe slice complete", timeoutMs = 300_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val sliceState = viewModel.state.value
+            if (sliceState is SlicerViewModel.SlicerState.Error)
+                throw AssertionError("B125: H2C shoe slice failed: ${sliceState.message}")
+
+            val result = (sliceState as SlicerViewModel.SlicerState.SliceComplete).result
+            val gcode = java.io.File(result.gcodePath).readText()
+
+            // extruder_count must be >= 2 in the embedded header
+            assertTrue(
+                "B125: embedded G-code header must declare extruder_count >= 2 " +
+                    "(got 1 means targetCount was incorrectly 1 and arrays were truncated)",
+                Regex("""extruder_count\s*=\s*([2-9])""").containsMatchIn(gcode)
+            )
+
+            val lines = gcode.lines()
+            val t1Count = lines.count { it.trim() == "T1" }
+            assertTrue(
+                "B125: T1 (support on E2) must appear in G-code when supportFilament=OVERRIDE(2). " +
+                    "Got T1=$t1Count — if 0, embedProfile set extruder_count=1 and OrcaSlicer " +
+                    "ignored support_filament=2.",
+                t1Count > 0
+            )
+        } finally {
+            viewModel.saveSlicingOverrides(overridesBefore) // restore original overrides
             viewModel.clearModel()
             modelFile.delete()
         }

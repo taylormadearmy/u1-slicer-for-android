@@ -2735,7 +2735,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val canonicalSize = getCanonicalFilamentList()
             ?.filaments?.count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
             ?: 0
-        val targetCount = maxOf(computedTarget, canonicalSize)
+        // B125: if the user has overridden support_filament/support_interface_filament to
+        // a slot beyond the model's own extruder count, expand targetCount so
+        // normalizePerFilamentArrays keeps enough entries and extruder_count covers the
+        // support slot. Without this, a single-colour model with supportFilament=4 gets
+        // extruder_count=1 and OrcaSlicer silently ignores the support_filament setting.
+        val ov125 = slicingOverrides.value
+        val maxSupportSlot = maxOf(
+            if (ov125.supportFilament.mode == OverrideMode.OVERRIDE) ov125.supportFilament.value ?: 0 else 0,
+            if (ov125.supportInterfaceFilament.mode == OverrideMode.OVERRIDE) ov125.supportInterfaceFilament.value ?: 0 else 0
+        )
+        val targetCount = maxOf(computedTarget, canonicalSize, maxSupportSlot)
         // Phase 2 (S-Buttons mesh-diversity fix): the embed-time extruder remap is
         // disabled because the post-slice tool remap is also disabled
         // (`skipSliceTimeRemap = true` below) and the print-time slot mapping is
