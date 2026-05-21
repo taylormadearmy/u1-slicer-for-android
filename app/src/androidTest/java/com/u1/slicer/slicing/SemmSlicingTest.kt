@@ -753,6 +753,72 @@ class SemmSlicingTest {
     }
 
     /**
+     * B122 (30% scale probe) — same as [h2cShoe_tpuModelPlaSupportFilament_slicesWithoutCrash]
+     * but at 30% scale, matching the scale the user reported a crash at.
+     * Accepts either success (with T1 in G-code confirming support was generated) or graceful
+     * failure. Crash (null result / SIGKILL) is a FAIL — the 30% scale must not crash the app.
+     *
+     * When this test fails with a SIGKILL (null result), the OOM boundary lies between 20% and
+     * 30% and the model is too large for on-device support generation at that scale.
+     */
+    @Test
+    fun h2cShoe_30PercentScale_tpuModelPlaSupportFilament_doesNotCrash() {
+        val input = asset("1890038_xav01_H2C_279_104.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        assertFalse("H2C printer shoe must NOT have hasPaintData", origInfo.hasPaintData)
+
+        val sourcePlate = origInfo.plates.firstOrNull()
+        val plateId = sourcePlate?.plateId ?: 1
+
+        val processed = BambuSanitizer.process(input, outDir)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val embedOverrides: Map<String, Any> = mapOf(
+            "enable_support" to "1",
+            "support_type" to "normal(auto)",
+            "support_threshold_angle" to "45",
+            "support_interface_top_layers" to "3",
+            "support_interface_bottom_layers" to "0",
+            "support_filament" to "2",
+            "support_interface_filament" to "2",
+            "filament_type" to mutableListOf("TPU", "PLA"),
+            "nozzle_temperature" to mutableListOf("230", "220"),
+            "nozzle_temperature_initial_layer" to mutableListOf("230", "220"),
+        )
+        val config = embedder.buildConfig(
+            info = origInfo,
+            sourceConfig = sourceConfig,
+            overrides = embedOverrides,
+            targetExtruderCount = 2
+        )
+
+        val embedded = embedder.embed(processed, config, outDir, origInfo, plateId = plateId)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+        lib.setModelScale(0.3f, 0.3f, 0.3f)
+
+        val sliceConfig = makeConfig(2).copy(
+            supportEnabled = true,
+            supportType = "normal(auto)",
+            supportFilament = 2,
+            supportInterfaceFilament = 2,
+            extruderTemps = intArrayOf(230, 220),
+        )
+        val result = lib.slice(sliceConfig)
+        assertNotNull("slice() must not return null at 30% scale — SIGKILL = OOM crash", result)
+        result!!
+        if (result.success) {
+            val gcode = File(result.gcodePath).readText()
+            val t1Count = gcode.lines().count { it.trim() == "T1" }
+            android.util.Log.i("SemmSlicingTest", "B122-30%: success, T1=$t1Count (support=${t1Count > 0})")
+            assertTrue("support_filament=2 header present", gcode.contains("support_filament = 2"))
+        } else {
+            assertFalse(
+                "slice() returned failure with null errorMessage",
+                result.errorMessage.isNullOrEmpty()
+            )
+        }
+    }
+
+    /**
      * B87: Skywing / Seawing / Silkwing Dragon 3MF — SEMM model with paint_color
      * states up to 8 but only 3 declared filaments (#6FCAEF cyan, #482960 purple,
      * #FFFFFF white). User reports that "black" bottom layers in the Prepare
