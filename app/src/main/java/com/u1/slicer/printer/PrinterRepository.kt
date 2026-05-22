@@ -120,7 +120,13 @@ class PrinterRepository(
                     prevState, effectiveState,
                     latestStatus.filename, latestStatus.progressPercent
                 )
-                event?.let { AppEventNotifier.notify(appContext, it) }
+                event?.let {
+                    AppEventNotifier.notify(
+                        appContext, it,
+                        nickname = _activeNickname.value,
+                        printerCount = _printerCount.value,
+                    )
+                }
                 prevState = effectiveState
                 val interval = if (rapidPollCyclesRemaining > 0) {
                     rapidPollCyclesRemaining--
