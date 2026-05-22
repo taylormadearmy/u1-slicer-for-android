@@ -507,11 +507,27 @@ fun PrinterScreen(
                     shape = RoundedCornerShape(16.dp)
                 ) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Temperatures", fontWeight = FontWeight.Bold, fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.primary)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Temperatures", fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.primary)
+                            // F82: cooldown all heaters. Always safe — no head motion.
+                            if (status.isConnected) {
+                                TextButton(onClick = { viewModel.cooldownAll() }) {
+                                    Icon(Icons.Default.AcUnit, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Cooldown")
+                                }
+                            }
+                        }
                         HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
 
-                        val canEdit = status.isPrinting || status.isPaused
+                        // F82: allow temperature edit any time the printer is reachable,
+                        // not just during print. No head motion involved.
+                        val canEdit = status.isConnected
                         TempTile(
                             label = "Bed", actual = status.bedTemp, target = status.bedTarget,
                             isEditing = editingHeater == "heater_bed",
@@ -548,6 +564,48 @@ fun PrinterScreen(
                                     }
                                     if (row.size == 1) Spacer(Modifier.weight(1f))
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // ── F82: Custom G-code (idle only) ─────────────────────────
+                if (status.isConnected && !status.isPrinting && !status.isPaused) {
+                    var customGcode by remember { mutableStateOf("") }
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("Custom G-code", fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                "Sends a single line to Klipper. Use for one-off " +
+                                "commands when idle (e.g. M104 S0, SET_PRESSURE_ADVANCE). " +
+                                "You own the risk — motion commands can crash the head.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                            OutlinedTextField(
+                                value = customGcode,
+                                onValueChange = { customGcode = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                placeholder = { Text("G-code (e.g. M104 S0)") },
+                                singleLine = true
+                            )
+                            Button(
+                                onClick = {
+                                    viewModel.sendCustomGcode(customGcode)
+                                    customGcode = ""
+                                },
+                                enabled = customGcode.isNotBlank(),
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("Send")
                             }
                         }
                     }

@@ -537,28 +537,56 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - `clipperRetryAttempted` left untouched — still active for non-upgrade Clipper errors
 - Issue #19 closed.
 
+## Open Architecture
+
+### A1: v2.1.0 hardening release — typed G-code path classes + Send-side multi-tool defence
+- **Status**: NOT STARTED. Estimated ~2–3 days. Defense-in-depth from Phase 2 reviews; not a correctness blocker but makes the bug class structurally harder to re-open.
+- **Scope**:
+  - **B.1 finish — typed value classes end-to-end.** Make `PhysicalGcodePath` constructor `internal`. Expose explicit factories: `fromRemap(physical)`, `fromVerifiedLegacy(file)`, `fromIdentityCopy(file)`. Drop the public `PhysicalGcodePath.of(file)` shortcut. Thread `CanonicalGcodePath` / `PhysicalGcodePath` through `prepareExportableGcode*`, `saveGcodeTo`, `shareGcode`, `shareJobGcode`. Compiler then enforces "anything sent to printer went through a typed boundary".
+  - **Source-T defence on Send.** Before sending, scan source G-code for `^T(\d+)`. If any T ≥ 4 appears AND canonical lookup returned `Absent`, block the send with a clear error.
+  - **Phase 2.6 carry-over.** STL canonical-list defaults from `PrinterViewModel.syncFilaments` (currently uses stale local `extruderPresets`).
+- **Tests**: Red test for Absent-misclassification (synthesise canonical G-code with T4+, force null canonical, verify Send blocked); regex test for multi-digit T (T10/T11); factory-correctness test for `PhysicalGcodePath`.
+- **Out of scope** (deferred to A2): anything requiring native rebuild; anything requiring a second printer profile.
+- **Pre-tag checklist**: sweep green at HEAD; JVM tests green; focused E2E batch on Send/Save/Share/Jobs paths + "block-on-Absent-multitool" manual test; version bump to 2.1.0 / versionCode 261; merge to main; build release APK; cut tag.
+- **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) §v2.1.0.
+
+### A2: v3.0.0 multi-printer via Orca profile import
+- **Status**: NOT STARTED. Estimated weeks. Needs a brainstorming-skill design session + spec doc before any code.
+- **Driver**: support multiple printers in a single Android app, profile-driven via OrcaSlicer profile import. Replaces the hardcoded U1 assumptions threaded through `applyConfigToPrusa`, the `profile_keys[]` whitelist, the `is_snapmaker_profile` heuristic, and the 4-slot `coerceIn(0, 3)` clamps.
+- **Scope**:
+  - **Profile import system.** Read `.orca_printer`, `.orca_filament`, `.orca_process` JSON. Handle 3MF-embedded variants. Validation (schema, required keys, conflict detection).
+  - **Profile merge logic (Kotlin).** Build a fully-resolved `Map<String, Any>` per active printer: base printer ⊕ active process ⊕ active filament per slot ⊕ user overrides ⊕ 3MF-embedded params.
+  - **JNI passthrough.** New `nativeApplyResolvedConfig(json)` consumes the resolved map. Replaces `applyConfigToPrusa`'s hardcoded values, the `profile_keys[]` whitelist, and the `is_snapmaker_profile` heuristic.
+  - **B.2 — config pipeline inversion.** Free byproduct of the JNI passthrough.
+  - **B.3 — PRINT_START heuristic obsoleted.** Profile carries explicit printer ID metadata.
+  - **Slot-count parameterisation.** `coerceIn(0, slotCount-1)` instead of hardcoded `0..3`. `meshAlignedFilamentColors` mod-N fallback uses `slotCount` from active profile.
+  - **UI.** Settings screen for imported profiles; active-profile indicator; migration of v2.x users to a pre-imported U1 profile.
+  - **First non-U1 printer profile + verification.** Real second printer; differential vs U1 must show only kinematics/extruder/bed differences from the profile delta.
+- **Relationship to F78** (multi-printer support): F78 is the user-facing "configure and switch between multiple printers" feature; A2 is the architectural foundation that makes it possible. F78 lands on top of A2.
+- **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) §v3.0.0.
+
+### A3: Clipper post-upgrade native failure — APPARENTLY RESOLVED
+- **History**: Long-running native-geometry investigation into poisoned-Clipper polygons after app upgrade. Documented in [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
+- **Status (2026-05-22)**: not observed in any release since the v1.5.0 native rebuild (B38 fix). v2.x runs through E2E batches and instrumented sweeps clean. Considering resolved; doc retained for forensic reference.
+- **If symptom returns**: poisoned-Clipper coordinates (`Long.MIN_VALUE` / `Long.MAX_VALUE`) in slicing output, intermittent across reinstalls on Pixel 9a more than Pixel 8a. Re-open this entry and the investigation doc.
+
 ## Open Features
 
-### F85: Plate selector when adding a 3MF to the bed (GitHub #140)
-- When a 3MF file is selected via **Add to bed**, the current path calls `native.addModel(path)` which loads all plates rather than showing the plate-selector dialog.
-- **Proposal**: detect 3MF extension in `addModelFile`/`addModelFromFile`, parse plates with `ThreeMfParser`, show the existing plate-selector dialog, then load only the chosen plate.
-- **Implementation options**: (a) new `nativeAddModelForPlate(path, plateId)` JNI method analogous to `loadModelForPlate`; or (b) pre-extract the target plate via `BambuSanitizer.extractPlate` to a temp file and pass to `addModel`.
-- Option (b) is simpler (no native rebuild required) but wastes disk; option (a) is cleaner.
+### F86: Prepare page — indicate overridden settings + reset button (GitHub #146)
+- **Indicate overrides**: settings on the Prepare page whose `OverrideMode == OVERRIDE` should be visually distinguished from settings still using the file value (`USE_FILE`) or app default (`USE_DEFAULT`) — e.g. a dot, accent colour, or "modified" badge on the control.
+- **Reset affordance**: provide a way to revert overrides. Minimum: global "Reset all overrides" button. Better: per-setting reset (inline icon / long-press) so a single change can be undone without wiping the rest. Reset restores `USE_FILE` when the file has an embedded profile, else `USE_DEFAULT`.
+- **Implementation**: override state already lives per-field in `SlicingOverrides` with `OverrideMode`; UI just reads each field's mode. See `SlicingOverridesUI.kt` for the existing override controls.
+- **Out of scope**: persisting reset as a per-file preference; diff view of file-value vs. override-value.
+- **Source**: Kevin (in-session feature request), 2026-05-22.
 
-### F84: Upload filename should preserve the original model name (GitHub #138)
-- Upload filenames today are derived from the on-disk transient G-code (typically `output_<epoch>.gcode` or `output.remapped_<epoch>.gcode`), so prints in the printer's file browser are indistinguishable.
-- **Proposal**: upload filename `{modelBaseName}_{epochMillis}.gcode`, where `modelBaseName` is the originally-loaded file name with extension stripped + the existing `buildPrinterUploadFilename` sanitisation applied.
-- **Examples**: `Jumping_frog.3mf` → `Jumping_frog_1778999503284.gcode`; `Dragon Scale infinity.3mf` → `Dragon_Scale_infinity_1778999503284.gcode`.
-- **Implementation**: `SlicerViewModel.currentModelName` already holds the original filename. Flow it to `PrinterViewModel.sendAndPrint` / `sendUploadOnly` and pass through to `PrinterRepository.uploadAndPrint` / `uploadOnly` (which already accept a `filename` parameter — currently `file.name` from the on-disk gcode). The `buildPrinterUploadFilename` helper itself doesn't change.
-- **Tests**: update `PrinterRepositoryTest#upload filename sanitization and unique suffix generation` to use model-like names; add a unit test confirming `sendAndPrint`/`sendUploadOnly` pass the model name (not the gcode name) to the repo; manual on-device confirm the printer's file browser shows the model name.
-- **Out of scope**: per-print custom naming; renaming files already on the printer.
+### F85: Plate selector when adding a 3MF to the bed (GitHub #140) — DONE v2.2.7
+- Add-to-bed now shows the plate-selector dialog for multi-plate 3MF files; only the chosen plate is loaded. Shipped via `nativeAddModelForPlate` (commits 3c94b56 / f6d25fa). GitHub #140 closed.
 
-### F83: Scale model by absolute dimension (mm) in addition to percentage (GitHub #136)
-- Today the Prepare screen only allows scaling by percentage (1% increments per F74). Users often want a specific final size (e.g. "50mm tall") without doing the percentage math.
-- **Proposal**: add a dimension-input mode alongside the percentage field — user types target X, Y, or Z in mm; other axes follow proportionally under uniform scaling.
-- **UX notes**: toggle between `%` and `mm`; show the resulting % alongside the mm value; clamp to a sensible min (~1mm); warn when the result exceeds the 270×270×270 bed.
-- Preserve B108/B109 bed-snap and rotated-footprint logic — only the input affordance changes.
-- **Out of scope**: non-uniform scaling UI rework; snap-to-bed (already handled by `setModelScale`).
+### F84: Upload filename should preserve the original model name (GitHub #138) — DONE
+- Shipped. `PrinterViewModel.sendAndPrint` / `sendUploadOnly` call `PrinterRepository.resolveUploadBaseName(modelName, file.name)`; `MainActivity` passes the model name through. Printer file browser shows the original model name with the epoch suffix. GitHub #138 closed.
+
+### F83: Scale model by absolute dimension (mm) + non-uniform XYZ scaling (GitHub #136) — DONE v2.2.7
+- Shipped. Prepare screen has mm/% toggle, uniform/non-uniform toggle, per-axis X/Y/Z sliders + text fields, `ModelScaleConverter` (unit-tested) for mm↔scale conversion, and an "Exceeds 270 mm bed on X/Y/Z" warning. Reset-to-100% button included. GitHub #136 closed.
 
 ### F82: Idle-state printer controls on Printer tab (GitHub #133)
 - The Printer tab today only exposes pause/resume/cancel during an active print, plus the LED toggle and filament sync card.  Add idle-state controls so the user can drive the printer without an active job.
@@ -567,14 +595,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **UX**: gate behind `status.isConnected` (and `!isPrinting` for moves that would conflict with a running print).  Match desktop Snapmaker Orca's idle-state control panel layout where reasonable.
 - **Out of scope (for v1)**: bed leveling wizard, per-step calibration flows.
 
-### F81: Add notifications for all loading stages (GitHub #120)
-- Notify when long-running background operations complete: model load, Bambu sanitize/embed pipeline, Prepare preview ready (large model QEM).
-- Only fire when app is backgrounded — use the existing `ProcessLifecycleOwner` foreground gate from F53.
-- Build on the existing notification infrastructure (F53, v1.5.15): 9 event types already wired; add new event types for load/preview milestones.
+### F81: Add notifications for all loading stages (GitHub #120) — DONE
+- Notifications wired for long-running background operations (model load, Bambu sanitize/embed pipeline, Prepare preview ready). Shipped (commit c3ba402). GitHub #120 closed.
 
-### F80: Investigate remote (off-LAN) printing via Snapmaker Orca / U1 firmware (GitHub #112)
-- Investigation only — map what desktop Snapmaker OrcaSlicer ships for remote print, what U1 firmware exposes, and whether tunnelling (Tailscale/ZeroTier) or first-class support is viable.
-- Output: writeup as issue comment covering 3 options (do nothing / tunnelling recipe / build support) with effort + auth/security implications and a recommendation. No implementation in this issue.
+### F80: Off-LAN printing via Snapmaker cloud MQTT — DONE, awaiting Snapmaker permission (GitHub #112)
+- **Status**: technical investigation + working implementation complete. Cloud-MQTT subscribe verified (`${sn}/status,/notification,/response`, 3 of 4 topics GRANTED — cracked via blutter decompile of mobile `libapp.so`). 4-step WAN upload flow (create → S3 PUT → completed → `server.files.pull` MQTT) verified on a 17 MB file 2026-05-11. See [F80 cloud-MQTT resolution](memory/project-f80-cloud-mqtt-blocker.md) and [F80 off-LAN upload resolution](memory/project-f80-off-lan-upload.md) memory notes.
+- **Blocker before shipping**: awaiting permission from Snapmaker to use their cloud endpoints from a third-party app. Holding the code on a branch; not enabling in production until we have an explicit OK.
 - **Related**: #16 (F45) Bambu printer support
 
 ### F79: Colour selector improvements (GitHub #111)
@@ -588,7 +614,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Single active connection at a time (no parallel monitoring v1). Notifications include printer nickname.
 - **Tests**: unit tests on list model + migration; instrumented test for active-printer switch + WebSocket re-target.
 
-### F77: Add multiple files to the print bed independently (GitHub #109) — IN PROGRESS
+### F77: Add multiple files to the print bed independently (GitHub #109) — DONE v2.2.7
 - **Redesigned** from original flat-binary-STL-combiner approach to an additive JNI loading model that preserves the primary file's embedded settings and allows independent per-object movement.
 - **Primary load**: works unchanged — any supported format (STL, 3MF, OBJ, STEP). Settings/profiles from the primary file are preserved.
 - **"Add to bed" button**: appears below the 3D viewer once a model is loaded. Opens a file picker; adds the selected file as a new independent object via `NativeLibrary.addModel()`. Preserves all primary file's config. Multiple files can be added sequentially.
@@ -600,9 +626,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Still to do**: per-object extruder assignment UI (currently all objects slice with primary file's extruder config); instrumented test for addModelFile slice pipeline.
 - **Tests**: `CopyArrangeCalculatorTest` — 5 `buildMultiObjectPositions` cases (empty, single, two-in-row, row-wrap, row-height tracking); `InlineModelPreviewRotationKeysTest` — `perObjectSizes` key guard added.
 
-### F75: Prime tower should default to back of plate (GitHub #90)
-- Default auto-placed prime tower to back of bed instead of current default; prefer embedded 3MF position when present; user can still move freely.
-- **Source**: Discord user DC15, 2026-04-21
+### F75: Prime tower should default to back of plate (GitHub #90) — DONE
+- Shipped. `CopyArrangeCalculator.computeWipeTowerPosition` lists back-of-plate candidates (top-center → top-left → top-right) before the rest of the bed; when the model occupies the back, front candidates still beat them on raw clearance so the model dictates placement. Embedded 3MF position still wins when present. GitHub #90 closed.
 
 ### F70: Check for Updates (GitHub #68) — DONE v1.5.49
 - "Check for Updates" button in Settings About section; queries GitHub Releases API (`/releases/latest`), compares to `BuildConfig.VERSION_NAME`, shows inline result
@@ -674,11 +699,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Background-only gating via ProcessLifecycleOwner; deep-link navigation to relevant tab on tap
 - Issue #13 closed.
 
-### F54: AI colouring for single colour prints (GitHub #33)
-- Automatically generate multi-colour designs from single-colour STL/3MF models using AI
-- When a user loads a single-colour model, offer an option to generate colour assignments (per-face or per-region)
-- Scope TBD: region segmentation approach, on-device vs cloud inference, user control (accept/reject/edit), output format (per-triangle extruder assignment compatible with existing SEMM pipeline)
-- Track: [`#33`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/33)
+### F54: AI colouring for single colour prints (GitHub #33) — DONE v2.2.0
+- Shipped as Smart Paint / AI Paint on the Prepare screen (commit 435ef9e, v2.2.0). Per-region segmentation + manual paint/lasso editing + Parts ⇄ Regions toggle. GitHub #33 closed.
 
 ### F55: Draft slice mode — slice with simplified mesh for fast iteration (GitHub #34)
 - Large models (1M+ triangles) can take a long time to slice; for iterative workflows the user does not need full precision

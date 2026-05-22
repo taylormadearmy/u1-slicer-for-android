@@ -1,5 +1,7 @@
 # Clipper Post-Upgrade Investigation
 
+> **Status (2026-05-22): APPARENTLY RESOLVED.** Not observed in any release since the v1.5.0 native rebuild (B38). v2.x E2E batches and instrumented sweeps run clean. Retained as forensic reference. If poisoned-Clipper coordinates (`Long.MIN_VALUE` / `Long.MAX_VALUE`) reappear in slicing output, re-open BACKLOG entry A3 and this doc.
+
 ## Summary
 
 This document captures the current state of the long-running investigation into the intermittent-but-often-reproducible post-upgrade slicing failure in U1 Slicer for Android.

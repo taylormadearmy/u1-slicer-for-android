@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v2.2.18` (`versionCode 291`)
+Current release: `v2.3.0` (`versionCode 292`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -17,7 +17,7 @@ Current release: `v2.2.18` (`versionCode 291`)
 >    "Map & Print" / "Send & Print" without an explicit user-authorised reason.
 >
 > For local-only device IDs, adb targets, and any machine-specific workflow notes, see `CLAUDE.local.md` if present.
-> For the current deep-dive on the post-upgrade native Clipper failure, see [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).
+> The post-upgrade native Clipper failure (B38) has been resolved since v1.5.0 and is not observed in any v2.x release. Historical investigation lives in [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md); see BACKLOG entry A3 for the resolution note.
 > For the multi-phase Bambu refactor status (Phase 1 + Phase 2 done; Phase 2.0/2.6 future UX work), see [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md).
 
 ## Build

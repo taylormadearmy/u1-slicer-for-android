@@ -333,6 +333,27 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    // F82: idle-state printer controls — temperature-only set, no head motion.
+    // `TURN_OFF_HEATERS` is the standard Klipper macro that drops bed + every
+    // extruder to 0 in one call. Safe to send when idle, printing, or paused.
+    fun cooldownAll() {
+        viewModelScope.launch {
+            val ok = printerRepo.sendGcode("TURN_OFF_HEATERS")
+            if (!ok) _heaterError.value = "Could not send cooldown"
+        }
+    }
+
+    // F82: arbitrary G-code line from the user-typed custom-G-code box. User
+    // owns the risk (movements, raw heater commands, etc); the UI displays a
+    // warning beside the field. Empty / whitespace-only input is rejected.
+    fun sendCustomGcode(script: String) {
+        val trimmed = sanitizeCustomGcode(script) ?: return
+        viewModelScope.launch {
+            val ok = printerRepo.sendGcode(trimmed)
+            if (!ok) _heaterError.value = "Could not send G-code"
+        }
+    }
+
     fun clearSendingState() {
         _sendingState.value = SendingState.Idle
     }
@@ -344,6 +365,15 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     }
 
     companion object {
+        // F82: pre-flight check for the custom G-code input. Returns the
+        // sanitised script when it should be sent, or null when the input is
+        // empty/whitespace-only. Keeps the side-effecting `sendCustomGcode`
+        // thin so this rule is unit-testable.
+        internal fun sanitizeCustomGcode(raw: String): String? {
+            val trimmed = raw.trim()
+            return if (trimmed.isEmpty()) null else trimmed
+        }
+
         internal fun shouldStartCameraKeepalive(hasActiveJob: Boolean): Boolean = !hasActiveJob
 
         internal fun shouldPollLedOnConnectionEdge(wasConnected: Boolean, isConnected: Boolean): Boolean =

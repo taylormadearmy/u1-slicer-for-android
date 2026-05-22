@@ -87,6 +87,40 @@ data class SlicingOverrides(
      * @param slotCount number of physical extruder slots being used
      * @param cfgWipeTower current [SliceConfig.wipeTowerEnabled] value
      */
+    // F86: per-section and total override counts. Used by the Prepare/Settings
+    // accordion to show "(N modified)" badges and gate the "Reset all overrides"
+    // affordance. Only OVERRIDE counts as a user-set override — USE_FILE and
+    // ORCA_DEFAULT both fall back to non-user values. `flowCalibration` is a
+    // plain Boolean toggle without an OverrideMode and is intentionally excluded.
+    fun layerAndInfillOverrideCount(): Int = listOf(
+        layerHeight, infillDensity, wallCount, wallGenerator, seamPosition,
+        infillPattern, sparseInfillSpeed, topShellLayers, bottomShellLayers,
+        topSurfacePattern, bottomSurfacePattern, reduceInfillRetraction
+    ).count { it.mode == OverrideMode.OVERRIDE }
+
+    fun supportOverrideCount(): Int = listOf(
+        supports, supportType, supportAngle, supportBuildPlateOnly, supportPattern,
+        supportPatternSpacing, supportInterfaceTopLayers, supportInterfaceBottomLayers,
+        supportFilament, supportInterfaceFilament, supportXyDistance,
+        supportInterfacePattern, supportInterfaceSpacing, supportSpeed,
+        treeSupportBranchAngle, treeSupportBranchDistance, treeSupportBranchDiameter
+    ).count { it.mode == OverrideMode.OVERRIDE }
+
+    fun primeTowerOverrideCount(): Int = listOf(
+        primeTower, primeVolume, primeTowerBrimWidth, primeTowerBrimChamfer,
+        primeTowerChamferMaxWidth, primeTowerWidth, wipeTowerRotationAngle
+    ).count { it.mode == OverrideMode.OVERRIDE }
+
+    fun temperatureOverrideCount(): Int =
+        if (bedTemp.mode == OverrideMode.OVERRIDE) 1 else 0
+
+    fun otherOverrideCount(): Int = listOf(brimWidth, skirtLoops)
+        .count { it.mode == OverrideMode.OVERRIDE }
+
+    fun totalOverrideCount(): Int =
+        layerAndInfillOverrideCount() + supportOverrideCount() +
+        primeTowerOverrideCount() + temperatureOverrideCount() + otherOverrideCount()
+
     fun resolvePrimeTower(slotCount: Int, cfgWipeTower: Boolean): Boolean {
         if (slotCount > 1 && primeTower.mode != OverrideMode.OVERRIDE) return true
         return when (primeTower.mode) {

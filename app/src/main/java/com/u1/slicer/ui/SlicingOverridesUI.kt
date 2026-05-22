@@ -5,15 +5,19 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Architecture
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material3.*
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,9 +57,31 @@ fun SlicingOverridesAccordion(
 ) {
     var expandedSection by remember { mutableStateOf<String?>(defaultExpandedSection) }
 
+    // F86: global "Reset all overrides" affordance — only visible when at least
+    // one override is active. Reset returns every field to USE_FILE (so files
+    // with embedded profiles regain their values; STL/raw paths fall back to
+    // app defaults via the existing slicing pipeline).
+    val totalOverrides = overrides.totalOverrideCount()
+    if (totalOverrides > 0) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = {
+                onOverridesChange(SlicingOverrides(flowCalibration = overrides.flowCalibration))
+            }) {
+                Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Reset all overrides ($totalOverrides)")
+            }
+        }
+    }
+
     ExpandableOverrideSection(
         title = "Layer & Infill",
         icon = Icons.Default.Layers,
+        overrideCount = overrides.layerAndInfillOverrideCount(),
         expanded = expandedSection == "layer",
         onToggle = { expandedSection = if (expandedSection == "layer") null else "layer" }
     ) {
@@ -273,6 +299,7 @@ fun SlicingOverridesAccordion(
     ExpandableOverrideSection(
         title = "Support",
         icon = Icons.Default.Architecture,
+        overrideCount = overrides.supportOverrideCount(),
         expanded = expandedSection == "support",
         onToggle = { expandedSection = if (expandedSection == "support") null else "support" }
     ) {
@@ -575,6 +602,7 @@ fun SlicingOverridesAccordion(
     ExpandableOverrideSection(
         title = "Prime Tower",
         icon = Icons.Default.ViewInAr,
+        overrideCount = overrides.primeTowerOverrideCount(),
         expanded = expandedSection == "tower",
         onToggle = { expandedSection = if (expandedSection == "tower") null else "tower" }
     ) {
@@ -691,6 +719,7 @@ fun SlicingOverridesAccordion(
     ExpandableOverrideSection(
         title = "Temperature",
         icon = Icons.Default.Thermostat,
+        overrideCount = overrides.temperatureOverrideCount(),
         expanded = expandedSection == "temp",
         onToggle = { expandedSection = if (expandedSection == "temp") null else "temp" }
     ) {
@@ -724,6 +753,7 @@ fun SlicingOverridesAccordion(
     ExpandableOverrideSection(
         title = "Other",
         icon = Icons.Default.Tune,
+        overrideCount = overrides.otherOverrideCount(),
         expanded = expandedSection == "other",
         onToggle = { expandedSection = if (expandedSection == "other") null else "other" }
     ) {
@@ -780,6 +810,7 @@ fun ExpandableOverrideSection(
     icon: ImageVector,
     expanded: Boolean,
     onToggle: () -> Unit,
+    overrideCount: Int = 0,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
@@ -798,6 +829,22 @@ fun ExpandableOverrideSection(
                 Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(12.dp))
                 Text(title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                // F86: show modified count badge when section has overrides
+                if (overrideCount > 0) {
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "$overrideCount modified",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                }
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     "Toggle"
@@ -888,7 +935,20 @@ fun <T> OverrideRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // F86: solid dot indicator when the row has a user override.
+                // 6dp circle in the primary colour, leading the label.
+                if (override.mode == OverrideMode.OVERRIDE) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                }
+                Text(label, style = MaterialTheme.typography.bodyMedium)
+            }
             if (override.mode == OverrideMode.ORCA_DEFAULT) {
                 Text(
                     defaultHint,

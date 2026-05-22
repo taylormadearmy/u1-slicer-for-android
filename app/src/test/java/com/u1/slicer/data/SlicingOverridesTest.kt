@@ -8,6 +8,87 @@ import org.junit.Test
 
 class SlicingOverridesTest {
 
+    // ---- F86: override counting helpers ----
+
+    @Test
+    fun `f86 totalOverrideCount is zero for default overrides`() {
+        assertEquals(0, SlicingOverrides().totalOverrideCount())
+        assertEquals(0, SlicingOverrides().layerAndInfillOverrideCount())
+        assertEquals(0, SlicingOverrides().supportOverrideCount())
+        assertEquals(0, SlicingOverrides().primeTowerOverrideCount())
+        assertEquals(0, SlicingOverrides().temperatureOverrideCount())
+        assertEquals(0, SlicingOverrides().otherOverrideCount())
+    }
+
+    @Test
+    fun `f86 USE_FILE and ORCA_DEFAULT do not count as user overrides`() {
+        val ov = SlicingOverrides(
+            layerHeight = OverrideValue(OverrideMode.USE_FILE, 0.3f),
+            infillDensity = OverrideValue(OverrideMode.ORCA_DEFAULT, 0.5f)
+        )
+        assertEquals(0, ov.totalOverrideCount())
+    }
+
+    @Test
+    fun `f86 OVERRIDE in each section increments only that section`() {
+        val layer = SlicingOverrides(layerHeight = OverrideValue(OverrideMode.OVERRIDE, 0.25f))
+        assertEquals(1, layer.layerAndInfillOverrideCount())
+        assertEquals(0, layer.supportOverrideCount())
+        assertEquals(1, layer.totalOverrideCount())
+
+        val support = SlicingOverrides(supports = OverrideValue(OverrideMode.OVERRIDE, true))
+        assertEquals(1, support.supportOverrideCount())
+        assertEquals(0, support.layerAndInfillOverrideCount())
+
+        val tower = SlicingOverrides(primeTower = OverrideValue(OverrideMode.OVERRIDE, true))
+        assertEquals(1, tower.primeTowerOverrideCount())
+
+        val temp = SlicingOverrides(bedTemp = OverrideValue(OverrideMode.OVERRIDE, 65))
+        assertEquals(1, temp.temperatureOverrideCount())
+
+        val other = SlicingOverrides(brimWidth = OverrideValue(OverrideMode.OVERRIDE, 2f))
+        assertEquals(1, other.otherOverrideCount())
+    }
+
+    @Test
+    fun `f86 totalOverrideCount sums across sections`() {
+        val ov = SlicingOverrides(
+            layerHeight = OverrideValue(OverrideMode.OVERRIDE, 0.25f),
+            infillDensity = OverrideValue(OverrideMode.OVERRIDE, 0.4f),
+            supports = OverrideValue(OverrideMode.OVERRIDE, true),
+            primeTower = OverrideValue(OverrideMode.OVERRIDE, false),
+            bedTemp = OverrideValue(OverrideMode.OVERRIDE, 65),
+            skirtLoops = OverrideValue(OverrideMode.OVERRIDE, 3)
+        )
+        assertEquals(2, ov.layerAndInfillOverrideCount())
+        assertEquals(1, ov.supportOverrideCount())
+        assertEquals(1, ov.primeTowerOverrideCount())
+        assertEquals(1, ov.temperatureOverrideCount())
+        assertEquals(1, ov.otherOverrideCount())
+        assertEquals(6, ov.totalOverrideCount())
+    }
+
+    @Test
+    fun `f86 flowCalibration is excluded from override counts`() {
+        val ov = SlicingOverrides(flowCalibration = false)
+        assertEquals(0, ov.totalOverrideCount())
+    }
+
+    @Test
+    fun `f86 reset preserves flowCalibration but clears all override modes`() {
+        val customised = SlicingOverrides(
+            layerHeight = OverrideValue(OverrideMode.OVERRIDE, 0.25f),
+            bedTemp = OverrideValue(OverrideMode.OVERRIDE, 65),
+            flowCalibration = false
+        )
+        // Mirrors the Reset-all button behaviour in SlicingOverridesAccordion
+        val reset = SlicingOverrides(flowCalibration = customised.flowCalibration)
+        assertEquals(0, reset.totalOverrideCount())
+        assertEquals(false, reset.flowCalibration)
+        assertEquals(OverrideMode.USE_FILE, reset.layerHeight.mode)
+        assertEquals(OverrideMode.USE_FILE, reset.bedTemp.mode)
+    }
+
     @Test
     fun `default overrides are all USE_FILE`() {
         val overrides = SlicingOverrides()

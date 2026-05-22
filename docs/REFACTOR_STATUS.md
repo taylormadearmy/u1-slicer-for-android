@@ -13,8 +13,8 @@ For background see [`docs/architecture/2026-04-23-bambu-via-native-loader.md`](a
 - **Phase 2 (canonical filament list architecture):** ✅ DONE — shipped as `v2.0.0` 2026-05-01
 - **Phase 2.0 (UX exploration):** ✅ DONE — direction settled in `docs/superpowers/specs/2026-04-26-canonical-filament-list-ux.md` §7
 - **Phase 2.6 (Prepare-screen reshape):** ✅ DONE in v2.0.0 (4 of 5 spec items; STL-default-from-syncFilaments deferred to v2.1.0)
-- **v2.1.0 (hardening release):** ⏸ NOT STARTED — bounded ~2-3 days
-- **v3.0.0 (multi-printer epic):** ⏸ NOT STARTED — weeks; needs design pass first
+- **v2.1.0 (hardening release):** ⏸ NOT STARTED — bounded ~2-3 days. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A1**.
+- **v3.0.0 (multi-printer epic):** ⏸ NOT STARTED — weeks; needs design pass first. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A2**.
 - **Phase 3+ adjacent platform work:** 🔭 ROADMAP — see GitHub #16, #18, #33
 
 The "core" refactor (kill duplicate Kotlin parsing of Bambu files; native loader is single source of truth; canonical filaments come from the file; mapping happens at Send time) is **complete and shipping** in v2.0.0. What remains is hardening (v2.1) + a separate multi-printer feature epic (v3.0).
