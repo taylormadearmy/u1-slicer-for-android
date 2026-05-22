@@ -129,6 +129,46 @@ Invariants enforced by `PrintersConfig` constructor:
 
 Legacy keys are NOT deleted on migration. v2.5.0 removes the read fallback; v2.6.0 deletes the keys via a second migration step. This preserves one-release rollback safety.
 
+### Settings backup / restore
+
+`SettingsBackup.kt` currently exports the single `printerUrl` + `extruderPresets` pair at schema VERSION=1. F78 bumps the schema to VERSION=2 and stores the full `PrintersConfig`:
+
+```json
+{
+  "version": 2,
+  "sliceConfig": { ... },
+  "slicingOverrides": { ... },
+  "filamentProfiles": [ ... ],
+  "makerWorldCookies": "...",
+  "printers": [
+    { "id": "uuid-1", "nickname": "Printer 1", "moonrakerUrl": "...",
+      "ledAutoSync": true, "extruderPresets": [ ... ] },
+    { "id": "uuid-2", "nickname": "Workshop",  "moonrakerUrl": "...",
+      "ledAutoSync": false, "extruderPresets": [ ... ] }
+  ],
+  "activePrinterId": "uuid-1",
+  "printerUrl": "...",
+  "extruderPresets": [ ... ]
+}
+```
+
+**Export rules (v2.4.0):**
+- Always write the full `printers` array + `activePrinterId` (the new schema).
+- ALSO write the legacy `printerUrl` + `extruderPresets` fields, populated from the *active* printer's values. This means a v2.4.0 backup can be imported on v2.3.0 (or earlier) and produce a sensible single-printer setup. Forward-compat for free.
+
+**Import rules (v2.4.0):**
+- `version == 2` → read the `printers` array directly into `PrintersConfig`. Ignore the legacy duplicate fields if also present.
+- `version == 1` (pre-F78 backup) → read `printerUrl` + `extruderPresets`, run the same migration logic as `runMigrationIfNeeded()` to produce a single `Printer` entry. Backward-compat for free.
+- `version > 2` or `version < 1` → reject with a clear error message.
+
+**Test coverage:**
+- `SettingsBackupTest` — extend existing tests:
+  - `v1Backup_importsAsSinglePrinter_withLegacyValues`
+  - `v2Backup_importsAllPrinters_andPreservesActive`
+  - `v2BackupExport_includesLegacyFieldsFromActivePrinter_forV1Rollback`
+  - `v2Backup_extraneousLegacyFields_areIgnoredWhenPrintersArrayPresent`
+  - `unsupportedVersion_throwsClearError`
+
 ## Test plan
 
 ### JVM unit tests (`app/src/test/java/com/u1/slicer/data/PrintersRepositoryTest.kt`)
@@ -153,8 +193,8 @@ Legacy keys are NOT deleted on migration. v2.5.0 removes the read fallback; v2.6
 - Two Moonraker instances on LAN (Kevin already has multiple printer test setups). Walk through: add second printer → switch → send job to active → switch back → verify notification title prefix.
 
 ### Test counts to update in CLAUDE.md / README
-- Unit: 1258 → 1268 (10 new)
-- Instrumented: 318 → 321 (3 new)
+- Unit: 1258 → 1273 (10 new in PrintersRepositoryTest + 5 new in SettingsBackupTest)
+- Instrumented: 318 → 321 (3 new in MultiPrinterIntegrationTest)
 
 ## Risks
 
@@ -162,7 +202,7 @@ Legacy keys are NOT deleted on migration. v2.5.0 removes the read fallback; v2.6
 - **Camera keepalive across switch.** `PrinterViewModel.startCameraKeepalive` runs against the active printer. Must `stopCameraKeepalive` on switch and restart against the new one.
 - **DataStore atomicity.** All `PrintersConfig` mutations go through a single `dataStore.edit { ... }` block to avoid lost updates.
 - **Notification de-dupe.** A switch could cause an immediate "PrinterOffline → Idle" transition on the new printer's first poll cycle that looks like a new event. The existing `applyGracePeriod` (OFFLINE_GRACE_FAILURES) covers most of this; verify behaviour on switch and add a "just-switched" grace if needed.
-- **Backup/restore.** `SettingsBackup.kt` currently exports printer URL + extruder presets as global fields. v2.4.0 backup format must include the full `PrintersConfig`. Backward-compat: importing a pre-v2.4.0 backup runs the same migration logic against the imported legacy fields.
+- **Backup/restore.** Covered in dedicated "Settings backup / restore" section above — schema bumps to VERSION=2, with two-way compat (v2.4.0 backups still import on v2.3.0 via the duplicated legacy fields; v1 backups still import on v2.4.0 via the existing migration path).
 
 ## Non-goals
 
