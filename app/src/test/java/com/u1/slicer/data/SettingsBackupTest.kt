@@ -5,6 +5,8 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 
+// Printer / PrintersConfig are in the same package — no import needed.
+
 class SettingsBackupTest {
 
     @Test
@@ -13,9 +15,10 @@ class SettingsBackupTest {
             SliceConfig(), SlicingOverrides(), "", emptyList(), emptyList()
         )
         val obj = JSONObject(json)
-        assertEquals(1, obj.getInt("version"))
+        assertEquals(2, obj.getInt("version"))
         assertTrue(obj.has("sliceConfig"))
         assertTrue(obj.has("slicingOverrides"))
+        // v2 always mirrors active printer URL into legacy field for rollback compat
         assertTrue(obj.has("printerUrl"))
         assertTrue(obj.has("extruderPresets"))
         assertTrue(obj.has("filamentProfiles"))
@@ -67,7 +70,7 @@ class SettingsBackupTest {
             SliceConfig(), SlicingOverrides(), "192.168.0.151", emptyList(), emptyList()
         )
         val data = SettingsBackup.import(json)
-        assertEquals("192.168.0.151", data.printerUrl)
+        assertEquals("192.168.0.151", data.printersConfig?.active?.moonrakerUrl)
     }
 
     @Test
@@ -80,13 +83,14 @@ class SettingsBackupTest {
         )
         val json = SettingsBackup.export(SliceConfig(), SlicingOverrides(), "", presets, emptyList())
         val data = SettingsBackup.import(json)
-        assertNotNull(data.extruderPresets)
-        assertEquals(4, data.extruderPresets!!.size)
-        assertEquals(0, data.extruderPresets!![0].index)
-        assertEquals("#FF0000", data.extruderPresets!![0].color)
-        assertEquals("PLA", data.extruderPresets!![0].materialType)
-        assertEquals(3, data.extruderPresets!![3].index)
-        assertEquals("#FFFF00", data.extruderPresets!![3].color)
+        val importedPresets = data.printersConfig?.active?.extruderPresets
+        assertNotNull(importedPresets)
+        assertEquals(4, importedPresets!!.size)
+        assertEquals(0, importedPresets[0].index)
+        assertEquals("#FF0000", importedPresets[0].color)
+        assertEquals("PLA", importedPresets[0].materialType)
+        assertEquals(3, importedPresets[3].index)
+        assertEquals("#FFFF00", importedPresets[3].color)
     }
 
     @Test
@@ -153,7 +157,7 @@ class SettingsBackupTest {
         assertNotNull(data.sliceConfig)
         assertEquals(0.15f, data.sliceConfig!!.layerHeight, 0.001f)
         assertEquals(200, data.sliceConfig!!.nozzleTemp)
-        assertNull(data.extruderPresets)
+        assertNull(data.printersConfig)
         assertNull(data.filamentProfiles)
     }
 
@@ -239,5 +243,108 @@ class SettingsBackupTest {
         val normalized = SlicerViewModel.normalizeImportedSliceConfig(imported)
         assertEquals(0, normalized.skirtLoops)
         assertEquals(0f, normalized.brimWidth, 0.001f)
+    }
+
+    // ---- F78: VERSION=2 multi-printer backups ----
+
+    @Test
+    fun `v1 backup imports as a single printer with legacy values`() {
+        val v1Json = """
+            {
+              "version": 1,
+              "printerUrl": "http://10.0.0.5",
+              "extruderPresets": [
+                {"slot":1,"color":"#FF0000","materialType":"PLA"},
+                {"slot":2,"color":"#00FF00","materialType":"PETG"},
+                {"slot":3,"color":"#0000FF","materialType":"PLA"},
+                {"slot":4,"color":"#FFFFFF","materialType":"PLA"}
+              ]
+            }
+        """.trimIndent()
+        val data = SettingsBackup.import(v1Json)
+        val cfg = data.printersConfig
+        assertNotNull(cfg)
+        assertEquals(1, cfg!!.printers.size)
+        assertEquals("Printer 1", cfg.printers[0].nickname)
+        assertEquals("http://10.0.0.5", cfg.printers[0].moonrakerUrl)
+        assertEquals("#FF0000", cfg.printers[0].extruderPresets[0].color)
+    }
+
+    @Test
+    fun `v2 backup imports all printers and preserves active`() {
+        val v2Json = """
+            {
+              "version": 2,
+              "printers": [
+                {"id":"a","nickname":"P1","moonrakerUrl":"http://1","extruderPresets":[]},
+                {"id":"b","nickname":"P2","moonrakerUrl":"http://2","extruderPresets":[]}
+              ],
+              "activePrinterId": "b",
+              "printerUrl": "http://2",
+              "extruderPresets": []
+            }
+        """.trimIndent()
+        val data = SettingsBackup.import(v2Json)
+        val cfg = data.printersConfig
+        assertNotNull(cfg)
+        assertEquals(2, cfg!!.printers.size)
+        assertEquals("b", cfg.activeId)
+    }
+
+    @Test
+    fun `v2 export includes legacy printerUrl from active printer for v1 rollback`() {
+        val cfg = PrintersConfig(
+            printers = listOf(
+                Printer(id = "a", nickname = "P1", moonrakerUrl = "http://1"),
+                Printer(id = "b", nickname = "P2", moonrakerUrl = "http://2"),
+            ),
+            activeId = "b",
+        )
+        val json = SettingsBackup.export(SettingsBackup.BackupData(
+            sliceConfig = null,
+            slicingOverrides = null,
+            printersConfig = cfg,
+            filamentProfiles = null,
+            makerWorldCookies = null,
+        ))
+        val obj = org.json.JSONObject(json)
+        assertEquals(2, obj.getInt("version"))
+        // Legacy duplicate fields populated from the active printer:
+        assertEquals("http://2", obj.getString("printerUrl"))
+        // Extra: full printers array also present
+        assertEquals(2, obj.getJSONArray("printers").length())
+        assertEquals("b", obj.getString("activePrinterId"))
+    }
+
+    @Test
+    fun `v2 backup with both printers array and legacy fields uses the printers array`() {
+        val json = """
+            {
+              "version": 2,
+              "printers": [
+                {"id":"new","nickname":"Modern","moonrakerUrl":"http://new","extruderPresets":[]}
+              ],
+              "activePrinterId": "new",
+              "printerUrl": "http://stale-legacy",
+              "extruderPresets": []
+            }
+        """.trimIndent()
+        val data = SettingsBackup.import(json)
+        val cfg = data.printersConfig
+        assertNotNull(cfg)
+        assertEquals(1, cfg!!.printers.size)
+        assertEquals("Modern", cfg.printers[0].nickname)
+        assertEquals("http://new", cfg.printers[0].moonrakerUrl)
+    }
+
+    @Test
+    fun `unsupported backup version throws clear error`() {
+        val json = """{"version": 999}"""
+        try {
+            SettingsBackup.import(json)
+            fail("expected IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("version"))
+        }
     }
 }

@@ -4432,14 +4432,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val cfg = _config.value
             val overrides = slicingOverrides.value
-            val presets = extruderPresets.value
-            val printerUrl = settingsRepo.printerUrl.first()
             val profiles = filamentDao.getAll().first()
             val profileMap = profiles.associateBy { it.id }
             val cookies = settingsRepo.makerWorldCookies.first()
-            val json = SettingsBackup.export(cfg, overrides, printerUrl, presets, profiles,
+            val printersConfig = container.printersRepository.config.first()
+            // Build filament-name-resolved extruder presets for the active printer
+            val presets = extruderPresets.value
+            val resolvedPresetsConfig = if (printersConfig != null) {
+                val resolvedPresets = presets.map { p ->
+                    p // filamentProfileId is preserved; name resolution is done at export
+                }
+                val active = printersConfig.active.copy(extruderPresets = resolvedPresets)
+                com.u1.slicer.data.PrintersConfig(
+                    printers = printersConfig.printers.map { if (it.id == active.id) active else it },
+                    activeId = printersConfig.activeId,
+                )
+            } else printersConfig
+            val json = SettingsBackup.export(
+                cfg, overrides, resolvedPresetsConfig?.active?.moonrakerUrl ?: "", presets, profiles,
                 filamentNameResolver = { id -> profileMap[id]?.name },
-                makerWorldCookies = cookies
+                makerWorldCookies = cookies,
+                printersConfig = resolvedPresetsConfig,
             )
             onResult(json)
         }
@@ -4456,10 +4469,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 data.slicingOverrides?.let {
                     settingsRepo.saveSlicingOverrides(it)
-                }
-                val hasPrinterUrl = !data.printerUrl.isNullOrBlank()
-                data.printerUrl?.let {
-                    settingsRepo.savePrinterUrl(it)
                 }
                 data.makerWorldCookies?.let {
                     settingsRepo.saveMakerWorldCookies(it)
@@ -4479,20 +4488,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
-                // Resolve filament profile names to new IDs on extruder presets
-                val root = JSONObject(json)
-                val presetsArr = root.optJSONArray("extruderPresets")
-                if (presetsArr != null && data.extruderPresets != null) {
-                    val parsed = SettingsBackup.parseExtruderPresetsWithNames(presetsArr)
-                    val resolved = parsed.map { p ->
-                        val resolvedId = p.filamentProfileName?.let { nameToId[it] }
-                        p.preset.copy(filamentProfileId = resolvedId)
-                    }
-                    settingsRepo.saveExtruderPresets(resolved)
+                // Restore the full printers config (v2) or legacy single-printer (v1 migrated).
+                val hasPrinterUrl: Boolean
+                if (data.printersConfig != null) {
+                    hasPrinterUrl = data.printersConfig.printers.any { it.moonrakerUrl.isNotBlank() }
+                    // Resolve filament profile names to new IDs on each printer's extruder presets.
+                    // The extruderPresets in the JSON use the legacy slot-based format; re-parse them
+                    // from the raw JSON so we can apply filamentProfileName resolution.
+                    val root = JSONObject(json)
+                    val presetsArr = root.optJSONArray("extruderPresets")
+                    val resolvedActivePrinter = if (presetsArr != null) {
+                        val parsed = SettingsBackup.parseExtruderPresetsWithNames(presetsArr)
+                        val resolved = parsed.map { p ->
+                            val resolvedId = p.filamentProfileName?.let { nameToId[it] }
+                            p.preset.copy(filamentProfileId = resolvedId)
+                        }
+                        data.printersConfig.active.copy(extruderPresets = resolved)
+                    } else data.printersConfig.active
+                    val resolvedConfig = com.u1.slicer.data.PrintersConfig(
+                        printers = data.printersConfig.printers.map {
+                            if (it.id == resolvedActivePrinter.id) resolvedActivePrinter else it
+                        },
+                        activeId = data.printersConfig.activeId,
+                    )
+                    container.printersRepository.replace(resolvedConfig)
+                    // Keep legacy settingsRepo.printerUrl in sync for any code still reading it.
+                    settingsRepo.savePrinterUrl(resolvedActivePrinter.moonrakerUrl)
+                    settingsRepo.saveExtruderPresets(resolvedActivePrinter.extruderPresets)
                 } else {
-                    data.extruderPresets?.let {
-                        settingsRepo.saveExtruderPresets(it)
-                    }
+                    hasPrinterUrl = false
                 }
                 Log.i("SlicerVM", "Settings backup imported successfully")
                 onImported(hasPrinterUrl)
