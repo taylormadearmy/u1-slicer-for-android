@@ -4,6 +4,18 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B127: LayerToolPauseInjector drops layer-tool swaps for canonical fileIdx ≥ 4 (GitHub #145) — OPEN
+- **Symptom (potential)**: Hueforge / layer-tool 3MF files with more than 4 declared filaments lose tool changes silently at slice time. The injector writes `T<extruderBambu - 1>` directly from `custom_gcode_per_layer.xml` without applying the user's `colorMapping`. For any swap whose `extruderBambu` is 5+ (canonical fileIdx 4+), the `if (toolIndex in 1..3)` guard at [`LayerToolPauseInjector.kt:134`](app/src/main/java/com/u1/slicer/gcode/LayerToolPauseInjector.kt#L134) drops both the `T<n>` line and the matching `M109 S<temp> T<n>` — the printer never switches tool for that layer band.
+- **Surfaced by**: 2026-05-22 SEMM-fold-removal sub-agent review. Not directly reproduced; orthogonal to the fold (the fold guard required `hasPaintData==true`, so layer-tool files never went through it). Worth confirming on a real > 4 colour Hueforge plate before fixing blind.
+- **T0 skip subtlety**: the `1..3` lower bound also skips `extruderBambu = 1 → T0`, which appears intentional — T0 is the implicit starting tool. Any fix must preserve that semantics post-colorMapping translation (i.e. canonical→physical slot 0 likely still skips), or document why it changes.
+- **Fix outline** (not yet designed):
+  1. Add `colorMapping: List<Int>?` parameter to `LayerToolPauseInjector.injectFrom3mf`.
+  2. Pass `_colorMapping.value` from the call site at [`SlicerViewModel.kt:3693`](app/src/main/java/com/u1/slicer/SlicerViewModel.kt#L3693).
+  3. Translate `canonicalFileIdx = extruderBambu - 1`; resolve `physicalSlot = colorMapping?.getOrNull(canonicalFileIdx) ?: canonicalFileIdx`; write `T<physicalSlot>` (and matching `M109`).
+  4. Decide T0-skip semantics post-translation. Decide whether consecutive same-slot swaps should be deduped (multiple canonical indices may map to one physical slot).
+  5. Add an instrumented regression fixture with a > 4 colour layer-tool 3MF.
+- **Source**: Surfaced 2026-05-22 during SEMM fold removal review (sub-agent code-review pass).
+
 ### B125: H2C shoe support filament row missing — support_filament not emitted when supports=USE_FILE + hasSourceConfig=true (GitHub #144) — FIXED v2.2.14 (filament keys) / v2.2.15 (sub-settings) / v2.2.16 (root cause: targetCount too low)
 - **Symptom**: Load `1890038_xav01_H2C_279_104.3mf` with TPU as model filament and PLA as support/interface-only. The Prepare preview and Filament Mapping dialog show only 1 filament row instead of 2 (model + support). The sliced G-code also only contains T0 (support runs on same extruder as model rather than a dedicated PLA extruder).
 - **Reported by**: Kevin (screenshots, Pixel 8a, v2.2.13). Recurring report — first raised multiple sessions ago.

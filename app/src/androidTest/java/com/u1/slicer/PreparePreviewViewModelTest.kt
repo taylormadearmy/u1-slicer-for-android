@@ -1085,10 +1085,10 @@ class PreparePreviewViewModelTest {
 
             val state = viewModel.state.value as SlicerViewModel.SlicerState.SliceComplete
             val gcode = java.io.File(state.result.gcodePath).readText()
-            // Phase 2 canonical contract: slicer emits T<fileIndex>. Verify
-            // green's T-command appears (or the slot mapping post-remap T1 if
-            // GcodeToolRemapper ran). Accept either compact T1 (legacy slot
-            // remap) or T<greenFileIndex> (canonical fileIndex space).
+            // Phase 2 canonical contract: slicer emits T<fileIndex> directly.
+            // Just verify ≥ 2 distinct T-commands without caring which canonical
+            // indices — the H2C 7-colour benchy maps onto 4 physical slots at
+            // send time via PrintTimeRemap.
             val toolRegex = Regex("""^\s*T(\d+)\s*$""")
             val toolCounts = gcode.lines().mapNotNull {
                 toolRegex.matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
@@ -1813,32 +1813,28 @@ class PreparePreviewViewModelTest {
     }
 
     /**
-     * B92 (#96) re-surfaced after v1.6.10/v1.6.11: with default presets
-     * (E1=red, E2=green, E3=blue, E4=white) Buzz plate 8 auto-resolves to
-     * colorMapping=[0, 3]. Prepare correctly renders RED/WHITE stripes.
-     * Preview reportedly shows the painted stripes as **sky blue** —
-     * GcodeRenderer's untouched default palette colour for slot 1 (0.2,
-     * 0.7, 1.0). This proves the parsed G-code being fed into the renderer
-     * still has moves tagged with the pre-remap compact tool index `1`.
+     * B92 (#96) — Buzz plate 8 paints the candy-cane stripes from canonical
+     * filament 6 (red, fileIdx 5) on a body from filament 10 (white, fileIdx
+     * 9). With default presets (E1=brown, E2=green, E3=blue, E4=white) the
+     * mapping auto-resolves to colorMapping=[0, 3].
      *
-     * The remap step (`GcodeToolRemapper.remap`) DOES rewrite T1 → T3 in
-     * the G-code file. But `validateSliceOutput` parses the file BEFORE
-     * the remap runs (see SlicerViewModel.startSlicing flow), and the
-     * resulting `ParsedGcode` is what `_parsedGcode.value` exposes to the
-     * Preview screen. So `parsedGcode.value` keeps the stale compact
-     * indices and the renderer paints them with its default palette.
+     * Phase 2 + SEMM-fold-removal contract (2026-05-22): the slicer emits
+     * canonical T-indices in fileIndex space (T5, T9 for this plate). The
+     * preview palette built by `normalizeGcodePreviewColors` is canonical-
+     * indexed so `palette[T]` looks up the correct file-filament colour.
      *
-     * Two-layer red assertion (one or both should fail before fix):
-     *   (1) The G-code file post-remap must NOT contain any pre-remap
-     *       T1 patterns (T1, M10[49] T1, SM_ EXTRUDER=1 / INDEX=1).
-     *       If this fails, the remapper missed a pattern.
-     *   (2) The `parsedGcode` StateFlow must NOT tag any move with an
-     *       extruder index that the user's mapping never claimed
-     *       (here: slots 1 and 2). If this fails, the parser was fed a
-     *       stale pre-remap copy of the G-code.
+     * Two assertions:
+     *   (1) parsedGcode StateFlow's distinct extruder indices match the
+     *       expected canonical set ({5, 9}). No orphan slot-1/slot-2 moves
+     *       — pre-fold-removal these came from the on-disk fold step that
+     *       collapsed T5+T9 to compact T1 and bled through into parsedGcode.
+     *   (2) The renderer-bound palette (the result of
+     *       `normalizeGcodePreviewColors`) yields the file's RED at index
+     *       5 and WHITE at index 9 — not slot-0 brown, slot-1 sky-blue, or
+     *       any other unmapped default-palette colour.
      */
     @Test
-    fun buzzPlate8_parsedGcodeMustReflectPostRemapToolIndices() {
+    fun buzzPlate8_parsedGcodeAndPalette_renderCanonicalRedAndWhite() {
         val application = targetContext.applicationContext as U1SlicerApplication
         val settingsRepo = application.container.settingsRepository
         // Force default presets to match user's reproduction environment.
@@ -1871,7 +1867,7 @@ class PreparePreviewViewModelTest {
             // Sanity: with default presets brown→E1, white→E4 → mapping [0, 3]
             assertEquals(
                 "Default presets must auto-resolve Buzz plate 8 to colorMapping=[0, 3]; " +
-                    "got $colorMapping. If this changes, update the unused-slots set below.",
+                    "got $colorMapping.",
                 listOf(0, 3), colorMapping
             )
 
@@ -1883,54 +1879,72 @@ class PreparePreviewViewModelTest {
             (viewModel.state.value as? SlicerViewModel.SlicerState.Error)?.let {
                 throw AssertionError("Buzz plate 8 slice failed: ${it.message}")
             }
-            val result = (viewModel.state.value as SlicerViewModel.SlicerState.SliceComplete).result
+            // Wait for canonicalFilamentColors + activeExtruderColors to publish.
+            // Buzz canonical has 10 entries; default presets fill all 4 slots.
+            waitUntil("canonical + slot palettes settle", timeoutMs = 30_000L) {
+                viewModel.canonicalFilamentColors.value.size >= 10 &&
+                    viewModel.activeExtruderColors.value.isNotEmpty()
+            }
 
-            // ---- Layer 1 (primary): parsedGcode StateFlow must reflect post-remap indices ----
-            // This is what the renderer reads. A move tagged with extruder=1 paints with
-            // GcodeRenderer's default slot-1 palette colour (sky blue) when the user's
-            // mapping never claimed slot 1, exactly reproducing the user screenshot.
+            // ---- Assertion 1: parsedGcode carries canonical T5 + T9, no fold residue ----
             val parsed = viewModel.parsedGcode.value
             assertNotNull("parsedGcode StateFlow must be populated after slice", parsed)
             val extrudersUsed = parsed!!.layers.flatMap { it.moves }.map { it.extruder }.toSet()
+            assertTrue(
+                "Buzz plate 8 (canonical fileIdx 5 = red stripes, fileIdx 9 = white body) " +
+                    "must surface both in parsedGcode. Got extrudersUsed=$extrudersUsed.",
+                5 in extrudersUsed && 9 in extrudersUsed
+            )
             val unusedSlots = setOf(1, 2)
             val intersection = extrudersUsed intersect unusedSlots
             assertTrue(
-                "B92: parsedGcode (StateFlow exposed to Preview) must not tag any " +
-                    "move with extruder slots ${unusedSlots} when colorMapping=$colorMapping " +
-                    "(used physical slots [0, 3]). Got extrudersUsed=$extrudersUsed; " +
-                    "intersection=$intersection. The renderer would paint moves tagged with " +
-                    "slot 1 using GcodeRenderer's default sky-blue palette, reproducing the " +
-                    "user's blue-stripes screenshot exactly.",
+                "parsedGcode must not tag any move with extruder ${unusedSlots} when " +
+                    "colorMapping=$colorMapping. Got extrudersUsed=$extrudersUsed; " +
+                    "intersection=$intersection. Pre-fold-removal these orphan slots came " +
+                    "from `computeSemmFoldSlots` collapsing canonical T5+T9 to compact T1.",
                 intersection.isEmpty()
             )
 
-            // ---- Layer 2 (sanity): G-code file's executable lines must be remap-clean ----
-            // Strip comments before checking — a "; preheat T1 time" trailing comment is
-            // cosmetic and ignored by GcodeParser. We only care about parser-visible patterns.
-            val gcode = File(result.gcodePath).readText()
-            val toolLineRe = Regex("""^T(\d+)$""")
-            val mTempT1Re = Regex("""\bM10[49]\b.*?\bT1\b""")
-            val smParamRe = Regex("""\bSM_\S+.*?(?:EXTRUDER|INDEX)=1\b""")
-            val orphanT1Lines = mutableListOf<Pair<Int, String>>()
-            gcode.lineSequence().forEachIndexed { idx, line ->
-                val semicolonIdx = line.indexOf(';')
-                val executable = if (semicolonIdx >= 0) line.substring(0, semicolonIdx) else line
-                val stripped = executable.trim()
-                if (stripped.isEmpty()) return@forEachIndexed
-                val tMatch = toolLineRe.matchEntire(stripped)
-                val isStandaloneT1 = tMatch != null && tMatch.groupValues[1] == "1"
-                if (isStandaloneT1 ||
-                    mTempT1Re.containsMatchIn(stripped) ||
-                    smParamRe.containsMatchIn(stripped)
-                ) {
-                    orphanT1Lines += (idx + 1) to line
-                }
-            }
+            // ---- Assertion 2: the renderer-bound palette resolves T5→RED, T9→WHITE ----
+            // Mirrors `GcodeViewer3DScreen` / `MainActivity` palette build: feed the
+            // active slot palette + canonicalFilamentColors through
+            // `normalizeGcodePreviewColors`. The result is what GcodeRenderer.
+            // setExtruderColors uploads.
+            val activeExtruder = viewModel.activeExtruderColors.value
+            val canonicalColors = viewModel.canonicalFilamentColors.value
             assertTrue(
-                "B92 sanity: G-code post-remap must not retain any executable T1 references " +
-                    "(standalone T1, M104/M109 T1, SM_ EXTRUDER=1, SM_ INDEX=1) in non-comment " +
-                    "text. Found ${orphanT1Lines.size}: first 5 = ${orphanT1Lines.take(5)}",
-                orphanT1Lines.isEmpty()
+                "canonicalFilamentColors must be populated for Buzz plate 8 (size " +
+                    "${canonicalColors.size}, value=$canonicalColors).",
+                canonicalColors.size >= 10
+            )
+            val palette = normalizeGcodePreviewColors(activeExtruder, colorMapping, canonicalColors)
+            assertTrue(
+                "Preview palette must be at least canonical-width; got ${palette.size}.",
+                palette.size >= 10
+            )
+
+            fun parseRgb(hex: String): Triple<Int, Int, Int> {
+                val c = android.graphics.Color.parseColor(
+                    if (hex.startsWith("#")) hex else "#$hex"
+                )
+                return Triple(android.graphics.Color.red(c),
+                    android.graphics.Color.green(c),
+                    android.graphics.Color.blue(c))
+            }
+            // Buzz canonical filament 6 = #C12E1F (red), filament 10 = #FFFFFF.
+            val (r5, g5, b5) = parseRgb(palette[5])
+            val (r9, g9, b9) = parseRgb(palette[9])
+            assertTrue(
+                "palette[5] must render RED (canonical filament 6 = #C12E1F). " +
+                    "Got #${palette[5]} (R=$r5 G=$g5 B=$b5). A near-grey/blue here " +
+                    "means the canonical-indexed palette is misaligned and the " +
+                    "renderer would paint the candy-cane stripes with the wrong colour.",
+                r5 > 150 && g5 < 90 && b5 < 90
+            )
+            assertTrue(
+                "palette[9] must render WHITE (canonical filament 10 = #FFFFFF). " +
+                    "Got #${palette[9]} (R=$r9 G=$g9 B=$b9).",
+                r9 > 230 && g9 > 230 && b9 > 230
             )
         } finally {
             viewModel.clearModel()

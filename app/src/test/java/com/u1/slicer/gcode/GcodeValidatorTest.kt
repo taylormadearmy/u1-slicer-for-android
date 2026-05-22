@@ -43,6 +43,20 @@ class GcodeValidatorTest {
         assertTrue("T1" in tools)
     }
 
+    @Test
+    fun extractToolChanges_multiDigit_findsT10AndAbove() {
+        // Phase 2 canonical T-indices may be multi-digit on high-colour SEMM
+        // / layer-tool models (e.g. Buzz plate 9 emits T9 + T10). The legacy
+        // `T[0-9]` regex silently dropped T10+; the canonical contract makes
+        // these legitimate output, so the validator must surface them.
+        val gcode = "G28\nT0\nT9\nT10\nT11\n"
+        val tools = GcodeValidator.extractToolChanges(gcode)
+        assertTrue("T0 in $tools", "T0" in tools)
+        assertTrue("T9 in $tools", "T9" in tools)
+        assertTrue("T10 in $tools", "T10" in tools)
+        assertTrue("T11 in $tools", "T11" in tools)
+    }
+
     // ─── extractNozzleTemps ───────────────────────────────────────────────────
 
     @Test

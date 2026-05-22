@@ -55,12 +55,16 @@ object GcodeValidator {
         val depth get() = maxY - minY
     }
 
-    /** Return all bare tool-change lines (e.g. "T0", "T1", "T2", "T3"). */
+    /**
+     * Return all bare tool-change lines (e.g. "T0", "T1", "T2", "T3", "T10").
+     * Phase 2 emits canonical fileIndex T-values; multi-digit T-indices are
+     * legitimate output for high-colour SEMM / layer-tool models.
+     */
     fun extractToolChanges(gcode: String): Set<String> {
         val result = mutableSetOf<String>()
         for (line in gcode.lines()) {
             val trimmed = line.trim()
-            if (trimmed.matches(Regex("T[0-9]\\s*"))) result.add(trimmed.trimEnd())
+            if (trimmed.matches(Regex("T\\d+\\s*"))) result.add(trimmed.trimEnd())
         }
         return result
     }

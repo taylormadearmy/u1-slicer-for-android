@@ -31,7 +31,6 @@ import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.gcode.ExcludeObjectInfo
 import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
-import com.u1.slicer.gcode.GcodeToolRemapper
 import com.u1.slicer.gcode.GcodeValidator
 import com.u1.slicer.gcode.LayerToolPauseInjector
 import com.u1.slicer.gcode.ParsedGcode
@@ -3711,76 +3710,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // translates to physical slots when the user confirms
                     // the Filament mapping dialog. The on-disk G-code stays
                     // in canonical space so "how many filaments?" stays
-                    // answerable from the slice summary alone. The legacy
-                    // composeSemmRemap / computeExpandedGcodeRemap branch
-                    // and its `skipSliceTimeRemap=true` const-true gate
-                    // (~50 LOC) were dead-but-still-computed before; now
-                    // both helpers + the gate are deleted.
+                    // answerable from the slice summary alone.
                     //
-                    // SEMM paint-state fold — folds T(N)..T(canonical-1) → T(i%N).
-                    //
-                    // Two shapes require folding:
-                    //
-                    // Shape A — PAINT_DERIVED overflow (AMS2/AMS3):
-                    //   Bambu multi-AMS files encode states 5-12+ in paint_color. The
-                    //   canonical list has N FILE_COLOUR entries + M PAINT_DERIVED overflow
-                    //   entries. cm.size == N in these cases (user maps N distinct slots).
-                    //
-                    // Shape B — FILE_COLOUR-only overflow (colored benchy, B123):
-                    //   Some SEMM files declare all paint states as explicit filament_colour
-                    //   entries in project_settings (e.g. 10 FILE_COLOUR for a 4-colour
-                    //   painted model). The canonical list has 10 entries, all FILE_COLOUR;
-                    //   cm.size == 4 (only 4 user-facing slots). The old PAINT_DERIVED-based
-                    //   condition never fired for these files. Fix: prefer cm.size as the
-                    //   base count when cm.size < semmCanonicalSize.
-                    //
-                    // H2C models are excluded: H2C has colorMapping.size > distinctSlots
-                    // intentionally (e.g. 7 model colours → 4 physical slots). Their T4+
-                    // indices are semantically distinct swatch indices, not aliases, and must
-                    // survive for PrintTimeRemap at send time. Models like old.3mf also take
-                    // this path (6 model colours → 4 distinct physical slots via
-                    // colorMapping=[2,3,0,1,0,3]) — their T4/T5 are correct Phase 2 canonical
-                    // G-code that PrintTimeRemap collapses at send time. H2C is identified via
-                    // _colorMapping (mirrors isH2cStyle in applyMultiColorAssignments):
-                    // distinctSlots >= 4 AND colorMapping.size > distinctSlots. toolRemapSlots
-                    // is not used here because it is null for both H2C and identity mappings.
-                    val cm = _colorMapping.value
-                    val cmDistinct = cm?.distinct()?.size ?: 0
-                    val isH2cPaint = cmDistinct >= 4 && (cm?.size ?: 0) > cmDistinct
-                    val semmCanonicalList = getCanonicalFilamentList()
-                    if (_threeMfInfo.value?.hasPaintData == true && !isH2cPaint &&
-                            semmCanonicalList != null) {
-                        val canonicalSize = semmCanonicalList.size
-                        // Derive which canonical fileIndices (0-based) are actually active on
-                        // this plate so computeSemmFoldSlots can guard against collapsing
-                        // non-contiguous active T-indices (e.g. Buzz plate 8: T5+T9 both → T1).
-                        val plateActiveFileIndices: Set<Int>? = if (
-                                cm != null && cm.size in 1 until canonicalSize) {
-                            val info = _threeMfInfo.value
-                            val plateId = recoveryPlateId.takeIf { it >= 0 }
-                            val plate = plateId?.let { pid ->
-                                info?.plates?.firstOrNull { p -> p.plateId == pid }
-                            }
-                            val fromPlate = plate?.filamentIndices
-                                ?.mapNotNull { idx -> (idx - 1).takeIf { it in 0 until canonicalSize } }
-                                ?.toSet()
-                                ?.takeIf { it.size == cm.size }
-                            fromPlate ?: info?.usedExtruderIndices
-                                ?.filter { it > 0 }
-                                ?.sorted()
-                                ?.mapNotNull { idx -> (idx - 1).takeIf { it in 0 until canonicalSize } }
-                                ?.toSet()
-                                ?.takeIf { it.size == cm.size }
-                        } else null
-                        val foldSlots = computeSemmFoldSlots(cm, semmCanonicalList, plateActiveFileIndices)
-                        if (foldSlots != null) {
-                            val baseColorCount = foldSlots.distinct().size
-                            GcodeToolRemapper.remap(result.gcodePath, foldSlots)
-                            Log.i("SlicerVM", "SEMM fold: T$baseColorCount..T${semmCanonicalList.size - 1}" +
-                                " → T(N%%$baseColorCount) [base=$baseColorCount," +
-                                " canonical=${semmCanonicalList.size}, h2c=false, cmSize=${cm?.size}]")
-                        }
-                    }
+                    // 2026-05-22 — the SEMM paint-state fold
+                    // (`computeSemmFoldSlots` + `GcodeToolRemapper.remap`)
+                    // was removed. The fold rewrote canonical T-indices to
+                    // `T(i%N)` so the legacy fixed-width palette could
+                    // address them; with the canonical-width palette in
+                    // place (`normalizeGcodePreviewColors`,
+                    // `GcodeRenderer.setExtruderColors`), the renderer
+                    // paints canonical T5/T9 directly and the fold
+                    // collapsed non-contiguous active T-indices to the
+                    // same compact slot (Buzz plate 8: T5+T9 → T1).
                     val outputValidation = validateSliceOutput(
                         result,
                         buildExpectedModelFootprint(mi, copies, custom),
@@ -5985,8 +5926,9 @@ internal fun buildCompactExtruderRemap(
     if (colorMapping.isNullOrEmpty()) return null
     if (info.hasLayerToolChanges && !info.hasPaintData) return null
     // SEMM (paint-based) models: paint state filament indices are not affected by the
-    // extruder attribute remap in model_settings.config.  GcodeToolRemapper handles the
-    // physical slot assignment for these models, so suppress the XML extruder remap here.
+    // extruder attribute remap in model_settings.config.  PrintTimeRemap handles the
+    // canonical→physical slot translation at send time, so suppress the XML extruder
+    // remap here.
     if (info.hasPaintData) return null
 
     val compactSlotOrder = colorMapping.distinct().sorted().take(4)
@@ -6051,8 +5993,9 @@ internal fun computeEmbedTargetCount(
         // extruder index matches the collapsed state still get a valid slot.
         // Anything looser than size-distinct==1 is normal SEMM with sparse
         // usage (e.g. old.3mf has 6 paint states on 3 slots — delta 3 — and
-        // must keep the distinct count so GcodeToolRemapper's tool distribution
-        // matches the physical slots exactly).
+        // must keep the distinct count so PrintTimeRemap's send-time
+        // canonical→physical translation matches the user's slot mapping
+        // exactly.
         val isHybridSingleDedup = hasMultiExtruderAssignments &&
             (colorMapping.size - distinctSlots) == 1
         val baseSize = if (isH2c || isHybridSingleDedup) {
@@ -6066,8 +6009,9 @@ internal fun computeEmbedTargetCount(
         // silently drop the high-index states (`if (state > max_ebt) state = NONE`).
         // Buzz Lightyear plate 9 has paint_color="8C" → state 11 against detected-
         // colour count 2; without this bump, the 4-extruder Snapmaker U1 receives a
-        // single-tool G-code instead of two. The post-slice GcodeToolRemapper
-        // remaps the resulting high T-indices back to the user's physical slots.
+        // single-tool G-code instead of two. The resulting high T-indices stay in
+        // canonical fileIndex space on disk; PrintTimeRemap translates them to the
+        // user's physical slots at send time.
         return maxOf(baseSize, maxSourceFilamentIndex)
     }
     if (toolRemapSlots != null) return toolRemapSlots.distinct().size
@@ -6083,49 +6027,6 @@ internal fun computeEmbedTargetCount(
 // callers after `1e95c7d` made `applyConfigToPrusa` respect the embed for
 // per-filament tuning. Their unit tests (SlicerColorOrderTest,
 // SemmColorPermutationTest, ExpandedGcodeRemapTest) were removed alongside.
-
-/**
- * B123 — computes the fold-slot mapping for SEMM models where the slicer emits
- * more T-indices than the user's filament mapping (cm) declares.
- *
- * Two shapes are handled:
- * - Shape A (PAINT_DERIVED overflow): canonical has N FILE_COLOUR + M PAINT_DERIVED
- *   entries. cm.size == N. Fold T(N)..T(N+M-1) → T(i%N).
- * - Shape B (FILE_COLOUR-only overflow, e.g. colored_3DBenchy): all canonical entries
- *   are FILE_COLOUR but cm.size < canonical.size (file declares 10 paint states as
- *   explicit filament colours; user maps only 4). Fold T(4)..T(9) → T(i%4).
- *
- * When cm.size < non-PAINT_DERIVED count (e.g. 4 FILE_COLOUR + 3 PAINT_DERIVED,
- * cm=[0,1,2]): the user has deliberately assigned fewer slots than the file declares;
- * cm.size wins as the base so T(cm.size)..T(canonical-1) all collapse. The 4th
- * FILE_COLOUR entry is treated as an overflow alias, not a distinct colour.
- *
- * When [cm] is null or its size already covers all canonical entries, returns null
- * (nothing to fold). Does NOT apply to H2C models — callers must exclude those.
- */
-internal fun computeSemmFoldSlots(
-    cm: List<Int>?,
-    semmCanonicalList: com.u1.slicer.data.CanonicalFilamentList,
-    plateActiveFileIndices: Set<Int>? = null,
-): List<Int>? {
-    val semmCanonicalSize = semmCanonicalList.size
-    val baseColorCount = if (cm != null && cm.size in 1 until semmCanonicalSize) {
-        cm.size
-    } else {
-        semmCanonicalList.filaments
-            .count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
-    }
-    if (baseColorCount < 1 || semmCanonicalSize <= baseColorCount) return null
-    // Guard: fold is only safe when T0..T(baseColorCount-1) are all active.
-    // If the plate's active filaments don't include the base range the fold
-    // collapses distinct active T-indices to the same compact index.
-    // Buzz plate 8: active={5,9}, base=2 → 5%2=1 and 9%2=1 → both → T1.
-    if (plateActiveFileIndices != null &&
-        (0 until baseColorCount).any { it !in plateActiveFileIndices }) {
-        return null
-    }
-    return (0 until semmCanonicalSize).map { it % baseColorCount }
-}
 
 internal fun resolveFilamentTypesForHeaderPatch(
     canonical: com.u1.slicer.data.CanonicalFilamentList,

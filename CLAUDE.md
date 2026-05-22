@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v2.2.17` (`versionCode 290`)
+Current release: `v2.2.18` (`versionCode 291`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -68,7 +68,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1258 JVM unit tests
+./gradlew testDebugUnitTest                        # 1248 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 318 instrumented tests — uses Orchestrator
 ```
 
@@ -78,7 +78,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1247 tests across 83 classes
+### Unit tests (`app/src/test/`) - 1237 tests across 82 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -136,7 +136,6 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/HsvColorPickerTest.kt` (9) — F64 HSV↔hex color conversion round-trips: hsvToHex, hexToHsv, red/green/blue/white/black, inverse property
 - `SliceStalenessTest.kt` (4) — F67 _sliceStale StateFlow contract: initial false, config mutation sets true, startSlicing resets false, extruderPresets drop(1) skips startup
 - `SliceCancelTest.kt` (5) — B55 cancel state machine: SliceResult.cancelled field, Cancelling state singleton
-- `SemmFoldSlotsTest.kt` (11) — B123 computeSemmFoldSlots: Shape A (PAINT_DERIVED overflow), Shape B (all FILE_COLOUR with cm.size < canonical — colored_3DBenchy fix), null-cm fallback, no-fold guards (canonical==cm.size, cm>canonical, single entry), cm.size < FILE_COLOUR count (user assigns fewer slots than file declares — cm wins); B126 plateActiveFileIndices guard (Buzz plate 8: active={5,9} doesn't cover base [0,1] → no fold; full coverage → fold applied)
 - `FilamentTypeHeaderPatchTest.kt` (14) — B63 fixFilamentTypeHeader: single/multi-extruder replacement, absent line guard, empty list guard, missing file, first-occurrence-only, B99 header patch canonical padding for support/interface slots beyond canonical size, B102 sparse colorMapping produces physical-slot-indexed filament_type, B105 resolveNonCanonicalHeaderPatchTypes single/multi-slot, unknown-slot fallback
 - `ui/SupportFilamentOptionTest.kt` (5) — B99 support/interface filament option labels and config values for H2C, STL, non-identity, and sparse color mappings
 - `ui/SlicedWithMaterialTest.kt` (8) — B118 Map & Print dialog material-mismatch cascade: override priority, sliceTime-slot priority, file-declared fallback, DC15 single-colour PETG-slot repro, explicit override on single-colour, multi-colour mapped-slot resolution; B121 support-row uses displayFileIndex not slot-0 when colorMapping too short
@@ -165,7 +164,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/BambuFixtureHarnessTest.kt` (6) — Tier B data-driven harness: one `@Test` per fixture so Orchestrator gives each its own process (slicing accumulates native memory; combining all 6 in one method OOMs). Validates extruder count, paint flag, per-tool G-code counts, and bounding box ceiling for Dragon Scale, Button-for-S-trousers, colored Benchy, Shashibo, slip-slide-spin, and flippy+flappy fixtures. 2026-05-03 note: current branch shows direct-harness hangs/crashes on Shashibo after release-equivalent harness restore; treat as a blocker/regression until explained, not an accepted skip. Also note the historical harness caveat: fixture JSON says `plateIndex`, but this class passes that value directly as `plateId`; release `v2.0.0` therefore passed these fixtures without proving true app plate 5 / plate 3 coverage. Real app-path Shashibo plate 5 coverage lives in `PreparePreviewViewModelTest#shashiboPlate5_selectPlate_appPathLoadsMultiExtruderPreparePreview`.
 - `gcode/GcodeThumbnailInjectorTest.kt` (8) — 3MF image extraction, thumbnail blocks, G-code injection
 - `viewer/NativePreparePreviewTest.kt` (16) — native Prepare preview regressions: dual-colour, painted, old asset, selected multi-plate spread, Dragon plate 3 colour preservation, H2C benchy full/decimated 7-index preservation + green recolor + interleaving guard, layer-tool Z-band recolor, triangle count cap, B51 old.3mf bounding box + Korok orientation, B72 multi-instance post-slice bounds, B78 Shashibo plate 5 file-scale+centre preservation on fresh load + post-slice dirty-path reset
-- `PreparePreviewViewModelTest.kt` (21) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix, B98/B78 Shashibo plate 5 app-path Prepare preview guard, entry-point equivalence for `loadModel(uri)` vs `loadModelFromFile(file)`, B86 S-Buttons user-like presets (E2=white/E4=pink) 4-distinct-colour guard, B92 Buzz plate 8 Prepare/Preview colour agreement with explicit slicerColorOrder permutation, B93 Buzz multi-plate cold load skips full-file embedProfile, B94 Spiderman drag-to-right preserved through slice, B92.1 v1.6.12 parsedGcode StateFlow reflects post-remap T-indices (no orphan extruder=1 moves for colorMapping=[0,3]), F73 plate change invalidates plates-available and cache, slip-slide plate 3 four-colour preview, B120 jons-bug plate 2 detects both PETG+TPU filaments via ViewModel path, B124 Button-for-S-trousers single-file load keeps hasMultipleDistinctObjects=false with multi-volume bboxes, B124 drag-to-right preserved through slice, B125 H2C shoe single-colour supportFilament=OVERRIDE(2) produces T1 in G-code (embedProfile targetCount expansion)
+- `PreparePreviewViewModelTest.kt` (21) — Dragon plate 3 end-to-end Prepare state, slice-output colour coverage, H2C benchy full pipeline green verification, B47 colorMapping-before-ModelLoaded ordering contract, B83 plate-switch objectIds stable-source fix, B98/B78 Shashibo plate 5 app-path Prepare preview guard, entry-point equivalence for `loadModel(uri)` vs `loadModelFromFile(file)`, B86 S-Buttons user-like presets (E2=white/E4=pink) 4-distinct-colour guard, B92 Buzz plate 8 Prepare/Preview colour agreement with explicit slicerColorOrder permutation, B93 Buzz multi-plate cold load skips full-file embedProfile, B94 Spiderman drag-to-right preserved through slice, B92.1 parsedGcode + canonical preview palette: Buzz plate 8 surfaces canonical T5+T9 (no orphan slot-1/2 moves) and `normalizeGcodePreviewColors` resolves palette[5]=red + palette[9]=white, F73 plate change invalidates plates-available and cache, slip-slide plate 3 four-colour preview, B120 jons-bug plate 2 detects both PETG+TPU filaments via ViewModel path, B124 Button-for-S-trousers single-file load keeps hasMultipleDistinctObjects=false with multi-volume bboxes, B124 drag-to-right preserved through slice, B125 H2C shoe single-colour supportFilament=OVERRIDE(2) produces T1 in G-code (embedProfile targetCount expansion)
 - `ui/MakerWorldBrowserUtilsInstrumentedTest.kt` (6) — resolveDownloadFilename with URLUtil, RFC 5987, path traversal sanitization
 
 ### Red-green TDD for bug fixes
