@@ -101,4 +101,53 @@ class PrintersRepositoryTest {
         val next = PrintersRepository.applySetActive(initial, "ghost")
         assertSame(initial, next)
     }
+
+    // ---- Migration helpers (pure functions of legacy values) ----
+
+    @Test
+    fun `migration with legacy URL and presets produces single Printer 1 entry`() {
+        val legacyUrl = "http://192.168.1.50"
+        val legacyPresetsJson = serializeExtruderPresets(listOf(
+            ExtruderPreset(index = 0, color = "#FFAA00", materialType = "PETG"),
+            ExtruderPreset(index = 1, color = "#0000FF", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#00FF00", materialType = "PLA"),
+            ExtruderPreset(index = 3, color = "#FFFFFF", materialType = "PLA"),
+        ))
+        val cfg = PrintersRepository.buildMigratedConfig(
+            legacyUrl = legacyUrl,
+            legacyExtruderPresetsJson = legacyPresetsJson,
+            idFactory = { "fixed-uuid-1" },
+        )
+        assertEquals(1, cfg.printers.size)
+        assertEquals("Printer 1", cfg.printers[0].nickname)
+        assertEquals(legacyUrl, cfg.printers[0].moonrakerUrl)
+        assertEquals("#FFAA00", cfg.printers[0].extruderPresets[0].color)
+        assertEquals("fixed-uuid-1", cfg.printers[0].id)
+        assertEquals("fixed-uuid-1", cfg.activeId)
+    }
+
+    @Test
+    fun `migration with blank legacy URL produces entry with empty URL`() {
+        val cfg = PrintersRepository.buildMigratedConfig(
+            legacyUrl = "",
+            legacyExtruderPresetsJson = "",
+            idFactory = { "fixed-uuid-1" },
+        )
+        assertEquals(1, cfg.printers.size)
+        assertEquals("", cfg.printers[0].moonrakerUrl)
+        // defaultExtruderPresets() always returns 4 slots
+        assertEquals(4, cfg.printers[0].extruderPresets.size)
+    }
+
+    @Test
+    fun `migration with no legacy values still produces a valid Printer 1`() {
+        val cfg = PrintersRepository.buildMigratedConfig(
+            legacyUrl = null,
+            legacyExtruderPresetsJson = null,
+            idFactory = { "fixed-uuid-1" },
+        )
+        assertEquals(1, cfg.printers.size)
+        assertEquals("Printer 1", cfg.printers[0].nickname)
+        assertEquals("", cfg.printers[0].moonrakerUrl)
+    }
 }

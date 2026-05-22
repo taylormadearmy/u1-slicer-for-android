@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.printersDataStore by preferencesDataStore(name = "printers_config")
@@ -41,6 +42,23 @@ class PrintersRepository(private val context: Context) {
         context.printersDataStore.edit { prefs ->
             prefs[key] = PrintersConfig.toJson(cfg)
         }
+    }
+
+    /**
+     * Runs migration if `printers_config_json` is not yet present.
+     * Idempotent — calling repeatedly is a no-op after the first successful run.
+     */
+    suspend fun runMigrationIfNeeded(settingsRepository: SettingsRepository) {
+        val current = context.printersDataStore.data
+            .map { it[key] }
+            .first()
+        if (!current.isNullOrBlank()) return  // already migrated
+
+        val legacyUrl = settingsRepository.printerUrl.first()
+        val legacyPresetsJson = settingsRepository.extruderPresetsJson.first()
+
+        val cfg = buildMigratedConfig(legacyUrl = legacyUrl, legacyExtruderPresetsJson = legacyPresetsJson)
+        replace(cfg)
     }
 
     private suspend fun mutate(transform: (PrintersConfig) -> PrintersConfig) {
@@ -81,6 +99,31 @@ class PrintersRepository(private val context: Context) {
             }
             if (id == cfg.activeId) return cfg
             return cfg.copy(activeId = id)
+        }
+
+        /**
+         * Build a single-printer PrintersConfig from the v2.3.x legacy DataStore
+         * keys. Pure function — the caller is responsible for reading the legacy
+         * values out of DataStore and writing the result back via [replace].
+         *
+         * @param legacyUrl value of the legacy `printer_url` key, or null/blank if absent
+         * @param legacyExtruderPresetsJson value of the legacy `extruder_presets` key, or null/blank
+         * @param idFactory generates the new UUID for the seeded entry — overridable for testing
+         */
+        fun buildMigratedConfig(
+            legacyUrl: String?,
+            legacyExtruderPresetsJson: String?,
+            idFactory: () -> String = { java.util.UUID.randomUUID().toString() },
+        ): PrintersConfig {
+            val id = idFactory()
+            val presets = parseExtruderPresets(legacyExtruderPresetsJson ?: "")
+            val printer = Printer(
+                id = id,
+                nickname = "Printer 1",
+                moonrakerUrl = legacyUrl ?: "",
+                extruderPresets = presets,
+            )
+            return PrintersConfig(printers = listOf(printer), activeId = id)
         }
     }
 }
