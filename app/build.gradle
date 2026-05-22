@@ -123,6 +123,8 @@ dependencies {
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
     // org.json standalone JVM jar — needed for unit tests that exercise JSON parsing code
     testImplementation 'org.json:json:20231013'
+    // kotlin-reflect — needed for the F86 reflective bucketing test
+    testImplementation 'org.jetbrains.kotlin:kotlin-reflect:1.9.22'
 
     // Testing - Instrumented tests (on-device)
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'

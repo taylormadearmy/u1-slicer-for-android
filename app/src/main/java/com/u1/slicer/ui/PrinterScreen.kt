@@ -570,7 +570,10 @@ fun PrinterScreen(
                 }
 
                 // ── F82: Custom G-code (idle only) ─────────────────────────
-                if (status.isConnected && !status.isPrinting && !status.isPaused) {
+                // Tighter gate than "!isPrinting && !isPaused": `isIdle` excludes
+                // error/disconnected, where freeform G-code would either be
+                // rejected by Klipper or surprise the user.
+                if (status.isConnected && status.isIdle) {
                     var customGcode by remember { mutableStateOf("") }
                     Card(
                         modifier = Modifier.fillMaxWidth(),

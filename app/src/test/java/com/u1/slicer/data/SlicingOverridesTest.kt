@@ -75,6 +75,75 @@ class SlicingOverridesTest {
     }
 
     @Test
+    fun `f86 every OverrideValue field is bucketed into exactly one section count`() {
+        // Reflective guard: when a new OverrideValue field is added to
+        // SlicingOverrides, the developer must add it to exactly one of the
+        // five section counters. If this test fails after adding a field, you
+        // either forgot to bucket it or double-bucketed it.
+        val cls = SlicingOverrides::class
+        val overrideFieldNames = cls.members
+            .filterIsInstance<kotlin.reflect.KProperty1<SlicingOverrides, *>>()
+            .filter { prop ->
+                val ret = prop.returnType.classifier as? kotlin.reflect.KClass<*>
+                ret == OverrideValue::class
+            }
+            .map { it.name }
+            .toSet()
+
+        // Build a SlicingOverrides where exactly one field is OVERRIDE at a time
+        // and check that exactly one of the five section counters increments.
+        val sections = listOf<(SlicingOverrides) -> Int>(
+            SlicingOverrides::layerAndInfillOverrideCount,
+            SlicingOverrides::supportOverrideCount,
+            SlicingOverrides::primeTowerOverrideCount,
+            SlicingOverrides::temperatureOverrideCount,
+            SlicingOverrides::otherOverrideCount,
+        )
+        val unbucketed = mutableListOf<String>()
+        for (fieldName in overrideFieldNames) {
+            val mutated = setOverrideFieldByName(SlicingOverrides(), fieldName)
+            val bucketCounts = sections.map { it(mutated) }
+            val hits = bucketCounts.count { it == 1 }
+            if (hits != 1 || bucketCounts.sum() != 1) {
+                unbucketed += "$fieldName -> $bucketCounts"
+            }
+        }
+        assertTrue(
+            "Fields not bucketed into exactly one section counter:\n${unbucketed.joinToString("\n")}",
+            unbucketed.isEmpty()
+        )
+    }
+
+    // Reflective helper: copy [overrides] with the named OverrideValue field
+    // flipped to OVERRIDE mode. Used by the reflective bucketing test above.
+    private fun setOverrideFieldByName(overrides: SlicingOverrides, fieldName: String): SlicingOverrides {
+        val copyFn = SlicingOverrides::class.members.first { it.name == "copy" }
+        val params = copyFn.parameters
+        val args = params.associateWith { p ->
+            when {
+                p.kind == kotlin.reflect.KParameter.Kind.INSTANCE -> overrides
+                p.name == fieldName -> OverrideValue(OverrideMode.OVERRIDE, defaultValueForType(p.type))
+                else -> null
+            }
+        }.filter { it.key.kind == kotlin.reflect.KParameter.Kind.INSTANCE || it.key.name == fieldName }
+        @Suppress("UNCHECKED_CAST")
+        return copyFn.callBy(args) as SlicingOverrides
+    }
+
+    private fun defaultValueForType(type: kotlin.reflect.KType): Any {
+        // OverrideValue<T> — pull T and return a non-null placeholder
+        val argType = type.arguments.firstOrNull()?.type ?: return 0
+        val cls = argType.classifier as? kotlin.reflect.KClass<*> ?: return 0
+        return when (cls) {
+            Int::class -> 1
+            Float::class -> 1f
+            Boolean::class -> true
+            String::class -> "x"
+            else -> 0
+        }
+    }
+
+    @Test
     fun `f86 reset preserves flowCalibration but clears all override modes`() {
         val customised = SlicingOverrides(
             layerHeight = OverrideValue(OverrideMode.OVERRIDE, 0.25f),
