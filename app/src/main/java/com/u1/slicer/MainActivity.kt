@@ -776,6 +776,8 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                    val activeNickname by printerViewModel.activeNickname.collectAsState()
+                    val printerCount by printerViewModel.printerCount.collectAsState()
                     when (canonicalState) {
                         is CanonicalLookup.Loading -> {
                             // IO in flight; keep pendingMappingSend alive.
@@ -803,6 +805,8 @@ class MainActivity : ComponentActivity() {
                                     plateFileIndices = plateFileIndices,
                                     filamentMaterialOverrides = overrides.mapValues { (_, ov) -> ov.materialType },
                                     sliceTimeColorMapping = currentMapping,
+                                    activeNickname = activeNickname,
+                                    showNicknameInTitle = printerCount > 1,
                                     onConfirm = { plateMapping ->
                                         val sourceFile = java.io.File(pending.gcodePath)
                                         val remappedFile = java.io.File(

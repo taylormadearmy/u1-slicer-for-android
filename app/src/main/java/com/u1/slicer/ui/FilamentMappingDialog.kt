@@ -75,6 +75,8 @@ fun FilamentMappingDialog(
     sliceTimeColorMapping: List<Int>? = null,
     onConfirm: (List<Int>) -> Unit,
     onDismiss: () -> Unit,
+    activeNickname: String = "",
+    showNicknameInTitle: Boolean = false,
 ) {
     // M3 from post-Buzz code review (2026-04-30): when [plateFileIndices] is
     // supplied it MUST be the same size as [canonicalList.filaments], because
@@ -114,6 +116,13 @@ fun FilamentMappingDialog(
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                 )
+                if (showNicknameInTitle && activeNickname.isNotBlank()) {
+                    Text(
+                        "Send to $activeNickname",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    )
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     if (canonicalList.size == 1)
