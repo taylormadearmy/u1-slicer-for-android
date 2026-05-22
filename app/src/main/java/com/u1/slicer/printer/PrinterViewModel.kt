@@ -154,7 +154,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateUrl(url: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            printerRepo.updateUrl(url)
+            printerRepo.updateActiveUrl(url)
             _connectionState.value = ConnectionState.Unknown
             resolveWebcam()
         }
