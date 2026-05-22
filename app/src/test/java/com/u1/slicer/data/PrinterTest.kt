@@ -55,4 +55,20 @@ class PrinterTest {
         val back = PrintersConfig.fromJson(json)
         assertEquals(cfg as Any, back as Any)
     }
+
+    @Test
+    fun `Printer JSON round-trip with empty extruder presets falls back to defaults`() {
+        val p = Printer(
+            id = "uuid-empty",
+            nickname = "EmptyPresets",
+            moonrakerUrl = "http://x",
+            extruderPresets = emptyList(),
+        )
+        val json = Printer.toJsonObject(p).toString()
+        val back = Printer.fromJsonObject(org.json.JSONObject(json))
+        // Empty input deliberately falls back to defaultExtruderPresets() — 4 slots
+        assertEquals(4, back.extruderPresets.size)
+        assertEquals("uuid-empty", back.id)
+        assertEquals("EmptyPresets", back.nickname)
+    }
 }
