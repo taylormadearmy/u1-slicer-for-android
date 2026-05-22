@@ -34,10 +34,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.filled.Architecture
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Thermostat
@@ -388,100 +384,28 @@ fun SettingsScreen(
                 InfoRow("Build Volume", "270 x 270 x 270 mm")
                 InfoRow("Extruders", "4")
 
-                // Connection sub-section
+                // F78: multi-printer list with add/edit/delete
                 if (printerViewModel != null) {
-                    val printerUrl by printerViewModel.printerUrl.collectAsState()
-                    val connectionState by printerViewModel.connectionState.collectAsState()
-                    var urlInput by remember(printerUrl) { mutableStateOf(printerUrl) }
-                    var showConnection by remember { mutableStateOf(false) }
+                    val printerList by printerViewModel.printerList.collectAsState()
+                    val activePrinterId by printerViewModel.activePrinterId.collectAsState()
 
                     Spacer(Modifier.height(4.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                     Spacer(Modifier.height(4.dp))
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showConnection = !showConnection },
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Connection", fontWeight = FontWeight.Medium)
-                            // Status indicator dot
-                            when (connectionState) {
-                                is PrinterViewModel.ConnectionState.Connected ->
-                                    Icon(Icons.Default.CheckCircle, null,
-                                        tint = Color(0xFF4CAF50), modifier = Modifier.size(14.dp))
-                                is PrinterViewModel.ConnectionState.Failed ->
-                                    Icon(Icons.Default.Error, null,
-                                        tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                                else -> {}
+                    com.u1.slicer.ui.printer.PrintersSettingsCard(
+                        printers = printerList,
+                        activeId = activePrinterId,
+                        onAdd = { nick, url -> printerViewModel.addPrinter(nick, url) },
+                        onEdit = { id, nick, url -> printerViewModel.updatePrinter(id, nick, url) },
+                        onDelete = { id -> printerViewModel.deletePrinter(id) },
+                        onTestConnection = { url ->
+                            val client = com.u1.slicer.network.MoonrakerClient().apply {
+                                baseUrl = url
                             }
-                        }
-                        Icon(
-                            if (showConnection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            "Toggle connection settings"
-                        )
-                    }
-
-                    if (showConnection) {
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = urlInput,
-                            onValueChange = { urlInput = it },
-                            label = { Text("Printer URL") },
-                            placeholder = { Text("192.168.1.100") },
-                            supportingText = { Text("http:// and port 7125 added automatically") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                        Button(
-                            onClick = {
-                                printerViewModel.updateUrl(urlInput)
-                                printerViewModel.testConnection()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) { Text("Connect") }
-
-                        when (connectionState) {
-                            is PrinterViewModel.ConnectionState.Testing -> {
-                                Row(verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp)
-                                    Text("Testing connection\u2026",
-                                        style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            is PrinterViewModel.ConnectionState.Connected -> {
-                                Row(verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Icon(Icons.Default.CheckCircle, null,
-                                        tint = Color(0xFF4CAF50), modifier = Modifier.size(16.dp))
-                                    Text("Connected",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF4CAF50))
-                                }
-                            }
-                            is PrinterViewModel.ConnectionState.Failed -> {
-                                Row(verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Icon(Icons.Default.Error, null,
-                                        tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(16.dp))
-                                    Text((connectionState as PrinterViewModel.ConnectionState.Failed).reason,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error)
-                                }
-                            }
-                            else -> {}
-                        }
-                    }
+                            client.testConnection()
+                        },
+                    )
                 }
             }
 
