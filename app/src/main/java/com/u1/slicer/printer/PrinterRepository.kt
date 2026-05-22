@@ -1,7 +1,6 @@
 package com.u1.slicer.printer
 
 import com.u1.slicer.AppEventNotifier
-import com.u1.slicer.data.SettingsRepository
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.MoonrakerClient
 import com.u1.slicer.network.PrinterStatus
@@ -11,7 +10,6 @@ import kotlinx.coroutines.flow.*
 class PrinterRepository(
     private val appContext: android.content.Context,
     private val client: MoonrakerClient,
-    private val settingsRepo: SettingsRepository,
     private val printersRepo: com.u1.slicer.data.PrintersRepository,
 ) {
     private val _status = MutableStateFlow(PrinterStatus(state = "disconnected", progress = 0f))

@@ -17,7 +17,6 @@ class AppContainer(context: Context) {
     val printerRepository = PrinterRepository(
         context.applicationContext,
         moonrakerClient,
-        settingsRepository,
         printersRepository,
     )
 
