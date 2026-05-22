@@ -7,7 +7,7 @@
 
 ## TL;DR
 
-Today the app talks to a single Moonraker URL. F78 lets the user configure multiple U1 printers, switch between them from a chip at the top of the Printer tab, and have per-printer settings for the things that actually differ between physical printers (URL, nickname, LED-sync preference, what filament is loaded in each slot). Only one printer connects at a time. Notifications get the printer nickname prefixed in the title. Jobs / filament library / slicing overrides stay global.
+Today the app talks to a single Moonraker URL. F78 lets the user configure multiple U1 printers, switch between them from a chip at the top of the Printer tab, and have per-printer settings for the things that actually differ between physical printers (URL, nickname, what filament is loaded in each slot). LED on/off remains a live readback from each printer, not a per-printer persisted preference. Only one printer connects at a time. Notifications get the printer nickname prefixed in the title. Jobs / filament library / slicing overrides stay global.
 
 ## User-facing behaviour
 
@@ -29,7 +29,7 @@ Today the app talks to a single Moonraker URL. F78 lets the user configure multi
 - To send to a different printer, the user switches active printer first, then sends.
 
 ### Per-printer settings
-The Extruder Slots card on the Printer tab and the LED auto-sync preference both bind to the **active** printer. So the slot colours/materials the user sees on Printer 2 are what's loaded in Printer 2, not what's in Printer 1.
+The Extruder Slots card on the Printer tab binds to the **active** printer. So the slot colours/materials the user sees on Printer 2 are what's loaded in Printer 2, not what's in Printer 1. The LED bulb icon in the toolbar reflects the active printer's live LED state (no per-printer persistence required).
 
 ### Notifications
 - Title format: `Printer 2 — Print complete: foo.gcode` (nickname prefix when there's >1 configured printer; unchanged when there's exactly 1).
@@ -54,7 +54,6 @@ data class Printer(
     val id: String,                     // UUID generated on create
     val nickname: String,
     val moonrakerUrl: String,           // normalized via MoonrakerClient.normalizeUrl
-    val ledAutoSync: Boolean = true,
     val extruderPresets: List<ExtruderPreset> = emptyList(),
 )
 
@@ -63,6 +62,8 @@ data class PrintersConfig(
     val activeId: String,               // must reference an id in `printers`
 )
 ```
+
+**LED state is intentionally NOT per-printer.** The LED on/off state lives on the physical printer (`PrinterRepository.getLedState()` reads it live from Moonraker). There is no persisted "LED preference" in DataStore today, so there is nothing to migrate or store per-printer for LED. The light-bulb icon in the Printer tab toolbar just reflects the active printer's current live state.
 
 Serialised as JSON via `org.json.JSONObject` (matches the existing `SlicingOverrides.toJson()` / `fromJson()` precedent — kotlinx-serialization is not on the production classpath, only `org.json` as `testImplementation`) and persisted to a single DataStore key `printers_config_json`.
 
@@ -123,7 +124,6 @@ Invariants enforced by `PrintersConfig` constructor:
 2. Otherwise read legacy keys:
    - `PRINTER_URL` (string) → `moonrakerUrl`
    - `EXTRUDER_PRESETS` (string, JSON list) → `extruderPresets` via `parseExtruderPresets`
-   - `led_auto_sync` (bool) → `ledAutoSync` (default true if absent)
 3. Construct `Printer(id = UUID, nickname = "Printer 1", ...)`.
 4. Write `PrintersConfig(listOf(thatPrinter), activeId = thatPrinter.id)` to `printers_config_json`.
 
@@ -142,9 +142,9 @@ Legacy keys are NOT deleted on migration. v2.5.0 removes the read fallback; v2.6
   "makerWorldCookies": "...",
   "printers": [
     { "id": "uuid-1", "nickname": "Printer 1", "moonrakerUrl": "...",
-      "ledAutoSync": true, "extruderPresets": [ ... ] },
+      "extruderPresets": [ ... ] },
     { "id": "uuid-2", "nickname": "Workshop",  "moonrakerUrl": "...",
-      "ledAutoSync": false, "extruderPresets": [ ... ] }
+      "extruderPresets": [ ... ] }
   ],
   "activePrinterId": "uuid-1",
   "printerUrl": "...",
