@@ -110,4 +110,27 @@ class SemmFoldSlotsTest {
         val cm = listOf(0, 1, 2, 3, 3, 3) // 6 entries, canonical only 4
         assertNull(computeSemmFoldSlots(cm, list))
     }
+
+    // --- plateActiveFileIndices guard (B126) ---
+
+    @Test
+    fun `buzz plate 8 — active indices 5 and 9 do not cover base range 0-1 — no fold`() {
+        // Buzz plate 8: 10 FILE_COLOUR entries, cm=[0,3] (2 slots),
+        // active canonical indices = {5, 9}. Base range [0,1] is NOT covered
+        // → fold must return null to avoid T5%2=1 and T9%2=1 both collapsing to T1.
+        val list = canonical(fileCounts = 10)
+        val cm = listOf(0, 3)
+        val plateActiveFileIndices = setOf(5, 9)
+        assertNull(computeSemmFoldSlots(cm, list, plateActiveFileIndices))
+    }
+
+    @Test
+    fun `active indices cover full base range — fold applied normally`() {
+        // canonical=10, cm=[0,1,2,3], active={0,1,2,...,9} — base range [0-3] all present.
+        val list = canonical(fileCounts = 10)
+        val cm = listOf(0, 1, 2, 3)
+        val plateActiveFileIndices = (0..9).toSet()
+        val result = computeSemmFoldSlots(cm, list, plateActiveFileIndices)
+        assertEquals(listOf(0, 1, 2, 3, 0, 1, 2, 3, 0, 1), result)
+    }
 }

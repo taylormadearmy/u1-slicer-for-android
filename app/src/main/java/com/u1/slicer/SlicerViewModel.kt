@@ -3750,7 +3750,29 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val semmCanonicalList = getCanonicalFilamentList()
                     if (_threeMfInfo.value?.hasPaintData == true && !isH2cPaint &&
                             semmCanonicalList != null) {
-                        val foldSlots = computeSemmFoldSlots(cm, semmCanonicalList)
+                        val canonicalSize = semmCanonicalList.size
+                        // Derive which canonical fileIndices (0-based) are actually active on
+                        // this plate so computeSemmFoldSlots can guard against collapsing
+                        // non-contiguous active T-indices (e.g. Buzz plate 8: T5+T9 both → T1).
+                        val plateActiveFileIndices: Set<Int>? = if (
+                                cm != null && cm.size in 1 until canonicalSize) {
+                            val info = _threeMfInfo.value
+                            val plateId = recoveryPlateId.takeIf { it >= 0 }
+                            val plate = plateId?.let { pid ->
+                                info?.plates?.firstOrNull { p -> p.plateId == pid }
+                            }
+                            val fromPlate = plate?.filamentIndices
+                                ?.mapNotNull { idx -> (idx - 1).takeIf { it in 0 until canonicalSize } }
+                                ?.toSet()
+                                ?.takeIf { it.size == cm.size }
+                            fromPlate ?: info?.usedExtruderIndices
+                                ?.filter { it > 0 }
+                                ?.sorted()
+                                ?.mapNotNull { idx -> (idx - 1).takeIf { it in 0 until canonicalSize } }
+                                ?.toSet()
+                                ?.takeIf { it.size == cm.size }
+                        } else null
+                        val foldSlots = computeSemmFoldSlots(cm, semmCanonicalList, plateActiveFileIndices)
                         if (foldSlots != null) {
                             val baseColorCount = foldSlots.distinct().size
                             GcodeToolRemapper.remap(result.gcodePath, foldSlots)
@@ -6084,6 +6106,7 @@ internal fun computeEmbedTargetCount(
 internal fun computeSemmFoldSlots(
     cm: List<Int>?,
     semmCanonicalList: com.u1.slicer.data.CanonicalFilamentList,
+    plateActiveFileIndices: Set<Int>? = null,
 ): List<Int>? {
     val semmCanonicalSize = semmCanonicalList.size
     val baseColorCount = if (cm != null && cm.size in 1 until semmCanonicalSize) {
@@ -6093,6 +6116,14 @@ internal fun computeSemmFoldSlots(
             .count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
     }
     if (baseColorCount < 1 || semmCanonicalSize <= baseColorCount) return null
+    // Guard: fold is only safe when T0..T(baseColorCount-1) are all active.
+    // If the plate's active filaments don't include the base range the fold
+    // collapses distinct active T-indices to the same compact index.
+    // Buzz plate 8: active={5,9}, base=2 → 5%2=1 and 9%2=1 → both → T1.
+    if (plateActiveFileIndices != null &&
+        (0 until baseColorCount).any { it !in plateActiveFileIndices }) {
+        return null
+    }
     return (0 until semmCanonicalSize).map { it % baseColorCount }
 }
 

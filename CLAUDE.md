@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v2.2.16` (`versionCode 289`)
+Current release: `v2.2.17` (`versionCode 290`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -68,7 +68,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1256 JVM unit tests
+./gradlew testDebugUnitTest                        # 1258 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 318 instrumented tests — uses Orchestrator
 ```
 
@@ -136,7 +136,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/HsvColorPickerTest.kt` (9) — F64 HSV↔hex color conversion round-trips: hsvToHex, hexToHsv, red/green/blue/white/black, inverse property
 - `SliceStalenessTest.kt` (4) — F67 _sliceStale StateFlow contract: initial false, config mutation sets true, startSlicing resets false, extruderPresets drop(1) skips startup
 - `SliceCancelTest.kt` (5) — B55 cancel state machine: SliceResult.cancelled field, Cancelling state singleton
-- `SemmFoldSlotsTest.kt` (9) — B123 computeSemmFoldSlots: Shape A (PAINT_DERIVED overflow), Shape B (all FILE_COLOUR with cm.size < canonical — colored_3DBenchy fix), null-cm fallback, no-fold guards (canonical==cm.size, cm>canonical, single entry), cm.size < FILE_COLOUR count (user assigns fewer slots than file declares — cm wins)
+- `SemmFoldSlotsTest.kt` (11) — B123 computeSemmFoldSlots: Shape A (PAINT_DERIVED overflow), Shape B (all FILE_COLOUR with cm.size < canonical — colored_3DBenchy fix), null-cm fallback, no-fold guards (canonical==cm.size, cm>canonical, single entry), cm.size < FILE_COLOUR count (user assigns fewer slots than file declares — cm wins); B126 plateActiveFileIndices guard (Buzz plate 8: active={5,9} doesn't cover base [0,1] → no fold; full coverage → fold applied)
 - `FilamentTypeHeaderPatchTest.kt` (14) — B63 fixFilamentTypeHeader: single/multi-extruder replacement, absent line guard, empty list guard, missing file, first-occurrence-only, B99 header patch canonical padding for support/interface slots beyond canonical size, B102 sparse colorMapping produces physical-slot-indexed filament_type, B105 resolveNonCanonicalHeaderPatchTypes single/multi-slot, unknown-slot fallback
 - `ui/SupportFilamentOptionTest.kt` (5) — B99 support/interface filament option labels and config values for H2C, STL, non-identity, and sparse color mappings
 - `ui/SlicedWithMaterialTest.kt` (8) — B118 Map & Print dialog material-mismatch cascade: override priority, sliceTime-slot priority, file-declared fallback, DC15 single-colour PETG-slot repro, explicit override on single-colour, multi-colour mapped-slot resolution; B121 support-row uses displayFileIndex not slot-0 when colorMapping too short
