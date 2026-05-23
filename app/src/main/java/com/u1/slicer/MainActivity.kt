@@ -573,7 +573,7 @@ class MainActivity : ComponentActivity() {
                     onPickFile = { filePickerLauncher.launch(pickFileMimeTypes) },
                     onSaveGcode = {
                         val suggested = "${com.u1.slicer.data.ModelFileNaming.baseName(
-                            currentModelFileName.ifBlank { null }, "output.gcode"
+                            currentModelFileName, "output.gcode"
                         )}.gcode"
                         gcodeSaveLauncher.launch(suggested)
                     },
@@ -630,7 +630,7 @@ class MainActivity : ComponentActivity() {
                             onShareGcode = { viewModel.shareGcode() },
                             onSaveGcode = {
                                 val suggested = "${com.u1.slicer.data.ModelFileNaming.baseName(
-                                    currentModelFileName.ifBlank { null }, "output.gcode"
+                                    currentModelFileName, "output.gcode"
                                 )}.gcode"
                                 gcodeSaveLauncher.launch(suggested)
                             },

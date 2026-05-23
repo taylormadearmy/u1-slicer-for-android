@@ -473,6 +473,11 @@ class LayerToolPauseInjectorTest {
                 3,
                 result.lines().count { it.trim() == "; PAUSE_PRINT" }
             )
+
+            // Regression guard: T0 must still NOT be injected by the layer-tool path
+            // — T0 is the starting tool, the printer is already on it at layer boundaries.
+            assertFalse("T0 should be skipped by layer-tool injector (starting tool)",
+                result.contains(Regex("(?m)^T0$")))
         } finally {
             dir.deleteRecursively()
         }
