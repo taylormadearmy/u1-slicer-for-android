@@ -197,7 +197,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Initial focus**: large model loading, time to first usable preview, Bambu metadata/settings paths, and only then narrow slicing hotspots with fixture-level canaries.
 - **First milestone**: add/capture stage timing on `main` for representative large fixtures and identify the largest load/preview bottleneck before implementing optimisations.
 
-### B97: H2C state-fold helper has no provenance check — defensive cleanup
+### B97: H2C state-fold helper has no provenance check — defensive cleanup (GitHub #150)
 - **Symptom**: `TriangleSelector::h2c_state_matches` (orcaslicer fork, `src/libslic3r/TriangleSelector.cpp:1428`) returns true for `actual = query+4` whenever `query in [1..4]` regardless of whether the file is genuinely H2C (4-slot dual-AMS) or a normal multi-filament Bambu file with > 4 declared filaments.
 - **User-facing impact**: NONE currently. Buzz plate 8 (the original trigger of this concern) was the multi-state-variant manifestation only — saved G-code is clean (verified 2026-04-30, `filament_used_mm[1]=0` with state-6 painted geometry not bleeding into bucket 2). The slicer's downstream merge/projection step in `MultiMaterialSegmentation` collapses the duplicate-state buckets so phantom extrusion never reaches the output.
 - **Latent risk**: a future file shape that paints with state in 5..8 in a slicer code path that does NOT collapse via `merge_segmented_layers` could surface phantom extrusion. Specifically files with `filament_colour.size() > 4` where the user maps states 5..8 to physically distinct slots.
@@ -205,7 +205,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Not a ship blocker**: defensive only; covered by guard tests on Buzz plate 8 G-code (`buzzLightyear_plate8_prepareAndPreviewColoursAgreeByRegionSize` C1 assertion) and the 18-test instrumented sweep including H2C colored_3DBenchy.
 - **Source**: surfaced in the 2026-04-30 code review (post-Buzz fix) as concern C1+C2.
 
-### B96: SEMM-painted files emit canonical-fileIndex T-indices instead of physical-slot — pre-existing, amplified by Phase 2 — OPEN
+### B96: SEMM-painted files emit canonical-fileIndex T-indices instead of physical-slot — pre-existing, amplified by Phase 2 (GitHub #149) — OPEN
 - **Symptom**: SEMM (paint-state) painted files produce G-code with T-index spread that doesn't match desktop Snapmaker Orca's output. Most extreme on `colored_3DBenchy (1).3mf`:
   - Desktop Snapmaker Orca: `T0=3, T1=4, T2=2` (3 tools used for the 3 visible paint regions)
   - v1.6.13 Android: `T0=2, T1=5, T2=3, T3=2` (4 tools, T3 unused in desktop)
@@ -534,7 +534,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Architecture
 
-### A1: v2.1.0 hardening release — typed G-code path classes + Send-side multi-tool defence
+### A1: v2.1.0 hardening release — typed G-code path classes + Send-side multi-tool defence (GitHub #151)
 - **Status**: NOT STARTED. Estimated ~2–3 days. Defense-in-depth from Phase 2 reviews; not a correctness blocker but makes the bug class structurally harder to re-open.
 - **Scope**:
   - **B.1 finish — typed value classes end-to-end.** Make `PhysicalGcodePath` constructor `internal`. Expose explicit factories: `fromRemap(physical)`, `fromVerifiedLegacy(file)`, `fromIdentityCopy(file)`. Drop the public `PhysicalGcodePath.of(file)` shortcut. Thread `CanonicalGcodePath` / `PhysicalGcodePath` through `prepareExportableGcode*`, `saveGcodeTo`, `shareGcode`, `shareJobGcode`. Compiler then enforces "anything sent to printer went through a typed boundary".
@@ -545,7 +545,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Pre-tag checklist**: sweep green at HEAD; JVM tests green; focused E2E batch on Send/Save/Share/Jobs paths + "block-on-Absent-multitool" manual test; version bump to 2.1.0 / versionCode 261; merge to main; build release APK; cut tag.
 - **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) §v2.1.0.
 
-### A2: v3.0.0 multi-printer via Orca profile import
+### A2: v3.0.0 multi-printer via Orca profile import (GitHub #152)
 - **Status**: NOT STARTED. Estimated weeks. Needs a brainstorming-skill design session + spec doc before any code.
 - **Driver**: support multiple printers in a single Android app, profile-driven via OrcaSlicer profile import. Replaces the hardcoded U1 assumptions threaded through `applyConfigToPrusa`, the `profile_keys[]` whitelist, the `is_snapmaker_profile` heuristic, and the 4-slot `coerceIn(0, 3)` clamps.
 - **Scope**:
@@ -569,6 +569,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ### F88: Save Gcode + Share Gcode should preserve original model name (GitHub #148) — DONE v2.5.0
 - Shipped. New `ModelFileNaming.baseName(modelName, fallback)` helper in `app/src/main/java/com/u1/slicer/data/`. `MainActivity.gcodeSaveLauncher.launch(...)` now suggests `${modelBaseName}.gcode`; `SlicerViewModel.shareGcode()` + `shareJobGcode(job)` use the model name (with `.share.gcode` infix retained internally). 6 unit tests in `ModelFileNamingTest`.
+- **Smart Paint follow-up (also v2.5.0)**: after accepting a Smart Paint result, the painted 3MF lives in `cacheDir/ai_paint_<timestamp>.3mf`. Without this fix, `currentModelName` would become "ai_paint_<ts>.3mf" and Save/Share/Send would produce "ai_paint_<ts>.gcode" instead of the original name. Threaded `sourceDisplayName` through `AiPaintResultState` → `runPipeline` → accept-painting via a new `loadModelFromFile(file, preserveDisplayName)` overload on `SlicerViewModel`. Filename now stays as the user's original model name across the full Smart Paint round-trip.
 
 ### F87: Import process profiles from JSON, pick at slice time (GitHub #147)
 - **What**: Settings → new "Process profiles" section with "Import from JSON" (OrcaSlicer `.orca_process` / `.json`). Imported profiles listed with nicknames; rename / delete supported. Prepare screen gets a "Process profile" dropdown that applies the profile's keys to the slice; individual overrides still win on top.
