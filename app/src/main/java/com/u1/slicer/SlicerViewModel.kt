@@ -4271,9 +4271,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
+            val baseName = com.u1.slicer.data.ModelFileNaming.baseName(
+                job.modelName.ifBlank { null }, sourceFile.name
+            )
             val shareFile = File(
                 sourceFile.parentFile,
-                "${sourceFile.nameWithoutExtension}.share.${sourceFile.extension}"
+                "$baseName.share.gcode"
             )
             // Build the mapping from job metadata. Routes through the
             // same `resolveCanonicalExportMapping` helper as Save / Share
@@ -4754,9 +4757,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
             val sourceFile = File(state.result.gcodePath)
+            val baseName = com.u1.slicer.data.ModelFileNaming.baseName(
+                currentModelName.ifBlank { null }, sourceFile.name
+            )
             val shareFile = File(
                 sourceFile.parentFile,
-                "${sourceFile.nameWithoutExtension}.share.${sourceFile.extension}"
+                "$baseName.share.gcode"
             )
             if (!prepareExportableGcode(sourceFile, shareFile)) return@launch
 
