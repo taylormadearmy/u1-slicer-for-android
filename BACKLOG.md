@@ -572,6 +572,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F87: Import process profiles from JSON, pick at slice time (GitHub #147)
+- **What**: Settings → new "Process profiles" section with "Import from JSON" (OrcaSlicer `.orca_process` / `.json`). Imported profiles listed with nicknames; rename / delete supported. Prepare screen gets a "Process profile" dropdown that applies the profile's keys to the slice; individual overrides still win on top.
+- **Why**: User has standard presets they want to reuse across many prints (e.g. "0.16 fine" with tuned speed / walls / supports). Per-print manual override re-entry is friction.
+- **Persistence**: DataStore alongside existing filament library. `SettingsBackup` schema bump to include profiles (forward-compat: importing a v2 backup just doesn't see the section).
+- **Out of scope**: in-app profile editing (UI for 100+ keys is non-trivial); filament / printer profile import (those are A2).
+- **Relationship to A2**: A2 covers full Orca profile import (printer + filament + process) as part of v3.0.0 multi-printer architecture. F87 is the focused process-only first slice that can ship independently. A2 may later subsume or expand it.
+- **Source**: Kevin, 2026-05-23 (post-v2.4.0).
+
 ### F86: Prepare page — indicate overridden settings + reset button (GitHub #146)
 - **Indicate overrides**: settings on the Prepare page whose `OverrideMode == OVERRIDE` should be visually distinguished from settings still using the file value (`USE_FILE`) or app default (`USE_DEFAULT`) — e.g. a dot, accent colour, or "modified" badge on the control.
 - **Reset affordance**: provide a way to revert overrides. Minimum: global "Reset all overrides" button. Better: per-setting reset (inline icon / long-press) so a single change can be undone without wiping the rest. Reset restores `USE_FILE` when the file has an embedded profile, else `USE_DEFAULT`.
