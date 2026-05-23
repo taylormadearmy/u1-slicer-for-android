@@ -803,6 +803,39 @@ internal fun hexToHsv(hex: String): FloatArray {
     return floatArrayOf(h, s, max)
 }
 
+// ── HSV snap helper (F79) ────────────────────────────────────────────────────────
+
+/**
+ * Pure logic for hue-drag behaviour when the current colour is achromatic.
+ *
+ * When saturation is near-zero (white / grey / black), dragging the hue strip has
+ * no visible effect because hue is irrelevant at s=0.  This helper snaps saturation
+ * (and, when value is also near-zero, value too) to 1.0 so the chosen hue becomes
+ * immediately visible.  When the colour is already saturated, s and v are left
+ * unchanged.
+ */
+internal object HsvPickerSnap {
+    private const val ACHROMATIC_THRESHOLD = 0.05f
+
+    /**
+     * Compute the (h, s, v) to apply when the user drags/taps the hue strip.
+     * If [currentSaturation] is below [ACHROMATIC_THRESHOLD] snap s to 1.0.
+     * If [currentValue] is also below [ACHROMATIC_THRESHOLD] (pure black), snap v to 1.0
+     * so the hue is not masked by darkness.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun snapOnHueChange(
+        currentHue: Float,
+        currentSaturation: Float,
+        currentValue: Float,
+        newHue: Float,
+    ): Triple<Float, Float, Float> {
+        val s = if (currentSaturation < ACHROMATIC_THRESHOLD) 1f else currentSaturation
+        val v = if (currentValue < ACHROMATIC_THRESHOLD) 1f else currentValue
+        return Triple(newHue, s, v)
+    }
+}
+
 // ── HSV Colour Picker composable (F64) ───────────────────────────────────────────
 
 /**
@@ -832,21 +865,25 @@ internal fun HsvColorPicker(
                 .pointerInput(saturation, value) {
                     detectTapGestures { offset ->
                         val h = (offset.x / size.width * 360f).coerceIn(0f, 359.9f)
-                        onHsvChange(h, saturation, value)
+                        val (nh, ns, nv) = HsvPickerSnap.snapOnHueChange(hue, saturation, value, h)
+                        onHsvChange(nh, ns, nv)
                     }
                 }
                 .pointerInput(saturation, value) {
                     detectDragGestures { change, _ ->
                         val h = (change.position.x / size.width * 360f).coerceIn(0f, 359.9f)
-                        onHsvChange(h, saturation, value)
+                        val (nh, ns, nv) = HsvPickerSnap.snapOnHueChange(hue, saturation, value, h)
+                        onHsvChange(nh, ns, nv)
                     }
                 }
             ) {
                 drawRect(brush = Brush.horizontalGradient(hueColors))
-                // Thumb indicator
+                // Thumb indicator — triple-ring for visibility on any background (F79)
                 val thumbX = hue / 360f * size.width
-                drawCircle(Color.White, radius = 10f, center = Offset(thumbX, size.height / 2f))
-                drawCircle(Color.Black, radius = 10f, center = Offset(thumbX, size.height / 2f), style = Stroke(2f))
+                val thumbCy = size.height / 2f
+                drawCircle(Color.Black, radius = 11f, center = Offset(thumbX, thumbCy), style = Stroke(3f))
+                drawCircle(Color.White, radius = 8f, center = Offset(thumbX, thumbCy), style = Stroke(2f))
+                drawCircle(Color.Black, radius = 3f, center = Offset(thumbX, thumbCy))
             }
         }
 
@@ -874,11 +911,12 @@ internal fun HsvColorPicker(
                 drawRect(brush = Brush.horizontalGradient(listOf(Color.White, hueColor)))
                 // Value gradient (transparent → black) top to bottom
                 drawRect(brush = Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
-                // Thumb indicator
+                // Thumb indicator — triple-ring for visibility on any background (F79)
                 val thumbX = saturation * size.width
                 val thumbY = (1f - value) * size.height
-                drawCircle(Color.White, radius = 10f, center = Offset(thumbX, thumbY))
-                drawCircle(Color.Black, radius = 10f, center = Offset(thumbX, thumbY), style = Stroke(2f))
+                drawCircle(Color.Black, radius = 16f, center = Offset(thumbX, thumbY), style = Stroke(3f))
+                drawCircle(Color.White, radius = 13f, center = Offset(thumbX, thumbY), style = Stroke(2f))
+                drawCircle(Color.Black, radius = 4f, center = Offset(thumbX, thumbY))
             }
         }
     }

@@ -4,17 +4,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B127: LayerToolPauseInjector drops layer-tool swaps for canonical fileIdx ≥ 4 (GitHub #145) — OPEN
-- **Symptom (potential)**: Hueforge / layer-tool 3MF files with more than 4 declared filaments lose tool changes silently at slice time. The injector writes `T<extruderBambu - 1>` directly from `custom_gcode_per_layer.xml` without applying the user's `colorMapping`. For any swap whose `extruderBambu` is 5+ (canonical fileIdx 4+), the `if (toolIndex in 1..3)` guard at [`LayerToolPauseInjector.kt:134`](app/src/main/java/com/u1/slicer/gcode/LayerToolPauseInjector.kt#L134) drops both the `T<n>` line and the matching `M109 S<temp> T<n>` — the printer never switches tool for that layer band.
-- **Surfaced by**: 2026-05-22 SEMM-fold-removal sub-agent review. Not directly reproduced; orthogonal to the fold (the fold guard required `hasPaintData==true`, so layer-tool files never went through it). Worth confirming on a real > 4 colour Hueforge plate before fixing blind.
-- **T0 skip subtlety**: the `1..3` lower bound also skips `extruderBambu = 1 → T0`, which appears intentional — T0 is the implicit starting tool. Any fix must preserve that semantics post-colorMapping translation (i.e. canonical→physical slot 0 likely still skips), or document why it changes.
-- **Fix outline** (not yet designed):
-  1. Add `colorMapping: List<Int>?` parameter to `LayerToolPauseInjector.injectFrom3mf`.
-  2. Pass `_colorMapping.value` from the call site at [`SlicerViewModel.kt:3693`](app/src/main/java/com/u1/slicer/SlicerViewModel.kt#L3693).
-  3. Translate `canonicalFileIdx = extruderBambu - 1`; resolve `physicalSlot = colorMapping?.getOrNull(canonicalFileIdx) ?: canonicalFileIdx`; write `T<physicalSlot>` (and matching `M109`).
-  4. Decide T0-skip semantics post-translation. Decide whether consecutive same-slot swaps should be deduped (multiple canonical indices may map to one physical slot).
-  5. Add an instrumented regression fixture with a > 4 colour layer-tool 3MF.
-- **Source**: Surfaced 2026-05-22 during SEMM fold removal review (sub-agent code-review pass).
+### B127: LayerToolPauseInjector drops layer-tool swaps for canonical fileIdx ≥ 4 (GitHub #145) — FIXED v2.5.0
+- **Reproduced 2026-05-23** on `JapaneseWave.3mf` (7-filament Hueforge): XML had `extruder="5"/"6"/"7"` swaps but the output G-code had only the native T4/T5/T6 lines and no injected ones — `PAUSE_PRINT` fired but no tool switch.
+- **Fix**: change `LayerToolPauseInjector.kt:134` guard from `if (toolIndex in 1..3)` to `if (toolIndex >= 1)`. The spurious upper bound was a typo; the T0 skip intent (T0 = starting tool, no switch needed) is preserved.
+- **No colorMapping plumbing needed**: the injector writes canonical T-indices; `PrintTimeRemap` at upload time handles canonical → physical translation via colorMapping. Same path as the slicer's per-tool transitions.
+- **Verified post-fix on JapaneseWave**: T4/T5/T6 each now have 2 lines (native + injected), M109 T4/T5/T6 emitted, `; layer_tool extruder` comment count goes 3 → 6. PAUSE_PRINT count unchanged at 7 (one initial + 6 swaps).
+- **Tests**: 1 new unit test `b127 injector writes T-line for toolIndex 4 5 6 (7-filament Hueforge)` with synthetic XML in `LayerToolPauseInjectorTest.kt`. `JapaneseWave.3mf` (41 MB, 7-filament Hueforge) is intentionally NOT committed to the repo due to size; it lives at `G:/My Drive/tes-data/JapaneseWave.3mf` and can be copied locally for manual verification or future instrumented coverage.
 
 ### B125: H2C shoe support filament row missing — support_filament not emitted when supports=USE_FILE + hasSourceConfig=true (GitHub #144) — FIXED v2.2.14 (filament keys) / v2.2.15 (sub-settings) / v2.2.16 (root cause: targetCount too low)
 - **Symptom**: Load `1890038_xav01_H2C_279_104.3mf` with TPU as model filament and PLA as support/interface-only. The Prepare preview and Filament Mapping dialog show only 1 filament row instead of 2 (model + support). The sliced G-code also only contains T0 (support runs on same extruder as model rather than a dedicated PLA extruder).
@@ -572,12 +567,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
-### F88: Save Gcode + Share Gcode should preserve original model name (GitHub #148)
-- **Symptom**: Save G-code suggested filename is hardcoded "output.gcode"; Share G-code produces "output_<epoch>.share.gcode". Both should use the original model name (e.g. "MyModel.gcode" / "MyModel.share.gcode").
-- **Scope**: F84 follow-up — Send-to-printer path was already fixed in v2.4.0 via `PrinterRepository.resolveUploadBaseName`. Save (`gcodeSaveLauncher.launch("output.gcode")` in `MainActivity.kt:572,624`) and Share (`SlicerViewModel.shareGcode()` / `shareJobGcode(job)`) still derive the output name from the on-disk transient.
-- **Fix**: thread `viewModel.currentModelName` through both code paths; share the sanitisation helper used by F84.
-- **Quick win**: pure Kotlin, no native rebuild, ~half a day with tests.
-- **Source**: Kevin, 2026-05-23 (post-v2.4.0 report).
+### F88: Save Gcode + Share Gcode should preserve original model name (GitHub #148) — DONE v2.5.0
+- Shipped. New `ModelFileNaming.baseName(modelName, fallback)` helper in `app/src/main/java/com/u1/slicer/data/`. `MainActivity.gcodeSaveLauncher.launch(...)` now suggests `${modelBaseName}.gcode`; `SlicerViewModel.shareGcode()` + `shareJobGcode(job)` use the model name (with `.share.gcode` infix retained internally). 6 unit tests in `ModelFileNamingTest`.
 
 ### F87: Import process profiles from JSON, pick at slice time (GitHub #147)
 - **What**: Settings → new "Process profiles" section with "Import from JSON" (OrcaSlicer `.orca_process` / `.json`). Imported profiles listed with nicknames; rename / delete supported. Prepare screen gets a "Process profile" dropdown that applies the profile's keys to the slice; individual overrides still win on top.
@@ -611,22 +602,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Blocker before shipping**: awaiting permission from Snapmaker to use their cloud endpoints from a third-party app. Holding the code on a branch; not enabling in production until we have an explicit OK.
 - **Related**: #16 (F45) Bambu printer support
 
-### F79: Colour selector improvements (GitHub #111)
-- Ergonomic and UX improvements to the extruder colour picker per Discord discussion: https://discord.com/channels/1086575708903571536/1484249705042153633/1499419409893167154
-
-- **Concrete bugs reported by Kevin 2026-05-23** (must fix as part of F79):
-  1. **Current colour not visually obvious on open.** The thumb on the SV box ([HsvColorPicker in PrinterScreen.kt:878-881](app/src/main/java/com/u1/slicer/ui/PrinterScreen.kt#L878-L881)) is a 10px white+black ring — too subtle, especially against pale backgrounds. For an achromatic starting colour (white = sat 0, value 1) the thumb sits in the top-left corner and is easy to miss entirely. **Fix candidates**: bigger thumb (20–24px), drop-shadow, or a small connector line + label showing the current hex; ensure the SV thumb is rendered on top with a contrasting outline regardless of background colour.
-  2. **Picker locks to white when initial colour is white.** When the slot's current colour has saturation = 0 (e.g. `#FFFFFF`, the default for slot 4), the SV box thumb is at x=0 (saturation=0). Dragging the hue strip then has zero visual effect because s=0 — the output stays white regardless of hue. **Fix candidates**: when the user drags the hue strip AND saturation is currently 0 (or below a small threshold), auto-bump saturation to 1.0 so the new hue is immediately visible; OR initialise the picker with `sat=max(initial.sat, 1.0)` when the initial colour is fully achromatic (white/black/grey); OR show an inline hint "Tap the colour area below to pick a shade". Desktop OrcaSlicer's picker handles this by snapping to a sensible saturation on hue change. Prefer the auto-snap.
-
-- **Other likely scope** (confirm against Discord before starting): larger touch targets across the picker, recents/saved swatches per material, copy-colour-from-slot, hex/RGB entry field, closer parity with desktop OrcaSlicer colour picker.
-
-- **Action**: Read the Discord thread to lock the rest of the scope. The two bugs above are unambiguous — implement them whether the broader Discord scope is locked or not.
-
-- **Files**:
-  - [`app/src/main/java/com/u1/slicer/ui/PrinterScreen.kt`](app/src/main/java/com/u1/slicer/ui/PrinterScreen.kt#L816) — `HsvColorPicker` composable (thumb rendering, hue-drag snap-saturation logic)
-  - [`app/src/main/java/com/u1/slicer/ui/FilamentColorEditDialog.kt`](app/src/main/java/com/u1/slicer/ui/FilamentColorEditDialog.kt) — wrapper used from Prepare; may also need a "you're currently picking white" hint
-
-- **Tests**: extend `HsvColorPickerTest.kt` (currently 9 round-trip tests) with cases asserting the snap-saturation behaviour fires only when needed.
+### F79: Colour selector improvements (GitHub #111) — PARTIALLY DONE v2.5.0
+- **Shipped in v2.5.0 (Kevin's two reported bugs)**:
+  1. `HsvPickerSnap.snapOnHueChange` snaps saturation (and value when 0) to 1.0 when the user drags the hue strip while currently in an achromatic state. Fixes "hue drag does nothing when starting from white" — initial colour `#FFFFFF` / `#000000` no longer locks the picker.
+  2. Bigger high-contrast thumbs on both hue strip and SV box (triple-ring pattern: black stroke / white stroke / black dot). Fixes "can't see where the current colour is on open".
+  - 4 unit tests cover the snap behaviour in `HsvColorPickerTest.kt`.
+- **Still open** (broader Discord scope, lower priority): larger touch targets across the picker, recents/saved swatches per material, copy-colour-from-slot, hex/RGB entry field, closer parity with desktop OrcaSlicer colour picker.
+- **Discord scope**: https://discord.com/channels/1086575708903571536/1484249705042153633/1499419409893167154 — re-read before extending.
 
 ### F78: Multi-printer support — configure and switch between multiple printers (GitHub #110) — DONE v2.4.0
 - Shipped. Multiple Moonraker URLs supported via `PrintersRepository` + JSON-in-DataStore `PrintersConfig`. Chip at top of Printer tab opens a `ModalBottomSheet` of all configured printers; switching rebinds `MoonrakerClient.baseUrl` on the existing `PrinterRepository`. Settings has Printers section for add / edit / delete / test-connection. Per-printer extruder slot presets (slot UI reads from the active printer). Notifications prefixed with active printer's nickname when >1 configured. Send dialog title shows "Send to <nickname>" subtitle when >1 configured. Migration on first launch of v2.4.0 reads legacy `printer_url` + `extruder_presets` into a "Printer 1" entry. `SettingsBackup` schema bumped to VERSION=2 with bidirectional v1/v2 compat. GitHub #110 closed.

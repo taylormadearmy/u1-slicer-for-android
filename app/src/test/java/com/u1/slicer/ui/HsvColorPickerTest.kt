@@ -64,4 +64,57 @@ class HsvColorPickerTest {
         val hsv = hexToHsv("FF0000")
         assertEquals(1f, hsv[1], 0.01f)  // saturation = 1 (red)
     }
+
+    // ---- F79 fixes ----
+
+    @Test
+    fun `f79 hue drag from achromatic state snaps saturation to 1`() {
+        // When current sat is 0 (white/grey/black achromatic), changing hue
+        // alone has no visible effect. Snap saturation so the user sees the
+        // new hue.
+        val (h, s, v) = HsvPickerSnap.snapOnHueChange(
+            currentHue = 0f, currentSaturation = 0f, currentValue = 1f,
+            newHue = 120f,
+        )
+        assertEquals(120f, h, 0.001f)
+        assertEquals(1f, s, 0.001f)
+        assertEquals(1f, v, 0.001f)
+    }
+
+    @Test
+    fun `f79 hue drag from already-saturated state leaves saturation alone`() {
+        val (h, s, v) = HsvPickerSnap.snapOnHueChange(
+            currentHue = 0f, currentSaturation = 0.7f, currentValue = 0.8f,
+            newHue = 240f,
+        )
+        assertEquals(240f, h, 0.001f)
+        assertEquals(0.7f, s, 0.001f)
+        assertEquals(0.8f, v, 0.001f)
+    }
+
+    @Test
+    fun `f79 hue drag from very low saturation also snaps to 1`() {
+        // Anything below 0.05 counts as achromatic for snap purposes.
+        val (h, s, v) = HsvPickerSnap.snapOnHueChange(
+            currentHue = 0f, currentSaturation = 0.02f, currentValue = 0.9f,
+            newHue = 180f,
+        )
+        assertEquals(180f, h, 0.001f)
+        assertEquals(1f, s, 0.001f)
+        assertEquals(0.9f, v, 0.001f)
+    }
+
+    @Test
+    fun `f79 hue drag from black snaps to 1 saturation but ALSO bumps value`() {
+        // Pure black is sat=0, value=0. Snapping only saturation leaves the
+        // colour black (since v=0 still produces black). Also bump value
+        // to 1 so the picked hue is visible.
+        val (h, s, v) = HsvPickerSnap.snapOnHueChange(
+            currentHue = 0f, currentSaturation = 0f, currentValue = 0f,
+            newHue = 60f,
+        )
+        assertEquals(60f, h, 0.001f)
+        assertEquals(1f, s, 0.001f)
+        assertEquals(1f, v, 0.001f)
+    }
 }

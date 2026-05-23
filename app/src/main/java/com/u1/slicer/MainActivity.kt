@@ -520,6 +520,8 @@ class MainActivity : ComponentActivity() {
                 // makes the IO work survive the dialog dismissal.
                 val sendActionScope = rememberCoroutineScope()
                 val appSlicerState by viewModel.state.collectAsState()
+                // F88: collect model name so Save/Share G-code can suggest a meaningful filename.
+                val currentModelFileName by viewModel.modelFileName.collectAsState()
                 val sharedPreviewModelKey = when (val s = appSlicerState) {
                     is SlicerViewModel.SlicerState.Loading -> "loading:${s.message}"
                     else -> viewModel.previewModelPath ?: viewModel.currentModelPath
@@ -569,7 +571,12 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     printerViewModel = printerViewModel,
                     onPickFile = { filePickerLauncher.launch(pickFileMimeTypes) },
-                    onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") },
+                    onSaveGcode = {
+                        val suggested = "${com.u1.slicer.data.ModelFileNaming.baseName(
+                            currentModelFileName, "output.gcode"
+                        )}.gcode"
+                        gcodeSaveLauncher.launch(suggested)
+                    },
                     prepareContent = {
                         PrepareScreen(
                             viewModel = viewModel,
@@ -621,7 +628,12 @@ class MainActivity : ComponentActivity() {
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
                             onShareGcode = { viewModel.shareGcode() },
-                            onSaveGcode = { gcodeSaveLauncher.launch("output.gcode") },
+                            onSaveGcode = {
+                                val suggested = "${com.u1.slicer.data.ModelFileNaming.baseName(
+                                    currentModelFileName, "output.gcode"
+                                )}.gcode"
+                                gcodeSaveLauncher.launch(suggested)
+                            },
                             sharedPreviewCameraState = sharedPreviewCameraState,
                             onSharedPreviewCameraStateChange = { sharedPreviewCameraState = it },
                             onResetPreviewCamera = { sharedPreviewCameraState = null }

@@ -131,7 +131,9 @@ object LayerToolPauseInjector {
                                             writer.write(pauseCommand)
                                             writer.write("\n")
                                             val toolIndex = target.extruderBambu - 1
-                                            if (toolIndex in 1..3) {
+                                            // Skip T0 (starting tool, no switch needed).
+                                            // All higher tool indices (T1, T2, … T6+) are real swaps and must be written.
+                                            if (toolIndex >= 1) {
                                                 writer.write("; layer_tool extruder ${target.extruderBambu} → T$toolIndex\n")
                                                 writer.write("T$toolIndex\n")
                                                 // Prefer 3MF project settings; fall back to explicit M104/M109 Tn in source G-code.
