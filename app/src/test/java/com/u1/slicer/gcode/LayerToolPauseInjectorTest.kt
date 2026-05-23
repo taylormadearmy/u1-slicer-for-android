@@ -405,6 +405,79 @@ class LayerToolPauseInjectorTest {
         )
     }
 
+    // ---- B127: canonical fileIdx >= 4 must NOT be dropped ----
+
+    @Test
+    fun `b127 injector writes T-line for toolIndex 4 5 6 (7-filament Hueforge)`() {
+        // Synthesize a custom_gcode_per_layer.xml with extruder values 5, 6, 7
+        // (= toolIndex 4, 5, 6 after extruderBambu - 1).
+        val dir = createTempDir(prefix = "layer_tool_pause_b127_")
+        try {
+            val model = File(dir, "hueforge7.3mf")
+            ZipOutputStream(model.outputStream()).use { zip ->
+                write(zip, "Metadata/custom_gcode_per_layer.xml", """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <custom_gcodes_per_layer>
+                      <plate>
+                        <plate_info id="1"/>
+                        <layer top_z="1.0" type="2" extruder="5" color="" extra="" gcode=""/>
+                        <layer top_z="2.0" type="2" extruder="6" color="" extra="" gcode=""/>
+                        <layer top_z="3.0" type="2" extruder="7" color="" extra="" gcode=""/>
+                      </plate>
+                    </custom_gcodes_per_layer>
+                """.trimIndent())
+                write(
+                    zip,
+                    "Metadata/project_settings.config",
+                    """{"machine_pause_gcode":"M400 U1","nozzle_temperature":["220","220","220","220","220","220","220"]}"""
+                )
+            }
+
+            val gcode = File(dir, "hueforge7.gcode")
+            gcode.writeText(
+                """
+                ;LAYER_CHANGE
+                ;Z:0.5
+                G1 X0 Y0
+                ;LAYER_CHANGE
+                ;Z:1.2
+                G1 X10 Y10
+                ;LAYER_CHANGE
+                ;Z:2.2
+                G1 X20 Y20
+                ;LAYER_CHANGE
+                ;Z:3.2
+                G1 X30 Y30
+                """.trimIndent() + "\n"
+            )
+
+            // Provide native plate data matching the XML targets
+            val plateJson = """{"customGcode":[
+                {"printZ":1.0,"type":"ColorChange","extruder":5,"color":""},
+                {"printZ":2.0,"type":"ColorChange","extruder":6,"color":""},
+                {"printZ":3.0,"type":"ColorChange","extruder":7,"color":""}
+            ]}"""
+
+            assertTrue(
+                "B127: injector must inject pauses for 7-filament Hueforge",
+                LayerToolPauseInjector.injectFrom3mf(gcode.absolutePath, model, 0, plateDataOf(plateJson))
+            )
+
+            val result = gcode.readText()
+
+            assertTrue("B127: T4 line missing — extruder=5 maps to toolIndex 4", result.contains(Regex("(?m)^T4$")))
+            assertTrue("B127: T5 line missing — extruder=6 maps to toolIndex 5", result.contains(Regex("(?m)^T5$")))
+            assertTrue("B127: T6 line missing — extruder=7 maps to toolIndex 6", result.contains(Regex("(?m)^T6$")))
+            assertEquals(
+                "B127: exactly 3 PAUSE_PRINT comment lines expected (one per swap)",
+                3,
+                result.lines().count { it.trim() == "; PAUSE_PRINT" }
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     private fun write(zip: ZipOutputStream, name: String, text: String) {
         zip.putNextEntry(ZipEntry(name))
         zip.write(text.toByteArray())
