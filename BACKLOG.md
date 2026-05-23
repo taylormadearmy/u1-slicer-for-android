@@ -613,8 +613,20 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ### F79: Colour selector improvements (GitHub #111)
 - Ergonomic and UX improvements to the extruder colour picker per Discord discussion: https://discord.com/channels/1086575708903571536/1484249705042153633/1499419409893167154
-- Likely scope (confirm against Discord before starting): HSV picker sensitivity + larger touch targets, recents/saved swatches per material, copy-colour-from-slot, hex/RGB entry, closer parity with desktop OrcaSlicer colour picker.
-- **Action**: Read the Discord thread first to lock concrete scope, then update the issue before implementing.
+
+- **Concrete bugs reported by Kevin 2026-05-23** (must fix as part of F79):
+  1. **Current colour not visually obvious on open.** The thumb on the SV box ([HsvColorPicker in PrinterScreen.kt:878-881](app/src/main/java/com/u1/slicer/ui/PrinterScreen.kt#L878-L881)) is a 10px white+black ring — too subtle, especially against pale backgrounds. For an achromatic starting colour (white = sat 0, value 1) the thumb sits in the top-left corner and is easy to miss entirely. **Fix candidates**: bigger thumb (20–24px), drop-shadow, or a small connector line + label showing the current hex; ensure the SV thumb is rendered on top with a contrasting outline regardless of background colour.
+  2. **Picker locks to white when initial colour is white.** When the slot's current colour has saturation = 0 (e.g. `#FFFFFF`, the default for slot 4), the SV box thumb is at x=0 (saturation=0). Dragging the hue strip then has zero visual effect because s=0 — the output stays white regardless of hue. **Fix candidates**: when the user drags the hue strip AND saturation is currently 0 (or below a small threshold), auto-bump saturation to 1.0 so the new hue is immediately visible; OR initialise the picker with `sat=max(initial.sat, 1.0)` when the initial colour is fully achromatic (white/black/grey); OR show an inline hint "Tap the colour area below to pick a shade". Desktop OrcaSlicer's picker handles this by snapping to a sensible saturation on hue change. Prefer the auto-snap.
+
+- **Other likely scope** (confirm against Discord before starting): larger touch targets across the picker, recents/saved swatches per material, copy-colour-from-slot, hex/RGB entry field, closer parity with desktop OrcaSlicer colour picker.
+
+- **Action**: Read the Discord thread to lock the rest of the scope. The two bugs above are unambiguous — implement them whether the broader Discord scope is locked or not.
+
+- **Files**:
+  - [`app/src/main/java/com/u1/slicer/ui/PrinterScreen.kt`](app/src/main/java/com/u1/slicer/ui/PrinterScreen.kt#L816) — `HsvColorPicker` composable (thumb rendering, hue-drag snap-saturation logic)
+  - [`app/src/main/java/com/u1/slicer/ui/FilamentColorEditDialog.kt`](app/src/main/java/com/u1/slicer/ui/FilamentColorEditDialog.kt) — wrapper used from Prepare; may also need a "you're currently picking white" hint
+
+- **Tests**: extend `HsvColorPickerTest.kt` (currently 9 round-trip tests) with cases asserting the snap-saturation behaviour fires only when needed.
 
 ### F78: Multi-printer support — configure and switch between multiple printers (GitHub #110) — DONE v2.4.0
 - Shipped. Multiple Moonraker URLs supported via `PrintersRepository` + JSON-in-DataStore `PrintersConfig`. Chip at top of Printer tab opens a `ModalBottomSheet` of all configured printers; switching rebinds `MoonrakerClient.baseUrl` on the existing `PrinterRepository`. Settings has Printers section for add / edit / delete / test-connection. Per-printer extruder slot presets (slot UI reads from the active printer). Notifications prefixed with active printer's nickname when >1 configured. Send dialog title shows "Send to <nickname>" subtitle when >1 configured. Migration on first launch of v2.4.0 reads legacy `printer_url` + `extruder_presets` into a "Printer 1" entry. `SettingsBackup` schema bumped to VERSION=2 with bidirectional v1/v2 compat. GitHub #110 closed.
