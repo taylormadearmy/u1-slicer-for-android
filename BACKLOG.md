@@ -567,6 +567,18 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F89: Persist in-progress session + auto-resume on launch (GitHub #153)
+- **What**: when Android kills the app (low memory, swipe-from-recents), the user loses their loaded model, plate selection, transforms, copies, F77 additional files, and in-flight overrides. Persist these to DataStore and offer a "Resuming MyModel.3mf…" banner on next launch with one-tap accept / start-fresh dismiss.
+- **Why**: large-model workflows (Buzz, multi-plate Bambu) take 90+ seconds to cold-load plus 3+ minutes to slice. Losing all of that to an OS process kill is painful UX.
+- **Implementation (~1–2 days, pure Kotlin)**:
+  - New `SessionStateRepository` (DataStore JSON, modeled on `PrintersRepository`).
+  - `SlicerViewModel` writes session state on each relevant mutation (load, plate select, scale, rotation, copies, add-to-bed, slice complete, clear).
+  - `MainActivity` checks for an existing session on `onCreate`; shows the resume banner when the source file is still accessible. Reuses the F61 "Re-open from Jobs" code path for the actual re-load.
+  - Graceful fallback when the source file was evicted from cache.
+- **What NOT to persist** (already covered): slice result G-code (Room SliceJob), filament library / slot presets (DataStore), Smart Paint painted artifacts (cache dir).
+- **Option 2 (potential follow-up, NOT in F89)**: if F89 + B98 perf wins still leave the 90s cold-load painful, consider a native model-state snapshot to cut Buzz reload to ~5–15s. Weeks of native C++ work, coupled to the orcaslicer fork; defer until measured pain. Don't speculatively build.
+- **Source**: Kevin, 2026-05-23.
+
 ### F88: Save Gcode + Share Gcode should preserve original model name (GitHub #148) — DONE v2.5.0
 - Shipped. New `ModelFileNaming.baseName(modelName, fallback)` helper in `app/src/main/java/com/u1/slicer/data/`. `MainActivity.gcodeSaveLauncher.launch(...)` now suggests `${modelBaseName}.gcode`; `SlicerViewModel.shareGcode()` + `shareJobGcode(job)` use the model name (with `.share.gcode` infix retained internally). 6 unit tests in `ModelFileNamingTest`.
 - **Smart Paint follow-up (also v2.5.0)**: after accepting a Smart Paint result, the painted 3MF lives in `cacheDir/ai_paint_<timestamp>.3mf`. Without this fix, `currentModelName` would become "ai_paint_<ts>.3mf" and Save/Share/Send would produce "ai_paint_<ts>.gcode" instead of the original name. Threaded `sourceDisplayName` through `AiPaintResultState` → `runPipeline` → accept-painting via a new `loadModelFromFile(file, preserveDisplayName)` overload on `SlicerViewModel`. Filename now stays as the user's original model name across the full Smart Paint round-trip.
