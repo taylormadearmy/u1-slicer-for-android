@@ -603,13 +603,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Blocker before shipping**: awaiting permission from Snapmaker to use their cloud endpoints from a third-party app. Holding the code on a branch; not enabling in production until we have an explicit OK.
 - **Related**: #16 (F45) Bambu printer support
 
-### F79: Colour selector improvements (GitHub #111) — PARTIALLY DONE v2.5.0
-- **Shipped in v2.5.0 (Kevin's two reported bugs)**:
-  1. `HsvPickerSnap.snapOnHueChange` snaps saturation (and value when 0) to 1.0 when the user drags the hue strip while currently in an achromatic state. Fixes "hue drag does nothing when starting from white" — initial colour `#FFFFFF` / `#000000` no longer locks the picker.
-  2. Bigger high-contrast thumbs on both hue strip and SV box (triple-ring pattern: black stroke / white stroke / black dot). Fixes "can't see where the current colour is on open".
-  - 4 unit tests cover the snap behaviour in `HsvColorPickerTest.kt`.
-- **Still open** (broader Discord scope, lower priority): larger touch targets across the picker, recents/saved swatches per material, copy-colour-from-slot, hex/RGB entry field, closer parity with desktop OrcaSlicer colour picker.
-- **Discord scope**: https://discord.com/channels/1086575708903571536/1484249705042153633/1499419409893167154 — re-read before extending.
+### F79: Colour selector improvements (GitHub #111) — DONE v2.5.0
+- Shipped. Two reported bugs fixed:
+  1. `HsvPickerSnap.snapOnHueChange` snaps saturation (and value when 0) to 1.0 when the user drags the hue strip while currently in an achromatic state. Fixes "hue drag does nothing when starting from white".
+  2. Bigger high-contrast thumbs on both hue strip and SV box (triple-ring black/white/black pattern). Fixes "can't see where the current colour is on open".
+  - 4 unit tests in `HsvColorPickerTest.kt`. GitHub #111 closed.
 
 ### F78: Multi-printer support — configure and switch between multiple printers (GitHub #110) — DONE v2.4.0
 - Shipped. Multiple Moonraker URLs supported via `PrintersRepository` + JSON-in-DataStore `PrintersConfig`. Chip at top of Printer tab opens a `ModalBottomSheet` of all configured printers; switching rebinds `MoonrakerClient.baseUrl` on the existing `PrinterRepository`. Settings has Printers section for add / edit / delete / test-connection. Per-printer extruder slot presets (slot UI reads from the active printer). Notifications prefixed with active printer's nickname when >1 configured. Send dialog title shows "Send to <nickname>" subtitle when >1 configured. Migration on first launch of v2.4.0 reads legacy `printer_url` + `extruder_presets` into a "Printer 1" entry. `SettingsBackup` schema bumped to VERSION=2 with bidirectional v1/v2 compat. GitHub #110 closed.
