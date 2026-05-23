@@ -580,12 +580,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Relationship to A2**: A2 covers full Orca profile import (printer + filament + process) as part of v3.0.0 multi-printer architecture. F87 is the focused process-only first slice that can ship independently. A2 may later subsume or expand it.
 - **Source**: Kevin, 2026-05-23 (post-v2.4.0).
 
-### F86: Prepare page — indicate overridden settings + reset button (GitHub #146)
-- **Indicate overrides**: settings on the Prepare page whose `OverrideMode == OVERRIDE` should be visually distinguished from settings still using the file value (`USE_FILE`) or app default (`USE_DEFAULT`) — e.g. a dot, accent colour, or "modified" badge on the control.
-- **Reset affordance**: provide a way to revert overrides. Minimum: global "Reset all overrides" button. Better: per-setting reset (inline icon / long-press) so a single change can be undone without wiping the rest. Reset restores `USE_FILE` when the file has an embedded profile, else `USE_DEFAULT`.
-- **Implementation**: override state already lives per-field in `SlicingOverrides` with `OverrideMode`; UI just reads each field's mode. See `SlicingOverridesUI.kt` for the existing override controls.
-- **Out of scope**: persisting reset as a per-file preference; diff view of file-value vs. override-value.
-- **Source**: Kevin (in-session feature request), 2026-05-22.
+### F86: Prepare page — indicate overridden settings + reset button (GitHub #146) — DONE v2.3.0
+- Shipped. `OverrideRow` shows a primary-colour dot when the row has a user override; section header shows "N modified" badge; "Reset all overrides (N)" affordance at the top of the accordion clears every field back to `USE_FILE`. Override counts exposed as member functions on `SlicingOverrides` with reflective bucketing-guard test. GitHub #146 closed.
 
 ### F85: Plate selector when adding a 3MF to the bed (GitHub #140) — DONE v2.2.7
 - Add-to-bed now shows the plate-selector dialog for multi-plate 3MF files; only the chosen plate is loaded. Shipped via `nativeAddModelForPlate` (commits 3c94b56 / f6d25fa). GitHub #140 closed.
@@ -596,12 +592,9 @@ Open bugs, features, and investigations. Everything else is done — see git log
 ### F83: Scale model by absolute dimension (mm) + non-uniform XYZ scaling (GitHub #136) — DONE v2.2.7
 - Shipped. Prepare screen has mm/% toggle, uniform/non-uniform toggle, per-axis X/Y/Z sliders + text fields, `ModelScaleConverter` (unit-tested) for mm↔scale conversion, and an "Exceeds 270 mm bed on X/Y/Z" warning. Reset-to-100% button included. GitHub #136 closed.
 
-### F82: Idle-state printer controls on Printer tab (GitHub #133)
-- The Printer tab today only exposes pause/resume/cancel during an active print, plus the LED toggle and filament sync card.  Add idle-state controls so the user can drive the printer without an active job.
-- **Likely scope**: set bed temp (with a "Cooldown" preset), set per-extruder nozzle temp, manual-move/home (G28, G0 X/Y/Z), undock / dock extruder, manual filament load/unload per slot, send custom G-code box.
-- The plumbing is mostly there — `PrinterRepository.sendGcode` is wired through both HTTP/Moonraker and LAN/WCP paths.  Most controls reduce to a single-line G-code script.
-- **UX**: gate behind `status.isConnected` (and `!isPrinting` for moves that would conflict with a running print).  Match desktop Snapmaker Orca's idle-state control panel layout where reasonable.
-- **Out of scope (for v1)**: bed leveling wizard, per-step calibration flows.
+### F82: Idle-state printer controls on Printer tab (GitHub #133) — DONE v2.3.0 (temps + custom G-code)
+- Shipped (safe scope: temperature controls + custom G-code box only — no head motion). Bed and per-extruder nozzle temps editable any time the printer is connected (was previously gated on printing/paused). Cooldown button sends `TURN_OFF_HEATERS`. Custom G-code card appears when idle + connected with a "you own the risk" warning. Skipped per safety: homing (G28), manual XYZ moves, undock/dock, filament load/unload. Could be added in a follow-up after motion-safety design.
+- **Closed scope**: GitHub #133 closed. A follow-up issue (currently unfiled) could cover the motion-control half once a safety story exists.
 
 ### F81: Add notifications for all loading stages (GitHub #120) — DONE
 - Notifications wired for long-running background operations (model load, Bambu sanitize/embed pipeline, Prepare preview ready). Shipped (commit c3ba402). GitHub #120 closed.
