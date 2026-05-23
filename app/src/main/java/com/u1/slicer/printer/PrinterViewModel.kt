@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -24,10 +25,23 @@ import java.io.File
 class PrinterViewModel(application: Application) : AndroidViewModel(application) {
 
     private val printerRepo = (application as U1SlicerApplication).container.printerRepository
-    private val settingsRepo = (application as U1SlicerApplication).container.settingsRepository
+    private val printersRepo = (application as U1SlicerApplication).container.printersRepository
 
     val status: StateFlow<PrinterStatus> = printerRepo.status
     val printerUrl: StateFlow<String> = printerRepo.printerUrl
+
+    val activeNickname: StateFlow<String> = printerRepo.activeNickname
+
+    val printerCount: StateFlow<Int> = printerRepo.printerCount
+
+    /** Full list of configured printers — drives the switcher bottom sheet. */
+    val printerList: StateFlow<List<com.u1.slicer.data.Printer>> = printersRepo.config
+        .map { it?.printers ?: emptyList() }
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val activePrinterId: StateFlow<String?> = printersRepo.config
+        .map { it?.activeId }
+        .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     // Resolved webcam snapshot URL candidates (primary + optional alt with port).
     // Populated by resolveWebcam() which queries /server/webcams/list.
@@ -39,8 +53,9 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         .map { it.firstOrNull() ?: "" }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
-    /** Persisted per-extruder slot config (color + material type + optional profile). */
-    val extruderPresets: StateFlow<List<ExtruderPreset>> = settingsRepo.extruderPresets
+    /** F78: per-extruder slot config sourced from the active printer. */
+    val extruderPresets: StateFlow<List<ExtruderPreset>> = printersRepo.activePrinter
+        .map { it?.extruderPresets ?: defaultExtruderPresets() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, defaultExtruderPresets())
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Unknown)
@@ -154,9 +169,44 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateUrl(url: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            printerRepo.updateUrl(url)
+            printerRepo.updateActiveUrl(url)
             _connectionState.value = ConnectionState.Unknown
             resolveWebcam()
+        }
+    }
+
+    fun switchActivePrinter(id: String) {
+        viewModelScope.launch { printersRepo.setActive(id) }
+    }
+
+    fun addPrinter(nickname: String, url: String) {
+        viewModelScope.launch {
+            val printer = com.u1.slicer.data.Printer(
+                id = java.util.UUID.randomUUID().toString(),
+                nickname = nickname.ifBlank { "Printer ${(printerList.value.size + 1)}" },
+                moonrakerUrl = com.u1.slicer.network.MoonrakerClient.normalizeUrl(url),
+            )
+            printersRepo.add(printer)
+        }
+    }
+
+    fun updatePrinter(id: String, nickname: String, url: String) {
+        viewModelScope.launch {
+            val current = printerList.value.firstOrNull { it.id == id } ?: return@launch
+            printersRepo.update(current.copy(
+                nickname = nickname,
+                moonrakerUrl = com.u1.slicer.network.MoonrakerClient.normalizeUrl(url),
+            ))
+        }
+    }
+
+    fun deletePrinter(id: String) {
+        viewModelScope.launch {
+            try {
+                printersRepo.delete(id)
+            } catch (e: IllegalStateException) {
+                _heaterError.value = e.message ?: "Cannot delete printer"
+            }
         }
     }
 
@@ -196,13 +246,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         _isLightOn.value = printerRepo.getLedState()
     }
 
-    /** Update a single extruder slot (color or material type edit on printer page). */
+    /** F78: writes back into the active printer's extruderPresets list. */
     fun updateExtruderPreset(preset: ExtruderPreset) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val current = extruderPresets.value.toMutableList()
-            val idx = current.indexOfFirst { it.index == preset.index }
-            if (idx >= 0) current[idx] = preset else current.add(preset)
-            settingsRepo.saveExtruderPresets(current.sortedBy { it.index })
+        viewModelScope.launch {
+            val cfg = printersRepo.config.first() ?: return@launch
+            val active = cfg.active
+            val updated = active.extruderPresets.map { if (it.index == preset.index) preset else it }
+            printersRepo.update(active.copy(extruderPresets = updated))
         }
     }
 
@@ -234,8 +284,10 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     /** Apply the sync result — update presets with printer data as requested. */
     fun applySyncResult(entries: List<SyncPreviewEntry>, applyColors: Boolean, applyTypes: Boolean) {
         _syncState.value = SyncState.Idle
-        viewModelScope.launch(Dispatchers.IO) {
-            val current = extruderPresets.value.toMutableList()
+        viewModelScope.launch {
+            val cfg = printersRepo.config.first() ?: return@launch
+            val active = cfg.active
+            val current = active.extruderPresets.toMutableList()
             entries.forEach { entry ->
                 val idx = current.indexOfFirst { it.index == entry.slotIndex }
                 if (idx >= 0) {
@@ -249,7 +301,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             }
-            settingsRepo.saveExtruderPresets(current)
+            printersRepo.update(active.copy(extruderPresets = current))
         }
     }
 

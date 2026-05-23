@@ -1,7 +1,6 @@
 package com.u1.slicer.printer
 
 import com.u1.slicer.AppEventNotifier
-import com.u1.slicer.data.SettingsRepository
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.MoonrakerClient
 import com.u1.slicer.network.PrinterStatus
@@ -11,7 +10,7 @@ import kotlinx.coroutines.flow.*
 class PrinterRepository(
     private val appContext: android.content.Context,
     private val client: MoonrakerClient,
-    private val settingsRepo: SettingsRepository
+    private val printersRepo: com.u1.slicer.data.PrintersRepository,
 ) {
     private val _status = MutableStateFlow(PrinterStatus(state = "disconnected", progress = 0f))
     val status: StateFlow<PrinterStatus> = _status.asStateFlow()
@@ -19,7 +18,17 @@ class PrinterRepository(
     private val _printerUrl = MutableStateFlow("")
     val printerUrl: StateFlow<String> = _printerUrl.asStateFlow()
 
+    /** Active printer's nickname — used to prefix notification titles. Empty until the first
+     *  PrintersConfig emission. */
+    private val _activeNickname = MutableStateFlow("")
+    val activeNickname: StateFlow<String> = _activeNickname.asStateFlow()
+
+    /** Total configured printer count — used to decide whether to prefix notifications. */
+    private val _printerCount = MutableStateFlow(0)
+    val printerCount: StateFlow<Int> = _printerCount.asStateFlow()
+
     private var pollingJob: Job? = null
+    private var pollingScope: CoroutineScope? = null
 
     /**
      * When > 0 the polling loop uses 500 ms intervals instead of 2 000 ms.
@@ -36,22 +45,48 @@ class PrinterRepository(
     @Volatile
     private var consecutiveFailures = 0
 
-
     init {
-        // Load saved printer URL
+        // F78: observe the active printer and rebind on every change. The collect
+        // loop runs forever — first emission is the migrated PrintersConfig, every
+        // subsequent emission is a user switch / edit / delete.
         CoroutineScope(Dispatchers.IO).launch {
-            settingsRepo.printerUrl.collect { url ->
-                _printerUrl.value = url
-                client.baseUrl = url
+            printersRepo.config.collect { cfg ->
+                val active = cfg?.active ?: return@collect
+                rebind(active.moonrakerUrl)
+                _activeNickname.value = active.nickname
+                _printerCount.value = cfg.printers.size
             }
         }
     }
 
-    suspend fun updateUrl(url: String) {
-        val normalized = MoonrakerClient.normalizeUrl(url)
-        _printerUrl.value = normalized
+    /**
+     * Stop polling, swap `client.baseUrl`, reset status to "disconnected", restart polling
+     * if it was running. The order matters: cancelling the existing poll job before
+     * swapping the URL prevents an in-flight `getStatus()` call from writing into
+     * the new printer's flow.
+     */
+    private suspend fun rebind(newUrl: String) {
+        val normalized = MoonrakerClient.normalizeUrl(newUrl)
+        if (normalized == _printerUrl.value && pollingJob?.isActive == true) return  // no-op
+        val wasPolling = pollingJob?.isActive == true
+        val scope = pollingScope
+        stopPolling()
+        consecutiveFailures = 0
         client.baseUrl = normalized
-        settingsRepo.savePrinterUrl(normalized)
+        _printerUrl.value = normalized
+        _status.value = PrinterStatus(state = "disconnected", progress = 0f)
+        if (wasPolling && scope != null) {
+            startPolling(scope)
+        }
+    }
+
+    /** Convenience: update the active printer's URL via PrintersRepository. */
+    suspend fun updateActiveUrl(url: String) {
+        val normalized = MoonrakerClient.normalizeUrl(url)
+        val cfg = printersRepo.config.first() ?: return
+        val active = cfg.active
+        printersRepo.update(active.copy(moonrakerUrl = normalized))
+        // The config collector in init will rebind automatically.
     }
 
     /** Returns null on success, or an error message string on failure. */
@@ -66,6 +101,7 @@ class PrinterRepository(
     fun remoteScreenUrl(): String? = client.remoteScreenUrl()
 
     fun startPolling(scope: CoroutineScope) {
+        pollingScope = scope
         stopPolling()
         pollingJob = scope.launch(Dispatchers.IO) {
             var prevState = "disconnected"
@@ -84,7 +120,13 @@ class PrinterRepository(
                     prevState, effectiveState,
                     latestStatus.filename, latestStatus.progressPercent
                 )
-                event?.let { AppEventNotifier.notify(appContext, it) }
+                event?.let {
+                    AppEventNotifier.notify(
+                        appContext, it,
+                        nickname = _activeNickname.value,
+                        printerCount = _printerCount.value,
+                    )
+                }
                 prevState = effectiveState
                 val interval = if (rapidPollCyclesRemaining > 0) {
                     rapidPollCyclesRemaining--

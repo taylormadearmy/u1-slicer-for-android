@@ -37,7 +37,7 @@ object AppEventNotifier {
         object PrinterOffline : Event()
     }
 
-    fun notify(context: Context, event: Event) {
+    fun notify(context: Context, event: Event, nickname: String = "", printerCount: Int = 1) {
         if (AppForegroundTracker.isInForeground) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
@@ -63,12 +63,17 @@ object AppEventNotifier {
             notifId,
             NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-                .setContentTitle(titleFor(event))
+                .setContentTitle(buildTitle(event, nickname, printerCount))
                 .setContentText(bodyFor(event))
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
                 .build()
         )
+    }
+
+    fun buildTitle(event: Event, nickname: String = "", printerCount: Int = 1): String {
+        val base = titleFor(event)
+        return if (nickname.isNotBlank() && printerCount > 1) "$nickname — $base" else base
     }
 
     internal fun titleFor(event: Event): String = when (event) {

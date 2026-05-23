@@ -10,6 +10,7 @@ import com.u1.slicer.data.SlicingOverrides
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
@@ -341,6 +342,8 @@ class PreparePreviewViewModelTest {
         // Save user-like presets: E2=white (matches what user reported), E4=pink.
         // If E4 falls back to DEFAULT_COLORS[3]="#FFFFFF" it will equal E2 and only
         // 3 distinct preview colours will be visible — that is the B86 bug.
+        // F78: write to PrintersRepository (active printer record) so the ViewModel's
+        // extruderPresets StateFlow — which now reads from printersRepo — sees these presets.
         val userPresets = listOf(
             ExtruderPreset(index = 0, color = "#FFD700"),  // E1: yellow
             ExtruderPreset(index = 1, color = "#FFFFFF"),  // E2: white
@@ -348,7 +351,9 @@ class PreparePreviewViewModelTest {
             ExtruderPreset(index = 3, color = "#FF69B4"),  // E4: pink
         )
         runBlocking {
-            application.container.settingsRepository.saveExtruderPresets(userPresets)
+            val printersRepo = application.container.printersRepository
+            val cfg = printersRepo.config.first() ?: return@runBlocking
+            printersRepo.update(cfg.active.copy(extruderPresets = userPresets))
         }
 
         val viewModel = SlicerViewModel(application)
@@ -432,9 +437,10 @@ class PreparePreviewViewModelTest {
             viewModel.clearModel()
             modelFile.delete()
             runBlocking {
-                application.container.settingsRepository.saveExtruderPresets(
-                    com.u1.slicer.data.defaultExtruderPresets()
-                )
+                // F78: reset via PrintersRepository (active printer record).
+                val printersRepo = application.container.printersRepository
+                val cfg = printersRepo.config.first() ?: return@runBlocking
+                printersRepo.update(cfg.active.copy(extruderPresets = com.u1.slicer.data.defaultExtruderPresets()))
             }
         }
     }
@@ -1836,10 +1842,13 @@ class PreparePreviewViewModelTest {
     @Test
     fun buzzPlate8_parsedGcodeAndPalette_renderCanonicalRedAndWhite() {
         val application = targetContext.applicationContext as U1SlicerApplication
-        val settingsRepo = application.container.settingsRepository
         // Force default presets to match user's reproduction environment.
+        // F78: write to PrintersRepository (active printer record) so the ViewModel's
+        // extruderPresets StateFlow — which now reads from printersRepo — sees these presets.
         runBlocking {
-            settingsRepo.saveExtruderPresets(com.u1.slicer.data.defaultExtruderPresets())
+            val printersRepo = application.container.printersRepository
+            val cfg = printersRepo.config.first() ?: return@runBlocking
+            printersRepo.update(cfg.active.copy(extruderPresets = com.u1.slicer.data.defaultExtruderPresets()))
         }
         Thread.sleep(300)
         val viewModel = SlicerViewModel(application)

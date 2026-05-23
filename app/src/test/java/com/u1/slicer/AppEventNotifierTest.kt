@@ -1,6 +1,8 @@
 package com.u1.slicer
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppEventNotifierTest {
@@ -110,5 +112,27 @@ class AppEventNotifierTest {
     @Test
     fun `f81 prepare preview ready has no navigate target`() {
         assertEquals(null, AppEventNotifier.navigateTargetFor(AppEventNotifier.Event.PreparePreviewReady("x")))
+    }
+
+    @Test
+    fun `f78 notification title is prefixed with nickname when printerCount greater than 1`() {
+        val event = AppEventNotifier.Event.PrintComplete(filename = "foo.gcode")
+        val title = AppEventNotifier.buildTitle(event, nickname = "Workshop", printerCount = 2)
+        assertTrue("title should start with nickname prefix: '$title'",
+            title.startsWith("Workshop —"))
+    }
+
+    @Test
+    fun `f78 notification title is not prefixed when printerCount is 1`() {
+        val event = AppEventNotifier.Event.PrintComplete(filename = "foo.gcode")
+        val title = AppEventNotifier.buildTitle(event, nickname = "Workshop", printerCount = 1)
+        assertFalse("title should NOT have nickname prefix: '$title'", title.contains(" — "))
+    }
+
+    @Test
+    fun `f78 notification title is not prefixed when nickname is blank`() {
+        val event = AppEventNotifier.Event.PrintComplete(filename = "foo.gcode")
+        val title = AppEventNotifier.buildTitle(event, nickname = "", printerCount = 5)
+        assertFalse("blank nickname should not prefix: '$title'", title.contains(" — "))
     }
 }

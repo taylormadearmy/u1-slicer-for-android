@@ -88,6 +88,12 @@ class SettingsRepository(private val context: Context) {
         parseExtruderPresets(prefs[Keys.EXTRUDER_PRESETS] ?: "")
     }
 
+    /** F78 migration helper — returns the raw JSON string for the legacy presets key,
+     *  or empty string if the key is unset. */
+    val extruderPresetsJson: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.EXTRUDER_PRESETS] ?: ""
+    }
+
     val slicingOverrides: Flow<SlicingOverrides> = context.dataStore.data.map { prefs ->
         val json = prefs[Keys.SLICING_OVERRIDES] ?: ""
         if (json.isNotEmpty()) SlicingOverrides.fromJson(json) else SlicingOverrides()

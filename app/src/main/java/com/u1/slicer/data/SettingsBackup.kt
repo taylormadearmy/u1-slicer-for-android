@@ -5,34 +5,157 @@ import org.json.JSONObject
 
 /**
  * Backup/restore all app settings as a single JSON file.
- * Schema version 1.
+ *
+ * Schema versions:
+ *  v1 — single-printer: top-level `printerUrl` + `extruderPresets` array
+ *  v2 — multi-printer:  `printers` array + `activePrinterId`; also writes legacy
+ *        top-level fields from the active printer so a v1 reader can still load the file.
  */
 object SettingsBackup {
 
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     data class BackupData(
         val sliceConfig: SliceConfig?,
         val slicingOverrides: SlicingOverrides?,
-        val printerUrl: String?,
-        val extruderPresets: List<ExtruderPreset>?,
+        val printersConfig: PrintersConfig?,
         val filamentProfiles: List<FilamentProfile>?,
-        val makerWorldCookies: String? = null
+        val makerWorldCookies: String? = null,
     )
 
     fun import(json: String): BackupData {
         val root = JSONObject(json)
         val version = root.optInt("version", 0)
-        if (version < 1) throw IllegalArgumentException("Unknown backup version: $version")
+        if (version < 1 || version > VERSION) {
+            throw IllegalArgumentException("Unsupported backup version: $version (this app supports 1..$VERSION)")
+        }
+
+        val printersConfig: PrintersConfig? = when {
+            // v2+ with explicit printers array
+            root.has("printers") && root.has("activePrinterId") -> {
+                val arr = root.getJSONArray("printers")
+                val list = (0 until arr.length()).map { Printer.fromJsonObject(arr.getJSONObject(it)) }
+                PrintersConfig(printers = list, activeId = root.getString("activePrinterId"))
+            }
+            // v1 — synthesize from legacy fields
+            root.has("printerUrl") || root.has("extruderPresets") -> {
+                val legacyUrl = if (root.has("printerUrl")) root.getString("printerUrl") else ""
+                // The v1 backup stores extruder presets in slot-based format (slot=1-based).
+                // Convert to index-based JSON string that buildMigratedConfig / parseExtruderPresets expects.
+                val legacyExtruderPresetsJson: String? = if (root.has("extruderPresets")) {
+                    val srcArr = root.getJSONArray("extruderPresets")
+                    val converted = JSONArray()
+                    for (i in 0 until srcArr.length()) {
+                        val obj = srcArr.getJSONObject(i)
+                        val slot = obj.optInt("slot", i + 1)
+                        converted.put(JSONObject().apply {
+                            put("index", slot - 1)
+                            put("color", obj.optString("color", "#FFFFFF"))
+                            put("materialType", obj.optString("materialType", "PLA"))
+                            if (obj.has("filamentProfileId")) put("filamentProfileId", obj.getLong("filamentProfileId"))
+                        })
+                    }
+                    converted.toString()
+                } else null
+                PrintersRepository.buildMigratedConfig(
+                    legacyUrl = legacyUrl,
+                    legacyExtruderPresetsJson = legacyExtruderPresetsJson,
+                )
+            }
+            else -> null
+        }
 
         return BackupData(
             sliceConfig = root.optJSONObject("sliceConfig")?.let { parseSliceConfig(it) },
             slicingOverrides = root.optJSONObject("slicingOverrides")?.let { SlicingOverrides.fromJson(it.toString()) },
-            printerUrl = if (root.has("printerUrl")) root.getString("printerUrl") else null,
-            extruderPresets = root.optJSONArray("extruderPresets")?.let { parseExtruderPresetsArray(it) },
+            printersConfig = printersConfig,
             filamentProfiles = root.optJSONArray("filamentProfiles")?.let { parseFilamentProfilesArray(it) },
-            makerWorldCookies = if (root.has("makerWorldCookies")) root.getString("makerWorldCookies") else null
+            makerWorldCookies = if (root.has("makerWorldCookies")) root.getString("makerWorldCookies") else null,
         )
+    }
+
+    /**
+     * Export [BackupData] as a VERSION=2 JSON string.
+     *
+     * v2 schema:
+     *  - `printers` array + `activePrinterId`
+     *  - Legacy compat: active printer's `printerUrl` + `extruderPresets` also written
+     *    at the top level so a v1 reader can still load essential printer settings.
+     */
+    fun export(data: BackupData): String {
+        val root = JSONObject()
+        root.put("version", VERSION)
+        data.sliceConfig?.let { root.put("sliceConfig", exportSliceConfig(it)) }
+        data.slicingOverrides?.let { root.put("slicingOverrides", JSONObject(it.toJson())) }
+        data.filamentProfiles?.let { profiles ->
+            root.put("filamentProfiles", exportFilamentProfiles(profiles))
+        }
+        data.makerWorldCookies?.let { if (it.isNotEmpty()) root.put("makerWorldCookies", it) }
+
+        data.printersConfig?.let { cfg ->
+            // v2 schema: full list
+            val arr = JSONArray()
+            cfg.printers.forEach { arr.put(Printer.toJsonObject(it)) }
+            root.put("printers", arr)
+            root.put("activePrinterId", cfg.activeId)
+            // v1 rollback compat: mirror the active printer's URL + presets into legacy fields
+            val active = cfg.active
+            root.put("printerUrl", active.moonrakerUrl)
+            root.put("extruderPresets", exportExtruderPresets(active.extruderPresets))
+        }
+
+        return root.toString(2)
+    }
+
+    /**
+     * Legacy export signature used by [com.u1.slicer.SlicerViewModel.exportBackupAsync].
+     * Builds a [BackupData] and delegates to [export].
+     */
+    fun export(
+        sliceConfig: SliceConfig,
+        slicingOverrides: SlicingOverrides,
+        printerUrl: String,
+        extruderPresets: List<ExtruderPreset>,
+        filamentProfiles: List<FilamentProfile>,
+        filamentNameResolver: (Long) -> String? = { null },
+        makerWorldCookies: String = "",
+        printersConfig: PrintersConfig? = null,
+    ): String {
+        // If a full PrintersConfig is provided (v2 path), use it.
+        // Otherwise synthesise a single-printer config from the legacy flat fields.
+        val cfg = printersConfig ?: run {
+            val id = java.util.UUID.randomUUID().toString()
+            PrintersConfig(
+                printers = listOf(
+                    Printer(
+                        id = id,
+                        nickname = "Printer 1",
+                        moonrakerUrl = printerUrl,
+                        extruderPresets = extruderPresets,
+                    )
+                ),
+                activeId = id,
+            )
+        }
+        val data = BackupData(
+            sliceConfig = sliceConfig,
+            slicingOverrides = slicingOverrides,
+            printersConfig = cfg,
+            filamentProfiles = filamentProfiles.map { p ->
+                // Resolve filament profile names for name-linking round-trips.
+                // We cannot store names back into the FilamentProfile data class here
+                // because that field doesn't exist; the resolver is used in exportExtruderPresets.
+                p
+            },
+            makerWorldCookies = makerWorldCookies.takeIf { it.isNotEmpty() },
+        )
+
+        // We need to honour filamentNameResolver on extruder presets in the legacy JSON path.
+        // Build the JSON via export(data) then patch the extruderPresets array with resolved names.
+        val root = JSONObject(export(data))
+        val presetsArr = exportExtruderPresetsWithNames(extruderPresets, filamentNameResolver)
+        root.put("extruderPresets", presetsArr)
+        return root.toString(2)
     }
 
     private fun exportSliceConfig(cfg: SliceConfig): JSONObject {
@@ -95,29 +218,15 @@ object SettingsBackup {
         )
     }
 
-    fun export(
-        sliceConfig: SliceConfig,
-        slicingOverrides: SlicingOverrides,
-        printerUrl: String,
-        extruderPresets: List<ExtruderPreset>,
-        filamentProfiles: List<FilamentProfile>,
-        filamentNameResolver: (Long) -> String? = { null },
-        makerWorldCookies: String = ""
-    ): String {
-        val root = JSONObject()
-        root.put("version", VERSION)
-        root.put("sliceConfig", exportSliceConfig(sliceConfig))
-        root.put("slicingOverrides", JSONObject(slicingOverrides.toJson()))
-        root.put("printerUrl", printerUrl)
-        root.put("extruderPresets", exportExtruderPresets(extruderPresets, filamentNameResolver))
-        root.put("filamentProfiles", exportFilamentProfiles(filamentProfiles))
-        if (makerWorldCookies.isNotEmpty()) {
-            root.put("makerWorldCookies", makerWorldCookies)
-        }
-        return root.toString(2)
+    /**
+     * Serialize extruder presets using the v1 slot-based (1-based) format used in top-level
+     * `extruderPresets` JSON key — for backward-compat reads by v1 readers.
+     */
+    private fun exportExtruderPresets(presets: List<ExtruderPreset>): JSONArray {
+        return exportExtruderPresetsWithNames(presets) { null }
     }
 
-    private fun exportExtruderPresets(
+    private fun exportExtruderPresetsWithNames(
         presets: List<ExtruderPreset>,
         filamentNameResolver: (Long) -> String? = { null }
     ): JSONArray {

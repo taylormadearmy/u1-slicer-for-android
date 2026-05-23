@@ -80,6 +80,11 @@ fun PrinterScreen(
     val context = LocalContext.current
     val skippedObjects by viewModel.skippedObjects.collectAsState()
     var showSkipSheet by remember { mutableStateOf(false) }
+    val activeNickname by viewModel.activeNickname.collectAsState()
+    val printerCount by viewModel.printerCount.collectAsState()
+    val printerList by viewModel.printerList.collectAsState()
+    val activePrinterId by viewModel.activePrinterId.collectAsState()
+    var showSwitcher by remember { mutableStateOf(false) }
 
     var editingHeater by remember { mutableStateOf<String?>(null) }
     var editingValue by remember { mutableStateOf("") }
@@ -143,6 +148,16 @@ fun PrinterScreen(
         )
     }
 
+    if (showSwitcher) {
+        com.u1.slicer.ui.printer.PrinterSwitcherSheet(
+            printers = printerList,
+            activeId = activePrinterId,
+            activePrintingFilename = if (status.isPrinting) status.filename else null,
+            onSelect = { selected -> viewModel.switchActivePrinter(selected.id) },
+            onDismiss = { showSwitcher = false },
+        )
+    }
+
     // Sync preview dialog
     if (syncState is PrinterViewModel.SyncState.Preview) {
         FilamentSyncDialog(
@@ -162,6 +177,11 @@ fun PrinterScreen(
             TopAppBar(
                 title = { Text("Printer", fontWeight = FontWeight.Bold) },
                 actions = {
+                    com.u1.slicer.ui.printer.ActivePrinterChip(
+                        activeNickname = activeNickname,
+                        printerCount = printerCount,
+                        onClick = { showSwitcher = true },
+                    )
                     val isLightOn by viewModel.isLightOn.collectAsState()
                     if (status.isConnected) {
                         IconButton(onClick = { viewModel.toggleLight() }) {
