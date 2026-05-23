@@ -157,7 +157,12 @@ fun U1NavGraph(
                     finalizeScope.launch {
                         val finalPath = aiVm.finalizePainting()
                         if (finalPath != null) {
-                            viewModel.loadModelFromFile(java.io.File(finalPath))
+                            // F88 follow-up: pass the original model name captured at pipeline
+                            // launch so currentModelName stays "MyModel.3mf" instead of the
+                            // cache file's auto-generated "ai_paint_<ts>.3mf" name.
+                            val originalDisplayName = (uiState as? com.u1.slicer.aipaint.AiPaintUiState.Result)
+                                ?.state?.sourceDisplayName
+                            viewModel.loadModelFromFile(java.io.File(finalPath), preserveDisplayName = originalDisplayName)
                             navController.popBackStack(Routes.PREPARE, inclusive = false)
                         }
                     }

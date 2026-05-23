@@ -1796,7 +1796,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun loadModelFromFile(file: File) {
+    fun loadModelFromFile(file: File, preserveDisplayName: String? = null) {
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
@@ -1820,8 +1820,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 val filename = normalizeIncomingFilename(file.name)
-                currentModelName = filename
-                _state.value = SlicerState.Loading(loadingMessageFor(filename, file.length()))
+                // F88 follow-up: when the caller provides a display name (e.g. the original
+                // model name before Smart Paint rewrote it to "ai_paint_<ts>.3mf"), use that
+                // instead of the cache-file's auto-generated name.
+                currentModelName = preserveDisplayName?.takeIf { it.isNotBlank() } ?: filename
+                _state.value = SlicerState.Loading(loadingMessageFor(currentModelName, file.length()))
 
                 val sourceFile = if (file.parentFile?.absolutePath == workspaceDir.absolutePath) {
                     file

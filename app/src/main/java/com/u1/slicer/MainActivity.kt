@@ -1395,7 +1395,8 @@ fun PrepareScreen(
                                                 path,
                                                 viewModel.nativeLib,
                                                 printerColours = viewModel.activeExtruderColors.value
-                                                    .takeIf { it.isNotEmpty() }
+                                                    .takeIf { it.isNotEmpty() },
+                                                sourceDisplayName = viewModel.modelFileName.value,
                                             )
                                         }
                                         onNavigateAiPaint()

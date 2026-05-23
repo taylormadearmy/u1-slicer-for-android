@@ -53,6 +53,11 @@ data class AiPaintResultState(
     val aiNamingFailed: Boolean = false,
     val aiModelTried: String? = null,
 
+    /** F88 follow-up: the original model name (e.g. "MyModel.3mf") captured at pipeline launch.
+     *  Preserved through the accept-painting handoff so SlicerViewModel.loadModelFromFile can
+     *  restore currentModelName instead of using the cache file's "ai_paint_<ts>.3mf" name. */
+    val sourceDisplayName: String = "",
+
     /** Brush / lasso commits accumulated in this session. Rendered as a root-level group. */
     val customSelections: List<CustomSelection> = emptyList(),
 

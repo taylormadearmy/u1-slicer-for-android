@@ -96,15 +96,21 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         ))
     }
 
-    fun runPipeline(sourceModelPath: String, native: NativeLibrary, printerColours: List<String>? = null) {
+    fun runPipeline(
+        sourceModelPath: String,
+        native: NativeLibrary,
+        printerColours: List<String>? = null,
+        sourceDisplayName: String = "",
+    ) {
         lastPrinterColours = printerColours
-        runPipelineInternal(sourceModelPath, native, printerColours)
+        runPipelineInternal(sourceModelPath, native, printerColours, sourceDisplayName)
     }
 
     private fun runPipelineInternal(
         sourceModelPath: String,
         native: NativeLibrary,
         printerColours: List<String>?,
+        sourceDisplayName: String = "",
     ) {
         viewModelScope.launch {
             _uiState.value = AiPaintUiState.Running(1, "Reading model geometry…")
@@ -277,6 +283,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                         alternateTree = alternateTreeWithColours,
                         alternateSource = alternateCascadeForState?.source,
                         alternateTriangleSegments = alternateCascadeForState?.triangleSegments,
+                        sourceDisplayName = sourceDisplayName,
                     )
                 )
             } catch (e: Exception) {
@@ -620,8 +627,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun redo(sourceModelPath: String, native: NativeLibrary) {
+        val prevDisplayName = (_uiState.value as? AiPaintUiState.Result)?.state?.sourceDisplayName ?: ""
         _uiState.value = AiPaintUiState.Idle
-        runPipeline(sourceModelPath, native, lastPrinterColours)
+        runPipeline(sourceModelPath, native, lastPrinterColours, sourceDisplayName = prevDisplayName)
     }
 
     /** fix38: swap the active tree with the stored alternate (typically topology). User edits
