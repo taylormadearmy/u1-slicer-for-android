@@ -539,6 +539,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // F89: surface toast events from the ViewModel (e.g. "Couldn't resume <name>").
+                val toastContext = LocalContext.current
+                LaunchedEffect(Unit) {
+                    viewModel.toastEvents.collect { msg ->
+                        android.widget.Toast.makeText(toastContext, msg, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+
                 // Wire up the test receiver's navigate callback now that we have navController
                 if (isDebug) {
                     LaunchedEffect(navController) {
@@ -1214,6 +1222,7 @@ fun PrepareScreen(
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
     val pendingAddFile by viewModel.pendingAddFile.collectAsState()
+    val sessionResumeOffer by viewModel.sessionResumeOffer.collectAsState()
 
     // Plate selector dialogs — mutually exclusive: only one can be shown at a time.
     // If the initial-load selector is open and the user also triggers an add-to-bed
@@ -1318,6 +1327,13 @@ fun PrepareScreen(
                     .padding(top = if (modelLoaded) 72.dp else 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (sessionResumeOffer != null && state is SlicerViewModel.SlicerState.Idle) {
+                    SessionResumeBanner(
+                        offer = sessionResumeOffer!!,
+                        onAccept = { viewModel.acceptSessionResume() },
+                        onDismiss = { viewModel.dismissSessionResume() },
+                    )
+                }
                 when {
                     state is SlicerViewModel.SlicerState.Idle -> {
                         PrepareEmptyState(
@@ -4863,6 +4879,48 @@ private fun ViewerLoadingOverlay(label: String) {
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+    }
+}
+
+// =============================================================================
+// Session Resume Banner (F89) — shown on launch when a previous session is
+// recoverable. Tap Resume → ViewModel replays the saved state; tap × → clear.
+// =============================================================================
+@Composable
+fun SessionResumeBanner(
+    offer: SlicerViewModel.SessionResumeOffer,
+    onAccept: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        val plateSuffix = offer.plateId?.let { " · plate $it" } ?: ""
+        Text(
+            "Resuming ${offer.modelName}$plateSuffix",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onAccept) {
+            Text("Resume", color = MaterialTheme.colorScheme.primary)
+        }
+        IconButton(onClick = onDismiss) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "Dismiss resume",
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
         }
     }
 }
