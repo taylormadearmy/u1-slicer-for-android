@@ -547,6 +547,13 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // F89: ViewModel-driven navigation (e.g. restore-to-Preview after Resume).
+                LaunchedEffect(Unit) {
+                    viewModel.navigateEvents.collect { route ->
+                        navigateTab(route)
+                    }
+                }
+
                 // Wire up the test receiver's navigate callback now that we have navController
                 if (isDebug) {
                     LaunchedEffect(navController) {

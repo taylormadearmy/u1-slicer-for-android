@@ -510,6 +510,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     data class SessionResumeOffer(val modelName: String, val plateId: Int?)
 
+    // F89: most recently completed slice's job id. Captured in startSlicing's
+    // success path; persisted in the session blob so resume can restore
+    // SliceComplete state and navigate to Preview.
+    private var lastSliceJobId: Long? = null
+
+    // F89: navigation events emitted by the ViewModel (e.g. "navigate to Preview
+    // after restoring a SliceComplete session"). MainActivity collects and routes.
+    private val _navigateEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val navigateEvents: kotlinx.coroutines.flow.SharedFlow<String> = _navigateEvents
+
     // Tool remap: maps compact T-index (0,1,…) → actual printer slot index (e.g. 2,3 for E3+E4).
     // Null / identity mapping → no post-processing needed.
     private var toolRemapSlots: List<Int>? = null
@@ -3860,6 +3870,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 .takeIf { it in 0..3 },
                         )
                     )
+                    lastSliceJobId = jobId
+                    markSessionDirty()
                     // Copy gcode to durable per-job storage so Jobs "View G-code" always reads the
                     // correct file even after subsequent slices overwrite the transient output.gcode.
                     val durableGcode = copyGcodeToDurableJobDir(jobId, File(result.gcodePath))
@@ -4591,6 +4603,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             additionalFiles = additionalModelFiles.toList().map { (f, p) ->
                 SessionState.AdditionalFile(path = f.absolutePath, plateIdx = p)
             },
+            sliceJobId = lastSliceJobId,
+            wasSliceComplete = _state.value is SlicerState.SliceComplete,
             savedAtEpochMs = System.currentTimeMillis(),
             appVersionCode = BuildConfig.VERSION_CODE,
         )
@@ -4685,12 +4699,29 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (!awaitLoadCompletion()) {
             return // Error state — leave session in place so user can retry
         }
-        // 2. Plate selection. Only meaningful when a plate id was saved AND
-        //    the loaded file is multi-plate AND that plate id exists.
-        val plateId = saved.selectedPlateId
-        if (plateId != null && _multiPlatePlates.value.any { it.plateId == plateId }) {
-            selectPlate(plateId)
+        // 2. Multi-plate handling: if the load paused on the plate-selector
+        //    dialog, dismiss it programmatically and select the saved plate
+        //    (or the firstBambuPlateId / first available as a fallback).
+        if (_showPlateSelector.value) {
+            _showPlateSelector.value = false
+            val plate = saved.selectedPlateId
+                ?: recoveryPlateId.takeIf { it > 0 }
+                ?: _multiPlatePlates.value.firstOrNull()?.plateId
+            if (plate == null) {
+                Log.w("SlicerVM", "F89 restore: multi-plate file but no plate to select")
+                return
+            }
+            selectPlate(plate)
             if (!awaitLoadCompletion()) return
+        } else {
+            // Single-plate path. If a saved plate id matches the available
+            // plates, re-select it (handles edge cases like the user having
+            // switched plates within a single-plate-looking file).
+            val plateId = saved.selectedPlateId
+            if (plateId != null && _multiPlatePlates.value.any { it.plateId == plateId }) {
+                selectPlate(plateId)
+                if (!awaitLoadCompletion()) return
+            }
         }
         // 3. Additional files (F77). Skip missing ones rather than fail the whole restore.
         for (entry in saved.additionalFiles) {
@@ -4718,25 +4749,73 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (positions != null && tower != null) {
             applyPlacementPositions(positions, tower)
         }
+        // 6. Post-slice restore: if the saved session was past slicing AND the
+        //    SliceJob row still exists in Room with a valid gcode file, restore
+        //    the SliceComplete state and emit a navigate-to-Preview event.
+        if (saved.wasSliceComplete && saved.sliceJobId != null) {
+            val row = try {
+                sliceJobDao.getAll().first().firstOrNull { it.id == saved.sliceJobId }
+            } catch (e: Exception) {
+                Log.w("SlicerVM", "F89 restore: SliceJob lookup failed: ${e.message}")
+                null
+            }
+            if (row != null) {
+                val gcode = File(row.gcodePath)
+                if (gcode.exists()) {
+                    lastSliceJobId = row.id
+                    _state.value = SlicerState.SliceComplete(
+                        SliceResult(
+                            success = true,
+                            cancelled = false,
+                            errorMessage = "",
+                            gcodePath = row.gcodePath,
+                            totalLayers = row.totalLayers,
+                            estimatedTimeSeconds = row.estimatedTimeSeconds,
+                            estimatedFilamentMm = row.estimatedFilamentMm,
+                            estimatedFilamentGrams = row.estimatedFilamentGrams,
+                        )
+                    )
+                    // Also repopulate gcodePreview so the Preview page has its
+                    // summary text rendered. We don't have native's gcode loaded
+                    // here, so read the first 50 lines from the file directly.
+                    _gcodePreview.value = try {
+                        gcode.bufferedReader().use { reader ->
+                            val sb = StringBuilder()
+                            var line: String? = reader.readLine()
+                            var n = 0
+                            while (line != null && n < 50) {
+                                sb.appendLine(line)
+                                line = reader.readLine()
+                                n++
+                            }
+                            sb.toString()
+                        }
+                    } catch (_: Exception) { "" }
+                    _navigateEvents.tryEmit("preview")
+                } else {
+                    Log.w("SlicerVM", "F89 restore: SliceJob ${row.id} gcode missing at ${row.gcodePath}")
+                }
+            } else {
+                Log.w("SlicerVM", "F89 restore: sliceJobId=${saved.sliceJobId} not found in Room")
+            }
+        }
     }
 
     /** F89 restore helper: suspend until the most recent mutator's loading
-     *  cycle settles. Handles three cases:
-     *  - State already terminal (sync Error before any launch): returns immediately.
-     *  - State transitions startSnapshot → Loading → (ModelLoaded | Error).
-     *  - State already moved past startSnapshot before we subscribe (rare race):
-     *    returns whatever the current non-Loading state is.
-     *
-     *  Uses reference identity (!==) on the start state so a "stale" repeat
-     *  ModelLoaded with different `info` content is recognised as new. */
+     *  cycle settles, OR until the plate selector becomes visible (which is
+     *  a non-error pause; caller handles it). */
     private suspend fun awaitLoadCompletion(timeoutMs: Long = 120_000): Boolean {
         val startSnapshot = _state.value
-        val terminal = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
-            _state.first { current ->
-                current !== startSnapshot && current !is SlicerState.Loading
+        val outcome = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            kotlinx.coroutines.flow.combine(_state, _showPlateSelector) { s, sel ->
+                Triple(s, sel, s !== startSnapshot && s !is SlicerState.Loading)
+            }.first { (_, selectorShown, stateLeftLoading) ->
+                stateLeftLoading || selectorShown
             }
         } ?: return false
-        return terminal !is SlicerState.Error
+        // Treat plate-selector-shown as a non-error pause (caller handles it);
+        // otherwise the state itself decides.
+        return outcome.second || outcome.first !is SlicerState.Error
     }
 
     fun clearModel() {
@@ -4803,6 +4882,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         _sessionResumeOffer.value = null
+        lastSliceJobId = null
     }
 
     private fun deleteRecursivelyCount(file: File): Int {

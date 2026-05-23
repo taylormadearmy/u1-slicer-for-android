@@ -59,6 +59,8 @@ class SessionResumeIntegrationTest {
                 copyCount = 1,
                 customObjectPositions = null, customWipeTowerPos = null,
                 additionalFiles = emptyList(),
+                sliceJobId = null,
+                wasSliceComplete = false,
                 savedAtEpochMs = System.currentTimeMillis(),
                 appVersionCode = 295,
             )
@@ -85,6 +87,8 @@ class SessionResumeIntegrationTest {
                 copyCount = 1,
                 customObjectPositions = null, customWipeTowerPos = null,
                 additionalFiles = emptyList(),
+                sliceJobId = null,
+                wasSliceComplete = false,
                 savedAtEpochMs = 0L,
                 appVersionCode = 295,
             )
@@ -113,6 +117,8 @@ class SessionResumeIntegrationTest {
                 copyCount = 1,
                 customObjectPositions = null, customWipeTowerPos = null,
                 additionalFiles = emptyList(),
+                sliceJobId = null,
+                wasSliceComplete = false,
                 savedAtEpochMs = 0L,
                 appVersionCode = 295,
             )

@@ -37,6 +37,8 @@ class SessionStateRepositoryTest {
         customObjectPositions = floatArrayOf(135f, 135f),
         customWipeTowerPos = 170f to 140f,
         additionalFiles = emptyList(),
+        sliceJobId = null,
+        wasSliceComplete = false,
         savedAtEpochMs = 1716480000000L,
         appVersionCode = 295,
     )
