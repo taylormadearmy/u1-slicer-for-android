@@ -608,11 +608,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Likely scope (confirm against Discord before starting): HSV picker sensitivity + larger touch targets, recents/saved swatches per material, copy-colour-from-slot, hex/RGB entry, closer parity with desktop OrcaSlicer colour picker.
 - **Action**: Read the Discord thread first to lock concrete scope, then update the issue before implementing.
 
-### F78: Multi-printer support — configure and switch between multiple printers (GitHub #110)
-- New persistence model: list of `Printer` entries (id + nickname + Moonraker URL + LED preference) with a `currentPrinterId` selector. Migration seeds the existing single URL as "Printer 1".
-- Settings UI: add / edit / delete / test / set-active per printer. Printer screen gets a quick-switch affordance.
-- Single active connection at a time (no parallel monitoring v1). Notifications include printer nickname.
-- **Tests**: unit tests on list model + migration; instrumented test for active-printer switch + WebSocket re-target.
+### F78: Multi-printer support — configure and switch between multiple printers (GitHub #110) — DONE v2.4.0
+- Shipped. Multiple Moonraker URLs supported via `PrintersRepository` + JSON-in-DataStore `PrintersConfig`. Chip at top of Printer tab opens a `ModalBottomSheet` of all configured printers; switching rebinds `MoonrakerClient.baseUrl` on the existing `PrinterRepository`. Settings has Printers section for add / edit / delete / test-connection. Per-printer extruder slot presets (slot UI reads from the active printer). Notifications prefixed with active printer's nickname when >1 configured. Send dialog title shows "Send to <nickname>" subtitle when >1 configured. Migration on first launch of v2.4.0 reads legacy `printer_url` + `extruder_presets` into a "Printer 1" entry. `SettingsBackup` schema bumped to VERSION=2 with bidirectional v1/v2 compat. GitHub #110 closed.
 
 ### F77: Add multiple files to the print bed independently (GitHub #109) — DONE v2.2.7
 - **Redesigned** from original flat-binary-STL-combiner approach to an additive JNI loading model that preserves the primary file's embedded settings and allows independent per-object movement.
