@@ -572,6 +572,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F88: Save Gcode + Share Gcode should preserve original model name (GitHub #148)
+- **Symptom**: Save G-code suggested filename is hardcoded "output.gcode"; Share G-code produces "output_<epoch>.share.gcode". Both should use the original model name (e.g. "MyModel.gcode" / "MyModel.share.gcode").
+- **Scope**: F84 follow-up — Send-to-printer path was already fixed in v2.4.0 via `PrinterRepository.resolveUploadBaseName`. Save (`gcodeSaveLauncher.launch("output.gcode")` in `MainActivity.kt:572,624`) and Share (`SlicerViewModel.shareGcode()` / `shareJobGcode(job)`) still derive the output name from the on-disk transient.
+- **Fix**: thread `viewModel.currentModelName` through both code paths; share the sanitisation helper used by F84.
+- **Quick win**: pure Kotlin, no native rebuild, ~half a day with tests.
+- **Source**: Kevin, 2026-05-23 (post-v2.4.0 report).
+
 ### F87: Import process profiles from JSON, pick at slice time (GitHub #147)
 - **What**: Settings → new "Process profiles" section with "Import from JSON" (OrcaSlicer `.orca_process` / `.json`). Imported profiles listed with nicknames; rename / delete supported. Prepare screen gets a "Process profile" dropdown that applies the profile's keys to the slice; individual overrides still win on top.
 - **Why**: User has standard presets they want to reuse across many prints (e.g. "0.16 fine" with tuned speed / walls / supports). Per-print manual override re-entry is friction.
