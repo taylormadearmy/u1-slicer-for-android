@@ -1,14 +1,10 @@
 package com.u1.slicer.data
 
 import android.content.Context
-import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
-import androidx.datastore.preferences.preferencesDataStore
 import com.u1.slicer.aipaint.AiPaintProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "u1_slicer_settings")
 
 class SettingsRepository(private val context: Context) {
 
@@ -48,7 +44,7 @@ class SettingsRepository(private val context: Context) {
         val AI_NAMING_ENABLED = booleanPreferencesKey("ai_naming_enabled")
     }
 
-    val sliceConfig: Flow<SliceConfig> = context.dataStore.data.map { prefs ->
+    val sliceConfig: Flow<SliceConfig> = context.appDataStore.data.map { prefs ->
         SliceConfig(
             layerHeight = prefs[Keys.LAYER_HEIGHT] ?: 0.2f,
             firstLayerHeight = prefs[Keys.FIRST_LAYER_HEIGHT] ?: 0.3f,
@@ -80,65 +76,65 @@ class SettingsRepository(private val context: Context) {
         )
     }
 
-    val printerUrl: Flow<String> = context.dataStore.data.map { prefs ->
+    val printerUrl: Flow<String> = context.appDataStore.data.map { prefs ->
         prefs[Keys.PRINTER_URL] ?: ""
     }
 
-    val extruderPresets: Flow<List<ExtruderPreset>> = context.dataStore.data.map { prefs ->
+    val extruderPresets: Flow<List<ExtruderPreset>> = context.appDataStore.data.map { prefs ->
         parseExtruderPresets(prefs[Keys.EXTRUDER_PRESETS] ?: "")
     }
 
     /** F78 migration helper — returns the raw JSON string for the legacy presets key,
      *  or empty string if the key is unset. */
-    val extruderPresetsJson: Flow<String> = context.dataStore.data.map { prefs ->
+    val extruderPresetsJson: Flow<String> = context.appDataStore.data.map { prefs ->
         prefs[Keys.EXTRUDER_PRESETS] ?: ""
     }
 
-    val slicingOverrides: Flow<SlicingOverrides> = context.dataStore.data.map { prefs ->
+    val slicingOverrides: Flow<SlicingOverrides> = context.appDataStore.data.map { prefs ->
         val json = prefs[Keys.SLICING_OVERRIDES] ?: ""
         if (json.isNotEmpty()) SlicingOverrides.fromJson(json) else SlicingOverrides()
     }
 
-    val plateType: Flow<PlateType> = context.dataStore.data.map { prefs ->
+    val plateType: Flow<PlateType> = context.appDataStore.data.map { prefs ->
         PlateType.fromName(prefs[Keys.PLATE_TYPE])
     }
 
-    val aiPaintProvider: Flow<String> = context.dataStore.data.map { prefs ->
+    val aiPaintProvider: Flow<String> = context.appDataStore.data.map { prefs ->
         prefs[Keys.AI_PAINT_PROVIDER] ?: AiPaintProvider.DEFAULT.name
     }
 
-    val aiPaintApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+    val aiPaintApiKey: Flow<String> = context.appDataStore.data.map { prefs ->
         prefs[Keys.AI_PAINT_API_KEY] ?: ""
     }
 
     /** Per-provider API key. Reads ONLY from the provider's own slot — no fallback to the
      *  legacy single-key slot, because that fallback caused every provider to inherit the
      *  same key (the leak fix23 was supposed to fix). Blank when nothing's been entered. */
-    fun aiPaintApiKeyFor(providerName: String): Flow<String> = context.dataStore.data.map { prefs ->
+    fun aiPaintApiKeyFor(providerName: String): Flow<String> = context.appDataStore.data.map { prefs ->
         prefs[stringPreferencesKey("ai_paint_key_$providerName")] ?: ""
     }
 
     /** F54: when true the AI Paint pipeline calls the configured provider for region naming +
      *  colour suggestions on top of the deterministic cascade. Defaults to false; gating users
      *  out of the experimental AI path keeps results predictable. */
-    val aiNamingEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val aiNamingEnabled: Flow<Boolean> = context.appDataStore.data.map { prefs ->
         prefs[Keys.AI_NAMING_ENABLED] ?: false
     }
 
     suspend fun saveAiNamingEnabled(enabled: Boolean) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.AI_NAMING_ENABLED] = enabled
         }
     }
 
     suspend fun saveExtruderPresets(presets: List<ExtruderPreset>) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.EXTRUDER_PRESETS] = serializeExtruderPresets(presets)
         }
     }
 
     suspend fun saveSliceConfig(config: SliceConfig) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.LAYER_HEIGHT] = config.layerHeight
             prefs[Keys.FIRST_LAYER_HEIGHT] = config.firstLayerHeight
             prefs[Keys.PERIMETERS] = config.perimeters
@@ -168,29 +164,29 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun savePlateType(plateType: PlateType) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.PLATE_TYPE] = plateType.name
         }
     }
 
     suspend fun saveSlicingOverrides(overrides: SlicingOverrides) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.SLICING_OVERRIDES] = overrides.toJson()
         }
     }
 
     suspend fun savePrinterUrl(url: String) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.PRINTER_URL] = url
         }
     }
 
-    val makerWorldCookies: Flow<String> = context.dataStore.data.map { prefs ->
+    val makerWorldCookies: Flow<String> = context.appDataStore.data.map { prefs ->
         prefs[Keys.MAKERWORLD_COOKIES] ?: ""
     }
 
     suspend fun saveMakerWorldCookies(cookies: String) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.MAKERWORLD_COOKIES] = cookies
         }
     }
@@ -199,14 +195,14 @@ class SettingsRepository(private val context: Context) {
      *  picks a different provider in the dropdown — the key field should then auto-load that
      *  provider's stored key (or be blank if none). */
     suspend fun saveAiPaintProvider(provider: String) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.AI_PAINT_PROVIDER] = provider
         }
     }
 
     /** Save just the API key for a specific provider. Each provider's key is independent. */
     suspend fun saveAiPaintKey(provider: String, apiKey: String) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[stringPreferencesKey("ai_paint_key_$provider")] = apiKey
         }
     }
@@ -214,7 +210,7 @@ class SettingsRepository(private val context: Context) {
     @Deprecated("Bundled save leaks the key across providers; use saveAiPaintProvider and " +
         "saveAiPaintKey separately so switching providers doesn't copy the visible key.")
     suspend fun saveAiPaintSettings(provider: String, apiKey: String) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[Keys.AI_PAINT_PROVIDER] = provider
             prefs[stringPreferencesKey("ai_paint_key_$provider")] = apiKey
         }

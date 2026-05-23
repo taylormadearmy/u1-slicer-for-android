@@ -22,6 +22,8 @@ import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.PlateType
+import com.u1.slicer.data.SessionState
+import com.u1.slicer.data.SessionStateRepository
 import com.u1.slicer.data.SettingsBackup
 import com.u1.slicer.data.SliceConfig
 import com.u1.slicer.data.SliceJob
@@ -45,11 +47,15 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -487,6 +493,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Re-used after a 3MF re-embed reload; plateIdx preserved so plate-selected adds
     // reload the same plate instead of all plates.
     private val additionalModelFiles = mutableListOf<Pair<File, Int>>()
+
+    // F89: session persistence — debounced save of Prepare-screen ephemeral state.
+    private val sessionStateRepository = SessionStateRepository(getApplication())
+    private val sessionSaveFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    // F89: toast events surfaced to MainActivity (Toast.makeText). One-shot strings.
+    private val _toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val toastEvents: SharedFlow<String> = _toastEvents
+
+    // F89: resume offer — non-null when a saved session was found on launch and the
+    // source file is still on disk. Cleared on Resume (after the load starts) or
+    // explicit dismiss; banner UI gates on `state == Idle && offer != null`.
+    private val _sessionResumeOffer = MutableStateFlow<SessionResumeOffer?>(null)
+    val sessionResumeOffer: StateFlow<SessionResumeOffer?> = _sessionResumeOffer.asStateFlow()
+
+    data class SessionResumeOffer(val modelName: String, val plateId: Int?)
 
     // Tool remap: maps compact T-index (0,1,…) → actual printer slot index (e.g. 2,3 for E3+E4).
     // Null / identity mapping → no post-processing needed.
@@ -960,6 +982,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     )?.absolutePath
 
     init {
+        wireSessionPersistence()
         configureNativeDiagnosticsIfAvailable()
 
         viewModelScope.launch {
@@ -1462,6 +1485,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 currentModelFile = fileToLoad
                 loadNativeModel(fileToLoad)
                 firstBambuPlateId?.let { recoveryPlateId = it }
+                markSessionDirty()
             } catch (e: Throwable) {
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error: ${e.message}")
@@ -1782,6 +1806,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val publishPositions = customObjectPositions
         if (publishPositions != null) _multiObjectPositions.value = publishPositions
         _modelAddVersion.value++
+        markSessionDirty()
         val objectCount = _objectBoundingBoxes.value.size / 3
         Log.i("SlicerVM", "Added $displayName (plateIdx=$plateIdx) — $objectCount objects on bed")
         diagnostics.recordEvent("add_model_to_bed", mapOf(
@@ -1925,6 +1950,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 currentModelFile = fileToLoad
                 loadNativeModel(fileToLoad)
                 firstBambuPlateId?.let { recoveryPlateId = it }
+                markSessionDirty()
             } catch (e: Throwable) {
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error: ${e.message}")
@@ -2065,6 +2091,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         "usedExtruders=${nativeInfo.usedExtruderIndices}, " +
                         "detectedExtruderCount=${nativeInfo.detectedExtruderCount}, " +
                         "hasPaint=${nativeInfo.hasPaintData}")
+                    markSessionDirty()
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
@@ -2559,6 +2586,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 _modelAddVersion.value++
             }
         }
+        markSessionDirty()
     }
 
     /** Returns initial positions for inline 3D placement (custom or auto-calculated).
@@ -4543,6 +4571,174 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // F89: capture a SessionState snapshot from the current ViewModel state.
+    // Returns null if there's nothing meaningful to save (no rawInputFile = no
+    // loaded model). Pure read of existing fields; safe to call from any thread.
+    private fun captureSessionSnapshot(): SessionState? {
+        val raw = rawInputFile ?: return null
+        return SessionState(
+            modelName = currentModelName,
+            rawInputPath = raw.absolutePath,
+            sourceModelPath = sourceModelFile?.absolutePath,
+            currentModelPath = _currentModelFile?.absolutePath,
+            multiPlateSourcePath = _multiPlateSourceFile?.absolutePath,
+            selectedPlateId = recoveryPlateId.takeIf { it >= 0 },
+            modelScale = _modelScale.value.let { Triple(it.x, it.y, it.z) },
+            modelRotation = _modelRotation.value.let { Triple(it.x, it.y, it.z) },
+            copyCount = _copyCount.value,
+            customObjectPositions = customObjectPositions?.copyOf(),
+            customWipeTowerPos = customWipeTowerPos,
+            additionalFiles = additionalModelFiles.toList().map { (f, p) ->
+                SessionState.AdditionalFile(path = f.absolutePath, plateIdx = p)
+            },
+            savedAtEpochMs = System.currentTimeMillis(),
+            appVersionCode = BuildConfig.VERSION_CODE,
+        )
+    }
+
+    // F89: emit to the debounced save flow. Cheap; safe to call per-frame.
+    private fun markSessionDirty() {
+        if (rawInputFile == null) return
+        sessionSaveFlow.tryEmit(Unit)
+    }
+
+    // F89: wire the debounced session save + the StateFlow-based dirty mirror.
+    // Called once from init.
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun wireSessionPersistence() {
+        viewModelScope.launch {
+            sessionSaveFlow
+                .debounce(500)
+                .collectLatest {
+                    val snapshot = captureSessionSnapshot() ?: return@collectLatest
+                    try {
+                        sessionStateRepository.write(snapshot)
+                    } catch (e: Exception) {
+                        Log.w("SlicerVM", "F89 session save failed: ${e.message}")
+                    }
+                }
+        }
+        // StateFlow-based mirror — combine emits once on subscribe with current
+        // values; markSessionDirty no-ops while rawInputFile is null so the
+        // startup emission is harmless.
+        viewModelScope.launch {
+            combine(_modelScale, _modelRotation, _copyCount) { _, _, _ -> Unit }
+                .collect { markSessionDirty() }
+        }
+        // F89: one-shot init read. If a saved session exists and the source file
+        // is still on disk, expose a resume offer for the banner UI. If the file
+        // is gone, surface a one-time toast and clear the stale entry.
+        viewModelScope.launch {
+            val saved = try { sessionStateRepository.read() } catch (e: Exception) {
+                Log.w("SlicerVM", "F89 session read failed: ${e.message}")
+                null
+            } ?: return@launch
+            val raw = File(saved.rawInputPath)
+            if (!raw.exists()) {
+                try { sessionStateRepository.clear() } catch (e: Exception) {
+                    Log.w("SlicerVM", "F89 stale-session clear failed: ${e.message}")
+                }
+                _toastEvents.tryEmit("Couldn't resume ${saved.modelName} — file no longer available")
+                return@launch
+            }
+            _sessionResumeOffer.value = SessionResumeOffer(
+                modelName = saved.modelName,
+                plateId = saved.selectedPlateId,
+            )
+        }
+    }
+
+    /** F89: user tapped Resume on the banner. Replays the saved session via
+     *  the existing public mutators. */
+    fun acceptSessionResume() {
+        val offer = _sessionResumeOffer.value ?: return
+        _sessionResumeOffer.value = null
+        viewModelScope.launch {
+            val saved = try { sessionStateRepository.read() } catch (e: Exception) { null }
+                ?: return@launch
+            val raw = File(saved.rawInputPath)
+            if (!raw.exists()) {
+                try { sessionStateRepository.clear() } catch (_: Exception) {}
+                _toastEvents.tryEmit("Couldn't resume ${saved.modelName} — file no longer available")
+                return@launch
+            }
+            restoreSession(saved, raw)
+        }
+    }
+
+    /** F89: user tapped × on the banner. Clear the offer and the DataStore entry. */
+    fun dismissSessionResume() {
+        _sessionResumeOffer.value = null
+        viewModelScope.launch {
+            try { sessionStateRepository.clear() } catch (e: Exception) {
+                Log.w("SlicerVM", "F89 dismiss-clear failed: ${e.message}")
+            }
+        }
+    }
+
+    /** F89: replay the saved session. Runs on the caller's coroutine (already
+     *  in viewModelScope). Suspends through the existing loading paths. */
+    private suspend fun restoreSession(saved: SessionState, raw: File) {
+        // 1. Trigger the standard load. loadModelFromFile launches its own
+        //    coroutine; we observe _state to know when it completes.
+        loadModelFromFile(raw, preserveDisplayName = saved.modelName)
+        if (!awaitLoadCompletion()) {
+            return // Error state — leave session in place so user can retry
+        }
+        // 2. Plate selection. Only meaningful when a plate id was saved AND
+        //    the loaded file is multi-plate AND that plate id exists.
+        val plateId = saved.selectedPlateId
+        if (plateId != null && _multiPlatePlates.value.any { it.plateId == plateId }) {
+            selectPlate(plateId)
+            if (!awaitLoadCompletion()) return
+        }
+        // 3. Additional files (F77). Skip missing ones rather than fail the whole restore.
+        for (entry in saved.additionalFiles) {
+            val f = File(entry.path)
+            if (!f.exists()) {
+                Log.w("SlicerVM", "F89 restore: skipping missing additional file ${entry.path}")
+                continue
+            }
+            if (entry.plateIdx >= 0) addModelFromFileForPlate(f, entry.plateIdx)
+            else addModelFromFile(f)
+            if (!awaitLoadCompletion()) return
+        }
+        // 4. Scale / rotation / copies. These reset customObjectPositions, so they
+        //    MUST come before applyPlacementPositions in step 5.
+        setModelScale(ModelScale(
+            saved.modelScale.first, saved.modelScale.second, saved.modelScale.third
+        ))
+        setModelRotation(ModelRotation(
+            saved.modelRotation.first, saved.modelRotation.second, saved.modelRotation.third
+        ))
+        setCopyCount(saved.copyCount)
+        // 5. Custom placement — must be last because every other mutator resets it.
+        val positions = saved.customObjectPositions
+        val tower = saved.customWipeTowerPos
+        if (positions != null && tower != null) {
+            applyPlacementPositions(positions, tower)
+        }
+    }
+
+    /** F89 restore helper: suspend until the most recent mutator's loading
+     *  cycle settles. Handles three cases:
+     *  - State already terminal (sync Error before any launch): returns immediately.
+     *  - State transitions startSnapshot → Loading → (ModelLoaded | Error).
+     *  - State already moved past startSnapshot before we subscribe (rare race):
+     *    returns whatever the current non-Loading state is.
+     *
+     *  Uses reference identity (!==) on the start state so a "stale" repeat
+     *  ModelLoaded with different `info` content is recognised as new. */
+    private suspend fun awaitLoadCompletion(timeoutMs: Long = 120_000): Boolean {
+        val startSnapshot = _state.value
+        val terminal = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            _state.first { current ->
+                current !== startSnapshot && current !is SlicerState.Loading
+            }
+        } ?: return false
+        return terminal !is SlicerState.Error
+    }
+
     fun clearModel() {
         // B55: signal QEM to bail out immediately — the cancel flag is checked every
         // iteration inside its_quadric_edge_collapse, so QEM exits in microseconds.
@@ -4599,6 +4795,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             extruderRetractSpeed = floatArrayOf(),
             wipeTowerEnabled = false
         )
+        viewModelScope.launch {
+            try {
+                sessionStateRepository.clear()
+            } catch (e: Exception) {
+                Log.w("SlicerVM", "F89 session clear failed: ${e.message}")
+            }
+        }
+        _sessionResumeOffer.value = null
     }
 
     private fun deleteRecursivelyCount(file: File): Int {
