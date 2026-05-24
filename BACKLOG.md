@@ -582,7 +582,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Caveat**: Android can still kill foreground services under extreme memory pressure; F89's resume path stays as the safety net.
 - **Source**: Kevin, 2026-05-24 (post-F89 conversation: "having notifications active while things happen in the background make it less likely Android might kill it in the background right?").
 
-### F89: Persist in-progress session + auto-resume on launch (GitHub #153)
+### F89: Persist in-progress session + auto-resume on launch (GitHub #153) — DONE v2.6.0
 - **What**: when Android kills the app (low memory, swipe-from-recents), the user loses their loaded model, plate selection, transforms, copies, F77 additional files, and in-flight overrides. Persist these to DataStore and offer a "Resuming MyModel.3mf…" banner on next launch with one-tap accept / start-fresh dismiss.
 - **Why**: large-model workflows (Buzz, multi-plate Bambu) take 90+ seconds to cold-load plus 3+ minutes to slice. Losing all of that to an OS process kill is painful UX.
 - **Implementation (~1–2 days, pure Kotlin)**:
