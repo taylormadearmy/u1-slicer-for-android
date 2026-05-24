@@ -4916,7 +4916,7 @@ fun SessionResumeBanner(
     ) {
         val plateSuffix = offer.plateId?.let { " · plate $it" } ?: ""
         Text(
-            "Resuming ${offer.modelName}$plateSuffix",
+            "Resume ${offer.modelName}$plateSuffix?",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSecondaryContainer,
             maxLines = 1,

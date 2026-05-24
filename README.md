@@ -28,6 +28,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 - **Filament library** — manage profiles with temps, speeds, retraction settings
 - **Settings backup/restore** — export and import all app settings as JSON
 - **Background slicing** — foreground service keeps slicing alive when app is backgrounded
+- **Auto-resume** (v2.6.0): If Android closes the app while you have a model loaded, sliced, or being edited, a "Resume <name>?" banner appears on next launch to restore your session. Sliced sessions resume on the Preview tab instantly; the model loads in the background for editing.
 
 ### Smart Paint
 
