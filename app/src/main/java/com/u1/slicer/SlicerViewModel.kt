@@ -522,6 +522,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // with a half-loaded VM.
     private var restoreSessionJob: kotlinx.coroutines.Job? = null
 
+    // F89: true while acceptSessionResume's launched coroutine is running its
+    // restore (fast-path or full). External load entry points (addModelFromFile,
+    // loadJobGcodeForViewer, etc.) check this to avoid self-cancelling the
+    // restore from inside its own coroutine.
+    @Volatile private var restoreInProgress: Boolean = false
+
     // F89 silent-load completion signal. Emits true on successful native load,
     // false on error/cancellation. Fires regardless of silent flag so callers
     // can await load completion when _state writes are suppressed.
@@ -1710,7 +1716,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun addModelFromFile(file: File) {
-        restoreSessionJob?.cancel()
+        if (!restoreInProgress) restoreSessionJob?.cancel()
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
@@ -1733,7 +1739,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Debug/test: add a specific plate of a 3MF without going through the plate-selector UI. */
     fun addModelFromFileForPlate(file: File, plateIdx: Int) {
-        restoreSessionJob?.cancel()
+        if (!restoreInProgress) restoreSessionJob?.cancel()
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
@@ -2395,9 +2401,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _state.value = SlicerState.ModelLoaded(info)
                 }
                 // Emit completion signal so silent callers know the load
-                // succeeded; loud callers also get the signal (harmless — no
-                // current loud caller awaits it).
-                _silentLoadCompleted.tryEmit(true)
+                // succeeded. Gated on silent: loud loads must not pollute the
+                // shared flow (stale tryEmit values could be consumed by a
+                // later awaitSilentLoadCompletion()).
+                if (silent) _silentLoadCompleted.tryEmit(true)
             } else {
                 if (!silent) {
                     _state.value = SlicerState.Error("Failed to read model info")
@@ -4450,6 +4457,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // F60: parse saved G-code and set it as the active preview so the viewer can display it.
     // Returns true if the file existed and parsing was started, false if the file is missing.
     fun loadJobGcodeForViewer(job: SliceJob, onResult: (success: Boolean) -> Unit) {
+        if (!restoreInProgress) restoreSessionJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             val gcodeFile = File(job.gcodePath)
             if (!gcodeFile.exists()) {
@@ -4746,36 +4754,41 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _sessionResumeOffer.value = null
         restoreSessionJob?.cancel()
         restoreSessionJob = viewModelScope.launch {
-            val saved = try { sessionStateRepository.read() } catch (e: Exception) { null }
-                ?: return@launch
-            val raw = File(saved.rawInputPath)
-            if (!raw.exists()) {
-                try { sessionStateRepository.clear() } catch (_: Exception) {}
-                _toastEvents.tryEmit("Couldn't resume ${saved.modelName} — file no longer available")
-                return@launch
-            }
-            // Fast-path: past slicing AND the Room row + gcode file still exist.
-            // Skip the model reload, jump straight to SliceComplete + Preview.
-            if (saved.wasSliceComplete && saved.sliceJobId != null) {
-                val row = try {
-                    sliceJobDao.getAll().first().firstOrNull { it.id == saved.sliceJobId }
-                } catch (e: Exception) {
-                    Log.w("SlicerVM", "F89 fast-path: SliceJob lookup failed: ${e.message}")
-                    null
-                }
-                if (row != null && File(row.gcodePath).exists()) {
-                    restoreSliceCompleteOnly(saved, row)
-                    // Continue with a silent background load so Prepare populates
-                    // for re-slicing. The fast-path SliceComplete state survives
-                    // because every `_state.value = ...` write is suppressed when
-                    // silent = true.
-                    runSilentBackgroundRestore(saved, raw)
+            restoreInProgress = true
+            try {
+                val saved = try { sessionStateRepository.read() } catch (e: Exception) { null }
+                    ?: return@launch
+                val raw = File(saved.rawInputPath)
+                if (!raw.exists()) {
+                    try { sessionStateRepository.clear() } catch (_: Exception) {}
+                    _toastEvents.tryEmit("Couldn't resume ${saved.modelName} — file no longer available")
                     return@launch
                 }
-                Log.i("SlicerVM", "F89 fast-path unavailable (row=$row, gcodeExists=${row?.gcodePath?.let { File(it).exists() }}); falling back to full restore")
+                // Fast-path: past slicing AND the Room row + gcode file still exist.
+                // Skip the model reload, jump straight to SliceComplete + Preview.
+                if (saved.wasSliceComplete && saved.sliceJobId != null) {
+                    val row = try {
+                        sliceJobDao.getAll().first().firstOrNull { it.id == saved.sliceJobId }
+                    } catch (e: Exception) {
+                        Log.w("SlicerVM", "F89 fast-path: SliceJob lookup failed: ${e.message}")
+                        null
+                    }
+                    if (row != null && File(row.gcodePath).exists()) {
+                        restoreSliceCompleteOnly(saved, row)
+                        // Continue with a silent background load so Prepare populates
+                        // for re-slicing. The fast-path SliceComplete state survives
+                        // because every `_state.value = ...` write is suppressed when
+                        // silent = true.
+                        runSilentBackgroundRestore(saved, raw)
+                        return@launch
+                    }
+                    Log.i("SlicerVM", "F89 fast-path unavailable (row=$row, gcodeExists=${row?.gcodePath?.let { File(it).exists() }}); falling back to full restore")
+                }
+                // Full Prepare-state restore (model load + plate + transforms).
+                restoreSession(saved, raw)
+            } finally {
+                restoreInProgress = false
             }
-            // Full Prepare-state restore (model load + plate + transforms).
-            restoreSession(saved, raw)
         }
     }
 
