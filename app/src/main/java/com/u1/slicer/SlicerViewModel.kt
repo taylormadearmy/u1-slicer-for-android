@@ -4715,36 +4715,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun restoreSliceCompleteOnly(saved: SessionState, row: SliceJob) {
         lastSliceJobId = row.id
         currentModelName = saved.modelName
-        _state.value = SlicerState.SliceComplete(
-            SliceResult(
-                success = true,
-                cancelled = false,
-                errorMessage = "",
-                gcodePath = row.gcodePath,
-                totalLayers = row.totalLayers,
-                estimatedTimeSeconds = row.estimatedTimeSeconds,
-                estimatedFilamentMm = row.estimatedFilamentMm,
-                estimatedFilamentGrams = row.estimatedFilamentGrams,
-            )
-        )
-        _gcodePreview.value = try {
-            File(row.gcodePath).bufferedReader().use { reader ->
-                val sb = StringBuilder()
-                var line: String? = reader.readLine()
-                var n = 0
-                while (line != null && n < 50) {
-                    sb.appendLine(line)
-                    line = reader.readLine()
-                    n++
-                }
-                sb.toString()
-            }
+        // Parse the gcode file off the main thread so the Preview tab's 3D
+        // InlineGcodePreview has its `parsedGcode.layers` to render. Without
+        // this the Preview composable falls back to a near-empty card and
+        // the user sees a blank screen post-Resume.
+        val gcodeFile = File(row.gcodePath)
+        val parsed = try {
+            kotlinx.coroutines.withContext(Dispatchers.IO) { GcodeParser.parse(gcodeFile) }
         } catch (e: Exception) {
-            Log.w("SlicerVM", "F89 fast-path: failed to read gcode preview lines: ${e.message}")
-            ""
+            Log.w("SlicerVM", "F89 fast-path: gcode parse failed: ${e.message}")
+            null
         }
+        _parsedGcode.value = parsed
+        _state.value = SlicerState.SliceComplete(sliceResultFromJob(row))
+        _gcodePreview.value = ""
         _navigateEvents.tryEmit("preview")
-        Log.i("SlicerVM", "F89 fast-path: restored SliceComplete for ${saved.modelName} (jobId=${row.id})")
+        Log.i("SlicerVM", "F89 fast-path: restored SliceComplete for ${saved.modelName} (jobId=${row.id}, layers=${parsed?.layers?.size ?: 0})")
     }
 
     /** F89: user tapped × on the banner. Clear the offer and the DataStore entry. */
