@@ -109,12 +109,12 @@
         </activity>
 
         <service
-            android:name=".SlicingService"
+            android:name=".LongOpService"
             android:foregroundServiceType="specialUse"
             android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="3D model slicing computation" />
+                android:value="3D model preparation, loading and slicing" />
         </service>
 
         <provider

@@ -432,7 +432,7 @@ class MainActivity : ComponentActivity() {
             )
         )
 
-        // Request notification permission for Android 13+ (required for SlicingService
+        // Request notification permission for Android 13+ (required for LongOpService
         // foreground notification to be visible)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)

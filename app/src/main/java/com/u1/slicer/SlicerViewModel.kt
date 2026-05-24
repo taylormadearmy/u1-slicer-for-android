@@ -2,6 +2,7 @@ package com.u1.slicer
 
 import android.app.ActivityManager
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Debug
@@ -1386,6 +1387,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // per-filament overrides could silently apply to file B.
         beginNewModelLoad()
         viewModelScope.launch(Dispatchers.IO) {
+            val longOpCtx = beginLongOp("Loading model")
+            try {
             try {
                 val context = getApplication<Application>()
                 val workspaceDir = transientWorkspaceDir()
@@ -1525,6 +1528,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Throwable) {
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
                 _state.value = SlicerState.Error("Error: ${e.message}")
+            }
+            } finally {
+                endLongOp(longOpCtx)
             }
         }
     }
@@ -1733,6 +1739,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
+            val longOpCtx = beginLongOp("Adding model")
+            try {
             try {
                 val displayName = normalizeIncomingFilename(file.name)
                 _state.value = SlicerState.Loading("Adding $displayName…")
@@ -1740,6 +1748,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 Log.e("SlicerVM", "addModelFromFile failed", e)
                 _state.value = SlicerState.Error("Failed to add file: ${e.message ?: e.javaClass.simpleName}")
+            }
+            } finally {
+                endLongOp(longOpCtx)
             }
         }
     }
@@ -1756,6 +1767,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
+            val longOpCtx = beginLongOp("Adding model")
+            try {
             try {
                 val displayName = normalizeIncomingFilename(file.name)
                 _state.value = SlicerState.Loading("Adding $displayName (plate ${plateIdx + 1})…")
@@ -1763,6 +1776,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 Log.e("SlicerVM", "addModelFromFileForPlate failed", e)
                 _state.value = SlicerState.Error("Failed to add file: ${e.message ?: e.javaClass.simpleName}")
+            }
+            } finally {
+                endLongOp(longOpCtx)
             }
         }
     }
@@ -1775,12 +1791,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val pending = _pendingAddFile.value ?: return
         _pendingAddFile.value = null
         viewModelScope.launch(Dispatchers.IO) {
+            val longOpCtx = beginLongOp("Adding model")
+            try {
             try {
                 _state.value = SlicerState.Loading("Adding ${pending.displayName}…")
                 doAddFile(pending.copiedFile, pending.displayName, plateIdx = plateId - 1)
             } catch (e: Exception) {
                 Log.e("SlicerVM", "confirmAddPlate failed", e)
                 _state.value = SlicerState.Error("Failed to add file: ${e.message ?: e.javaClass.simpleName}")
+            }
+            } finally {
+                endLongOp(longOpCtx)
             }
         }
     }
@@ -1876,6 +1897,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // review's cross-load leak).
         beginNewModelLoad()
         viewModelScope.launch(Dispatchers.IO) {
+            val longOpCtx = beginLongOp("Loading model")
+            try {
             try {
                 val context = getApplication<Application>()
                 val workspaceDir = transientWorkspaceDir()
@@ -2024,6 +2047,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _silentLoadCompleted.tryEmit(false)
                 }
             }
+            } finally {
+                endLongOp(longOpCtx)
+            }
         }
     }
 
@@ -2063,6 +2089,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         )
 
         selectPlateJob = viewModelScope.launch(Dispatchers.IO) {
+            val longOpCtx = beginLongOp("Loading plate $plateId")
+            try {
             try {
                 val workspaceDir = transientWorkspaceDir()
                 // Phase 1 native-first: use _fileThreeMfInfo (file-level metadata) for
@@ -2185,6 +2213,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     _silentLoadCompleted.tryEmit(false)
                 }
+            }
+            } finally {
+                endLongOp(longOpCtx)
             }
         }
     }
@@ -3372,7 +3403,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _state.value = SlicerState.Error("Model is not ready to slice yet")
                     return@launch
                 }
-                SlicingService.start(context)
+                LongOpService.start(context, "Slicing")
                 var maxPct = 0
                 native.progressListener = { pct, stage ->
                     // Guard: don't override Loading — selectPlate() may have set it to initiate
@@ -3383,7 +3414,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     if (cur !is SlicerState.Loading && cur !is SlicerState.Idle) {
                         if (pct > maxPct) maxPct = pct
                         _state.value = SlicerState.Slicing(maxPct, stage)
-                        SlicingService.updateProgress(context, maxPct, stage)
+                        LongOpService.update(context, maxPct, stage)
                     }
                 }
 
@@ -4018,7 +4049,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             } finally {
                 diagnostics.clearSliceInProgress()
                 native.progressListener = null
-                SlicingService.stop(context)
+                LongOpService.stop(context)
             }
         }
     }
@@ -4705,6 +4736,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun markSessionDirty() {
         if (rawInputFile == null) return
         sessionSaveFlow.tryEmit(Unit)
+    }
+
+    /**
+     * F90: start the [LongOpService] foreground notification for [stage]. Callers MUST pair
+     * this with [endLongOp] in a try/finally so cancellation/exception pops the stack.
+     * Returns the application context for re-use in the matching [endLongOp] call.
+     */
+    private fun beginLongOp(stage: String): Context {
+        val context = getApplication<Application>()
+        LongOpService.start(context, stage)
+        return context
+    }
+
+    /** F90: pop the matching [beginLongOp] stage off the LongOpService stack. */
+    private fun endLongOp(context: Context) {
+        LongOpService.stop(context)
     }
 
     // F89: wire the debounced session save + the StateFlow-based dirty mirror.
