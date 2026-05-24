@@ -1230,6 +1230,7 @@ fun PrepareScreen(
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
     val pendingAddFile by viewModel.pendingAddFile.collectAsState()
     val sessionResumeOffer by viewModel.sessionResumeOffer.collectAsState()
+    val silentRestoreInProgress by viewModel.silentRestoreInProgress.collectAsState()
 
     // Plate selector dialogs — mutually exclusive: only one can be shown at a time.
     // If the initial-load selector is open and the user also triggers an add-to-bed
@@ -1340,6 +1341,9 @@ fun PrepareScreen(
                         onAccept = { viewModel.acceptSessionResume() },
                         onDismiss = { viewModel.dismissSessionResume() },
                     )
+                }
+                if (silentRestoreInProgress) {
+                    SilentRestoreIndicator()
                 }
                 when {
                     state is SlicerViewModel.SlicerState.Idle -> {
@@ -4929,6 +4933,35 @@ fun SessionResumeBanner(
                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
             )
         }
+    }
+}
+
+// =============================================================================
+// Silent Restore Indicator (F89) — shown on the Prepare tab while a silent
+// background restore is in flight after a fast-path Resume. Tells the user
+// "the model is reloading, don't tap Pick file".
+// =============================================================================
+@Composable
+fun SilentRestoreIndicator(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(16.dp),
+            strokeWidth = 2.dp,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            "Restoring model in the background…",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
     }
 }
 

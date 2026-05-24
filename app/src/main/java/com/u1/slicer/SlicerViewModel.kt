@@ -533,6 +533,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // can await load completion when _state writes are suppressed.
     private val _silentLoadCompleted = MutableSharedFlow<Boolean>(extraBufferCapacity = 4)
 
+    // F89: true while a silent background restore is in flight (post-fast-path).
+    // The Prepare tab uses this to show a "Restoring model…" indicator instead
+    // of the empty state, so users don't think Resume is broken and tap "Pick
+    // file" mid-restore.
+    private val _silentRestoreInProgress = MutableStateFlow(false)
+    val silentRestoreInProgress: StateFlow<Boolean> = _silentRestoreInProgress.asStateFlow()
+
     // F89: navigation events emitted by the ViewModel (e.g. "navigate to Preview
     // after restoring a SliceComplete session"). MainActivity collects and routes.
     private val _navigateEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -4820,46 +4827,58 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      *  so the Prepare tab populates for re-slicing. All `_state` writes are
      *  suppressed so the SliceComplete state from the fast-path survives. */
     private suspend fun runSilentBackgroundRestore(saved: SessionState, raw: File) {
-        loadModelFromFile(raw, preserveDisplayName = saved.modelName, silent = true)
-        if (!awaitSilentLoadCompletion()) {
-            Log.w("SlicerVM", "F89 silent restore: load failed or timed out")
-            return
-        }
-        // Multi-plate: load paused waiting for plate pick (we suppressed the
-        // dialog). Pick the saved plate or fall back to first available.
-        if (_multiPlatePlates.value.isNotEmpty()) {
-            val plate = saved.selectedPlateId
-                ?: recoveryPlateId.takeIf { it > 0 }
-                ?: _multiPlatePlates.value.firstOrNull()?.plateId
-            if (plate == null) {
-                Log.w("SlicerVM", "F89 silent restore: no plate to select")
-                return
-            }
-            selectPlate(plate, silent = true)
+        _silentRestoreInProgress.value = true
+        try {
+            loadModelFromFile(raw, preserveDisplayName = saved.modelName, silent = true)
             if (!awaitSilentLoadCompletion()) {
-                Log.w("SlicerVM", "F89 silent restore: plate select failed or timed out")
+                Log.w("SlicerVM", "F89 silent restore: load failed or timed out")
+                _toastEvents.tryEmit("Couldn't reload ${saved.modelName} for editing — re-open from Jobs to retry")
+                try { sessionStateRepository.clear() } catch (_: Exception) {}
                 return
             }
+            // Multi-plate: load paused waiting for plate pick (we suppressed the
+            // dialog). Pick the saved plate or fall back to first available.
+            if (_multiPlatePlates.value.isNotEmpty()) {
+                val plate = saved.selectedPlateId
+                    ?: recoveryPlateId.takeIf { it > 0 }
+                    ?: _multiPlatePlates.value.firstOrNull()?.plateId
+                if (plate == null) {
+                    Log.w("SlicerVM", "F89 silent restore: no plate to select")
+                    _toastEvents.tryEmit("Couldn't reload ${saved.modelName} for editing — re-open from Jobs to retry")
+                    try { sessionStateRepository.clear() } catch (_: Exception) {}
+                    return
+                }
+                selectPlate(plate, silent = true)
+                if (!awaitSilentLoadCompletion()) {
+                    Log.w("SlicerVM", "F89 silent restore: plate select failed or timed out")
+                    _toastEvents.tryEmit("Couldn't reload ${saved.modelName} for editing — re-open from Jobs to retry")
+                    try { sessionStateRepository.clear() } catch (_: Exception) {}
+                    return
+                }
+            }
+            // Transforms (these don't write _state, safe even outside silent mode).
+            setModelScale(ModelScale(
+                saved.modelScale.first, saved.modelScale.second, saved.modelScale.third
+            ))
+            setModelRotation(ModelRotation(
+                saved.modelRotation.first, saved.modelRotation.second, saved.modelRotation.third
+            ))
+            setCopyCount(saved.copyCount)
+            val positions = saved.customObjectPositions
+            val tower = saved.customWipeTowerPos
+            if (positions != null && tower != null) {
+                applyPlacementPositions(positions, tower)
+            }
+            // F77 additional files NOT restored in silent mode (addModelFromFile
+            // touches _state). v2.6.0 trade-off; can extend in a follow-up.
+            if (saved.additionalFiles.isNotEmpty()) {
+                Log.w("SlicerVM", "F89 silent restore: ${saved.additionalFiles.size} additional file(s) not restored (deferred)")
+                _toastEvents.tryEmit("${saved.additionalFiles.size} added file(s) weren't restored — re-add them to the bed")
+            }
+            Log.i("SlicerVM", "F89 silent restore complete for ${saved.modelName}")
+        } finally {
+            _silentRestoreInProgress.value = false
         }
-        // Transforms (these don't write _state, safe even outside silent mode).
-        setModelScale(ModelScale(
-            saved.modelScale.first, saved.modelScale.second, saved.modelScale.third
-        ))
-        setModelRotation(ModelRotation(
-            saved.modelRotation.first, saved.modelRotation.second, saved.modelRotation.third
-        ))
-        setCopyCount(saved.copyCount)
-        val positions = saved.customObjectPositions
-        val tower = saved.customWipeTowerPos
-        if (positions != null && tower != null) {
-            applyPlacementPositions(positions, tower)
-        }
-        // F77 additional files NOT restored in silent mode (addModelFromFile
-        // touches _state). v2.6.0 trade-off; can extend in a follow-up.
-        if (saved.additionalFiles.isNotEmpty()) {
-            Log.w("SlicerVM", "F89 silent restore: ${saved.additionalFiles.size} additional file(s) not restored (deferred)")
-        }
-        Log.i("SlicerVM", "F89 silent restore complete for ${saved.modelName}")
     }
 
     /** F89: user tapped × on the banner. Clear the offer and the DataStore entry. */
