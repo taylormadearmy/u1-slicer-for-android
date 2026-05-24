@@ -567,10 +567,23 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
-### F90: Foreground-service coverage for all long-running operations (GitHub #154) — DONE v2.7.0
-- Shipped. `SlicingService` renamed to `LongOpService` with stack-based stage labels: nested `start(stage)` pushes; `stop()` pops; the persistent notification always renders the top-of-stack. `update(progress, stage?)` replaces the top frame so the native slicer progress listener keeps its existing rename-on-tick behaviour. Wrap points: `loadModel(uri)`, `loadModelFromFile`, `selectPlate`, `addModelFromFile[ForPlate]`, `confirmAddPlate`, `startSlicing`. Each wrap is start/stop-paired via try/finally so cancellation/exception pop the stage. Manifest `foregroundServiceType="specialUse"` retained (sideloaded; no Play subtype review); subtype updated to "3D model preparation, loading and slicing". 9 unit tests in `LongOpServiceStackTest.kt`.
+### F91: Filament library — expose full Orca Slicer filament settings and plumb through to slice (GitHub #155)
+- **What**: Filament library currently exposes a small subset of Orca Slicer's filament settings (material type, colour, nozzle temp). Extend the library editor so it exposes all filament-level settings OrcaSlicer supports (filament diameter, density, cost, flow ratio, max volumetric speed, per-filament retraction length/speed/restart-extra, wipe distance, pressure advance, fan min/max, fan slowdown layer time, chamber temp, bed temp per plate type, soluble flag, support-interface flag, etc.). Authoritative key list to be derived from OrcaSlicer's `FilamentConfig` in `PrintConfig.cpp`, not hand-rolled.
+- **Plumbing** (each setting must be wired end-to-end):
+  1. Storage — added to filament profile schema (DataStore + `SettingsBackup` round-trip).
+  2. UI — editable in the filament library form with defaults + per-field validation.
+  3. Slice path — applied at slice time when the filament is selected for a slot, via both `applyConfigToPrusa()` fallback (raw STL) and `profile_keys[]` whitelist (embedded Bambu profiles).
+  4. Override interaction — Prepare-screen overrides still win over library defaults; library defaults still win over file-declared values when no override is set.
+- **Why**: Per-filament tuning (flow ratio, max volumetric speed, pressure advance, retraction, fan curves) is critical for print quality across TPU, PETG-CF, ASA, silk PLA, etc. Users currently have to bake these into a desktop Orca profile and slice off-device, defeating the on-device workflow.
+- **Out of scope**: per-print process-profile settings (F87); printer-level settings (A2).
+- **Notes**: Native rebuild may be needed if any new keys aren't already on the `profile_keys[]` whitelist. Imported filament JSON (Settings → Import filament JSON) should accept and persist the new fields.
+- **Source**: Kevin, 2026-05-24.
+
+### F90: Foreground-service coverage for all long-running operations (GitHub #154) — DONE v2.7.1
+- Shipped v2.7.0. `SlicingService` renamed to `LongOpService` with stack-based stage labels: nested `start(stage)` pushes; `stop()` pops; the persistent notification always renders the top-of-stack. `update(progress, stage?)` replaces the top frame so the native slicer progress listener keeps its existing rename-on-tick behaviour. Wrap points: `loadModel(uri)`, `loadModelFromFile`, `selectPlate`, `addModelFromFile[ForPlate]`, `confirmAddPlate`, `startSlicing`. Each wrap is start/stop-paired via try/finally so cancellation/exception pop the stage. Manifest `foregroundServiceType="specialUse"` retained (sideloaded; no Play subtype review); subtype updated to "3D model preparation, loading and slicing". 9 unit tests in `LongOpServiceStackTest.kt`.
+- **v2.7.1 follow-up**: preview-prep wrap added — the `InlineModelPreview` `LaunchedEffect` that calls `lib.getPreparePreviewMesh(...)` on `Dispatchers.IO` (30+ seconds on heavy models per the in-code comment) now pushes `"Preparing preview"` onto the LongOpService stack with paired stop in `finally`. The wrap sits AFTER the 300 ms debounce: putting it before caused `ForegroundServiceDidNotStartInTimeException` under rotation-slider drag — each cancelled-mid-debounce LaunchedEffect still fired `startForegroundService`, and Android's per-call 5-second watchdog can't be satisfied during the rapid cancel/restart churn. Reproduced + fixed on Pixel 8a: 16 rapid drags on the Y-tilt slider no longer crash. 3 source-grep structural tests in `PreparePreviewLongOpWrapTest.kt` guard the contract (wrap exists, finally pop, start-after-debounce ordering).
 - **Caveat**: Android can still kill foreground services under extreme memory pressure; F89's resume path stays as the safety net.
-- **Source**: Kevin, 2026-05-24 (post-F89 conversation: "having notifications active while things happen in the background make it less likely Android might kill it in the background right?").
+- **Source**: Kevin, 2026-05-24 (post-F89 conversation: "having notifications active while things happen in the background make it less likely Android might kill it in the background right?"). Preview-prep gap surfaced + resolved 2026-05-24.
 
 ### F89: Persist in-progress session + auto-resume on launch (GitHub #153) — DONE v2.6.0
 - **What**: when Android kills the app (low memory, swipe-from-recents), the user loses their loaded model, plate selection, transforms, copies, F77 additional files, and in-flight overrides. Persist these to DataStore and offer a "Resuming MyModel.3mf…" banner on next launch with one-tap accept / start-fresh dismiss.
@@ -687,6 +700,17 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Likely viable scope is only `LAN + Developer Mode`; stock secured firmware support is probably not realistic for this Android app
 - Monitoring-only support may be possible without Developer Mode, but direct send/start is the critical blocker
 - Significant scope — needs investigation of Bambu MQTT/cloud protocol and an explicit product decision on whether `Developer Mode` is acceptable
+- **2026-05-24 design drafted**: decomposed into six sub-projects A→F. Inspired by [bambuddy](https://github.com/maziggy/bambuddy) (Python+TS daemon) — used as wire-protocol reference, not embedded. Scope: LAN + Developer Mode only (matches earlier viability note); off-LAN via optional bambuddy relay (sub-project F).
+  - **A** — printer transport abstraction (refactor only, no user-visible change)
+  - **B** — Bambu LAN read-only (MQTT-TLS push reports, AMS inventory, in-app MJPEG camera). Designed together with A.
+  - **C** — Bambu LAN passthrough send (FTPS upload + MQTT print command; "Send original to Bambu" button, source must be Bambu 3MF)
+  - **D** — SSDP discovery in add-printer dialog
+  - **E** — Slice-for-Bambu (bundle Bambu machine profiles into native engine; "Slice for Bambu & Send" button)
+  - **F** — Optional bambuddy relay for off-LAN access
+- **External release blocked** until at least C ships — A+B alone don't deliver enough user value to justify the new surface area.
+- Specs:
+  - Roadmap: [`docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md`](docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md)
+  - A+B design: [`docs/superpowers/specs/2026-05-24-bambu-ab-design.md`](docs/superpowers/specs/2026-05-24-bambu-ab-design.md)
 
 ### F14: Mixed-colour / pseudo-extruder support (FullSpectrum fork) (GitHub #18)
 - Source: ratdoux/OrcaSlicer-FullSpectrum — fork of Snapmaker Orca 2.2.4

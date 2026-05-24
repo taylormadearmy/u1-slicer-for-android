@@ -3192,6 +3192,7 @@ fun InlineModelPreview(
     // Without debouncing, each intermediate value cancels the previous LaunchedEffect,
     // wasting the 30s computation and restarting.  The initial call (rot=0,0,0) skips
     // the delay so model load isn't slowed.
+    val previewPrepContext = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(modelRotation, modelFilePath, modelAddVersion) {
         val rot = modelRotation
 
@@ -3210,6 +3211,15 @@ fun InlineModelPreview(
             kotlinx.coroutines.delay(300)
         }
 
+        // F90 follow-up (v2.7.1): push the foreground-service stage AFTER the 300ms
+        // debounce. Putting it before the delay causes ForegroundServiceDidNotStartInTimeException
+        // under rotation-slider drag — each cancelled-mid-debounce LaunchedEffect still
+        // fires startForegroundService, and Android's per-call 5-second watchdog can't
+        // be satisfied during the rapid cancel/restart churn. Pushing after the debounce
+        // means a drag that gets cancelled mid-debounce never starts the service at all.
+        // The paired stop() in `finally` covers both cancellation and exception paths.
+        LongOpService.start(previewPrepContext, "Preparing preview")
+        try {
         val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             NativeLibrary.previewMutex.withLock {
                 try {
@@ -3272,6 +3282,9 @@ fun InlineModelPreview(
             lastSetMesh = null  // force setMesh() on the GL thread
         }
         if (!isInitialFetch) viewerLoading = false
+        } finally {
+            LongOpService.stop(previewPrepContext)
+        }
     }
 
     // Update renderer with placement data
