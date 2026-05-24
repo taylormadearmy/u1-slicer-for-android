@@ -16,6 +16,8 @@ class SessionStateTest {
             SessionState.AdditionalFile(path = "/cache/multi.3mf", plateIdx = 2),
         ),
         selectedPlateId: Int? = 8,
+        sliceJobId: Long? = 42L,
+        wasSliceComplete: Boolean = false,
     ) = SessionState(
         modelName = "Buzz Lightyear.3mf",
         rawInputPath = "/cache/buzz.3mf",
@@ -29,6 +31,8 @@ class SessionStateTest {
         customObjectPositions = customObjectPositions,
         customWipeTowerPos = customWipeTowerPos,
         additionalFiles = additionalFiles,
+        sliceJobId = sliceJobId,
+        wasSliceComplete = wasSliceComplete,
         savedAtEpochMs = 1716480000000L,
         appVersionCode = 295,
     )
@@ -121,25 +125,42 @@ class SessionStateTest {
 
     @Test
     fun fromJson_missingRequiredModelName_returnsNull() {
-        val noName = """{"version":1,"rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
+        val noName = """{"version":2,"rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
         assertNull(SessionState.fromJson(noName))
     }
 
     @Test
     fun fromJson_missingRequiredRawInputPath_returnsNull() {
-        val noPath = """{"version":1,"modelName":"x","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
+        val noPath = """{"version":2,"modelName":"x","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
         assertNull(SessionState.fromJson(noPath))
     }
 
     @Test
     fun fromJson_oddLengthCustomObjectPositions_returnsNull() {
-        val odd = """{"version":1,"modelName":"x","rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"customObjectPositions":[1,2,3],"additionalFiles":[],"savedAtEpochMs":0,"appVersionCode":0}"""
+        val odd = """{"version":2,"modelName":"x","rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"customObjectPositions":[1,2,3],"additionalFiles":[],"savedAtEpochMs":0,"appVersionCode":0}"""
         assertNull(SessionState.fromJson(odd))
     }
 
     @Test
     fun fromJson_pastSchemaVersion_returnsNull() {
-        val past = """{"version":0,"modelName":"x","rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
+        val past = """{"version":1,"modelName":"x","rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
         assertNull(SessionState.fromJson(past))
+    }
+
+    @Test
+    fun toJson_fromJson_roundTrip_sliceJobIdAndWasSliceComplete() {
+        val src = sampleSession(sliceJobId = 12345L)
+            .copy(wasSliceComplete = true)
+        val parsed = SessionState.fromJson(SessionState.toJson(src))!!
+        assertEquals(12345L, parsed.sliceJobId)
+        assertEquals(true, parsed.wasSliceComplete)
+    }
+
+    @Test
+    fun toJson_fromJson_roundTrip_nullSliceJobIdAndFalseWasSliceComplete() {
+        val src = sampleSession(sliceJobId = null).copy(wasSliceComplete = false)
+        val parsed = SessionState.fromJson(SessionState.toJson(src))!!
+        assertNull(parsed.sliceJobId)
+        assertEquals(false, parsed.wasSliceComplete)
     }
 }

@@ -27,6 +27,8 @@ data class SessionState(
     val customObjectPositions: FloatArray?,
     val customWipeTowerPos: Pair<Float, Float>?,
     val additionalFiles: List<AdditionalFile>,
+    val sliceJobId: Long?,
+    val wasSliceComplete: Boolean,
     val savedAtEpochMs: Long,
     val appVersionCode: Int,
 ) {
@@ -50,6 +52,8 @@ data class SessionState(
                     customObjectPositions.contentEquals(other.customObjectPositions))) &&
             customWipeTowerPos == other.customWipeTowerPos &&
             additionalFiles == other.additionalFiles &&
+            sliceJobId == other.sliceJobId &&
+            wasSliceComplete == other.wasSliceComplete &&
             savedAtEpochMs == other.savedAtEpochMs &&
             appVersionCode == other.appVersionCode
     }
@@ -67,13 +71,15 @@ data class SessionState(
         result = 31 * result + (customObjectPositions?.contentHashCode() ?: 0)
         result = 31 * result + (customWipeTowerPos?.hashCode() ?: 0)
         result = 31 * result + additionalFiles.hashCode()
+        result = 31 * result + (sliceJobId?.hashCode() ?: 0)
+        result = 31 * result + wasSliceComplete.hashCode()
         result = 31 * result + savedAtEpochMs.hashCode()
         result = 31 * result + appVersionCode
         return result
     }
 
     companion object {
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
 
         fun toJson(state: SessionState): String {
             val obj = JSONObject()
@@ -114,6 +120,8 @@ data class SessionState(
                 })
             }
             obj.put("additionalFiles", filesArr)
+            state.sliceJobId?.let { obj.put("sliceJobId", it) }
+            obj.put("wasSliceComplete", state.wasSliceComplete)
             obj.put("savedAtEpochMs", state.savedAtEpochMs)
             obj.put("appVersionCode", state.appVersionCode)
             return obj.toString()
@@ -156,6 +164,8 @@ data class SessionState(
                     customObjectPositions = customPositions,
                     customWipeTowerPos = customTower,
                     additionalFiles = files,
+                    sliceJobId = if (obj.has("sliceJobId")) obj.getLong("sliceJobId") else null,
+                    wasSliceComplete = obj.optBoolean("wasSliceComplete", false),
                     savedAtEpochMs = obj.getLong("savedAtEpochMs"),
                     appVersionCode = obj.getInt("appVersionCode"),
                 )
