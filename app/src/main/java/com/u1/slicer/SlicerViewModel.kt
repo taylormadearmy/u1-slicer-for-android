@@ -522,6 +522,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // with a half-loaded VM.
     private var restoreSessionJob: kotlinx.coroutines.Job? = null
 
+    // F89 silent-load completion signal. Emits true on successful native load,
+    // false on error/cancellation. Fires regardless of silent flag so callers
+    // can await load completion when _state writes are suppressed.
+    private val _silentLoadCompleted = MutableSharedFlow<Boolean>(extraBufferCapacity = 4)
+
     // F89: navigation events emitted by the ViewModel (e.g. "navigate to Preview
     // after restoring a SliceComplete session"). MainActivity collects and routes.
     private val _navigateEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -1841,10 +1846,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun loadModelFromFile(file: File, preserveDisplayName: String? = null) {
-        restoreSessionJob?.cancel()
+    fun loadModelFromFile(file: File, preserveDisplayName: String? = null, silent: Boolean = false) {
+        if (!silent) restoreSessionJob?.cancel()
         if (!NativeLibrary.isLoaded) {
-            _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
+            if (!silent) {
+                _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
+            } else {
+                _silentLoadCompleted.tryEmit(false)
+            }
             return
         }
         invalidatePrepareMeshCache()
@@ -1861,7 +1870,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 if (cleared > 0) Log.i("SlicerVM", "Cleared $cleared intermediate cache files before direct model load")
                 clipperRetryAttempted = false
                 if (!file.exists() || !file.canRead()) {
-                    _state.value = SlicerState.Error("Could not read file: ${file.absolutePath}")
+                    if (!silent) {
+                        _state.value = SlicerState.Error("Could not read file: ${file.absolutePath}")
+                    } else {
+                        _silentLoadCompleted.tryEmit(false)
+                    }
                     return@launch
                 }
 
@@ -1870,7 +1883,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // model name before Smart Paint rewrote it to "ai_paint_<ts>.3mf"), use that
                 // instead of the cache-file's auto-generated name.
                 currentModelName = preserveDisplayName?.takeIf { it.isNotBlank() } ?: filename
-                _state.value = SlicerState.Loading(loadingMessageFor(currentModelName, file.length()))
+                if (!silent) {
+                    _state.value = SlicerState.Loading(loadingMessageFor(currentModelName, file.length()))
+                }
 
                 val sourceFile = if (file.parentFile?.absolutePath == workspaceDir.absolutePath) {
                     file
@@ -1903,12 +1918,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     try {
                         java.util.zip.ZipFile(sourceFile).use { zip ->
                             if (zip.entries().toList().isEmpty()) {
-                                _state.value = SlicerState.Error("3MF file is empty or invalid")
+                                if (!silent) {
+                                    _state.value = SlicerState.Error("3MF file is empty or invalid")
+                                } else {
+                                    _silentLoadCompleted.tryEmit(false)
+                                }
                                 return@launch
                             }
                         }
                     } catch (e: java.util.zip.ZipException) {
-                        _state.value = SlicerState.Error("3MF file is corrupt: ${e.message}")
+                        if (!silent) {
+                            _state.value = SlicerState.Error("3MF file is corrupt: ${e.message}")
+                        } else {
+                            _silentLoadCompleted.tryEmit(false)
+                        }
                         return@launch
                     }
 
@@ -1950,7 +1973,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     if (prepared.requiresPlateSelection) {
                         Log.i("SlicerVM", "Multi-plate: ${origInfo.plates.size} plates, showing selector")
                         currentModelFile = prepared.embeddedFile
-                        _showPlateSelector.value = true
+                        if (!silent) {
+                            _showPlateSelector.value = true
+                        } else {
+                            // Silent restore: caller knows which plate to pick and will
+                            // call selectPlate(plate, silent=true) next. Signal so the
+                            // awaitSilentLoadCompletion() in runSilentBackgroundRestore
+                            // doesn't hang waiting for a ModelLoaded that never comes.
+                            _silentLoadCompleted.tryEmit(true)
+                        }
                         return@launch
                     }
                     Log.i("SlicerVM", "Single-plate, loading directly")
@@ -1969,12 +2000,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 currentModelFile = fileToLoad
-                loadNativeModel(fileToLoad)
+                loadNativeModel(fileToLoad, silent = silent)
                 firstBambuPlateId?.let { recoveryPlateId = it }
                 markSessionDirty()
             } catch (e: Throwable) {
                 NativeLibrary.previewMutex.withLock { native.clearModel() }
-                _state.value = SlicerState.Error("Error: ${e.message}")
+                if (!silent) {
+                    _state.value = SlicerState.Error("Error: ${e.message}")
+                } else {
+                    _silentLoadCompleted.tryEmit(false)
+                }
             }
         }
     }
@@ -1982,7 +2017,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Called when user selects a plate from the multi-plate dialog.
      */
-    fun selectPlate(plateId: Int) {
+    fun selectPlate(plateId: Int, silent: Boolean = false) {
         selectPlateJob?.cancel()
         slicingJob?.cancel()
         _showPlateSelector.value = false
@@ -1992,7 +2027,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // _multiPlateSourceFile is set once on load and never overwritten (B83 fix).
         val file = _multiPlateSourceFile
             ?: resolvePlateSelectionSourceFile(sourceModelFile, currentModelFile)
-            ?: return
+            ?: run {
+                if (silent) _silentLoadCompleted.tryEmit(false)
+                return
+            }
         recoveryPlateId = plateId          // Track for Clipper recovery
         clipperRetryAttempted = false      // New plate = fresh retry allowance
         // Transition to Loading immediately so InlineModelPreview unmounts.
@@ -2000,7 +2038,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // and loadNativeModel completing, hitting the native's stale plate-N cache and
         // delivering the wrong mesh.  Unmounting ensures the fresh effect fires only
         // after the correct plate is loaded in native.
-        _state.value = SlicerState.Loading("Loading plate $plateId…")
+        if (!silent) {
+            _state.value = SlicerState.Loading("Loading plate $plateId…")
+        }
         diagnostics.recordEvent(
             "plate_selected",
             mapOf(
@@ -2096,24 +2136,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             }
                     } catch (_: Exception) { null }
 
-                loadNativeModel(embeddedPlateFile) {
-                    // --- Native-first state reading ---
-                    // Read authoritative plate state from native's loaded model.
-                    val nativeState = readPlateStateFromNative()
-                    // Build the UI-facing ThreeMfInfo from native data + file metadata.
-                    val nativeInfo = if (fileInfo != null) {
-                        buildThreeMfInfoFromNative(fileInfo, nativeState, plateId, canonical)
-                    } else {
-                        // Non-Bambu fallback: use embedInfo as-is
-                        embedInfo
+                loadNativeModel(
+                    embeddedPlateFile,
+                    silent = silent,
+                    postLoadStateProvider = {
+                        // --- Native-first state reading ---
+                        // Read authoritative plate state from native's loaded model.
+                        val nativeState = readPlateStateFromNative()
+                        // Build the UI-facing ThreeMfInfo from native data + file metadata.
+                        val nativeInfo = if (fileInfo != null) {
+                            buildThreeMfInfoFromNative(fileInfo, nativeState, plateId, canonical)
+                        } else {
+                            // Non-Bambu fallback: use embedInfo as-is
+                            embedInfo
+                        }
+                        _threeMfInfo.value = nativeInfo
+                        Log.i("SlicerVM", "selectPlate: native-first _threeMfInfo set: " +
+                            "usedExtruders=${nativeInfo.usedExtruderIndices}, " +
+                            "detectedExtruderCount=${nativeInfo.detectedExtruderCount}, " +
+                            "hasPaint=${nativeInfo.hasPaintData}")
+                        markSessionDirty()
                     }
-                    _threeMfInfo.value = nativeInfo
-                    Log.i("SlicerVM", "selectPlate: native-first _threeMfInfo set: " +
-                        "usedExtruders=${nativeInfo.usedExtruderIndices}, " +
-                        "detectedExtruderCount=${nativeInfo.detectedExtruderCount}, " +
-                        "hasPaint=${nativeInfo.hasPaintData}")
-                    markSessionDirty()
-                }
+                )
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 Log.e("SlicerVM", "selectPlate(${plateId}) threw — clearing model", e)
@@ -2123,7 +2167,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // distinguishably in the UI Error state instead of as bare
                 // "Error loading plate: null".
                 val cause = "${e::class.simpleName}: ${e.message ?: "(no message)"}"
-                _state.value = SlicerState.Error("Error loading plate: $cause")
+                if (!silent) {
+                    _state.value = SlicerState.Error("Error loading plate: $cause")
+                } else {
+                    _silentLoadCompleted.tryEmit(false)
+                }
             }
         }
     }
@@ -2178,7 +2226,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         file: File,
         plateIdx: Int = -1,
         preserveTransforms: Boolean = false,
-        postLoadStateProvider: (suspend () -> Unit)? = null
+        postLoadStateProvider: (suspend () -> Unit)? = null,
+        silent: Boolean = false
     ) {
         val firstModelLoadThisLaunch = diagnostics.markFirstModelLoad()
         // Stale cached mesh from a previous model/plate load would cause InlineModelPreview's
@@ -2237,7 +2286,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     _modelRotation.value = ModelRotation()
                 }
                 if (isLargeTriangleCount(info.triangleCount)) {
-                    _state.value = SlicerState.Loading("Large model — preview may take a moment…")
+                    if (!silent) {
+                        _state.value = SlicerState.Loading("Large model — preview may take a moment…")
+                    }
                     kotlinx.coroutines.delay(0)
                 }
 
@@ -2340,12 +2391,26 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     saveConfig()
                     Log.i("SlicerVM", "Single-color model: set preview colors from slots ${colors}")
                 }
-                _state.value = SlicerState.ModelLoaded(info)
+                if (!silent) {
+                    _state.value = SlicerState.ModelLoaded(info)
+                }
+                // Emit completion signal so silent callers know the load
+                // succeeded; loud callers also get the signal (harmless — no
+                // current loud caller awaits it).
+                _silentLoadCompleted.tryEmit(true)
             } else {
-                _state.value = SlicerState.Error("Failed to read model info")
+                if (!silent) {
+                    _state.value = SlicerState.Error("Failed to read model info")
+                } else {
+                    _silentLoadCompleted.tryEmit(false)
+                }
             }
         } else {
-            _state.value = SlicerState.Error("Failed to load model")
+            if (!silent) {
+                _state.value = SlicerState.Error("Failed to load model")
+            } else {
+                _silentLoadCompleted.tryEmit(false)
+            }
         }
     }
 
@@ -4700,6 +4765,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 if (row != null && File(row.gcodePath).exists()) {
                     restoreSliceCompleteOnly(saved, row)
+                    // Continue with a silent background load so Prepare populates
+                    // for re-slicing. The fast-path SliceComplete state survives
+                    // because every `_state.value = ...` write is suppressed when
+                    // silent = true.
+                    runSilentBackgroundRestore(saved, raw)
                     return@launch
                 }
                 Log.i("SlicerVM", "F89 fast-path unavailable (row=$row, gcodeExists=${row?.gcodePath?.let { File(it).exists() }}); falling back to full restore")
@@ -4731,6 +4801,52 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _gcodePreview.value = ""
         _navigateEvents.tryEmit("preview")
         Log.i("SlicerVM", "F89 fast-path: restored SliceComplete for ${saved.modelName} (jobId=${row.id}, layers=${parsed?.layers?.size ?: 0})")
+    }
+
+    /** F89: after the fast-path has put us on Preview, do a silent model load
+     *  so the Prepare tab populates for re-slicing. All `_state` writes are
+     *  suppressed so the SliceComplete state from the fast-path survives. */
+    private suspend fun runSilentBackgroundRestore(saved: SessionState, raw: File) {
+        loadModelFromFile(raw, preserveDisplayName = saved.modelName, silent = true)
+        if (!awaitSilentLoadCompletion()) {
+            Log.w("SlicerVM", "F89 silent restore: load failed or timed out")
+            return
+        }
+        // Multi-plate: load paused waiting for plate pick (we suppressed the
+        // dialog). Pick the saved plate or fall back to first available.
+        if (_multiPlatePlates.value.isNotEmpty()) {
+            val plate = saved.selectedPlateId
+                ?: recoveryPlateId.takeIf { it > 0 }
+                ?: _multiPlatePlates.value.firstOrNull()?.plateId
+            if (plate == null) {
+                Log.w("SlicerVM", "F89 silent restore: no plate to select")
+                return
+            }
+            selectPlate(plate, silent = true)
+            if (!awaitSilentLoadCompletion()) {
+                Log.w("SlicerVM", "F89 silent restore: plate select failed or timed out")
+                return
+            }
+        }
+        // Transforms (these don't write _state, safe even outside silent mode).
+        setModelScale(ModelScale(
+            saved.modelScale.first, saved.modelScale.second, saved.modelScale.third
+        ))
+        setModelRotation(ModelRotation(
+            saved.modelRotation.first, saved.modelRotation.second, saved.modelRotation.third
+        ))
+        setCopyCount(saved.copyCount)
+        val positions = saved.customObjectPositions
+        val tower = saved.customWipeTowerPos
+        if (positions != null && tower != null) {
+            applyPlacementPositions(positions, tower)
+        }
+        // F77 additional files NOT restored in silent mode (addModelFromFile
+        // touches _state). v2.6.0 trade-off; can extend in a follow-up.
+        if (saved.additionalFiles.isNotEmpty()) {
+            Log.w("SlicerVM", "F89 silent restore: ${saved.additionalFiles.size} additional file(s) not restored (deferred)")
+        }
+        Log.i("SlicerVM", "F89 silent restore complete for ${saved.modelName}")
     }
 
     /** F89: user tapped × on the banner. Clear the offer and the DataStore entry. */
@@ -4852,6 +4968,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 Log.w("SlicerVM", "F89 restore: sliceJobId=${saved.sliceJobId} not found in Room")
             }
         }
+    }
+
+    /** F89 silent-mode completion. Suspends until the next _silentLoadCompleted
+     *  emission (or timeout). Returns false on timeout or explicit-false emission. */
+    private suspend fun awaitSilentLoadCompletion(timeoutMs: Long = 180_000): Boolean {
+        return kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            _silentLoadCompleted.first()
+        } ?: false
     }
 
     /** F89 restore helper: suspend until the most recent mutator's loading
