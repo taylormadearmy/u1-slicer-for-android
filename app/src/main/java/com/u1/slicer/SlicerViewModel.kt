@@ -515,6 +515,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // SliceComplete state and navigate to Preview.
     private var lastSliceJobId: Long? = null
 
+    // F89: handle to the currently-running restoreSession coroutine so any new
+    // load (loadModelFromFile, loadModel, addModelFromFile, F61 reopen, etc.)
+    // can cancel a stale restore before kicking off its own work. Prevents the
+    // race where the user taps a Jobs row during a slow Resume and ends up
+    // with a half-loaded VM.
+    private var restoreSessionJob: kotlinx.coroutines.Job? = null
+
     // F89: navigation events emitted by the ViewModel (e.g. "navigate to Preview
     // after restoring a SliceComplete session"). MainActivity collects and routes.
     private val _navigateEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -1349,6 +1356,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun loadModel(uri: Uri) {
+        restoreSessionJob?.cancel()
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
@@ -1697,6 +1705,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun addModelFromFile(file: File) {
+        restoreSessionJob?.cancel()
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
@@ -1719,6 +1728,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Debug/test: add a specific plate of a 3MF without going through the plate-selector UI. */
     fun addModelFromFileForPlate(file: File, plateIdx: Int) {
+        restoreSessionJob?.cancel()
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
@@ -1832,6 +1842,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun loadModelFromFile(file: File, preserveDisplayName: String? = null) {
+        restoreSessionJob?.cancel()
         if (!NativeLibrary.isLoaded) {
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
@@ -4662,12 +4673,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /** F89: user tapped Resume on the banner. Replays the saved session via
-     *  the existing public mutators. */
+    /** F89: user tapped Resume on the banner. For sessions that ended past
+     *  slice-complete, fast-path to Preview using the Room SliceJob row.
+     *  Otherwise replay the full Prepare state via restoreSession(). */
     fun acceptSessionResume() {
         val offer = _sessionResumeOffer.value ?: return
         _sessionResumeOffer.value = null
-        viewModelScope.launch {
+        restoreSessionJob?.cancel()
+        restoreSessionJob = viewModelScope.launch {
             val saved = try { sessionStateRepository.read() } catch (e: Exception) { null }
                 ?: return@launch
             val raw = File(saved.rawInputPath)
@@ -4676,8 +4689,62 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 _toastEvents.tryEmit("Couldn't resume ${saved.modelName} — file no longer available")
                 return@launch
             }
+            // Fast-path: past slicing AND the Room row + gcode file still exist.
+            // Skip the model reload, jump straight to SliceComplete + Preview.
+            if (saved.wasSliceComplete && saved.sliceJobId != null) {
+                val row = try {
+                    sliceJobDao.getAll().first().firstOrNull { it.id == saved.sliceJobId }
+                } catch (e: Exception) {
+                    Log.w("SlicerVM", "F89 fast-path: SliceJob lookup failed: ${e.message}")
+                    null
+                }
+                if (row != null && File(row.gcodePath).exists()) {
+                    restoreSliceCompleteOnly(saved, row)
+                    return@launch
+                }
+                Log.i("SlicerVM", "F89 fast-path unavailable (row=$row, gcodeExists=${row?.gcodePath?.let { File(it).exists() }}); falling back to full restore")
+            }
+            // Full Prepare-state restore (model load + plate + transforms).
             restoreSession(saved, raw)
         }
+    }
+
+    /** F89 fast-path: restore SliceComplete state directly from the Room row
+     *  without re-loading the native model. Cheap (sub-second). The user can
+     *  re-open from Jobs to get the model back into Prepare for re-slicing. */
+    private suspend fun restoreSliceCompleteOnly(saved: SessionState, row: SliceJob) {
+        lastSliceJobId = row.id
+        currentModelName = saved.modelName
+        _state.value = SlicerState.SliceComplete(
+            SliceResult(
+                success = true,
+                cancelled = false,
+                errorMessage = "",
+                gcodePath = row.gcodePath,
+                totalLayers = row.totalLayers,
+                estimatedTimeSeconds = row.estimatedTimeSeconds,
+                estimatedFilamentMm = row.estimatedFilamentMm,
+                estimatedFilamentGrams = row.estimatedFilamentGrams,
+            )
+        )
+        _gcodePreview.value = try {
+            File(row.gcodePath).bufferedReader().use { reader ->
+                val sb = StringBuilder()
+                var line: String? = reader.readLine()
+                var n = 0
+                while (line != null && n < 50) {
+                    sb.appendLine(line)
+                    line = reader.readLine()
+                    n++
+                }
+                sb.toString()
+            }
+        } catch (e: Exception) {
+            Log.w("SlicerVM", "F89 fast-path: failed to read gcode preview lines: ${e.message}")
+            ""
+        }
+        _navigateEvents.tryEmit("preview")
+        Log.i("SlicerVM", "F89 fast-path: restored SliceComplete for ${saved.modelName} (jobId=${row.id})")
     }
 
     /** F89: user tapped × on the banner. Clear the offer and the DataStore entry. */
