@@ -114,10 +114,19 @@ fun ProcessProfilesScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
-                    }) {
-                        Icon(Icons.Default.FolderOpen, "Import JSON")
+                    TextButton(
+                        onClick = {
+                            importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                        },
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Import JSON")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
