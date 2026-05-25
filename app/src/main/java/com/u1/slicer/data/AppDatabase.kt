@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 
 @Database(
     entities = [FilamentProfile::class, SliceJob::class],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -97,6 +97,32 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 → v7: F91 — add nullable OrcaSlicer per-filament tuning columns
+         * to filament_profiles. All NULL by default so existing rows keep their
+         * existing behaviour (slicer uses bundled / OrcaSlicer defaults).
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN nozzleTempInitialLayer INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN bedTempInitialLayer INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN flowRatio REAL")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN maxVolumetricSpeed REAL")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN filamentCost REAL")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN fanMinSpeed INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN fanMaxSpeed INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN overhangFanSpeed INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN additionalCoolingFanSpeed INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN slowDownLayerTime REAL")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN slowDownMinSpeed REAL")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN closeFanFirstLayers INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN fullFanSpeedLayer INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN enablePressureAdvance INTEGER")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN pressureAdvance REAL")
+                db.execSQL("ALTER TABLE filament_profiles ADD COLUMN filamentMinimalPurgeOnWipeTower REAL")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -104,7 +130,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "u1_slicer.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                     .addCallback(SeedCallback())
                     .build()
                 INSTANCE = instance

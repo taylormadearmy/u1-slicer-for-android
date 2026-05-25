@@ -3003,9 +3003,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // config) and the user's SlicingOverrides. ProfileEmbedder.buildConfig owns the
         // precedence order.
         val activeProcessKeys: Map<String, Any> = activeProcessProfile.value?.keys ?: emptyMap()
+        // F91: per-slot OrcaSlicer tuning settings sourced from the user's filament library
+        // entries (looked up via each slot's preset.filamentProfileId). Only keys with at
+        // least one non-null library value are emitted; unset keys leave the bundled
+        // profile / OrcaSlicer default in place.
+        val filamentLibrarySettings: Map<String, Any> = buildFilamentLibrarySettings(
+            slotCount = slotCount,
+            usedSlots = usedSlots,
+            presets = extruderPresets.value,
+            filaments = filaments.value,
+        )
         val embeddedConfig = profileEmbedder.buildConfig(
             info = info,
             sourceConfig = sourceConfig,
+            filamentSettings = filamentLibrarySettings,
             overrides = buildProfileOverrides(cfg, targetCount, usedSlots, hasSourceConfig = sourceConfig != null),
             targetExtruderCount = targetCount,
             processProfileKeys = activeProcessKeys,
@@ -6491,6 +6502,92 @@ internal fun computeTogglePrimeTower(
 /** Returns a sensible nozzle temperature default for a given material type string. */
 internal fun nozzleTempDefaultForMaterial(material: String): Int = when (material.uppercase()) {
     "PETG" -> 235; "ABS" -> 270; "ASA" -> 260; "PA" -> 260; "TPU" -> 225; "PVA" -> 210; else -> 220
+}
+
+/**
+ * F91: Build a `filamentSettings` map of per-slot arrays from the user's filament library.
+ *
+ * For each new OrcaSlicer per-filament tuning key (filament_flow_ratio,
+ * filament_max_volumetric_speed, fan_*, pressure_advance, etc.), emit a length-`slotCount`
+ * array indexed by physical slot when AT LEAST ONE slot has a non-null library value for
+ * that field. Slots without a library value fall back to a neighbour's value
+ * (forward/backward-fill) to keep the array length consistent and avoid OrcaSlicer crashes
+ * on mismatched per-extruder arrays.
+ *
+ * Keys are sized to `slotCount` (physical extruder count), NOT canonical filament count —
+ * matches the existing per-extruder pad/clamp behaviour in sapil_print.cpp for these keys.
+ *
+ * When NO slot has a value for a given field, the key is omitted entirely so the bundled
+ * filament profile / OrcaSlicer default stands.
+ */
+internal fun buildFilamentLibrarySettings(
+    slotCount: Int,
+    usedSlots: List<Int>?,
+    presets: List<com.u1.slicer.data.ExtruderPreset>,
+    filaments: List<com.u1.slicer.data.FilamentProfile>,
+): Map<String, Any> {
+    if (slotCount <= 0) return emptyMap()
+    val slots = usedSlots ?: (0 until slotCount).toList()
+    val profilesPerSlot: List<com.u1.slicer.data.FilamentProfile?> = (0 until slotCount).map { i ->
+        val slotIndex = slots.getOrElse(i) { i }
+        val preset = presets.firstOrNull { it.index == slotIndex }
+        val profileId = preset?.filamentProfileId
+        filaments.firstOrNull { it.id == profileId }
+    }
+
+    fun forwardBackFill(values: List<String?>): List<String> {
+        val out = values.toMutableList()
+        // forward fill
+        var last: String? = null
+        for (i in out.indices) {
+            if (out[i] != null) last = out[i]
+            else if (last != null) out[i] = last
+        }
+        // back fill (for leading nulls)
+        last = null
+        for (i in out.indices.reversed()) {
+            if (out[i] != null) last = out[i]
+            else if (last != null) out[i] = last
+        }
+        // any remaining null → empty string (means no slot had a value AND we shouldn't be
+        // emitting this key — caller guards on anyNonNull)
+        return out.map { it ?: "" }
+    }
+
+    val result = mutableMapOf<String, Any>()
+    fun emitFloat(key: String, accessor: (com.u1.slicer.data.FilamentProfile) -> Float?) {
+        val raw = profilesPerSlot.map { p -> p?.let(accessor)?.toString() }
+        if (raw.all { it == null }) return
+        result[key] = forwardBackFill(raw)
+    }
+    fun emitInt(key: String, accessor: (com.u1.slicer.data.FilamentProfile) -> Int?) {
+        val raw = profilesPerSlot.map { p -> p?.let(accessor)?.toString() }
+        if (raw.all { it == null }) return
+        result[key] = forwardBackFill(raw)
+    }
+    fun emitBool(key: String, accessor: (com.u1.slicer.data.FilamentProfile) -> Boolean?) {
+        val raw = profilesPerSlot.map { p -> p?.let(accessor)?.let { if (it) "1" else "0" } }
+        if (raw.all { it == null }) return
+        result[key] = forwardBackFill(raw)
+    }
+
+    emitInt("nozzle_temperature_initial_layer") { it.nozzleTempInitialLayer }
+    emitInt("hot_plate_temp_initial_layer") { it.bedTempInitialLayer }
+    emitFloat("filament_flow_ratio") { it.flowRatio }
+    emitFloat("filament_max_volumetric_speed") { it.maxVolumetricSpeed }
+    emitFloat("filament_cost") { it.filamentCost }
+    emitInt("fan_min_speed") { it.fanMinSpeed }
+    emitInt("fan_max_speed") { it.fanMaxSpeed }
+    emitInt("overhang_fan_speed") { it.overhangFanSpeed }
+    emitInt("additional_cooling_fan_speed") { it.additionalCoolingFanSpeed }
+    emitFloat("slow_down_layer_time") { it.slowDownLayerTime }
+    emitFloat("slow_down_min_speed") { it.slowDownMinSpeed }
+    emitInt("close_fan_the_first_x_layers") { it.closeFanFirstLayers }
+    emitInt("full_fan_speed_layer") { it.fullFanSpeedLayer }
+    emitBool("enable_pressure_advance") { it.enablePressureAdvance }
+    emitFloat("pressure_advance") { it.pressureAdvance }
+    emitFloat("filament_minimal_purge_on_wipe_tower") { it.filamentMinimalPurgeOnWipeTower }
+    return result
 }
 
 /**

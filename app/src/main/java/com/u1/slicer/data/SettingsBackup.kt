@@ -307,6 +307,24 @@ object SettingsBackup {
                     put("retractSpeed", p.retractSpeed.toDouble())
                     put("color", p.color)
                     put("density", p.density.toDouble())
+                    // F91: extended OrcaSlicer per-filament settings. Optional — omitted when null
+                    // so older readers see nothing surprising.
+                    p.nozzleTempInitialLayer?.let { put("nozzleTempInitialLayer", it) }
+                    p.bedTempInitialLayer?.let { put("bedTempInitialLayer", it) }
+                    p.flowRatio?.let { put("flowRatio", it.toDouble()) }
+                    p.maxVolumetricSpeed?.let { put("maxVolumetricSpeed", it.toDouble()) }
+                    p.filamentCost?.let { put("filamentCost", it.toDouble()) }
+                    p.fanMinSpeed?.let { put("fanMinSpeed", it) }
+                    p.fanMaxSpeed?.let { put("fanMaxSpeed", it) }
+                    p.overhangFanSpeed?.let { put("overhangFanSpeed", it) }
+                    p.additionalCoolingFanSpeed?.let { put("additionalCoolingFanSpeed", it) }
+                    p.slowDownLayerTime?.let { put("slowDownLayerTime", it.toDouble()) }
+                    p.slowDownMinSpeed?.let { put("slowDownMinSpeed", it.toDouble()) }
+                    p.closeFanFirstLayers?.let { put("closeFanFirstLayers", it) }
+                    p.fullFanSpeedLayer?.let { put("fullFanSpeedLayer", it) }
+                    p.enablePressureAdvance?.let { put("enablePressureAdvance", it) }
+                    p.pressureAdvance?.let { put("pressureAdvance", it.toDouble()) }
+                    p.filamentMinimalPurgeOnWipeTower?.let { put("filamentMinimalPurgeOnWipeTower", it.toDouble()) }
                 })
             }
         }
@@ -323,7 +341,24 @@ object SettingsBackup {
                 retractLength = obj.optDouble("retractLength", 0.8).toFloat(),
                 retractSpeed = obj.optDouble("retractSpeed", 45.0).toFloat(),
                 color = obj.optString("color", "#808080"),
-                density = obj.optDouble("density", 1.24).toFloat()
+                density = obj.optDouble("density", 1.24).toFloat(),
+                // F91: nullable round-trip — absent in v1/v2 backups, falls back to null.
+                nozzleTempInitialLayer = if (obj.has("nozzleTempInitialLayer")) obj.getInt("nozzleTempInitialLayer") else null,
+                bedTempInitialLayer = if (obj.has("bedTempInitialLayer")) obj.getInt("bedTempInitialLayer") else null,
+                flowRatio = if (obj.has("flowRatio")) obj.getDouble("flowRatio").toFloat() else null,
+                maxVolumetricSpeed = if (obj.has("maxVolumetricSpeed")) obj.getDouble("maxVolumetricSpeed").toFloat() else null,
+                filamentCost = if (obj.has("filamentCost")) obj.getDouble("filamentCost").toFloat() else null,
+                fanMinSpeed = if (obj.has("fanMinSpeed")) obj.getInt("fanMinSpeed") else null,
+                fanMaxSpeed = if (obj.has("fanMaxSpeed")) obj.getInt("fanMaxSpeed") else null,
+                overhangFanSpeed = if (obj.has("overhangFanSpeed")) obj.getInt("overhangFanSpeed") else null,
+                additionalCoolingFanSpeed = if (obj.has("additionalCoolingFanSpeed")) obj.getInt("additionalCoolingFanSpeed") else null,
+                slowDownLayerTime = if (obj.has("slowDownLayerTime")) obj.getDouble("slowDownLayerTime").toFloat() else null,
+                slowDownMinSpeed = if (obj.has("slowDownMinSpeed")) obj.getDouble("slowDownMinSpeed").toFloat() else null,
+                closeFanFirstLayers = if (obj.has("closeFanFirstLayers")) obj.getInt("closeFanFirstLayers") else null,
+                fullFanSpeedLayer = if (obj.has("fullFanSpeedLayer")) obj.getInt("fullFanSpeedLayer") else null,
+                enablePressureAdvance = if (obj.has("enablePressureAdvance")) obj.getBoolean("enablePressureAdvance") else null,
+                pressureAdvance = if (obj.has("pressureAdvance")) obj.getDouble("pressureAdvance").toFloat() else null,
+                filamentMinimalPurgeOnWipeTower = if (obj.has("filamentMinimalPurgeOnWipeTower")) obj.getDouble("filamentMinimalPurgeOnWipeTower").toFloat() else null,
             )
         }
     }

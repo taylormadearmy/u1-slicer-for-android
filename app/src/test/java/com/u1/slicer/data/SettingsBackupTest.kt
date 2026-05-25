@@ -402,6 +402,91 @@ class SettingsBackupTest {
         assertNull("v2 backup has no processProfilesConfig", data.processProfilesConfig)
     }
 
+    // F91 — extended filament profile round-trip
+    @Test
+    fun `v3 round-trip preserves extended filament fields`() {
+        val profile = FilamentProfile(
+            id = 1L,
+            name = "PLA Pro",
+            material = "PLA",
+            nozzleTemp = 220,
+            bedTemp = 60,
+            retractLength = 0.8f,
+            retractSpeed = 45f,
+            nozzleTempInitialLayer = 225,
+            bedTempInitialLayer = 65,
+            flowRatio = 0.98f,
+            maxVolumetricSpeed = 18f,
+            filamentCost = 25f,
+            fanMinSpeed = 100,
+            fanMaxSpeed = 100,
+            overhangFanSpeed = 80,
+            additionalCoolingFanSpeed = 70,
+            slowDownLayerTime = 4f,
+            slowDownMinSpeed = 20f,
+            closeFanFirstLayers = 1,
+            fullFanSpeedLayer = 3,
+            enablePressureAdvance = true,
+            pressureAdvance = 0.045f,
+            filamentMinimalPurgeOnWipeTower = 15f,
+        )
+        val json = SettingsBackup.export(
+            sliceConfig = SliceConfig(),
+            slicingOverrides = SlicingOverrides(),
+            printerUrl = "",
+            extruderPresets = emptyList(),
+            filamentProfiles = listOf(profile)
+        )
+        val data = SettingsBackup.import(json)
+        assertNotNull(data.filamentProfiles)
+        val p = data.filamentProfiles!![0]
+        assertEquals(225, p.nozzleTempInitialLayer)
+        assertEquals(65, p.bedTempInitialLayer)
+        assertEquals(0.98f, p.flowRatio!!, 0.001f)
+        assertEquals(18f, p.maxVolumetricSpeed!!, 0.001f)
+        assertEquals(25f, p.filamentCost!!, 0.001f)
+        assertEquals(100, p.fanMinSpeed)
+        assertEquals(100, p.fanMaxSpeed)
+        assertEquals(80, p.overhangFanSpeed)
+        assertEquals(70, p.additionalCoolingFanSpeed)
+        assertEquals(4f, p.slowDownLayerTime!!, 0.001f)
+        assertEquals(20f, p.slowDownMinSpeed!!, 0.001f)
+        assertEquals(1, p.closeFanFirstLayers)
+        assertEquals(3, p.fullFanSpeedLayer)
+        assertEquals(true, p.enablePressureAdvance)
+        assertEquals(0.045f, p.pressureAdvance!!, 0.001f)
+        assertEquals(15f, p.filamentMinimalPurgeOnWipeTower!!, 0.001f)
+    }
+
+    @Test
+    fun `v1 backup without extended filament fields imports them as null`() {
+        // Earlier-version backup with the basic 7-field filament shape only.
+        val legacyJson = """
+            {
+              "version": 2,
+              "filamentProfiles": [{
+                "name": "Old PLA",
+                "material": "PLA",
+                "nozzleTemp": 210,
+                "bedTemp": 60,
+                "retractLength": 0.8,
+                "retractSpeed": 45,
+                "color": "#808080",
+                "density": 1.24
+              }]
+            }
+        """.trimIndent()
+        val data = SettingsBackup.import(legacyJson)
+        assertNotNull(data.filamentProfiles)
+        val p = data.filamentProfiles!![0]
+        assertEquals("Old PLA", p.name)
+        assertEquals(210, p.nozzleTemp)
+        assertNull(p.flowRatio)
+        assertNull(p.maxVolumetricSpeed)
+        assertNull(p.enablePressureAdvance)
+        assertNull(p.filamentMinimalPurgeOnWipeTower)
+    }
+
     @Test
     fun `export omits processProfiles when none provided`() {
         val json = SettingsBackup.export(
