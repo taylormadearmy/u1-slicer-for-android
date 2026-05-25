@@ -589,25 +589,39 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Out of scope**: per-print process-profile settings (F87 above); printer-level settings (A2); per-feature speeds (already in `SlicingOverrides`).
 - **Source**: Kevin, 2026-05-24.
 
-#### Known limitation — applyConfigToPrusa clamps many embed-routed keys
-Discovered while writing on-device verification tests for F87+F91 (2026-05-25). The Kotlin embed pipeline correctly threads imported process-profile keys + library filament fields into `Metadata/project_settings.config`, and the native `profile_keys[]` loop reads them into the slicer config. **But `applyConfigToPrusa` in `sapil_print.cpp` runs AFTER that loop and unconditionally overwrites several keys** with U1 hardware defaults — including `sparse_infill_density`, `filament_max_volumetric_speed`, `fan_min_speed`, `fan_max_speed`, `overhang_fan_speed`, `slow_down_layer_time`, `slow_down_min_speed`, `seam_position`, `wall_generator`, and the per-feature speed family.
+#### Native clamp gap — FIXED 2026-05-25
+Originally surfaced while writing on-device F87/F91 verification: `applyConfigToPrusa` in `sapil_print.cpp` ran AFTER the `profile_keys[]` loop and unconditionally overwrote many keys with U1 hardware defaults, so embed-routed imported values were silently lost. Same gap also broke `SlicingOverrides.seamPosition` etc.
 
-This is a pre-existing architecture gap that also affects `SlicingOverrides.seamPosition`, `wallGenerator`, etc. — those override modes have been silently no-op for unclamped keys since they were added.
+**Fix landed 2026-05-25**:
+- `sapil_print.cpp`: gate `sparse_infill_pattern`, `sparse_infill_density`, `filament_max_volumetric_speed`, `fan_min_speed`, `fan_max_speed`, `overhang_fan_speed`, `slow_down_layer_time`, `slow_down_min_speed`, `seam_position`, `reduce_infill_retraction` on `!has_embedded_profile`. When Kotlin's `ProfileEmbedder` produces a Snapmaker-authored embed (`is_snapmaker_profile=true`), the embed's values win. Raw STL with no embed keeps the U1 hardware defaults exactly as before.
+- `sapil_print.cpp`: add `filament_cost` to `profile_keys[]` so library cost values reach the slicer.
+- `ProfileEmbedder.kt` preserve path (Bambu): overlay the U1-safe cooling/flow values from bundled `pla.json` (`U1_FILAMENT_SAFETY_OVERLAY` set) on top of `sourceConfig` BEFORE `filamentSettings` + `overrides`. This prevents Bambu's potentially-wrong-for-U1 values (e.g. PETG `fan_min_speed=60`) from reaching the slicer when no library override exists; library overrides still win because they're layered after.
+- `wall_generator` stays clamped to Arachne: surfaced when un-gating that OrcaSlicer 2.2.4's classic perimeter generator SIGSEGVs on the U1 config (PerimeterGenerator::process_classic / MultiPoint dtor). Pre-existing OrcaSlicer bug. Re-clamping until fixed upstream.
 
-Verified working F87 keys (NOT clamped, hit G-code header): `layer_height` (sentinel-gated), `wall_loops`, `top_shell_layers`, `bottom_shell_layers`, `top_surface_pattern`, `bottom_surface_pattern`, `ironing_type`, support settings, prime-tower settings.
+**Native build**: NDK 26 / Release / 20.8 MB stripped / Clang 17.0.2 / 34 JNI symbols (matches `external fun` count). Verified on Pixel 8a.
 
-Verified working F91 keys: `filament_flow_ratio`, `pressure_advance`, `enable_pressure_advance`, `filament_minimal_purge_on_wipe_tower`, `additional_cooling_fan_speed`, `close_fan_the_first_x_layers`, `full_fan_speed_layer`, `nozzle_temperature_initial_layer`, `hot_plate_temp_initial_layer`. `filament_cost` is stored in the library but is NOT on `profile_keys[]` so native silently ignores it (defaults to 0).
+**Verified working F87 keys**: `layer_height` (sentinel-gated), `wall_loops`, `top_shell_layers`, `bottom_shell_layers`, `top_surface_pattern`, `bottom_surface_pattern`, `seam_position`, `sparse_infill_density`, `sparse_infill_pattern`, `reduce_infill_retraction`, `ironing_type`, support settings, prime-tower settings. `wall_generator` accepted but stays Arachne (see above).
 
-**Fix path (deferred to follow-up)**: gate the relevant `applyConfigToPrusa` `set_key_value` calls on `!has_embedded_profile` (the function already has the flag — same pattern as `initial_layer_print_height`). When a Snapmaker-authored embed is present, trust its values; when no embed (raw STL), keep the U1 hardware defaults. Needs native rebuild + careful regression coverage on Bambu-imported files where embedded values are wrong for U1 (the comments on each clamped key call out specific Bambu/Prusa values to defend against — e.g. `fan_min_speed=60` from Bambu would under-cool U1 PLA).
+**Verified working F91 keys** (all 15 fields):
+- Per-extruder cooling: `fan_min_speed`, `fan_max_speed`, `overhang_fan_speed`, `additional_cooling_fan_speed`, `slow_down_layer_time`, `slow_down_min_speed`, `close_fan_the_first_x_layers`, `full_fan_speed_layer`.
+- Per-extruder flow: `filament_flow_ratio`, `filament_max_volumetric_speed`.
+- Per-extruder PA: `enable_pressure_advance`, `pressure_advance`.
+- Per-extruder cost/temps: `filament_cost`, `nozzle_temperature_initial_layer`, `hot_plate_temp_initial_layer`.
+- Wipe tower: `filament_minimal_purge_on_wipe_tower`.
+
+**Regression coverage 2026-05-25** (all on Pixel 8a):
+- 4/4 new F87+F91 instrumented tests
+- 32/32 `ProfileEmbedderIntegrationTest`
+- 41/41 `BambuPipelineIntegrationTest`
+- 52/52 `SlicingIntegrationTest`
+- Full JVM unit suite
 
 #### Remaining for ship
-- ✅ On-device F87/F91 instrumented tests written + passing (4 new tests in `ProfileEmbedderIntegrationTest`).
-- ✅ Full `ProfileEmbedderIntegrationTest` sweep passes on Pixel 8a (32 tests).
-- ✅ Bambu pipeline + STL slice smoke tests pass.
-- Manual UI verification: import a profile via Settings → Process Profiles, slice a model, confirm the profile's working keys (e.g. `top_surface_pattern`) reach the G-code header.
-- Manual UI verification: edit a library filament with `pressure_advance=0.05`, slice, confirm header shows it.
-- Native fix for the clamp gap (above) — separate ticket / follow-up branch, requires `.so` rebuild.
-- Version bump + GitHub release (after Kevin reviews the limitation + manual verifications).
+- ✅ Native rebuild + .so committed.
+- ✅ All instrumented + unit tests pass on Pixel 8a (post-rebuild).
+- Manual UI verification on device: import a process profile via Settings → Process Profiles, slice a model, confirm the profile's keys reach the G-code header.
+- Manual UI verification: edit a library filament with `pressure_advance=0.05` + `fan_min_speed=80`, slice, confirm header shows both.
+- Version bump + GitHub release (after manual verifications pass).
 
 ### F90: Foreground-service coverage for all long-running operations (GitHub #154) — DONE v2.7.1
 - Shipped v2.7.0. `SlicingService` renamed to `LongOpService` with stack-based stage labels: nested `start(stage)` pushes; `stop()` pops; the persistent notification always renders the top-of-stack. `update(progress, stage?)` replaces the top frame so the native slicer progress listener keeps its existing rename-on-tick behaviour. Wrap points: `loadModel(uri)`, `loadModelFromFile`, `selectPlate`, `addModelFromFile[ForPlate]`, `confirmAddPlate`, `startSlicing`. Each wrap is start/stop-paired via try/finally so cancellation/exception pop the stage. Manifest `foregroundServiceType="specialUse"` retained (sideloaded; no Play subtype review); subtype updated to "3D model preparation, loading and slicing". 9 unit tests in `LongOpServiceStackTest.kt`.

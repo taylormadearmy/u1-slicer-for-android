@@ -191,8 +191,16 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     else if (config.fill_pattern == "line") pattern = Slic3r::InfillPattern::ipLine;
     else if (config.fill_pattern == "rectilinear") pattern = Slic3r::InfillPattern::ipRectilinear;
 
-    dpc.set_key_value("sparse_infill_pattern", new Slic3r::ConfigOptionEnum<Slic3r::InfillPattern>(pattern));
-    dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(config.fill_density * 100.0));
+    // F87/F91 (2026-05-25): gate fallbacks on !has_embedded_profile so an imported
+    // OrcaSlicer process profile / user-tuned library filament can win. When the Kotlin
+    // ProfileEmbedder has authored the embed (is_snapmaker_profile=true) the embed's
+    // values came from the layered: printer profile + bundled process + library +
+    // SlicingOverrides, so trust it. Raw STL (no embed) still gets these SliceConfig-
+    // derived defaults.
+    if (!has_embedded_profile) {
+        dpc.set_key_value("sparse_infill_pattern", new Slic3r::ConfigOptionEnum<Slic3r::InfillPattern>(pattern));
+        dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(config.fill_density * 100.0));
+    }
 
     // Speed (OrcaSlicer keys).
     // outer_wall_speed is the primary speed control — set from the user's "print speed" setting.
@@ -382,25 +390,28 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // access produces corrupt wipe tower coordinates (2^116 / -inf X values).
     dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
 
+    // F91 (2026-05-25): gate per-filament cooling/flow fallbacks on !has_embedded_profile.
+    // For Kotlin-authored embeds, ProfileEmbedder layers the bundled `pla.json` U1-safe
+    // values UNLESS a library filament overrides them, so the embed always carries U1-safe
+    // floor + user-library-tuned ceiling. Raw STL still gets these defaults below.
+    //
     // Filament max volumetric speed — OrcaSlicer defaults to 2 mm³/s which throttles all
-    // print speeds to ~22 mm/s.  Set to 21 mm³/s (matching Snapmaker PLA profile) as fallback.
-    // Always written: U1 hardware default; the embed's value is for Bambu/Prusa hardware
-    // and may be lower (12 mm³/s for PETG) which would unnecessarily throttle U1 prints.
-    dpc.set_key_value("filament_max_volumetric_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 21.0)));
-    // Filament density for weight estimation (PLA = 1.24 g/cm³)
+    // print speeds to ~22 mm/s. Fallback 21 mm³/s matches Snapmaker PLA profile.
+    if (!has_embedded_profile) {
+        dpc.set_key_value("filament_max_volumetric_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 21.0)));
+    }
+    // Filament density for weight estimation (PLA = 1.24 g/cm³).
+    // Always written: not currently F91-user-controllable + needed for accurate cost/weight.
     dpc.set_key_value("filament_density", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.24)));
 
     // Fan / cooling — OrcaSlicer defaults fan_min_speed to 20%, but PLA needs 100%.
-    // These fallbacks match pla.json. Always written: U1 cooling profile differs from
-    // Bambu/Prusa profiles (Bambu uses 60-80% fan, U1 needs 100% for PLA).
-    // fan_min_speed and fan_max_speed are coFloats in OrcaSlicer (per-extruder arrays).
-    dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
-    dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
-    // overhang_fan_speed is coInts (per-extruder)
-    dpc.set_key_value("overhang_fan_speed", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 100)));
-    // Slow-down cooling — OrcaSlicer default is 5s, Snapmaker profile uses 4s
-    dpc.set_key_value("slow_down_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 4.0)));
-    dpc.set_key_value("slow_down_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 20.0)));
+    if (!has_embedded_profile) {
+        dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+        dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+        dpc.set_key_value("overhang_fan_speed", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 100)));
+        dpc.set_key_value("slow_down_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 4.0)));
+        dpc.set_key_value("slow_down_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 20.0)));
+    }
 
     // G-code dialect — NOT set as a fallback here because gcode_flavor=klipper suppresses
     // M104/M109 temp commands from the slicer body, relying on the start G-code template.
@@ -428,16 +439,24 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     dpc.set_key_value("sparse_infill_line_width",new Slic3r::ConfigOptionFloatOrPercent(nd * 1.125, false));
     dpc.set_key_value("initial_layer_line_width",new Slic3r::ConfigOptionFloatOrPercent(nd * 1.25,  false));
 
-    // Wall generator - Arachne (variable-width perimeters) is the OrcaSlicer default
-    // and works better for organic geometry. Set explicitly as fallback for STL files.
+    // Wall generator: keep clamped to Arachne for everyone.
+    // OrcaSlicer 2.2.4's classic perimeter generator crashes (SIGSEGV in
+    // PerimeterGenerator::process_classic / MultiPoint dtor) on the U1 process config
+    // — surfaced 2026-05-25 when F87 first un-gated this key. Pre-existing OrcaSlicer
+    // issue; until it's fixed upstream we must not let the user reach the classic path.
     dpc.set_key_value("wall_generator", new Slic3r::ConfigOptionEnum<Slic3r::PerimeterGeneratorType>(Slic3r::PerimeterGeneratorType::Arachne));
 
-    // Seam position - aligned is the default; set explicitly for STL files.
-    dpc.set_key_value("seam_position", new Slic3r::ConfigOptionEnum<Slic3r::SeamPosition>(Slic3r::spAligned));
+    // F87 (2026-05-25): gate seam_position + reduce_infill_retraction on
+    // !has_embedded_profile so an imported process profile or user SlicingOverride
+    // can win. `buildProfileOverrides` already writes the resolved values into the
+    // embed map for Snapmaker-authored embeds.
+    if (!has_embedded_profile) {
+        // Seam position - aligned is the default; set explicitly for STL files.
+        dpc.set_key_value("seam_position", new Slic3r::ConfigOptionEnum<Slic3r::SeamPosition>(Slic3r::spAligned));
 
-    // Reduce infill retraction - off by default for Snapmaker U1. When on, OrcaSlicer
-    // limits retraction between infill moves, which can cause failed prints.
-    dpc.set_key_value("reduce_infill_retraction", new Slic3r::ConfigOptionBool(false));
+        // Reduce infill retraction - off by default for Snapmaker U1.
+        dpc.set_key_value("reduce_infill_retraction", new Slic3r::ConfigOptionBool(false));
+    }
 
     // Support speeds — OrcaSlicer defaults to 80mm/s which is fine today, but pin to
     // Snapmaker profile values so future OrcaSlicer changes don't silently regress.
@@ -683,6 +702,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // Filament flow limits
                     "filament_max_volumetric_speed",
                     "filament_density",
+                    "filament_cost",
                     // Fan / cooling (from filament profile)
                     "fan_min_speed",
                     "fan_max_speed",

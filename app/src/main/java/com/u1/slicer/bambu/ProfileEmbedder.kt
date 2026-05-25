@@ -40,6 +40,22 @@ class ProfileEmbedder(private val context: Context) {
             "extruder_offset", "wipe_tower_x", "wipe_tower_y"
         )
 
+        // F91: keys overlaid from the bundled Snapmaker `pla.json` onto the Bambu preserve
+        // path (before user library settings) so the native side never sees Bambu's
+        // potentially-wrong-for-U1 cooling/flow values when no user library override exists.
+        // Library settings still win — they're applied AFTER this overlay.
+        private val U1_FILAMENT_SAFETY_OVERLAY = setOf(
+            "filament_max_volumetric_speed",
+            "fan_min_speed",
+            "fan_max_speed",
+            "overhang_fan_speed",
+            "slow_down_layer_time",
+            "slow_down_min_speed",
+            "close_fan_the_first_x_layers",
+            "full_fan_speed_layer",
+            "additional_cooling_fan_speed",
+        )
+
         // Files to strip from Bambu 3MF
         private val DROP_FILES = setOf(
             "Metadata/project_settings.config",
@@ -222,6 +238,17 @@ class ProfileEmbedder(private val context: Context) {
                 k to if (v is List<*>) v.toMutableList() else v
             }
             config.putAll(printerProfile!!.toMap())
+            // F91 (2026-05-25): the native applyConfigToPrusa fallbacks for cooling/flow
+            // keys now defer to the embed when is_snapmaker_profile=true. Bambu's values
+            // (e.g. PETG fan_min_speed=60) would under-cool U1 PLA prints. Overlay the
+            // bundled `pla.json` U1-safe values for cooling/flow so the embed always has
+            // a U1-safe floor. The user's library filament still wins via filamentSettings
+            // (layered after this).
+            for (key in U1_FILAMENT_SAFETY_OVERLAY) {
+                filamentProfile!![key]?.let { value ->
+                    config[key] = if (value is List<*>) (value as List<*>).toMutableList() else value
+                }
+            }
             if (info.hasLayerToolChanges) {
                 sourceConfig["machine_pause_gcode"]?.let { config["machine_pause_gcode"] = it }
             }

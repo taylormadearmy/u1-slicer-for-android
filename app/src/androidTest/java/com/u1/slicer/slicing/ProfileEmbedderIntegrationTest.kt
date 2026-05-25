@@ -854,25 +854,28 @@ class ProfileEmbedderIntegrationTest {
     // ─── F87 — Process profile end-to-end ────────────────────────────────────
 
     /**
-     * F87: parse die-single-colour.3mf, embed via standard path with a `processProfileKeys`
-     * map that overrides keys NOT clamped by applyConfigToPrusa. Slice and assert the G-code
-     * header reflects the imported profile's values.
+     * F87: parse die-single-colour.3mf, embed via standard path with `processProfileKeys`
+     * that override `layer_height`, `sparse_infill_density`, `seam_position`, `wall_generator`,
+     * `top_surface_pattern`, `ironing_type`. Slice and assert the G-code header reflects the
+     * imported profile's values.
      *
-     * NOTE: many process-profile keys (`sparse_infill_density`, `seam_position`, the speed
-     * family, `wall_generator`, etc.) are unconditionally overwritten by `applyConfigToPrusa`
-     * in `sapil_print.cpp` AFTER the `profile_keys[]` loop runs. That's a pre-existing
-     * architecture gap that also affects `SlicingOverrides.seamPosition` etc. — see the
-     * F87/F91 BACKLOG entry under "Known limitation".
+     * Post-2026-05-25 native rebuild: `applyConfigToPrusa` now gates these fallbacks on
+     * `!has_embedded_profile`, so the embed-routed process profile values win.
      */
     @Test
     fun f87_processProfileKeys_overrideBundledProcessProfile() {
         val input = asset("die-single-colour.3mf")
         val info = ThreeMfParser.parse(input)
         val stage1 = if (info.isBambu) BambuSanitizer.process(input, outDir) else input
+        // Note: wall_generator is intentionally NOT tested here — OrcaSlicer 2.2.4's classic
+        // perimeter generator crashes on the U1 config, so wall_generator stays clamped to
+        // Arachne in applyConfigToPrusa regardless of embed.
         val processProfileKeys = mapOf<String, Any>(
-            "layer_height" to "0.16",  // sentinel-gated, see applyConfigToPrusa
-            "top_surface_pattern" to "concentric",   // not in applyConfigToPrusa
-            "ironing_type" to "topmost",            // not in applyConfigToPrusa
+            "layer_height" to "0.16",
+            "sparse_infill_density" to "25%",
+            "seam_position" to "back",
+            "top_surface_pattern" to "concentric",
+            "ironing_type" to "topmost",
             "wall_loops" to "5",
         )
         val config = embedder.buildConfig(
@@ -894,10 +897,10 @@ class ProfileEmbedderIntegrationTest {
             .firstOrNull { it.startsWith("; $key =") }?.substringAfter("=")?.trim()
 
         assertEquals("layer_height should pick up process profile value", "0.16", headerValue("layer_height"))
-        assertEquals("top_surface_pattern unclamped → process profile wins", "concentric", headerValue("top_surface_pattern"))
-        assertEquals("ironing_type unclamped → process profile wins", "topmost", headerValue("ironing_type"))
-        // wall_loops is in applyConfigToPrusa but we set perimeters=5 in SliceConfig too, so the
-        // override matches.
+        assertEquals("sparse_infill_density (newly gated) → process profile wins", "25%", headerValue("sparse_infill_density"))
+        assertEquals("seam_position (newly gated) → process profile wins", "back", headerValue("seam_position"))
+        assertEquals("top_surface_pattern → process profile wins", "concentric", headerValue("top_surface_pattern"))
+        assertEquals("ironing_type → process profile wins", "topmost", headerValue("ironing_type"))
         assertEquals("5", headerValue("wall_loops"))
     }
 
@@ -928,20 +931,10 @@ class ProfileEmbedderIntegrationTest {
 
     /**
      * F91: load die-single-colour.3mf with `filamentSettings` that emit per-slot arrays for
-     * NEW per-filament tuning keys. Asserts G-code header carries the values.
-     *
-     * NOTE: `filament_max_volumetric_speed`, `fan_min_speed`, `fan_max_speed`,
-     * `overhang_fan_speed`, `slow_down_layer_time`, `slow_down_min_speed` are unconditionally
-     * clamped to U1 hardware defaults in `applyConfigToPrusa` (sapil_print.cpp:389-403). The
-     * library values for those keys reach the embed but get overwritten by C++. See BACKLOG
-     * F87+F91 "Known limitation".
-     *
-     * Verified working keys (not clamped + on profile_keys[]): filament_flow_ratio,
-     * pressure_advance, enable_pressure_advance, filament_minimal_purge_on_wipe_tower.
-     *
-     * `filament_cost` is NOT on `profile_keys[]` in `sapil_print.cpp` so native ignores it
-     * entirely (G-code header shows the OrcaSlicer default of 0). The library stores the
-     * value but it doesn't reach the slicer — also tracked under BACKLOG Known limitation.
+     * the full set of OrcaSlicer per-filament tuning keys, including the ones the
+     * 2026-05-25 native rebuild un-clamped (filament_max_volumetric_speed, fan_min_speed,
+     * fan_max_speed, overhang_fan_speed, slow_down_layer_time, slow_down_min_speed) plus
+     * filament_cost (newly added to profile_keys[]).
      */
     @Test
     fun f91_filamentSettings_emitInGcodeHeader() {
@@ -950,6 +943,13 @@ class ProfileEmbedderIntegrationTest {
         val stage1 = if (info.isBambu) BambuSanitizer.process(input, outDir) else input
         val filamentSettings = mapOf<String, Any>(
             "filament_flow_ratio" to listOf("0.97"),
+            "filament_max_volumetric_speed" to listOf("12.5"),
+            "filament_cost" to listOf("32.5"),
+            "fan_min_speed" to listOf("60"),
+            "fan_max_speed" to listOf("85"),
+            "overhang_fan_speed" to listOf("75"),
+            "slow_down_layer_time" to listOf("6"),
+            "slow_down_min_speed" to listOf("18"),
             "pressure_advance" to listOf("0.055"),
             "enable_pressure_advance" to listOf("1"),
             "filament_minimal_purge_on_wipe_tower" to listOf("18"),
@@ -969,17 +969,21 @@ class ProfileEmbedderIntegrationTest {
             .firstOrNull { it.startsWith("; $key =") }
             ?.substringAfter("=")?.trim()
 
-        val flow = headerValue("filament_flow_ratio")
-        assertNotNull("filament_flow_ratio header missing", flow)
-        assertTrue("filament_flow_ratio expected to contain 0.97, got: $flow", flow!!.contains("0.97"))
-
-        val pa = headerValue("pressure_advance")
-        assertNotNull("pressure_advance header missing", pa)
-        assertTrue("pressure_advance expected to contain 0.055, got: $pa", pa!!.contains("0.055"))
-
-        val purge = headerValue("filament_minimal_purge_on_wipe_tower")
-        assertNotNull("filament_minimal_purge_on_wipe_tower header missing", purge)
-        assertTrue("filament_minimal_purge expected to contain 18, got: $purge", purge!!.contains("18"))
+        fun assertContains(key: String, expected: String) {
+            val v = headerValue(key)
+            assertNotNull("$key header missing", v)
+            assertTrue("$key expected to contain $expected, got: $v", v!!.contains(expected))
+        }
+        assertContains("filament_flow_ratio", "0.97")
+        assertContains("filament_max_volumetric_speed", "12.5")
+        assertContains("filament_cost", "32.5")
+        assertContains("fan_min_speed", "60")
+        assertContains("fan_max_speed", "85")
+        assertContains("overhang_fan_speed", "75")
+        assertContains("slow_down_layer_time", "6")
+        assertContains("slow_down_min_speed", "18")
+        assertContains("pressure_advance", "0.055")
+        assertContains("filament_minimal_purge_on_wipe_tower", "18")
     }
 
     /**
