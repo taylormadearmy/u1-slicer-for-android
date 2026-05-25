@@ -166,6 +166,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val container = (application as U1SlicerApplication).container
     private val settingsRepo = container.settingsRepository
     private val printersRepo = container.printersRepository
+    private val processProfilesRepo = container.processProfilesRepository
     private val filamentDao = container.filamentDao
     private val sliceJobDao = container.sliceJobDao
     private val profileEmbedder by lazy { ProfileEmbedder(getApplication()) }
@@ -608,6 +609,52 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val extruderPresets: StateFlow<List<ExtruderPreset>> = printersRepo.activePrinter
         .map { it?.extruderPresets ?: com.u1.slicer.data.defaultExtruderPresets() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, com.u1.slicer.data.defaultExtruderPresets())
+
+    // F87: imported process profiles + currently active selection. The repository owns the
+    // list; the ViewModel observes for slice-time consumption + UI state.
+    val processProfilesConfig: StateFlow<com.u1.slicer.data.ProcessProfilesConfig> =
+        processProfilesRepo.config
+            .stateIn(viewModelScope, SharingStarted.Eagerly, com.u1.slicer.data.ProcessProfilesConfig())
+    val activeProcessProfile: StateFlow<com.u1.slicer.data.ProcessProfile?> =
+        processProfilesRepo.activeProfile
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** F87: import a process profile from a JSON file picked by the user. */
+    fun importProcessProfilesFromJson(json: String, fallbackName: String, onResult: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val parsed = try {
+                com.u1.slicer.data.ProcessProfileParser.parse(json, fallbackName)
+            } catch (e: Exception) {
+                _toastEvents.tryEmit("Import failed: ${e.message ?: "Could not parse JSON"}")
+                onResult(0)
+                return@launch
+            }
+            if (parsed.isEmpty()) {
+                _toastEvents.tryEmit("No process profiles found in file")
+                onResult(0)
+                return@launch
+            }
+            parsed.forEach { processProfilesRepo.add(it) }
+            _toastEvents.tryEmit("Imported ${parsed.size} process profile${if (parsed.size == 1) "" else "s"}")
+            onResult(parsed.size)
+        }
+    }
+
+    fun renameProcessProfile(id: String, name: String) {
+        viewModelScope.launch { processProfilesRepo.rename(id, name) }
+    }
+
+    fun deleteProcessProfile(id: String) {
+        viewModelScope.launch { processProfilesRepo.delete(id) }
+    }
+
+    fun setActiveProcessProfile(id: String?) {
+        viewModelScope.launch {
+            processProfilesRepo.setActive(id)
+            // Mark slice stale so the user re-slices with the new profile.
+            _sliceStale.value = true
+        }
+    }
 
     /**
      * Phase 2 §4 Step 7 (visual side) — per-file-filament resolved colours
@@ -2951,11 +2998,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "detectedExtruders" to info.detectedExtruderCount
             )
         )
+        // F87: spill the active imported process profile's keys into the embed config
+        // between the bundled Snapmaker process profile (or the preserved Bambu source
+        // config) and the user's SlicingOverrides. ProfileEmbedder.buildConfig owns the
+        // precedence order.
+        val activeProcessKeys: Map<String, Any> = activeProcessProfile.value?.keys ?: emptyMap()
         val embeddedConfig = profileEmbedder.buildConfig(
             info = info,
             sourceConfig = sourceConfig,
             overrides = buildProfileOverrides(cfg, targetCount, usedSlots, hasSourceConfig = sourceConfig != null),
-            targetExtruderCount = targetCount
+            targetExtruderCount = targetCount,
+            processProfileKeys = activeProcessKeys,
         )
         return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
     }
@@ -4627,11 +4680,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     activeId = printersConfig.activeId,
                 )
             } else printersConfig
+            val processProfilesConfig = container.processProfilesRepository.config.first()
             val json = SettingsBackup.export(
                 cfg, overrides, resolvedPresetsConfig?.active?.moonrakerUrl ?: "", presets, profiles,
                 filamentNameResolver = { id -> profileMap[id]?.name },
                 makerWorldCookies = cookies,
                 printersConfig = resolvedPresetsConfig,
+                processProfilesConfig = processProfilesConfig.takeIf { it.profiles.isNotEmpty() },
             )
             onResult(json)
         }
@@ -4696,6 +4751,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     settingsRepo.saveExtruderPresets(resolvedActivePrinter.extruderPresets)
                 } else {
                     hasPrinterUrl = false
+                }
+                // F87: restore process profiles + active selection.
+                data.processProfilesConfig?.let { ppCfg ->
+                    container.processProfilesRepository.replace(ppCfg)
                 }
                 Log.i("SlicerVM", "Settings backup imported successfully")
                 onImported(hasPrinterUrl)

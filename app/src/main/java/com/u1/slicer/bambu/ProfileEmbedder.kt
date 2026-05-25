@@ -190,7 +190,12 @@ class ProfileEmbedder(private val context: Context) {
         sourceConfig: Map<String, Any>? = null,
         filamentSettings: Map<String, Any> = emptyMap(),
         overrides: Map<String, Any> = emptyMap(),
-        targetExtruderCount: Int = 1
+        targetExtruderCount: Int = 1,
+        // F87: optional user-imported process profile keys. Layered AFTER the bundled
+        // standard_0.20mm.json (standard path) or AFTER the preserved source config
+        // (preserve path), but BEFORE filamentSettings and overrides, so user-set
+        // SlicingOverrides still win.
+        processProfileKeys: Map<String, Any> = emptyMap(),
     ): MutableMap<String, Any> {
         loadProfiles()
 
@@ -228,6 +233,13 @@ class ProfileEmbedder(private val context: Context) {
             config.putAll(processProfile!!)
             config.putAll(filamentProfile!!)
             Log.i(TAG, "Using standard profile stack")
+        }
+
+        // F87: layer on user-imported process profile keys. Sits above the bundled
+        // standard_0.20mm.json defaults / Bambu source config and below user filament
+        // settings + slicing overrides.
+        for ((key, value) in processProfileKeys) {
+            config[key] = value
         }
 
         // Layer on user filament settings

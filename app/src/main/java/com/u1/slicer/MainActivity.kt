@@ -704,6 +704,7 @@ class MainActivity : ComponentActivity() {
                             printerViewModel = printerViewModel,
                             onShareDiagnostics = { viewModel.shareDiagnostics() },
                             onNavigateFilaments = { navController.navigate(Routes.FILAMENTS) },
+                            onNavigateProcessProfiles = { navController.navigate(Routes.PROCESS_PROFILES) },
                             onNavigatePrepare = { navigateTab(Routes.PREPARE) },
                             onNavigatePreview = { navigateTab(Routes.PREVIEW) },
                             onNavigatePrinter = { navigateTab(Routes.PRINTER) },

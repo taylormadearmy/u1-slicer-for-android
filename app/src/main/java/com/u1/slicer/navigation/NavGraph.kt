@@ -17,6 +17,7 @@ import com.u1.slicer.ui.FilamentScreen
 import com.u1.slicer.ui.GcodeViewer3DScreen
 import com.u1.slicer.ui.MakerWorldBrowserScreen
 import com.u1.slicer.ui.ModelViewerScreen
+import com.u1.slicer.ui.ProcessProfilesScreen
 
 object Routes {
     const val PREPARE = "prepare"
@@ -24,6 +25,7 @@ object Routes {
     const val SETTINGS = "settings"
     const val PRINTER = "printer"
     const val FILAMENTS = "filaments"
+    const val PROCESS_PROFILES = "process_profiles"
     const val JOBS = "jobs"
     const val GCODE_VIEWER_3D = "gcode_viewer_3d"
     const val MODEL_VIEWER = "model_viewer"
@@ -75,6 +77,18 @@ fun U1NavGraph(
         }
         composable(Routes.JOBS) {
             jobsContent()
+        }
+        composable(Routes.PROCESS_PROFILES) {
+            val cfg by viewModel.processProfilesConfig.collectAsState()
+            ProcessProfilesScreen(
+                profiles = cfg.profiles,
+                activeId = cfg.activeId,
+                onImport = { json, fallbackName -> viewModel.importProcessProfilesFromJson(json, fallbackName) },
+                onSetActive = { viewModel.setActiveProcessProfile(it) },
+                onRename = { id, name -> viewModel.renameProcessProfile(id, name) },
+                onDelete = { viewModel.deleteProcessProfile(it) },
+                onBack = { navController.popBackStack() }
+            )
         }
         composable(Routes.GCODE_VIEWER_3D) {
             val parsedGcode by viewModel.parsedGcode.collectAsState()

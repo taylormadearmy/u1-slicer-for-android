@@ -15,7 +15,7 @@ class SettingsBackupTest {
             SliceConfig(), SlicingOverrides(), "", emptyList(), emptyList()
         )
         val obj = JSONObject(json)
-        assertEquals(2, obj.getInt("version"))
+        assertEquals(3, obj.getInt("version"))
         assertTrue(obj.has("sliceConfig"))
         assertTrue(obj.has("slicingOverrides"))
         // v2 always mirrors active printer URL into legacy field for rollback compat
@@ -308,7 +308,7 @@ class SettingsBackupTest {
             makerWorldCookies = null,
         ))
         val obj = org.json.JSONObject(json)
-        assertEquals(2, obj.getInt("version"))
+        assertEquals(3, obj.getInt("version"))
         // Legacy duplicate fields populated from the active printer:
         assertEquals("http://2", obj.getString("printerUrl"))
         // Extra: full printers array also present
@@ -346,5 +346,68 @@ class SettingsBackupTest {
         } catch (e: IllegalArgumentException) {
             assertTrue(e.message!!.contains("version"))
         }
+    }
+
+    // F87 — process profile round-trip
+    @Test
+    fun `v3 round-trip preserves process profiles + active id`() {
+        val profile = ProcessProfile(
+            id = "p1",
+            name = "Fine 0.16",
+            sourceName = "0.16mm Fine @Snapmaker U1",
+            keys = mapOf(
+                "layer_height" to "0.16",
+                "wall_loops" to "3",
+                "sparse_infill_pattern" to "gyroid"
+            )
+        )
+        val ppCfg = ProcessProfilesConfig(profiles = listOf(profile), activeId = "p1")
+        val json = SettingsBackup.export(
+            sliceConfig = SliceConfig(),
+            slicingOverrides = SlicingOverrides(),
+            printerUrl = "",
+            extruderPresets = emptyList(),
+            filamentProfiles = emptyList(),
+            processProfilesConfig = ppCfg
+        )
+        val obj = JSONObject(json)
+        assertTrue("v3 export contains processProfiles array", obj.has("processProfiles"))
+        assertEquals("p1", obj.optString("activeProcessProfileId"))
+
+        val data = SettingsBackup.import(json)
+        assertNotNull(data.processProfilesConfig)
+        assertEquals(1, data.processProfilesConfig!!.profiles.size)
+        val restored = data.processProfilesConfig!!.profiles[0]
+        assertEquals("p1", restored.id)
+        assertEquals("Fine 0.16", restored.name)
+        assertEquals("0.16mm Fine @Snapmaker U1", restored.sourceName)
+        assertEquals("0.16", restored.keys["layer_height"])
+        assertEquals("3", restored.keys["wall_loops"])
+        assertEquals("p1", data.processProfilesConfig!!.activeId)
+    }
+
+    @Test
+    fun `v2 backup without process profiles imports cleanly`() {
+        // v2 backup synthesised with only printers field — no processProfiles.
+        val json = """
+            {
+              "version": 2,
+              "sliceConfig": {},
+              "slicingOverrides": {},
+              "printers": [{"id":"p","nickname":"P","moonrakerUrl":"http://x","extruderPresets":[]}],
+              "activePrinterId": "p"
+            }
+        """.trimIndent()
+        val data = SettingsBackup.import(json)
+        assertNull("v2 backup has no processProfilesConfig", data.processProfilesConfig)
+    }
+
+    @Test
+    fun `export omits processProfiles when none provided`() {
+        val json = SettingsBackup.export(
+            SliceConfig(), SlicingOverrides(), "", emptyList(), emptyList()
+        )
+        val obj = JSONObject(json)
+        assertFalse("no processProfiles key when no profiles supplied", obj.has("processProfiles"))
     }
 }

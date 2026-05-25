@@ -10,16 +10,19 @@ import org.json.JSONObject
  *  v1 — single-printer: top-level `printerUrl` + `extruderPresets` array
  *  v2 — multi-printer:  `printers` array + `activePrinterId`; also writes legacy
  *        top-level fields from the active printer so a v1 reader can still load the file.
+ *  v3 — F87: adds `processProfiles` array + `activeProcessProfileId`. v3 readers also
+ *        accept v1/v2 backups (the new keys are simply absent).
  */
 object SettingsBackup {
 
-    private const val VERSION = 2
+    private const val VERSION = 3
 
     data class BackupData(
         val sliceConfig: SliceConfig?,
         val slicingOverrides: SlicingOverrides?,
         val printersConfig: PrintersConfig?,
         val filamentProfiles: List<FilamentProfile>?,
+        val processProfilesConfig: ProcessProfilesConfig? = null,
         val makerWorldCookies: String? = null,
     )
 
@@ -65,11 +68,22 @@ object SettingsBackup {
             else -> null
         }
 
+        val processProfilesConfig: ProcessProfilesConfig? = root.optJSONArray("processProfiles")?.let { arr ->
+            val profiles = (0 until arr.length()).mapNotNull { i ->
+                arr.optJSONObject(i)?.let { ProcessProfilesConfig.profileFromJson(it) }
+            }
+            val activeId = if (root.has("activeProcessProfileId"))
+                root.optString("activeProcessProfileId").takeIf { it.isNotBlank() }
+            else null
+            ProcessProfilesConfig(profiles = profiles, activeId = activeId)
+        }
+
         return BackupData(
             sliceConfig = root.optJSONObject("sliceConfig")?.let { parseSliceConfig(it) },
             slicingOverrides = root.optJSONObject("slicingOverrides")?.let { SlicingOverrides.fromJson(it.toString()) },
             printersConfig = printersConfig,
             filamentProfiles = root.optJSONArray("filamentProfiles")?.let { parseFilamentProfilesArray(it) },
+            processProfilesConfig = processProfilesConfig,
             makerWorldCookies = if (root.has("makerWorldCookies")) root.getString("makerWorldCookies") else null,
         )
     }
@@ -91,6 +105,16 @@ object SettingsBackup {
             root.put("filamentProfiles", exportFilamentProfiles(profiles))
         }
         data.makerWorldCookies?.let { if (it.isNotEmpty()) root.put("makerWorldCookies", it) }
+
+        // F87: process profiles. Absent when not in use, so v3 backups are still backwards-compatible.
+        data.processProfilesConfig?.let { ppCfg ->
+            if (ppCfg.profiles.isNotEmpty()) {
+                val arr = JSONArray()
+                ppCfg.profiles.forEach { arr.put(ProcessProfilesConfig.profileToJson(it)) }
+                root.put("processProfiles", arr)
+                ppCfg.activeId?.let { root.put("activeProcessProfileId", it) }
+            }
+        }
 
         data.printersConfig?.let { cfg ->
             // v2 schema: full list
@@ -120,6 +144,7 @@ object SettingsBackup {
         filamentNameResolver: (Long) -> String? = { null },
         makerWorldCookies: String = "",
         printersConfig: PrintersConfig? = null,
+        processProfilesConfig: ProcessProfilesConfig? = null,
     ): String {
         // If a full PrintersConfig is provided (v2 path), use it.
         // Otherwise synthesise a single-printer config from the legacy flat fields.
@@ -147,6 +172,7 @@ object SettingsBackup {
                 // because that field doesn't exist; the resolver is used in exportExtruderPresets.
                 p
             },
+            processProfilesConfig = processProfilesConfig,
             makerWorldCookies = makerWorldCookies.takeIf { it.isNotEmpty() },
         )
 
