@@ -55,7 +55,7 @@ fun FilamentScreen(
         try {
             val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
                 ?: throw Exception("Could not read file")
-            val profiles = parseFilamentJson(json)
+            val profiles = parseFilamentJson(json, context)
             if (profiles.isEmpty()) throw Exception("No valid filament profiles found in file")
             onImport(profiles)
         } catch (e: Exception) {
@@ -488,7 +488,7 @@ private fun OptionalDecimalField(label: String, value: String, modifier: Modifie
  *
  * Simple keys accept camelCase or snake_case. Bambu/Orca keys use arrays — first non-nil value is used.
  */
-internal fun parseFilamentJson(json: String): List<FilamentProfile> {
+internal fun parseFilamentJson(json: String, context: Context? = null): List<FilamentProfile> {
     val trimmed = json.trim()
 
     // Try array first
@@ -497,7 +497,7 @@ internal fun parseFilamentJson(json: String): List<FilamentProfile> {
         val results = mutableListOf<FilamentProfile>()
         for (i in 0 until arr.length()) {
             val obj = try { arr.getJSONObject(i) } catch (_: Exception) { null } ?: continue
-            parseOneFilamentObject(obj)?.let { results += it }
+            parseOneFilamentObject(resolveInheritsIfPossible(obj, context))?.let { results += it }
         }
         return results
     }
@@ -516,13 +516,24 @@ internal fun parseFilamentJson(json: String): List<FilamentProfile> {
         val results = mutableListOf<FilamentProfile>()
         for (i in 0 until inner.length()) {
             val item = try { inner.getJSONObject(i) } catch (_: Exception) { null } ?: continue
-            parseOneFilamentObject(item)?.let { results += it }
+            parseOneFilamentObject(resolveInheritsIfPossible(item, context))?.let { results += it }
         }
         return results
     }
 
     // Single Bambu/Orca/simple profile object
-    return listOfNotNull(parseOneFilamentObject(obj))
+    return listOfNotNull(parseOneFilamentObject(resolveInheritsIfPossible(obj, context)))
+}
+
+/**
+ * F91 follow-up: when [obj] is a Bambu-style profile with an `inherits` key, walk the
+ * bundled Bambu profile chain to produce a flattened JSONObject. When [context] is null
+ * (unit-test path) or no `inherits` key exists, returns [obj] unchanged.
+ */
+private fun resolveInheritsIfPossible(obj: JSONObject, context: Context?): JSONObject {
+    if (context == null) return obj
+    if (!obj.has("inherits")) return obj
+    return com.u1.slicer.data.BambuProfileResolver.flatten(context, obj) ?: obj
 }
 
 /** Returns null if the object doesn't have enough data to form a profile. */
@@ -548,10 +559,12 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
             ?.toIntOrNull() ?: materialNozzleDefault(material))
             .coerceIn(100, 400)
 
-        bedTemp = (extractBambuValue(obj, "bed_temperature")
-            ?: extractBambuValue(obj, "cool_plate_temp")
-            ?.toIntOrNull()?.let { null }  // cool_plate_temp is not bed temp
-            .let { extractBambuValue(obj, "bed_temperature") })
+        // Bambu profiles store the actual print-bed target under per-plate-type keys.
+        // U1 uses the textured/engineering plate equivalent (hot_plate). Prefer that;
+        // fall back to legacy `bed_temperature`, then material default.
+        bedTemp = (extractBambuValue(obj, "hot_plate_temp")
+            ?: extractBambuValue(obj, "textured_plate_temp")
+            ?: extractBambuValue(obj, "bed_temperature"))
             ?.toIntOrNull() ?: materialBedDefault(material)
 
         retractLength = (extractBambuValue(obj, "filament_retraction_length")
@@ -574,6 +587,7 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
             .let { if (it == Int.MIN_VALUE) null else it }
     val bedTempInitial = if (isBambu)
         (extractBambuValue(obj, "hot_plate_temp_initial_layer")
+            ?: extractBambuValue(obj, "textured_plate_temp_initial_layer")
             ?: extractBambuValue(obj, "bed_temperature_initial_layer"))?.toIntOrNull()
         else obj.optInt("bedTempInitialLayer", Int.MIN_VALUE).let { if (it == Int.MIN_VALUE) null else it }
     val flowRatio = if (isBambu) extractBambuValue(obj, "filament_flow_ratio")?.toFloatOrNull()
@@ -605,6 +619,17 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
     val filamentMinimalPurgeOnWipeTower = if (isBambu) extractBambuValue(obj, "filament_minimal_purge_on_wipe_tower")?.toFloatOrNull()
         else obj.optDouble("filamentMinimalPurgeOnWipeTower", Double.NaN).let { if (it.isNaN()) null else it.toFloat() }
 
+    // Density: Bambu profiles store as `filament_density`; simple format uses `density`.
+    // Falls back to material-specific default (matches the FilamentProfile data class default).
+    val density: Float = if (isBambu)
+        extractBambuValue(obj, "filament_density")?.toFloatOrNull() ?: materialDensityDefault(material)
+        else obj.optDouble("density", Double.NaN).let { if (it.isNaN()) materialDensityDefault(material) else it.toFloat() }
+
+    // Colour: Bambu profiles sometimes carry `default_filament_colour`; simple format uses `color`.
+    val color: String = if (isBambu)
+        extractBambuValue(obj, "default_filament_colour") ?: extractBambuValue(obj, "filament_colour") ?: "#808080"
+        else obj.optString("color", "#808080").ifBlank { "#808080" }
+
     return FilamentProfile(
         name = name,
         material = material,
@@ -612,6 +637,8 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
         bedTemp = bedTemp,
         retractLength = retractLength,
         retractSpeed = retractSpeed,
+        color = color,
+        density = density,
         nozzleTempInitialLayer = nozzleTempInitial,
         bedTempInitialLayer = bedTempInitial,
         flowRatio = flowRatio,
@@ -673,4 +700,9 @@ private fun materialNozzleDefault(material: String) = when (material) {
 
 private fun materialBedDefault(material: String) = when (material) {
     "PETG" -> 70; "ABS" -> 90; "ASA" -> 90; "PA" -> 100; "TPU" -> 60; "PVA" -> 65; else -> 55
+}
+
+private fun materialDensityDefault(material: String): Float = when (material) {
+    "PETG" -> 1.27f; "ABS" -> 1.04f; "ASA" -> 1.07f; "PA" -> 1.14f
+    "TPU" -> 1.21f; "PVA" -> 1.23f; "PC" -> 1.20f; else -> 1.24f  // PLA
 }
