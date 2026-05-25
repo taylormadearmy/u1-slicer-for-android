@@ -851,6 +851,166 @@ class ProfileEmbedderIntegrationTest {
      * custom_gcode_per_layer.xml entry under test. Shape matters, not content
      * validity — embed() only reads individual entries when the name matches.
      */
+    // ─── F87 — Process profile end-to-end ────────────────────────────────────
+
+    /**
+     * F87: parse die-single-colour.3mf, embed via standard path with a `processProfileKeys`
+     * map that overrides keys NOT clamped by applyConfigToPrusa. Slice and assert the G-code
+     * header reflects the imported profile's values.
+     *
+     * NOTE: many process-profile keys (`sparse_infill_density`, `seam_position`, the speed
+     * family, `wall_generator`, etc.) are unconditionally overwritten by `applyConfigToPrusa`
+     * in `sapil_print.cpp` AFTER the `profile_keys[]` loop runs. That's a pre-existing
+     * architecture gap that also affects `SlicingOverrides.seamPosition` etc. — see the
+     * F87/F91 BACKLOG entry under "Known limitation".
+     */
+    @Test
+    fun f87_processProfileKeys_overrideBundledProcessProfile() {
+        val input = asset("die-single-colour.3mf")
+        val info = ThreeMfParser.parse(input)
+        val stage1 = if (info.isBambu) BambuSanitizer.process(input, outDir) else input
+        val processProfileKeys = mapOf<String, Any>(
+            "layer_height" to "0.16",  // sentinel-gated, see applyConfigToPrusa
+            "top_surface_pattern" to "concentric",   // not in applyConfigToPrusa
+            "ironing_type" to "topmost",            // not in applyConfigToPrusa
+            "wall_loops" to "5",
+        )
+        val config = embedder.buildConfig(
+            info = info,
+            processProfileKeys = processProfileKeys,
+            targetExtruderCount = 1,
+        )
+        val embedded = embedder.embed(stage1, config, outDir, info)
+        assertTrue(embedded.exists())
+
+        assertTrue("native load", lib.loadModel(embedded.absolutePath))
+        val sliceConfig = defaultSliceConfig.copy(layerHeight = 0.0f, perimeters = 5)
+        val result = lib.slice(sliceConfig)
+        assertNotNull("slice produced a result", result)
+        assertTrue("slice succeeded: ${result!!.errorMessage}", result.success)
+
+        val gcode = File(result.gcodePath).readText()
+        fun headerValue(key: String): String? = gcode.lineSequence()
+            .firstOrNull { it.startsWith("; $key =") }?.substringAfter("=")?.trim()
+
+        assertEquals("layer_height should pick up process profile value", "0.16", headerValue("layer_height"))
+        assertEquals("top_surface_pattern unclamped → process profile wins", "concentric", headerValue("top_surface_pattern"))
+        assertEquals("ironing_type unclamped → process profile wins", "topmost", headerValue("ironing_type"))
+        // wall_loops is in applyConfigToPrusa but we set perimeters=5 in SliceConfig too, so the
+        // override matches.
+        assertEquals("5", headerValue("wall_loops"))
+    }
+
+    /**
+     * F87: an empty processProfileKeys map must NOT change behaviour — bundled
+     * `standard_0.20mm.json` values should still drive the slice.
+     */
+    @Test
+    fun f87_emptyProcessProfileKeys_keepsBundledDefaults() {
+        val input = asset("die-single-colour.3mf")
+        val info = ThreeMfParser.parse(input)
+        val stage1 = if (info.isBambu) BambuSanitizer.process(input, outDir) else input
+        val config = embedder.buildConfig(
+            info = info,
+            processProfileKeys = emptyMap(),
+            targetExtruderCount = 1,
+        )
+        val embedded = embedder.embed(stage1, config, outDir, info)
+        assertTrue(lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(defaultSliceConfig.copy(layerHeight = 0.0f))
+        assertTrue("slice succeeds with empty processProfileKeys", result?.success == true)
+        // Bundled standard_0.20mm.json says layer_height=0.2.
+        val gcode = File(result!!.gcodePath).readText()
+        assertTrue("bundled layer_height=0.2 survives", gcode.contains("; layer_height = 0.2"))
+    }
+
+    // ─── F91 — Filament library settings end-to-end ──────────────────────────
+
+    /**
+     * F91: load die-single-colour.3mf with `filamentSettings` that emit per-slot arrays for
+     * NEW per-filament tuning keys. Asserts G-code header carries the values.
+     *
+     * NOTE: `filament_max_volumetric_speed`, `fan_min_speed`, `fan_max_speed`,
+     * `overhang_fan_speed`, `slow_down_layer_time`, `slow_down_min_speed` are unconditionally
+     * clamped to U1 hardware defaults in `applyConfigToPrusa` (sapil_print.cpp:389-403). The
+     * library values for those keys reach the embed but get overwritten by C++. See BACKLOG
+     * F87+F91 "Known limitation".
+     *
+     * Verified working keys (not clamped + on profile_keys[]): filament_flow_ratio,
+     * pressure_advance, enable_pressure_advance, filament_minimal_purge_on_wipe_tower.
+     *
+     * `filament_cost` is NOT on `profile_keys[]` in `sapil_print.cpp` so native ignores it
+     * entirely (G-code header shows the OrcaSlicer default of 0). The library stores the
+     * value but it doesn't reach the slicer — also tracked under BACKLOG Known limitation.
+     */
+    @Test
+    fun f91_filamentSettings_emitInGcodeHeader() {
+        val input = asset("die-single-colour.3mf")
+        val info = ThreeMfParser.parse(input)
+        val stage1 = if (info.isBambu) BambuSanitizer.process(input, outDir) else input
+        val filamentSettings = mapOf<String, Any>(
+            "filament_flow_ratio" to listOf("0.97"),
+            "pressure_advance" to listOf("0.055"),
+            "enable_pressure_advance" to listOf("1"),
+            "filament_minimal_purge_on_wipe_tower" to listOf("18"),
+        )
+        val config = embedder.buildConfig(
+            info = info,
+            filamentSettings = filamentSettings,
+            targetExtruderCount = 1,
+        )
+        val embedded = embedder.embed(stage1, config, outDir, info)
+        assertTrue(lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(defaultSliceConfig.copy(layerHeight = 0.0f))
+        assertTrue("slice succeeded: ${result?.errorMessage}", result?.success == true)
+
+        val gcode = File(result!!.gcodePath).readText()
+        fun headerValue(key: String): String? = gcode.lineSequence()
+            .firstOrNull { it.startsWith("; $key =") }
+            ?.substringAfter("=")?.trim()
+
+        val flow = headerValue("filament_flow_ratio")
+        assertNotNull("filament_flow_ratio header missing", flow)
+        assertTrue("filament_flow_ratio expected to contain 0.97, got: $flow", flow!!.contains("0.97"))
+
+        val pa = headerValue("pressure_advance")
+        assertNotNull("pressure_advance header missing", pa)
+        assertTrue("pressure_advance expected to contain 0.055, got: $pa", pa!!.contains("0.055"))
+
+        val purge = headerValue("filament_minimal_purge_on_wipe_tower")
+        assertNotNull("filament_minimal_purge_on_wipe_tower header missing", purge)
+        assertTrue("filament_minimal_purge expected to contain 18, got: $purge", purge!!.contains("18"))
+    }
+
+    /**
+     * F91: omitted filamentSettings keys should leave the bundled `pla.json` values intact.
+     * The bundled profile sets filament_flow_ratio=1, filament_max_volumetric_speed=21.
+     */
+    @Test
+    fun f91_omittedFilamentSettings_keepsBundledDefaults() {
+        val input = asset("die-single-colour.3mf")
+        val info = ThreeMfParser.parse(input)
+        val stage1 = if (info.isBambu) BambuSanitizer.process(input, outDir) else input
+        val config = embedder.buildConfig(
+            info = info,
+            filamentSettings = emptyMap(),
+            targetExtruderCount = 1,
+        )
+        val embedded = embedder.embed(stage1, config, outDir, info)
+        assertTrue(lib.loadModel(embedded.absolutePath))
+        val result = lib.slice(defaultSliceConfig.copy(layerHeight = 0.0f))
+        assertTrue("slice succeeds with empty filamentSettings", result?.success == true)
+        val gcode = File(result!!.gcodePath).readText()
+        assertTrue(
+            "bundled filament_flow_ratio=1 survives",
+            gcode.contains("; filament_flow_ratio = 1")
+        )
+        assertTrue(
+            "bundled filament_max_volumetric_speed=21 survives",
+            gcode.contains("; filament_max_volumetric_speed = 21")
+        )
+    }
+
     private fun buildSource3mfWithCustomGcodeXml(customGcodeXml: String): File {
         val file = File(cacheDir, "sub_plan_2b_src_${System.nanoTime()}.3mf")
         ZipOutputStream(FileOutputStream(file)).use { zip ->

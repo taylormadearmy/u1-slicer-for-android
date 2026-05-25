@@ -589,11 +589,25 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Out of scope**: per-print process-profile settings (F87 above); printer-level settings (A2); per-feature speeds (already in `SlicingOverrides`).
 - **Source**: Kevin, 2026-05-24.
 
+#### Known limitation — applyConfigToPrusa clamps many embed-routed keys
+Discovered while writing on-device verification tests for F87+F91 (2026-05-25). The Kotlin embed pipeline correctly threads imported process-profile keys + library filament fields into `Metadata/project_settings.config`, and the native `profile_keys[]` loop reads them into the slicer config. **But `applyConfigToPrusa` in `sapil_print.cpp` runs AFTER that loop and unconditionally overwrites several keys** with U1 hardware defaults — including `sparse_infill_density`, `filament_max_volumetric_speed`, `fan_min_speed`, `fan_max_speed`, `overhang_fan_speed`, `slow_down_layer_time`, `slow_down_min_speed`, `seam_position`, `wall_generator`, and the per-feature speed family.
+
+This is a pre-existing architecture gap that also affects `SlicingOverrides.seamPosition`, `wallGenerator`, etc. — those override modes have been silently no-op for unclamped keys since they were added.
+
+Verified working F87 keys (NOT clamped, hit G-code header): `layer_height` (sentinel-gated), `wall_loops`, `top_shell_layers`, `bottom_shell_layers`, `top_surface_pattern`, `bottom_surface_pattern`, `ironing_type`, support settings, prime-tower settings.
+
+Verified working F91 keys: `filament_flow_ratio`, `pressure_advance`, `enable_pressure_advance`, `filament_minimal_purge_on_wipe_tower`, `additional_cooling_fan_speed`, `close_fan_the_first_x_layers`, `full_fan_speed_layer`, `nozzle_temperature_initial_layer`, `hot_plate_temp_initial_layer`. `filament_cost` is stored in the library but is NOT on `profile_keys[]` so native silently ignores it (defaults to 0).
+
+**Fix path (deferred to follow-up)**: gate the relevant `applyConfigToPrusa` `set_key_value` calls on `!has_embedded_profile` (the function already has the flag — same pattern as `initial_layer_print_height`). When a Snapmaker-authored embed is present, trust its values; when no embed (raw STL), keep the U1 hardware defaults. Needs native rebuild + careful regression coverage on Bambu-imported files where embedded values are wrong for U1 (the comments on each clamped key call out specific Bambu/Prusa values to defend against — e.g. `fan_min_speed=60` from Bambu would under-cool U1 PLA).
+
 #### Remaining for ship
-- Device confidence check: full instrumented suite + E2E smoke-7 on Pixel 8a.
-- Manual verify: import an Orca process profile, see it in the dropdown, slice and confirm the profile's `layer_height`/`wall_loops` end up in the G-code header.
-- Manual verify: edit a filament with non-null `filament_max_volumetric_speed`, slice, confirm the value reaches the G-code header.
-- Version bump + GitHub release (after both verifications pass).
+- ✅ On-device F87/F91 instrumented tests written + passing (4 new tests in `ProfileEmbedderIntegrationTest`).
+- ✅ Full `ProfileEmbedderIntegrationTest` sweep passes on Pixel 8a (32 tests).
+- ✅ Bambu pipeline + STL slice smoke tests pass.
+- Manual UI verification: import a profile via Settings → Process Profiles, slice a model, confirm the profile's working keys (e.g. `top_surface_pattern`) reach the G-code header.
+- Manual UI verification: edit a library filament with `pressure_advance=0.05`, slice, confirm header shows it.
+- Native fix for the clamp gap (above) — separate ticket / follow-up branch, requires `.so` rebuild.
+- Version bump + GitHub release (after Kevin reviews the limitation + manual verifications).
 
 ### F90: Foreground-service coverage for all long-running operations (GitHub #154) — DONE v2.7.1
 - Shipped v2.7.0. `SlicingService` renamed to `LongOpService` with stack-based stage labels: nested `start(stage)` pushes; `stop()` pops; the persistent notification always renders the top-of-stack. `update(progress, stage?)` replaces the top frame so the native slicer progress listener keeps its existing rename-on-tick behaviour. Wrap points: `loadModel(uri)`, `loadModelFromFile`, `selectPlate`, `addModelFromFile[ForPlate]`, `confirmAddPlate`, `startSlicing`. Each wrap is start/stop-paired via try/finally so cancellation/exception pop the stage. Manifest `foregroundServiceType="specialUse"` retained (sideloaded; no Play subtype review); subtype updated to "3D model preparation, loading and slicing". 9 unit tests in `LongOpServiceStackTest.kt`.
