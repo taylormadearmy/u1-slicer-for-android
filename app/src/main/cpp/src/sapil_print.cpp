@@ -390,28 +390,52 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // access produces corrupt wipe tower coordinates (2^116 / -inf X values).
     dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
 
-    // F91 (2026-05-25): gate per-filament cooling/flow fallbacks on !has_embedded_profile.
-    // For Kotlin-authored embeds, ProfileEmbedder layers the bundled `pla.json` U1-safe
-    // values UNLESS a library filament overrides them, so the embed always carries U1-safe
-    // floor + user-library-tuned ceiling. Raw STL still gets these defaults below.
-    //
-    // Filament max volumetric speed — OrcaSlicer defaults to 2 mm³/s which throttles all
-    // print speeds to ~22 mm/s. Fallback 21 mm³/s matches Snapmaker PLA profile.
-    if (!has_embedded_profile) {
-        dpc.set_key_value("filament_max_volumetric_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 21.0)));
-    }
-    // Filament density for weight estimation (PLA = 1.24 g/cm³).
-    // Always written: not currently F91-user-controllable + needed for accurate cost/weight.
-    dpc.set_key_value("filament_density", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.24)));
+    // F91 (2026-05-25): three-way precedence for per-filament tuning keys —
+    //   1. SliceConfig.filament_* (user filament-library values)  ← always wins when set
+    //   2. embed value via profile_keys[]                          ← preserved when set 1 absent
+    //   3. U1 hardware default                                     ← floor for raw STL
+    // The first branch reaches STL slices too (which skip ProfileEmbedder); the second
+    // protects Snapmaker-authored 3MFs that carry tuned cooling/flow in their embedded
+    // profile (e.g. pla.json defaults via ProfileEmbedder's standard path).
 
-    // Fan / cooling — OrcaSlicer defaults fan_min_speed to 20%, but PLA needs 100%.
-    if (!has_embedded_profile) {
-        dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
-        dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
-        dpc.set_key_value("overhang_fan_speed", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 100)));
-        dpc.set_key_value("slow_down_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 4.0)));
-        dpc.set_key_value("slow_down_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 20.0)));
-    }
+    auto applyPerExtFloats = [&](const char* key,
+                                  const std::vector<float>& user_override,
+                                  double fallback) {
+        if (!user_override.empty()) {
+            std::vector<double> v(user_override.begin(), user_override.end());
+            while ((int)v.size() < n_ext) v.push_back(v.empty() ? fallback : v.back());
+            dpc.set_key_value(key, new Slic3r::ConfigOptionFloats(std::move(v)));
+        } else if (!has_embedded_profile) {
+            dpc.set_key_value(key, new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, fallback)));
+        }
+    };
+    auto applyPerExtInts = [&](const char* key,
+                                const std::vector<int>& user_override,
+                                int fallback) {
+        if (!user_override.empty()) {
+            std::vector<int> v = user_override;
+            while ((int)v.size() < n_ext) v.push_back(v.empty() ? fallback : v.back());
+            dpc.set_key_value(key, new Slic3r::ConfigOptionInts(std::move(v)));
+        } else if (!has_embedded_profile) {
+            dpc.set_key_value(key, new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, fallback)));
+        }
+    };
+
+    applyPerExtFloats("filament_max_volumetric_speed", config.filament_max_volumetric_speeds, 21.0);
+    // Filament density: not F91-user-controllable yet; always pin to PLA default for raw STL.
+    dpc.set_key_value("filament_density", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 1.24)));
+    // Fan / cooling — OrcaSlicer defaults fan_min_speed to 20%, U1 PLA needs 100%.
+    applyPerExtFloats("fan_min_speed", config.filament_fan_min_speeds.empty() ?
+                                          std::vector<float>{} :
+                                          std::vector<float>(config.filament_fan_min_speeds.begin(),
+                                                             config.filament_fan_min_speeds.end()), 100.0);
+    applyPerExtFloats("fan_max_speed", config.filament_fan_max_speeds.empty() ?
+                                          std::vector<float>{} :
+                                          std::vector<float>(config.filament_fan_max_speeds.begin(),
+                                                             config.filament_fan_max_speeds.end()), 100.0);
+    applyPerExtInts  ("overhang_fan_speed",      config.filament_overhang_fan_speeds, 100);
+    applyPerExtFloats("slow_down_layer_time",    config.filament_slow_down_layer_times, 4.0);
+    applyPerExtFloats("slow_down_min_speed",     config.filament_slow_down_min_speeds, 20.0);
 
     // G-code dialect — NOT set as a fallback here because gcode_flavor=klipper suppresses
     // M104/M109 temp commands from the slicer body, relying on the start G-code template.
@@ -456,6 +480,68 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
 
         // Reduce infill retraction - off by default for Snapmaker U1.
         dpc.set_key_value("reduce_infill_retraction", new Slic3r::ConfigOptionBool(false));
+    }
+
+    // F91 (2026-05-25) — SliceConfig user overrides for the per-filament tuning keys
+    // that applyConfigToPrusa doesn't otherwise touch. When the user sets a value via the
+    // Filament Library, populate dpc here so the slicer picks it up. When unset, the
+    // embedded profile (via profile_keys[]) or OrcaSlicer's compiled default stands.
+    if (!config.filament_flow_ratios.empty()) {
+        std::vector<double> v(config.filament_flow_ratios.begin(), config.filament_flow_ratios.end());
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("filament_flow_ratio", new Slic3r::ConfigOptionFloats(std::move(v)));
+    }
+    if (!config.filament_pressure_advances.empty()) {
+        std::vector<double> v(config.filament_pressure_advances.begin(), config.filament_pressure_advances.end());
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("pressure_advance", new Slic3r::ConfigOptionFloats(std::move(v)));
+    }
+    if (!config.filament_enable_pressure_advance.empty()) {
+        std::vector<unsigned char> v;
+        v.reserve(n_ext);
+        for (size_t i = 0; i < (size_t)n_ext; ++i) {
+            int src = (i < config.filament_enable_pressure_advance.size())
+                        ? config.filament_enable_pressure_advance[i]
+                        : config.filament_enable_pressure_advance.back();
+            v.push_back(src ? 1 : 0);
+        }
+        dpc.set_key_value("enable_pressure_advance", new Slic3r::ConfigOptionBools(std::move(v)));
+    }
+    if (!config.filament_additional_cooling_fan_speeds.empty()) {
+        std::vector<int> v = config.filament_additional_cooling_fan_speeds;
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("additional_cooling_fan_speed", new Slic3r::ConfigOptionInts(std::move(v)));
+    }
+    if (!config.filament_close_fan_first_layers.empty()) {
+        std::vector<int> v = config.filament_close_fan_first_layers;
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("close_fan_the_first_x_layers", new Slic3r::ConfigOptionInts(std::move(v)));
+    }
+    if (!config.filament_full_fan_speed_layers.empty()) {
+        std::vector<int> v = config.filament_full_fan_speed_layers;
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("full_fan_speed_layer", new Slic3r::ConfigOptionInts(std::move(v)));
+    }
+    if (!config.filament_minimal_purge_on_wipe_tower.empty()) {
+        std::vector<double> v(config.filament_minimal_purge_on_wipe_tower.begin(),
+                              config.filament_minimal_purge_on_wipe_tower.end());
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("filament_minimal_purge_on_wipe_tower", new Slic3r::ConfigOptionFloats(std::move(v)));
+    }
+    if (!config.filament_nozzle_temp_initial_layers.empty()) {
+        std::vector<int> v = config.filament_nozzle_temp_initial_layers;
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(std::move(v)));
+    }
+    if (!config.filament_bed_temp_initial_layers.empty()) {
+        std::vector<int> v = config.filament_bed_temp_initial_layers;
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::move(v)));
+    }
+    if (!config.filament_costs.empty()) {
+        std::vector<double> v(config.filament_costs.begin(), config.filament_costs.end());
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value("filament_cost", new Slic3r::ConfigOptionFloats(std::move(v)));
     }
 
     // Support speeds — OrcaSlicer defaults to 80mm/s which is fine today, but pin to

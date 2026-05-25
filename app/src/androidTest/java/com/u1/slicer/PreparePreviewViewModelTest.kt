@@ -2197,4 +2197,102 @@ class PreparePreviewViewModelTest {
             modelFile.delete()
         }
     }
+
+    /**
+     * F91 regression (2026-05-25): user loads an STL, then edits a Filament Library entry
+     * to set `maxVolumetricSpeed` / `pressureAdvance` / `enablePressureAdvance`. The slice
+     * MUST re-embed with the new library values; otherwise the G-code header carries the
+     * bundled pla.json defaults (filament_max_volumetric_speed=21, enable_pressure_advance=0,
+     * pressure_advance=0.02).
+     *
+     * Reproduces cheeky_b52's "16 mm³/s flow limit not abided by" Discord report 2026-05-25.
+     * Root cause: addFilament / updateFilament / printer-preset mutations did not set
+     * `profileNeedsReEmbed = true`, so `startSlicing` skipped the re-embed when
+     * `extruderCount == 1` and reused the stale at-load-time embed.
+     *
+     * Fix: SlicerViewModel observes `combine(filaments, extruderPresets, activeProcessProfile)`
+     * and marks the flag whenever any of those StateFlows changes post-load.
+     */
+    @Test
+    fun f91_editLibraryFilamentAfterLoad_triggersReEmbedSoNewValuesReachGcode() = runBlocking {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("tetrahedron.stl")
+        val filamentDao = application.container.filamentDao
+
+        try {
+            viewModel.loadModelFromFile(modelFile)
+            waitUntil("STL loaded", timeoutMs = 60_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+
+            // 1. Ensure slot 0 is linked to a library filament (Generic PLA seeded on first run).
+            val allFilaments = filamentDao.getAll().first()
+            val pla = allFilaments.firstOrNull { it.name == "Generic PLA" }
+                ?: throw AssertionError("seeded Generic PLA missing")
+
+            // Link slot 0 to the PLA profile via PrintersRepository, matching cheeky_b52's setup.
+            val printersRepo = application.container.printersRepository
+            val cfgBefore = printersRepo.config.first()!!
+            val active = cfgBefore.active
+            val newPresets = active.extruderPresets.map { p ->
+                if (p.index == 0) p.copy(filamentProfileId = pla.id, materialType = "PLA") else p
+            }
+            printersRepo.update(active.copy(extruderPresets = newPresets))
+            waitUntil("slot 0 linked to PLA profile") {
+                viewModel.extruderPresets.value.firstOrNull { it.index == 0 }?.filamentProfileId == pla.id
+            }
+
+            // 2. Now mutate the library entry — this is the path that previously did NOT
+            //    trigger a re-embed.
+            viewModel.updateFilament(
+                pla.copy(
+                    maxVolumetricSpeed = 16f,
+                    pressureAdvance = 0.024f,
+                    enablePressureAdvance = true,
+                )
+            )
+            waitUntil("library reflects updated maxVolumetricSpeed") {
+                viewModel.filaments.value.firstOrNull { it.id == pla.id }?.maxVolumetricSpeed == 16f
+            }
+
+            // 3. Slice and inspect.
+            viewModel.startSlicing()
+            waitUntil("slice complete", timeoutMs = 120_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.Error
+            }
+            val state = viewModel.state.value
+            if (state is SlicerViewModel.SlicerState.Error)
+                throw AssertionError("F91 regression: slice failed: ${state.message}")
+
+            val gcode = java.io.File((state as SlicerViewModel.SlicerState.SliceComplete).result.gcodePath).readText()
+
+            fun headerValue(key: String): String? = gcode.lineSequence()
+                .firstOrNull { it.startsWith("; $key =") }
+                ?.substringAfter("=")?.trim()
+
+            val maxVol = headerValue("filament_max_volumetric_speed")
+            assertNotNull("filament_max_volumetric_speed header missing", maxVol)
+            assertTrue(
+                "F91 regression: expected library value 16 to reach the G-code header, got: $maxVol. " +
+                    "If 21, the re-embed didn't fire after the library mutation and the slicer " +
+                    "used the bundled pla.json default.",
+                maxVol!!.contains("16")
+            )
+
+            val enablePa = headerValue("enable_pressure_advance")
+            assertEquals("enable_pressure_advance should be 1 (library has it true)", "1", enablePa)
+
+            val pa = headerValue("pressure_advance")
+            assertNotNull("pressure_advance header missing", pa)
+            assertTrue(
+                "F91 regression: expected library PA value 0.024 in G-code header, got: $pa",
+                pa!!.contains("0.024")
+            )
+        } finally {
+            viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
 }

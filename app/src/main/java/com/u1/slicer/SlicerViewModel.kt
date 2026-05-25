@@ -59,7 +59,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -653,8 +655,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             processProfilesRepo.setActive(id)
             // Mark slice stale so the user re-slices with the new profile.
             _sliceStale.value = true
+            if (lastModelInfo != null) profileNeedsReEmbed = true
         }
     }
+
+    /**
+     * F87/F91 (2026-05-25): after a model is loaded, mutations to the filament library,
+     * active extruder presets, or active process profile must trigger a re-embed before
+     * the next slice. Otherwise the slicer would use values frozen at load time and
+     * silently ignore subsequent edits (e.g. tweaking flow ratio / max volumetric speed
+     * in Filament Library after loading an STL — the original symptom of this bug, per
+     * cheeky_b52's "16 mm³/s flow limit not abided by" report 2026-05-25).
+     *
+     * combine() emits both initial values + every subsequent change. `drop(1)` skips the
+     * first combined emission so cold start doesn't race against an initial slice. The
+     * `lastModelInfo != null` guard skips the secondary StateIn-loaded emissions that
+     * also fire at startup before any model is loaded.
+     */
+    @Suppress("unused")
+    private val _filamentChangesReEmbedTrigger = combine(
+        filaments, extruderPresets, activeProcessProfile,
+    ) { _, _, _ -> Unit }
+        .drop(1)
+        .onEach {
+            if (lastModelInfo != null) {
+                profileNeedsReEmbed = true
+                _sliceStale.value = true
+            }
+        }
+        .launchIn(viewModelScope)
 
     /**
      * Phase 2 §4 Step 7 (visual side) — per-file-filament resolved colours
@@ -3492,7 +3521,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // applyConfigToPrusa() fallback — without re-embed they silently use stale
                 // values from the initial loadModel() embed (B24 fix RC2).
                 val remap = toolRemapSlots
-                val needsReEmbed = remap != null || _config.value.extruderCount > 1 || profileNeedsReEmbed
+                // 2026-05-25: always re-embed before slicing when a source file is available.
+                // The previous gate (remap != null || extruderCount > 1 || profileNeedsReEmbed)
+                // skipped re-embed for single-extruder slices, relying on `profileNeedsReEmbed`
+                // being set by every mutation. But filament library edits and extruder-preset
+                // changes (slot color, material, filamentProfileId) didn't flip that flag —
+                // so single-colour STL slices kept the embed frozen at load time and ignored
+                // subsequent filament-library tweaks (cheeky_b52's "16 mm³/s flow limit not
+                // abided by" report). Re-embed for a single-extruder STL is sub-second; the
+                // optimization isn't worth the correctness hazard.
+                val needsReEmbed = sourceModelFile != null
                 if (needsReEmbed) {
                     val src = sourceModelFile
                     // Use file-level ThreeMfInfo for the re-embed so filament_colour stays
@@ -3805,11 +3843,37 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     "" to ""
                 }
+                // F91 (2026-05-25): populate per-extruder SliceConfig fields from the user's
+                // filament library so native applies them even when the slice bypasses
+                // ProfileEmbedder (raw STL). buildFilamentLibraryArrays inspects the active
+                // printer's extruder presets and looks up each linked FilamentProfile.
+                val filamentArrays = buildFilamentLibraryArrays(
+                    slotCount = sliceConfig.extruderCount.coerceAtLeast(1),
+                    usedSlots = toolRemapSlots,
+                    presets = extruderPresets.value,
+                    filaments = filaments.value,
+                )
                 val jniSliceConfig = sliceConfig.copy(
                     layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE)
                         sliceConfig.layerHeight else 0.0f,
                     machineStartGcode = b106StartGcode,
                     machineEndGcode = b106EndGcode,
+                    filamentFlowRatios = filamentArrays.flowRatios,
+                    filamentMaxVolumetricSpeeds = filamentArrays.maxVolumetricSpeeds,
+                    filamentFanMinSpeeds = filamentArrays.fanMinSpeeds,
+                    filamentFanMaxSpeeds = filamentArrays.fanMaxSpeeds,
+                    filamentOverhangFanSpeeds = filamentArrays.overhangFanSpeeds,
+                    filamentAdditionalCoolingFanSpeeds = filamentArrays.additionalCoolingFanSpeeds,
+                    filamentSlowDownLayerTimes = filamentArrays.slowDownLayerTimes,
+                    filamentSlowDownMinSpeeds = filamentArrays.slowDownMinSpeeds,
+                    filamentCloseFanFirstLayers = filamentArrays.closeFanFirstLayers,
+                    filamentFullFanSpeedLayers = filamentArrays.fullFanSpeedLayers,
+                    filamentEnablePressureAdvance = filamentArrays.enablePressureAdvance,
+                    filamentPressureAdvances = filamentArrays.pressureAdvances,
+                    filamentMinimalPurgeOnWipeTower = filamentArrays.minimalPurgeOnWipeTower,
+                    filamentNozzleTempInitialLayers = filamentArrays.nozzleTempInitialLayers,
+                    filamentBedTempInitialLayers = filamentArrays.bedTempInitialLayers,
+                    filamentCosts = filamentArrays.costs,
                 )
                 val result = native.slice(jniSliceConfig)
                 ensureActive()
@@ -6502,6 +6566,103 @@ internal fun computeTogglePrimeTower(
 /** Returns a sensible nozzle temperature default for a given material type string. */
 internal fun nozzleTempDefaultForMaterial(material: String): Int = when (material.uppercase()) {
     "PETG" -> 235; "ABS" -> 270; "ASA" -> 260; "PA" -> 260; "TPU" -> 225; "PVA" -> 210; else -> 220
+}
+
+/**
+ * F91 (2026-05-25): SliceConfig-bound per-extruder arrays from the user's filament library.
+ *
+ * Unlike [buildFilamentLibrarySettings] (which produces a Map<String, Any> for the embed
+ * pipeline used on 3MF paths), this returns typed arrays that flow through SliceConfig and
+ * applyConfigToPrusa directly. The applyConfigToPrusa path is the only way to reach STL
+ * slices (they bypass ProfileEmbedder entirely on the Kotlin side).
+ *
+ * Empty array = "no slot has set this field — let the embed value / U1 default stand".
+ * Non-empty = "user has values for at least one slot, forward/back-filled across slots".
+ */
+internal data class FilamentLibraryArrays(
+    val flowRatios: FloatArray = floatArrayOf(),
+    val maxVolumetricSpeeds: FloatArray = floatArrayOf(),
+    val fanMinSpeeds: IntArray = intArrayOf(),
+    val fanMaxSpeeds: IntArray = intArrayOf(),
+    val overhangFanSpeeds: IntArray = intArrayOf(),
+    val additionalCoolingFanSpeeds: IntArray = intArrayOf(),
+    val slowDownLayerTimes: FloatArray = floatArrayOf(),
+    val slowDownMinSpeeds: FloatArray = floatArrayOf(),
+    val closeFanFirstLayers: IntArray = intArrayOf(),
+    val fullFanSpeedLayers: IntArray = intArrayOf(),
+    val enablePressureAdvance: IntArray = intArrayOf(),
+    val pressureAdvances: FloatArray = floatArrayOf(),
+    val minimalPurgeOnWipeTower: FloatArray = floatArrayOf(),
+    val nozzleTempInitialLayers: IntArray = intArrayOf(),
+    val bedTempInitialLayers: IntArray = intArrayOf(),
+    val costs: FloatArray = floatArrayOf(),
+)
+
+internal fun buildFilamentLibraryArrays(
+    slotCount: Int,
+    usedSlots: List<Int>?,
+    presets: List<com.u1.slicer.data.ExtruderPreset>,
+    filaments: List<com.u1.slicer.data.FilamentProfile>,
+): FilamentLibraryArrays {
+    if (slotCount <= 0) return FilamentLibraryArrays()
+    val slots = usedSlots ?: (0 until slotCount).toList()
+    val profilesPerSlot: List<com.u1.slicer.data.FilamentProfile?> = (0 until slotCount).map { i ->
+        val slotIndex = slots.getOrElse(i) { i }
+        val preset = presets.firstOrNull { it.index == slotIndex }
+        val profileId = preset?.filamentProfileId
+        filaments.firstOrNull { it.id == profileId }
+    }
+
+    fun <T : Number> collectFloat(accessor: (com.u1.slicer.data.FilamentProfile) -> T?): FloatArray {
+        val raw = profilesPerSlot.map { p -> p?.let(accessor)?.toFloat() }
+        if (raw.all { it == null }) return floatArrayOf()
+        // Forward + back fill
+        val out = raw.toMutableList()
+        var last: Float? = null
+        for (i in out.indices) { if (out[i] != null) last = out[i] else if (last != null) out[i] = last }
+        last = null
+        for (i in out.indices.reversed()) { if (out[i] != null) last = out[i] else if (last != null) out[i] = last }
+        return FloatArray(out.size) { out[it] ?: 0f }
+    }
+    fun collectInt(accessor: (com.u1.slicer.data.FilamentProfile) -> Int?): IntArray {
+        val raw = profilesPerSlot.map { p -> p?.let(accessor) }
+        if (raw.all { it == null }) return intArrayOf()
+        val out = raw.toMutableList()
+        var last: Int? = null
+        for (i in out.indices) { if (out[i] != null) last = out[i] else if (last != null) out[i] = last }
+        last = null
+        for (i in out.indices.reversed()) { if (out[i] != null) last = out[i] else if (last != null) out[i] = last }
+        return IntArray(out.size) { out[it] ?: 0 }
+    }
+    fun collectBoolAsInt(accessor: (com.u1.slicer.data.FilamentProfile) -> Boolean?): IntArray {
+        val raw = profilesPerSlot.map { p -> p?.let(accessor)?.let { if (it) 1 else 0 } }
+        if (raw.all { it == null }) return intArrayOf()
+        val out = raw.toMutableList()
+        var last: Int? = null
+        for (i in out.indices) { if (out[i] != null) last = out[i] else if (last != null) out[i] = last }
+        last = null
+        for (i in out.indices.reversed()) { if (out[i] != null) last = out[i] else if (last != null) out[i] = last }
+        return IntArray(out.size) { out[it] ?: 0 }
+    }
+
+    return FilamentLibraryArrays(
+        flowRatios = collectFloat { it.flowRatio },
+        maxVolumetricSpeeds = collectFloat { it.maxVolumetricSpeed },
+        fanMinSpeeds = collectInt { it.fanMinSpeed },
+        fanMaxSpeeds = collectInt { it.fanMaxSpeed },
+        overhangFanSpeeds = collectInt { it.overhangFanSpeed },
+        additionalCoolingFanSpeeds = collectInt { it.additionalCoolingFanSpeed },
+        slowDownLayerTimes = collectFloat { it.slowDownLayerTime },
+        slowDownMinSpeeds = collectFloat { it.slowDownMinSpeed },
+        closeFanFirstLayers = collectInt { it.closeFanFirstLayers },
+        fullFanSpeedLayers = collectInt { it.fullFanSpeedLayer },
+        enablePressureAdvance = collectBoolAsInt { it.enablePressureAdvance },
+        pressureAdvances = collectFloat { it.pressureAdvance },
+        minimalPurgeOnWipeTower = collectFloat { it.filamentMinimalPurgeOnWipeTower },
+        nozzleTempInitialLayers = collectInt { it.nozzleTempInitialLayer },
+        bedTempInitialLayers = collectInt { it.bedTempInitialLayer },
+        costs = collectFloat { it.filamentCost },
+    )
 }
 
 /**
