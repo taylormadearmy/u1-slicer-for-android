@@ -4,6 +4,22 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B129: Moving/rotating the model resets the G-code preview layer slider to the top of the print (GitHub #157) — OPEN
+- **Symptom**: After slicing, open the sliced G-code preview and move the layer slider to some position. Then move or rotate the model on the build plate. The G-code preview's layer slider jumps back to the top of the print.
+- **Reported by**: Kevin, v2.8.0.
+- **Expected**: Moving/rotating the build plate should not reset the layer slider — it should retain the user's position (or at minimum not snap to the top).
+- **Notes**: Likely a state reset in the G-code preview when Prepare-screen transform state changes triggers a recomposition that re-initialises the slider's remembered position.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/157
+
+### B128: 3MF default filament/material types not populated on load — slots 2+ show "none" (GitHub #156) — OPEN
+- **Symptom**: Load a 3MF that declares 3 colours/materials. On first load only slot 1 is assigned a material type (e.g. "PETG"); slots 2 and 3 show "none". Manually changing the material for each slot works fine.
+- **Reported by**: DC15 (Discord), v2.8.0.
+- **Expected**: On first load of a 3MF, the app should read and display the file's default colour AND material type for every filament slot, not just the first.
+- **Constraint (from reporter)**: Do not break the manual material-change path — that already works and must keep working.
+- **Notes**: Related to the Prepare-screen filament-list reshape (Phase 2.6) and to B118 (single-colour slot-preset/material resolution). The default-material read on load is the missing piece.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/156
+- **Source**: Discord, 2026-05-26 (DC15) — https://discord.com/channels/1086575708903571536/1484249705042153633/1508932542147854418
+
 ### B127: LayerToolPauseInjector drops layer-tool swaps for canonical fileIdx ≥ 4 (GitHub #145) — FIXED v2.5.0
 - **Reproduced 2026-05-23** on `JapaneseWave.3mf` (7-filament Hueforge): XML had `extruder="5"/"6"/"7"` swaps but the output G-code had only the native T4/T5/T6 lines and no injected ones — `PAUSE_PRINT` fired but no tool switch.
 - **Fix**: change `LayerToolPauseInjector.kt:134` guard from `if (toolIndex in 1..3)` to `if (toolIndex >= 1)`. The spurious upper bound was a typo; the T0 skip intent (T0 = starting tool, no switch needed) is preserved.
@@ -756,12 +772,19 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
   - Roadmap: [`docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md`](docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md)
   - A+B design: [`docs/superpowers/specs/2026-05-24-bambu-ab-design.md`](docs/superpowers/specs/2026-05-24-bambu-ab-design.md)
 
-### F14: Mixed-colour / pseudo-extruder support (FullSpectrum fork) (GitHub #18)
-- Source: ratdoux/OrcaSlicer-FullSpectrum — fork of Snapmaker Orca 2.2.4
-- Produces optically-blended colours via layer-cycle alternation (e.g. Blue+Yellow→Green)
-- **Blocked**: upstream was v0.9.4 alpha as of 2026-03-12, untested on real hardware
-- Wait for v1.0 / hardware-verified release before porting
-- Requires native .so rebuild
+### F14: Full-spectrum / mixed-colour support (GitHub #18)
+- Optically-blended colours via layer alternation across the U1's 4 toolheads
+  (e.g. Blue+Yellow→Green). Toolchanger → no purge tower, only XY-offset calibration.
+- **Re-scoped 2026-05-26.** Original ratdoux/OrcaSlicer-FullSpectrum plan retired:
+  Snapmaker shipped native support in their own fork (PR #375 "Feat: mix filament",
+  merged to `main` 2026-05-26), built on the same `FilamentMixer` library ratdoux adopted.
+- **M0 verified PASS** (source-read): fully config-driven, headless-reachable via SAPIL —
+  recipe is one `coString` key `mixed_filament_definitions`; virtual filament IDs
+  (`num_physical+1` = 5..8) assigned via our existing paint/`objectExtruderMap` path.
+- Marquee win is on Smart Paint (F54), lifting its 4-colour ceiling.
+- Dominant cost = submodule jump 2.2.4 `f11a7bf` → post-#375 `main` + SAPIL API-compat;
+  must re-apply B38 init patch (verified still needed). Requires native .so rebuild.
+- Roadmap + M0/M1 analysis + config-key catalog: [`docs/superpowers/specs/2026-05-26-full-spectrum-roadmap.md`](docs/superpowers/specs/2026-05-26-full-spectrum-roadmap.md)
 
 ### F50: Printer temperature control during printing (GitHub #22) — FIXED v1.5.15
 - Inline temperature editing on TempTile — tap edit icon to adjust bed/extruder temps mid-print

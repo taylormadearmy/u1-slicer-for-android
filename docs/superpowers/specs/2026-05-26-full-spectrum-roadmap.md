@@ -257,3 +257,42 @@ multi-tool toolpath generator and implement colour decomposition ourselves):
 maximum control and fork-independence, but re-solves what the fork already does
 plus a large amount of new native code. Over-engineering given we already drive the
 core through SAPIL. Rejected unless M0 shows no usable engine support anywhere.
+
+## Appendix A — Mixed-filament config keys (M3 wiring catalog)
+
+Read from PR #375 `PrintConfig.cpp` at merge commit `ac3dafe`. All are FFF print
+config options, so they serialize into `project_settings.config` in the 3MF. M3
+wiring per the `CLAUDE.md` "Profile Key Pipeline": **every key below must be added
+to `profile_keys[]`** so an embedded full-spectrum profile can drive it. Engine
+defaults are all "off / 0" (no mixing) — so raw STL files with no profile stay
+single-colour and **no `applyConfigToPrusa()` fallback is needed** unless we want
+to change a default. The subset our M3 UI controls also goes through
+`buildProfileOverrides()`.
+
+| Key | Type | Engine default | Role | M3 user-controlled? |
+|---|---|---|---|---|
+| `mixed_filament_definitions` | coString | `""` | **The recipe.** Serialized `MixedFilamentManager` rows. Built by our UI. | **Yes — primary** |
+| `mixed_filament_gradient_mode` | coBool | false | 0=layer-cycle weighted, 1=height weighted | Yes |
+| `mixed_filament_height_lower_bound` | coFloat | 0.04 | Local-Z sublayer min height | Maybe (advanced) |
+| `mixed_filament_height_upper_bound` | coFloat | 0.16 | Local-Z sublayer max height | Maybe (advanced) |
+| `mixed_filament_advanced_dithering` | coBool | false | Ordered-dither cadence (experimental) | Advanced toggle |
+| `mixed_filament_component_bias_enabled` | coBool | false | Per-pair apparent-colour bias | Advanced toggle |
+| `mixed_filament_surface_indentation` | coFloat | 0.0 | XY surface offset for mixed regions | No (default) |
+| `mixed_filament_region_collapse` | coBool | false | Merge adjacent mixed regions | No (default) |
+| `mixed_color_layer_height_a` | coFloat | 0.0 | Dithering cadence height, component A | No (derived) |
+| `mixed_color_layer_height_b` | coFloat | 0.0 | Dithering cadence height, component B | No (derived) |
+| `mixed_filament_pointillism_pixel_size` | coFloat | 0.0 | Same-layer pointillisme pixel size | Advanced |
+| `mixed_filament_pointillism_line_gap` | coFloat | 0.0 | Same-layer pointillisme line gap | Advanced |
+| `dithering_z_step_size` | coFloat | 0.0 | Layer height in dithered Z zones | Advanced |
+| `dithering_local_z_mode` | coBool | false | Enable Local-Z dithering pipeline | Advanced toggle |
+| `dithering_local_z_whole_objects` | coBool | false | Apply Local-Z to whole objects | Advanced |
+| `dithering_local_z_infill` | coBool | false | Apply Local-Z to infill | Advanced |
+| `dithering_local_z_direct_multicolor` | coBool | false | Direct multicolour Local-Z | Advanced |
+| `dithering_step_painted_zones_only` | coBool | false | Restrict Z-step to painted zones | Advanced |
+| `local_z_wipe_tower_purge_lines` | coFloat | 3.0 | Purge lines when Local-Z + prime tower | No (default) |
+
+**Bottom line for M3:** the minimum viable wiring is **one key** —
+`mixed_filament_definitions` (built by our colour-mix UI) — plus assigning the
+virtual filament IDs to objects/regions via the existing paint path. Everything
+else is optional tuning exposed progressively. Verify any bool defaults without an
+explicit `set_default_value` against `PrintConfig.cpp` when wiring.
