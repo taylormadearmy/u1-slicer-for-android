@@ -66,6 +66,41 @@ desktop GUI workflow. Identify the new config key names and the expected input
 (target colour? per-region assignment? CMYKW filament roles?). Cheapest possible
 check; **nothing else proceeds until this passes.**
 
+#### M0 desk-research findings (2026-05-26)
+- **Capability confirmed in Snapmaker's own fork.** PR
+  [**#375 "Feat: mix filament"**](https://github.com/Snapmaker/OrcaSlicer/pull/375)
+  merged to `main` on 2026-05-26. Adds `MixedFilament` / `MixedFilamentManager`
+  classes, gradient transitions, **pointillism same-layer mixing**, auto + manual
+  pattern modes, local-Z dithering, height-weighted cadence, configurable mix
+  ratios. Touches `Print.cpp`, `PrintApply.cpp`, `TriangleSelector.cpp`,
+  `ObjColorPanel`, and a new `MixedFilamentDialog`.
+- **Convergence signal:** it integrates a **`FilamentMixer`** library — the *same*
+  component the ratdoux fork moved to in its v0.8 pre-release. Snapmaker's native
+  path and ratdoux have effectively converged on one colour engine. **This further
+  retires the ratdoux option** — no reason to track a third-party fork for tech
+  Snapmaker now ships.
+- **Control-surface (the open M0 question):** *partially* answered. There **is** a
+  `PrintConfig` layer (new mixed-filament options) — promising for headless SAPIL
+  use — **but** the primary UX is the GUI `MixedFilamentDialog`, and per-region
+  assignment goes through `TriangleSelector` (paint-style). **Still to verify
+  hands-on:** how much mixing state serialises into `project_settings.config` /
+  model data we can drive headless vs. how much lives only in the GUI dialog.
+- **Architectural fit:** the `TriangleSelector` / `ObjColorPanel` paint machinery
+  is the *same* family we already handle in Phase 1 (objectExtruderMap, paint
+  states, native paint-state accessors). Our existing native plumbing likely
+  extends to this rather than needing a parallel system.
+- **Version / divergence cost:** #375 is on **`main` only, not in a tagged
+  release** (latest tag is the 2.3.x line; we are pinned at 2.2.4 `f11a7bf`).
+  Adopting it means a **large submodule jump** (~thousands of commits since 2.2.4)
+  and re-applying ~2,400 lines of Android patches against substantially changed
+  upstream — the dominant cost of M1, and a bleeding-edge stability risk until
+  Snapmaker tags a release containing #375.
+
+**M0 remaining work (hands-on):** clone the fork at a post-#375 commit, slice a
+mixed-filament model in their desktop build, and inspect the exported 3MF's
+`project_settings.config` + model data to confirm the mix recipe is reproducible
+headless through SAPIL. Decision to adopt is gated on this.
+
 ### M1 — Engine bump
 Move the `app/src/main/cpp/orcaslicer` submodule to the target Snapmaker commit,
 re-apply the Android patch catalogue (per `ENGINE_UPGRADE_GUIDE.md`), rebuild the
