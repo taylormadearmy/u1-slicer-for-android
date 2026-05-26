@@ -153,6 +153,36 @@ print-time estimate up front. Clearly-labelled mode. Wire the M0 config keys
 through `applyConfigToPrusa()` + `profile_keys[]` + `buildProfileOverrides()`.
 Add unit tests for any new parsing/mapping logic.
 
+### M3a — Smart Paint integration (designed with M3, built with or after it)
+Full-spectrum's biggest product win is on **Smart Paint** (F54), not the standalone
+colour picker. Smart Paint is today **hard-capped at 4 colours**: each segment is
+assigned a physical filament **slot `0..3`** ([`AiRegion.kt:12`,`:35`]), and when the
+AI finds >4 regions they collapse onto those 4 slots. Mixed filaments remove exactly
+that ceiling — virtual IDs `5,6,7,8…` are just more extruder IDs written through the
+**same per-triangle slot → 3MF mechanism** Smart Paint already uses
+(`PaintedMeshWriter`).
+
+**Decision to lock now (foundational, cheap now / expensive to retrofit):** the
+per-triangle slot and the segment→slot assignment must be **widened from `0..3` to
+carry virtual filament IDs (≥4)**. This ripples through `AiRegion`,
+`PaintedMeshWriter`, the slot-reassignment chips, and the preview palette. M3 must
+**not** design a parallel colour system Smart Paint can't see — both the picker and
+Smart Paint resolve to the same `{physical 1..N} ∪ {virtual N+1…}` palette and the
+same assignment substrate.
+
+**Deferred to build time (M3a, not now):**
+- **Palette breadth for the matcher** — how many mixes to expose to Smart Paint's
+  nearest-colour match (all 6 auto pairs? gradients too?). Too many makes matching
+  noisy; needs tuning. Pairs nicely with M4's perceived-colour prediction.
+- **Print-cost transparency** — a painted *mixed* region prints by per-layer
+  alternation, so Smart Paint could silently multiply tool changes / print time.
+  Needs a cost indicator (e.g. tool-change count or time delta) when mixes are in play.
+- **Registration dependency** — painted mixed regions rely on the user's XY
+  nozzle-offset calibration (shared M2/M3 risk).
+
+This item does **not** gate engine adoption (M0–M2 are colour-source agnostic);
+it gates only how M3's UI is shaped. Capture the data-model decision in the M3 spec.
+
 ### M4 — Colour-accuracy fast-follow
 Integrate **`prusa-fdm-mixer`** (MIT, C++17) so the picker predicts the *perceived*
 colour from a given layer ratio — honest "achievable colour" feedback rather than a
