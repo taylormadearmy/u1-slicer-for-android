@@ -208,6 +208,32 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _parsedGcode = MutableStateFlow<ParsedGcode?>(null)
     val parsedGcode: StateFlow<ParsedGcode?> = _parsedGcode.asStateFlow()
 
+    /**
+     * B129 — the G-code preview's layer-range slider position (min..max layer
+     * index), hoisted here so it survives leaving the preview to move/rotate
+     * the model. `null` means "show the full print"; it is reset to null
+     * whenever a new (or cleared) parsed G-code is assigned via
+     * [setParsedGcodeWithRangeReset], so a fresh slice always opens at the top.
+     */
+    private val _previewLayerRange = MutableStateFlow<Pair<Int, Int>?>(null)
+    val previewLayerRange: StateFlow<Pair<Int, Int>?> = _previewLayerRange.asStateFlow()
+
+    /** B129 — persist the user's current preview slider position. */
+    fun setPreviewLayerRange(minLayer: Int, maxLayer: Int) {
+        _previewLayerRange.value = minLayer to maxLayer
+    }
+
+    /**
+     * B129 — assign [_parsedGcode] and reset the remembered slider range in one
+     * step. Used everywhere a genuinely new (or cleared) preview is produced so
+     * the slider opens at the full range; navigation away/back does NOT go
+     * through here, so the remembered position is preserved.
+     */
+    private fun setParsedGcodeWithRangeReset(parsed: ParsedGcode?) {
+        _parsedGcode.value = parsed
+        _previewLayerRange.value = null
+    }
+
     private val _excludeObjects = MutableStateFlow<List<ExcludeObjectInfo>>(emptyList())
     val excludeObjects: StateFlow<List<ExcludeObjectInfo>> = _excludeObjects.asStateFlow()
 
@@ -722,6 +748,41 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
+     * B128 — the per-filament (materialType, nozzleTemp) the Prepare filament
+     * list should DISPLAY, computed by the very same
+     * [com.u1.slicer.data.resolvePerFilamentTypeAndTemp] the slice path uses
+     * (see [buildPerFilamentTypeAndTemp]). Computing both from one function
+     * guarantees the chip strip never diverges from the material actually
+     * sliced — the divergence that caused B118.
+     *
+     * Indexed by canonical fileIndex (aligned with `detectedColors` for the
+     * declared multi-colour files this drives). For a genuinely declared
+     * multi-colour 3MF with an injective colour→slot mapping the resolver
+     * surfaces the file's own `filament_type` here, so loading such a file
+     * shows its declared materials instead of the user's slot presets.
+     *
+     * Empty when no canonical list is available (STL / non-canonical / pre-
+     * load); the Prepare row then falls back to the slot preset material.
+     */
+    val displayedFilamentMaterials: StateFlow<List<Pair<String, Int>>> = combine(
+        _canonicalFilamentList,
+        _filamentOverrides,
+        _colorMapping,
+        extruderPresets,
+        filaments,
+    ) { canonical, overrides, mapping, presets, lib ->
+        val list = canonical ?: return@combine emptyList()
+        val (types, temps) = com.u1.slicer.data.resolvePerFilamentTypeAndTemp(
+            canonical = list,
+            overrides = overrides.mapValues { (_, ov) -> ov.color to ov.materialType },
+            colorMapping = mapping,
+            presets = presets,
+            filamentLibrary = lib,
+        )
+        types.zip(temps)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
      * Phase 2 (post-v2.0.0-validation, Bug 1 class sibling fix) —
      * canonical-fileIndex-aligned palette for the **G-code preview body**.
      *
@@ -1174,7 +1235,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // into thinking a saveable slice still exists. Clear them so the UI
                 // matches the underlying state.
                 if (prevState is SlicerState.SliceComplete && newState !is SlicerState.SliceComplete) {
-                    _parsedGcode.value = null
+                    setParsedGcodeWithRangeReset(null)
                     _gcodePreview.value = ""
                 }
                 when {
@@ -3178,12 +3239,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Phase 2.7 final — produces per-canonical-filament filament_type and
+     * Phase 2.7 / B128 — produces per-canonical-filament filament_type and
      * nozzle_temperature lists. For each file filament i, the resolution
      * order is:
      *   1. User override on that fileIndex (Prepare screen).
-     *   2. The mapped slot's preset materialType, matching Prepare rows.
-     *   3. Canonical entry's declared materialType (file's filament_type).
+     *   2. The file's declared materialType — but only for a genuinely
+     *      declared spool (FILE_COLOUR, multi-colour, non-paint, injective
+     *      slot). See [com.u1.slicer.data.resolvePerFilamentTypeAndTemp].
+     *   3. The mapped slot's preset materialType (authoritative for
+     *      paint-fold / support / single-colour cases).
      *   4. "PLA" / 220° as last resort.
      *
      * Nozzle temps are derived from the resolved material via
@@ -3201,6 +3265,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         presets = presets,
         filamentLibrary = filaments.value,
     )
+
+    /**
+     * B128 — the per-canonical-fileIndex material the slice actually used, for
+     * the Map & Print mismatch check. Mirrors [buildPerFilamentTypeAndTemp] but
+     * takes the explicit slice-time [sliceTimeColorMapping] so the dialog's
+     * "Sliced as X" reflects file-declared materials too (not just the slot
+     * preset), keeping the mismatch warning honest after B128.
+     */
+    fun sliceTimeMaterials(
+        canonical: com.u1.slicer.data.CanonicalFilamentList,
+        sliceTimeColorMapping: List<Int>?,
+    ): List<String> = com.u1.slicer.data.resolvePerFilamentTypeAndTemp(
+        canonical = canonical,
+        overrides = _filamentOverrides.value.mapValues { (_, ov) -> ov.color to ov.materialType },
+        colorMapping = sliceTimeColorMapping,
+        presets = extruderPresets.value,
+        filamentLibrary = filaments.value,
+    ).first
 
     private fun configureNativeDiagnosticsIfAvailable() {
         if (!NativeLibrary.isLoaded) return
@@ -4087,7 +4169,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                     _state.value = SlicerState.SliceComplete(result)
                     _gcodePreview.value = native.getGcodePreview(50)
-                    _parsedGcode.value = outputValidation.parsedGcode
+                    setParsedGcodeWithRangeReset(outputValidation.parsedGcode)
                     settingsRepo.saveSliceConfig(_config.value)
                     // Save job to history. Copy source model to durable storage so it can be
                     // re-opened from the Jobs tab even after the transient workspace is cleared.
@@ -4655,7 +4737,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
             try {
                 val parsed = GcodeParser.parse(gcodeFile)
-                _parsedGcode.value = parsed
+                setParsedGcodeWithRangeReset(parsed)
                 _state.value = SlicerState.SliceComplete(sliceResultFromJob(job))
                 _gcodePreview.value = ""
                 launch(Dispatchers.Main) { onResult(true) }
@@ -5020,7 +5102,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             Log.w("SlicerVM", "F89 fast-path: gcode parse failed: ${e.message}")
             null
         }
-        _parsedGcode.value = parsed
+        setParsedGcodeWithRangeReset(parsed)
         _state.value = SlicerState.SliceComplete(sliceResultFromJob(row))
         _gcodePreview.value = ""
         _navigateEvents.tryEmit("preview")
@@ -5251,7 +5333,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         clipperRetryAttempted = false
         _state.value = SlicerState.Idle
         _gcodePreview.value = ""
-        _parsedGcode.value = null
+        setParsedGcodeWithRangeReset(null)
         _lastSliceResult = null
         _excludeObjects.value = emptyList()
         _activeExtruderColors.value = emptyList()

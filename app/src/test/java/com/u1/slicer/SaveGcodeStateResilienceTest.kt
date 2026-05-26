@@ -57,7 +57,9 @@ class SaveGcodeStateResilienceTest {
         //      always tracks the latest successful slice.
         //   2. Clear _parsedGcode and _gcodePreview when transitioning away from
         //      SliceComplete so the Preview screen doesn't lie about a saveable
-        //      slice existing.
+        //      slice existing. (B129: the _parsedGcode clear now routes through
+        //      setParsedGcodeWithRangeReset(null), which also resets the preview
+        //      layer-slider range — guarded in GcodeViewer3DScreenLayerRangeTest.)
         assertTrue(
             "State observer must mirror SliceComplete into _lastSliceResult.",
             Regex(
@@ -67,7 +69,7 @@ class SaveGcodeStateResilienceTest {
         assertTrue(
             "State observer must clear _parsedGcode + _gcodePreview when leaving SliceComplete.",
             Regex(
-                """prevState\s+is\s+SlicerState\.SliceComplete\s+&&\s+newState\s+!is\s+SlicerState\.SliceComplete[^}]*_parsedGcode\.value\s*=\s*null[^}]*_gcodePreview\.value\s*=\s*\"\""""
+                """prevState\s+is\s+SlicerState\.SliceComplete\s+&&\s+newState\s+!is\s+SlicerState\.SliceComplete[^}]*setParsedGcodeWithRangeReset\(null\)[^}]*_gcodePreview\.value\s*=\s*\"\""""
             ).containsMatchIn(source)
         )
     }

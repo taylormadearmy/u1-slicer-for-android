@@ -4,19 +4,22 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B129: Moving/rotating the model resets the G-code preview layer slider to the top of the print (GitHub #157) — OPEN
+### B129: Moving/rotating the model resets the G-code preview layer slider to the top of the print (GitHub #157) — FIXED (unreleased; branch `fix/b128-b129-filament-and-slider`)
 - **Symptom**: After slicing, open the sliced G-code preview and move the layer slider to some position. Then move or rotate the model on the build plate. The G-code preview's layer slider jumps back to the top of the print.
 - **Reported by**: Kevin, v2.8.0.
-- **Expected**: Moving/rotating the build plate should not reset the layer slider — it should retain the user's position (or at minimum not snap to the top).
-- **Notes**: Likely a state reset in the G-code preview when Prepare-screen transform state changes triggers a recomposition that re-initialises the slider's remembered position.
+- **Root cause (two layers)**: (1) `GcodeViewer3DScreen` held `minLayer`/`maxLayer` in plain `remember` — Compose Navigation pops the `GCODE_VIEWER_3D` destination when you go to Prepare, destroying its saved state, so re-entry re-initialised to the full range. (2) On re-entry the `LaunchedEffect` re-ran `GcodeRenderer.uploadGcode`, which unconditionally resets the renderer's `maxLayer` to the top.
+- **Fix**: Hoisted the range to `SlicerViewModel.previewLayerRange: StateFlow<Pair<Int,Int>?>`. It is reset to `null` (full range) only via `setParsedGcodeWithRangeReset`, called at every `_parsedGcode` assignment/clear site, so a genuinely new/cleared slice opens at the top while plain navigation preserves the position. The screen seeds from it via the pure `resolveInitialLayerRange(saved, layerCount)` (clamped), persists slider moves via `onLayerRangeChange`, and re-applies the range to the renderer after `uploadGcode`. NavGraph wires both directions.
+- **Tests**: 7 unit cases for `resolveInitialLayerRange` (`GcodeLayerRangeTest`); 5 structural wiring guards (`GcodeViewer3DScreenLayerRangeTest`) including "all `_parsedGcode.value =` assignments route through the reset helper". (No automated Compose UI harness exists in this project; the move→rotate→return behaviour is covered by manual E2E.)
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/157
 
-### B128: 3MF default filament/material types not populated on load — slots 2+ show "none" (GitHub #156) — OPEN
-- **Symptom**: Load a 3MF that declares 3 colours/materials. On first load only slot 1 is assigned a material type (e.g. "PETG"); slots 2 and 3 show "none". Manually changing the material for each slot works fine.
+### B128: 3MF default filament/material types not populated on load — slots 2+ show "none" (GitHub #156) — FIXED (unreleased; branch `fix/b128-b129-filament-and-slider`)
+- **Symptom**: Load a 3MF that declares 3 colours/materials. On first load only slot 1 is assigned a material type (e.g. "PETG"); slots 2 and 3 show the slot-preset default. Manually changing the material per slot works fine.
 - **Reported by**: DC15 (Discord), v2.8.0.
-- **Expected**: On first load of a 3MF, the app should read and display the file's default colour AND material type for every filament slot, not just the first.
-- **Constraint (from reporter)**: Do not break the manual material-change path — that already works and must keep working.
-- **Notes**: Related to the Prepare-screen filament-list reshape (Phase 2.6) and to B118 (single-colour slot-preset/material resolution). The default-material read on load is the missing piece.
+- **Root cause**: On multi-colour load the per-filament material shown in `PrintSetupSection` (and the value the slice used) came from the auto colour-matched slot preset (`MainActivity.kt:3945`, `resolvePerFilamentTypeAndTemp` priority override → slot → file). The file's own `filament_type` array — parsed correctly into `CanonicalFilamentList.materialType` by `BambuCanonicalList` — was never authoritative. So a filament showed whatever material its matched physical slot happened to carry.
+- **Fix (scoped to declared filaments)**: `resolvePerFilamentTypeAndTemp` now prefers the file's declared material (`override → FILE → slot preset → "PLA"`) **only** for a genuinely declared spool: `FilamentSource.FILE_COLOUR`, the file is multi-colour, `paintStateMap` is empty, and the filament owns its physical slot (injective mapping). Paint-fold (SEMM/H2C), support/interface, single-colour, and slot-collision cases keep mapped-slot authority — so **B99/B125** (support filament on a different-material slot) and **B118** (single-colour PETG-slot) do not regress. Nozzle temp follows the resolved material's default unless the mapped slot's preset material matches (then its tuned profile temp survives).
+- **Consistency**: display (`SlicerViewModel.displayedFilamentMaterials` → `PrintSetupSection`), slice (`buildPerFilamentTypeAndTemp` → embed `filament_type`/`nozzle_temperature`), G-code header patch (`resolveFilamentTypesForHeaderPatch`), and the Map & Print "Sliced as X" mismatch check (`FilamentMappingDialog` fed `sliceTimeMaterials`) all run off the one resolver, so they can't diverge (no B118-class false warnings).
+- **Constraint honoured**: manual material override still wins everywhere; "Reset to default" returns to the file's declared material for declared filaments.
+- **Tests**: rewrote 1 + added 5 `PerFilamentResolverTest` cases (file-wins, collision-keeps-slot, paint-fold-keeps-slot, single-colour B118 guard, file==slot temp), updated 1 `FilamentTypeHeaderPatchTest` case, added `PrintSetupSectionMaterialTest` (display wiring), and instrumented `BambuPipelineIntegrationTest#b128_jonsBug_declaredFileMaterialsDriveResolvedTypes` (real `jons-bug.3mf` PETG+TPU → file materials win on-device). All green; 104-test slicing regression suite still passes.
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/156
 - **Source**: Discord, 2026-05-26 (DC15) — https://discord.com/channels/1086575708903571536/1484249705042153633/1508932542147854418
 

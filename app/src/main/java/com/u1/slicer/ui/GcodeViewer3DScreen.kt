@@ -36,13 +36,23 @@ fun GcodeViewer3DScreen(
     // (override-applied). When non-empty, drives the slot palette so the
     // standalone G-code 3D viewer shows file colours matching Prepare.
     resolvedFilamentColors: List<String> = emptyList(),
+    // B129: the layer range remembered across navigation. Hoisted to the
+    // ViewModel so moving/rotating the model (which leaves this screen) doesn't
+    // reset the slider to the top. Null means "show the full print" (a fresh
+    // slice). [onLayerRangeChange] persists the user's slider position back.
+    initialLayerRange: Pair<Int, Int>? = null,
+    onLayerRangeChange: (Int, Int) -> Unit = { _, _ -> },
     onBack: () -> Unit
 ) {
     val gcodeLayerCount = parsedGcode.layers.size
     val displayLayerCount = if (slicerLayerCount > 0) slicerLayerCount else gcodeLayerCount
     var viewerView by remember { mutableStateOf<GcodeViewerView?>(null) }
-    var minLayer by remember { mutableIntStateOf(0) }
-    var maxLayer by remember { mutableIntStateOf(gcodeLayerCount - 1) }
+    // B129: seed the slider from the saved range (preserved across navigation),
+    // clamped to the current layer count. A fresh composition on re-entry reads
+    // the latest saved value the ViewModel handed us.
+    val initialRange = remember(parsedGcode) { resolveInitialLayerRange(initialLayerRange, gcodeLayerCount) }
+    var minLayer by remember(parsedGcode) { mutableIntStateOf(initialRange.first) }
+    var maxLayer by remember(parsedGcode) { mutableIntStateOf(initialRange.second) }
     var isLoading by remember { mutableStateOf(true) }
     var showTravel by remember { mutableStateOf(false) }
     var featureColorMode by remember { mutableStateOf(false) }
@@ -69,6 +79,14 @@ fun GcodeViewer3DScreen(
             v.requestRender()
         }
         isLoading = false
+        // B129: uploadGcode() resets the renderer's layer window to the full
+        // print. Re-apply the remembered range so a slider position restored
+        // after navigation (move/rotate the model) actually takes effect
+        // instead of snapping back to the top.
+        if (minLayer > 0 || maxLayer < gcodeLayerCount - 1) {
+            v.setLayerRange(minLayer, maxLayer)
+            v.requestRender()
+        }
     }
 
     Scaffold(
@@ -204,6 +222,9 @@ fun GcodeViewer3DScreen(
                                 minLayer = range.start.roundToInt()
                                 maxLayer = range.endInclusive.roundToInt()
                                 viewerView?.setLayerRange(minLayer, maxLayer)
+                                // B129: persist to the ViewModel so the position
+                                // survives leaving the preview to move/rotate.
+                                onLayerRangeChange(minLayer, maxLayer)
                             },
                             valueRange = 0f..(gcodeLayerCount - 1).toFloat(),
                             modifier = Modifier
@@ -223,4 +244,24 @@ fun GcodeViewer3DScreen(
             }
         }
     }
+}
+
+/**
+ * B129 — resolve the slider's initial [minLayer, maxLayer] from the range
+ * remembered in the ViewModel.
+ *
+ *   - `saved == null` → the full print `0..layerCount-1` (a fresh slice has no
+ *     remembered position).
+ *   - `saved != null` → the remembered range, clamped to the current layer
+ *     count so a re-slice with fewer layers can't leave the window past the end.
+ *
+ * Pure and Android-free so the persist-vs-reset contract is unit-testable
+ * (see `GcodeLayerRangeTest`).
+ */
+internal fun resolveInitialLayerRange(saved: Pair<Int, Int>?, layerCount: Int): Pair<Int, Int> {
+    val maxIdx = (layerCount - 1).coerceAtLeast(0)
+    if (saved == null) return 0 to maxIdx
+    val lo = saved.first.coerceIn(0, maxIdx)
+    val hi = saved.second.coerceIn(lo, maxIdx)
+    return lo to hi
 }

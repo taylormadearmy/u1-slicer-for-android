@@ -833,6 +833,10 @@ class MainActivity : ComponentActivity() {
                                     plateFileIndices = plateFileIndices,
                                     filamentMaterialOverrides = overrides.mapValues { (_, ov) -> ov.materialType },
                                     sliceTimeColorMapping = currentMapping,
+                                    // B128: feed the actual sliced materials (file-declared
+                                    // when applicable) so the "Sliced as X" mismatch check
+                                    // matches the slice instead of the slot preset.
+                                    sliceTimeMaterials = viewModel.sliceTimeMaterials(canonical, currentMapping),
                                     activeNickname = activeNickname,
                                     showNicknameInTitle = printerCount > 1,
                                     onConfirm = { plateMapping ->
@@ -1571,11 +1575,16 @@ fun PrepareScreen(
                         }
                         // Inline filament list + prime tower toggle
                         val filamentOverrides by viewModel.filamentOverrides.collectAsState()
+                        // B128: per-filament (material, temp) resolved by the same
+                        // function the slice uses, so the chip strip shows the file's
+                        // declared materials and never diverges from the slice.
+                        val filamentMaterials by viewModel.displayedFilamentMaterials.collectAsState()
                         PrintSetupSection(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
                             colorMapping = colorMapping,
                             extruderPresets = extruderPresets,
                             filaments = filaments,
+                            filamentMaterials = filamentMaterials,
                             wipeTowerEnabled = config.wipeTowerEnabled,
                             extruderCount = config.extruderCount,
                             onMappingChange = { newMapping ->
@@ -3850,6 +3859,11 @@ fun PrintSetupSection(
     colorMapping: List<Int>?,
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
     filaments: List<com.u1.slicer.data.FilamentProfile>,
+    // B128: per-canonical-filament (materialType, nozzleTemp) resolved by the
+    // same slice-time resolver. When present for a row, it is authoritative for
+    // the displayed material + temp so the chip strip matches the slice exactly.
+    // Empty for STL / non-canonical files (falls back to slot-preset material).
+    filamentMaterials: List<Pair<String, Int>> = emptyList(),
     wipeTowerEnabled: Boolean,
     extruderCount: Int,
     onMappingChange: (List<Int>) -> Unit,
@@ -3942,16 +3956,24 @@ fun PrintSetupSection(
                             val suggestedSlot = mapping.getOrElse(colorIdx) { 0 }
                             val suggestedPreset = extruderPresets.firstOrNull { it.index == suggestedSlot }
                                 ?: extruderPresets.firstOrNull()
-                            val materialType = override?.materialType ?: suggestedPreset?.materialType ?: "PLA"
+                            // B128: the resolved (material, temp) — computed by the
+                            // same function the slice uses — is authoritative when
+                            // present, so the chip shows the file's declared material
+                            // for a declared multi-colour filament and the slice matches.
+                            // Falls back to the slot-preset path for non-canonical
+                            // files (STL / single-colour with no canonical entry).
+                            val resolved = filamentMaterials.getOrNull(colorIdx)
+                            val materialType = resolved?.first
+                                ?: override?.materialType ?: suggestedPreset?.materialType ?: "PLA"
                             val profileId = suggestedPreset?.filamentProfileId
                             val profile = filaments.firstOrNull { it.id == profileId }
                             val isOverridden = override?.materialType != null
-                            // Temp display: when material is overridden, use the
-                            // material's default temp (nozzleTempDefaultForMaterial)
-                            // since the slot's linked profile is no longer the
-                            // source of truth for temp. Otherwise prefer the
-                            // linked filament profile's nozzleTemp.
-                            val displayTemp = if (isOverridden) {
+                            // Temp display: prefer the resolver's temp (matches slice).
+                            // For non-canonical fallback: when material is overridden,
+                            // use the material's default temp since the slot's linked
+                            // profile is no longer the source of truth; otherwise prefer
+                            // the linked filament profile's nozzleTemp.
+                            val displayTemp = resolved?.second ?: if (isOverridden) {
                                 com.u1.slicer.nozzleTempDefaultForMaterial(materialType)
                             } else {
                                 profile?.nozzleTemp ?: com.u1.slicer.nozzleTempDefaultForMaterial(materialType)

@@ -8,10 +8,23 @@ import com.u1.slicer.nozzleTempDefaultForMaterial
  *
  * For each fileIndex `i` in [canonical], the material resolution order is:
  *   1. `overrides[i].second` - user override material from the Prepare screen.
- *   2. `presets[colorMapping[i]].materialType` — the mapped physical slot,
- *      matching what the Prepare filament row displays.
- *   3. `canonical.filaments[i].materialType` — the file's declared material.
+ *   2. `canonical.filaments[i].materialType` — the file's declared material,
+ *      but ONLY when filament `i` is a genuinely *declared* spool (B128): the
+ *      entry is [FilamentSource.FILE_COLOUR], the file is multi-colour, it has
+ *      no paint segmentation, and `i`'s physical slot is not shared with any
+ *      other filament (injective mapping). For paint-fold (SEMM/H2C),
+ *      support/interface, single-colour, or slot-collision cases the file's
+ *      material is NOT authoritative and resolution defers to the slot preset.
+ *   3. `presets[colorMapping[i]].materialType` — the mapped physical slot.
  *   4. `"PLA"` - final fallback.
+ *
+ * B128 rationale: a normal multi-colour 3MF declares one material per filament
+ * (e.g. PETG/PLA/TPU); those declared materials are the meaningful defaults the
+ * user expects to see on load. But when several "filaments" fold onto one
+ * physical slot (H2C/SEMM paint states) or a support filament is deliberately
+ * routed to a different-material slot, the physical slot is authoritative — so
+ * file-material authority is gated on the discriminator above. This keeps
+ * B99/B125 (support filament) and B118 (single-colour slot preset) intact.
  *
  * Nozzle-temperature resolution: when the user has overridden the material,
  * the temp comes purely from the resolved material via
@@ -47,16 +60,46 @@ internal fun resolvePerFilamentTypeAndTemp(
 ): Pair<List<String>, List<Int>> {
     val types = ArrayList<String>(canonical.size)
     val temps = ArrayList<Int>(canonical.size)
+
+    // B128 discriminator context: count how many filaments land on each
+    // physical slot so we can tell an injective (1:1) declared mapping from a
+    // fold (collision). `declaredContext` gates file-material authority to
+    // multi-colour, non-paint files.
+    val slotUsage = HashMap<Int, Int>()
+    for (i in 0 until canonical.size) {
+        val slot = colorMapping?.getOrNull(i) ?: 0
+        slotUsage[slot] = (slotUsage[slot] ?: 0) + 1
+    }
+    val declaredContext = canonical.size > 1 && canonical.paintStateMap.isEmpty()
+
     for (i in 0 until canonical.size) {
         val overrideMaterial = overrides[i]?.second
         val slot = colorMapping?.getOrNull(i) ?: 0
         val slotPreset = presets.firstOrNull { it.index == slot }
-        val material = overrideMaterial
-            ?: slotPreset?.materialType
-            ?: canonical.filaments[i].materialType
-            ?: "PLA"
+        val fileMaterial = canonical.filaments[i].materialType
+        // File material is authoritative only for a genuinely declared spool:
+        // FILE_COLOUR source, declares a material, in a multi-colour non-paint
+        // file, and owns its physical slot (no collision).
+        val fileMaterialWins = declaredContext &&
+            canonical.filaments[i].source == FilamentSource.FILE_COLOUR &&
+            fileMaterial != null &&
+            (slotUsage[slot] ?: 0) == 1
+
+        val material = when {
+            overrideMaterial != null -> overrideMaterial
+            fileMaterialWins -> fileMaterial!!
+            else -> slotPreset?.materialType ?: fileMaterial ?: "PLA"
+        }
         types.add(material)
-        val profileTemp = if (overrideMaterial == null) {
+
+        // Nozzle temp: the slot's linked filament-profile temp applies only when
+        // the resolved material actually comes from (or matches) that slot — i.e.
+        // there is no override AND the resolved material equals the slot preset's
+        // material. Otherwise the profile (tuned for the slot's spool) no longer
+        // describes the resolved material, so we use the material's default temp.
+        val profileTempApplies = overrideMaterial == null &&
+            slotPreset?.materialType == material
+        val profileTemp = if (profileTempApplies) {
             slotPreset?.filamentProfileId
                 ?.let { id -> filamentLibrary.firstOrNull { it.id == id }?.nozzleTemp }
         } else null
