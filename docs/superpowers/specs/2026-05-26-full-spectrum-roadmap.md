@@ -141,6 +141,41 @@ re-apply the Android patch catalogue (per `ENGINE_UPGRADE_GUIDE.md`), rebuild th
 `.so`, and confirm the **full existing test suite stays green** (1367 unit + 345
 instrumented). Closes/advances D1.
 
+#### M1 pre-flight analysis (2026-05-26)
+Cross-referenced our Android patch surface (per `ENGINE_UPGRADE_GUIDE.md` patch
+catalog) against the files PR #375 rewrote, and spot-checked current `main`.
+
+**Reframe — the dominant M1 cost is SAPIL API-compat, not patch re-merge.** The
+bulk of our native code lives in standalone files *outside* the submodule
+(`app/src/main/cpp/src/sapil_*.cpp`, `slicer_wrapper.cpp`) — these never conflict
+textually, but they call into libslic3r classes (`Print`, `Model`, `PrintConfig`,
+`PresetBundle`, `Config`) that **#375 changed**. M1's real work is fixing compile
+breakage in our wrapper against the new libslic3r API, not merging diffs.
+
+**Our actual in-submodule patch surface is small and mostly isolated:**
+
+| Patch | File | Collides with #375? | Action |
+|---|---|---|---|
+| B38 init: `m_origin`, `m_isBBLPrinter`, `FakeWipeTower` | `libslic3r/Print.hpp` | **Yes** | **Must re-apply** — verified still needed (see below) |
+| B38 init: `m_cur_layer_id` | `libslic3r/GCode/WipeTower.hpp` | No | Re-apply, clean — verified still needed |
+| Build: NDK type qualification | `CutSurface.cpp`, `Brim.cpp`, `clipper.hpp`, `NSVGUtils.cpp`, STL includes | No (not in #375) | Re-apply, expect clean; re-verify against full drift |
+| Diagnostics (`#ifdef __ANDROID__`) | `GCode.cpp`, `Print.cpp`, `WipeTower2.cpp`, `Snapmaker_Orca.cpp` | **Yes** | Defer — optional safety nets; re-add post-green |
+| Heavy diag (GUI) | `slic3r/GUI/PartPlate.cpp` | **Yes** | **Drop** — we don't use the GUI |
+| Heavy diag | `deps_src/clipper/clipper.cpp`, `ClipperUtils.cpp` | No | Optional; re-add only if investigating |
+
+**B38 verified still required (not upstreamed).** On current `main`:
+`Print.hpp:1124` is `Vec3d m_origin;` (no initializer), `:1100` is
+`bool m_isBBLPrinter;`, `WipeTower.hpp:307` is `size_t m_cur_layer_id;` — all still
+uninitialized. The members are unchanged, so re-application is mechanical (add the
+initializers). This is the one **must-fix** that gates a correct release build; the
+rest of the catalog is either upstream-clean, optional, or droppable.
+
+**Caveat:** #375 is only the latest PR. The full drift is 2.2.4 (`f11a7bf`) →
+post-#375 `main` (thousands of commits), which touches far more than #375's 114
+files. This analysis bounds the *#375-specific* collisions and confirms the
+must-fix set; the full re-apply still needs the real `git apply --3way` pass in M1
+with the submodule checked out.
+
 ### M2 — Feasibility slice
 Drive a full-spectrum slice through SAPIL from a test config. Inspect the G-code
 (tool changes per layer, time estimate, registration). Validate with **one real
