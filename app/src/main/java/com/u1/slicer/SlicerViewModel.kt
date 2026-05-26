@@ -506,6 +506,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val toastEvents: SharedFlow<String> = _toastEvents
 
+    // Most recent successful slice result, kept independent of [_state] so the Save /
+    // Share path stays robust when [_state] transitions away from SliceComplete during
+    // the file-picker round-trip (e.g. plate selector re-fires and triggers
+    // [selectPlate] before the user's saveGcodeTo callback runs — the picker has
+    // already created the destination file as 0 bytes; without this cache the save
+    // would silently early-return and leave it empty). Cleared on clearModel and
+    // whenever a new slice starts.
+    private var _lastSliceResult: SliceResult? = null
+
     // F89: resume offer — non-null when a saved session was found on launch and the
     // source file is still on disk. Cleared on Resume (after the load starts) or
     // explicit dismiss; banner UI gates on `state == Idle && offer != null`.
@@ -1154,6 +1163,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             var prevState: SlicerState = SlicerState.Idle
             state.collect { newState ->
                 val ctx = getApplication<android.app.Application>()
+                // Mirror the latest successful SliceResult into the save-path cache so it
+                // survives a later state transition.
+                if (newState is SlicerState.SliceComplete) {
+                    _lastSliceResult = newState.result
+                }
+                // When state transitions AWAY from SliceComplete, the on-screen Save
+                // button vanishes, but the parsed-G-code / G-code-preview StateFlows
+                // would otherwise keep showing the previous slice — tricking the user
+                // into thinking a saveable slice still exists. Clear them so the UI
+                // matches the underlying state.
+                if (prevState is SlicerState.SliceComplete && newState !is SlicerState.SliceComplete) {
+                    _parsedGcode.value = null
+                    _gcodePreview.value = ""
+                }
                 when {
                     prevState is SlicerState.Loading && newState is SlicerState.ModelLoaded -> {
                         val filename = (newState as SlicerState.ModelLoaded).info.filename
@@ -5229,6 +5252,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _state.value = SlicerState.Idle
         _gcodePreview.value = ""
         _parsedGcode.value = null
+        _lastSliceResult = null
         _excludeObjects.value = emptyList()
         _activeExtruderColors.value = emptyList()
         _selectedExtruder.value = 0
@@ -5428,12 +5452,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun shareGcode() {
-        val state = _state.value
-        if (state !is SlicerState.SliceComplete) return
+        val result = (_state.value as? SlicerState.SliceComplete)?.result ?: _lastSliceResult
+        if (result == null) {
+            _toastEvents.tryEmit("Share G-code failed: no completed slice available")
+            return
+        }
 
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
-            val sourceFile = File(state.result.gcodePath)
+            val sourceFile = File(result.gcodePath)
             val baseName = com.u1.slicer.data.ModelFileNaming.baseName(
                 currentModelName.ifBlank { null }, sourceFile.name
             )
@@ -5441,7 +5468,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 sourceFile.parentFile,
                 "$baseName.share.gcode"
             )
-            if (!prepareExportableGcode(sourceFile, shareFile)) return@launch
+            if (!prepareExportableGcode(sourceFile, shareFile)) {
+                _toastEvents.tryEmit("Share G-code failed: sliced file is missing")
+                return@launch
+            }
 
             val uri = FileProvider.getUriForFile(
                 context,
@@ -5464,24 +5494,97 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun saveGcodeTo(uri: Uri) {
-        val state = _state.value
-        if (state !is SlicerState.SliceComplete) return
+        // Prefer the live SliceComplete state, but fall back to the cached
+        // _lastSliceResult — the Android file picker has already created the
+        // destination as a 0-byte file before this callback runs, so a silent
+        // early-return leaves a useless empty file. The cache lets the save
+        // succeed even when a background plate-selector / selectPlate race has
+        // flipped _state away from SliceComplete during the picker round-trip.
+        val liveResult = (_state.value as? SlicerState.SliceComplete)?.result
+        val result = liveResult ?: _lastSliceResult
+        if (result == null) {
+            val stateName = _state.value::class.simpleName ?: "Unknown"
+            Log.e("SaveGcode", "saveGcodeTo: no SliceResult available (state=$stateName)")
+            _toastEvents.tryEmit("Save G-code failed: no completed slice available")
+            diagnostics.recordEvent(
+                "save_gcode_failed",
+                mapOf("reason" to "no_slice_result", "state" to stateName)
+            )
+            return
+        }
+        val usedCache = liveResult == null
+        if (usedCache) {
+            Log.w("SaveGcode", "saveGcodeTo: using cached _lastSliceResult (state=${_state.value::class.simpleName})")
+        }
 
         viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val sourceFile = File(result.gcodePath)
+            val srcExists = sourceFile.exists()
+            val srcLen = if (srcExists) sourceFile.length() else -1L
+            Log.i("SaveGcode", "saveGcodeTo: src=${sourceFile.absolutePath} exists=$srcExists len=$srcLen usedCache=$usedCache uri=$uri")
+            val exportFile = File(
+                sourceFile.parentFile,
+                "${sourceFile.nameWithoutExtension}.export.${sourceFile.extension}"
+            )
             try {
-                val context = getApplication<Application>()
-                val sourceFile = File(state.result.gcodePath)
-                val exportFile = File(
-                    sourceFile.parentFile,
-                    "${sourceFile.nameWithoutExtension}.export.${sourceFile.extension}"
-                )
-                if (!prepareExportableGcode(sourceFile, exportFile)) return@launch
-                context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                    exportFile.inputStream().use { it.copyTo(out) }
+                if (!prepareExportableGcode(sourceFile, exportFile)) {
+                    Log.e("SaveGcode", "saveGcodeTo: prepareExportableGcode returned false (src missing or empty)")
+                    _toastEvents.tryEmit("Save G-code failed: sliced file is missing")
+                    diagnostics.recordEvent(
+                        "save_gcode_failed",
+                        mapOf(
+                            "reason" to "prepare_returned_false",
+                            "srcPath" to sourceFile.absolutePath,
+                            "srcExists" to srcExists,
+                            "srcLen" to srcLen,
+                            "usedCache" to usedCache
+                        )
+                    )
+                    return@launch
                 }
+                val exportLen = exportFile.length()
+                Log.i("SaveGcode", "saveGcodeTo: prepared export file len=$exportLen")
+                val out = context.contentResolver.openOutputStream(uri, "wt")
+                if (out == null) {
+                    Log.e("SaveGcode", "saveGcodeTo: contentResolver.openOutputStream returned null for uri=$uri")
+                    _toastEvents.tryEmit("Save G-code failed: could not open destination")
+                    diagnostics.recordEvent(
+                        "save_gcode_failed",
+                        mapOf("reason" to "open_output_stream_null", "uri" to uri.toString())
+                    )
+                    return@launch
+                }
+                val bytesCopied = out.use { sink ->
+                    exportFile.inputStream().use { it.copyTo(sink) }
+                }
+                Log.i("SaveGcode", "saveGcodeTo: success bytesCopied=$bytesCopied")
+                diagnostics.recordEvent(
+                    "save_gcode_success",
+                    mapOf(
+                        "bytesCopied" to bytesCopied,
+                        "srcLen" to srcLen,
+                        "exportLen" to exportLen,
+                        "usedCache" to usedCache
+                    )
+                )
                 exportFile.delete()
-            } catch (_: Throwable) {
-                // Silent fail — user may have cancelled the save dialog
+            } catch (t: Throwable) {
+                Log.e("SaveGcode", "saveGcodeTo: exception src=${sourceFile.absolutePath} srcLen=$srcLen", t)
+                _toastEvents.tryEmit("Save G-code failed: ${t.message ?: t.javaClass.simpleName}")
+                diagnostics.recordEvent(
+                    "save_gcode_failed",
+                    mapOf(
+                        "reason" to "exception",
+                        "exception" to t.javaClass.simpleName,
+                        "message" to (t.message ?: ""),
+                        "srcPath" to sourceFile.absolutePath,
+                        "srcExists" to srcExists,
+                        "srcLen" to srcLen,
+                        "usedCache" to usedCache,
+                        "uri" to uri.toString()
+                    )
+                )
             }
         }
     }

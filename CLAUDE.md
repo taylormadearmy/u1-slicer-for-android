@@ -68,7 +68,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1362 JVM unit tests
+./gradlew testDebugUnitTest                        # 1367 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 345 instrumented tests — uses Orchestrator
 ```
 
@@ -78,7 +78,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1362 tests across 112 classes
+### Unit tests (`app/src/test/`) - 1367 tests across 113 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -130,6 +130,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `LargeModelLoadingMessageTest.kt` (5) — large model loading state messages
 - `LongOpServiceStackTest.kt` (9) — F90 stack semantics: push/pop, top-of-stack replace via updatePure, empty-stack stop, parent reveal on nested pop, ACTION_STOP emission, concurrent push/pop pairing
 - `SliceResultFromJobTest.kt` (2) — SliceResult construction from SliceJob
+- `SaveGcodeStateResilienceTest.kt` (5) — 2026-05-26 0-byte-save guard: `_lastSliceResult` cache field declared; state observer mirrors SliceComplete into cache + clears `_parsedGcode`/`_gcodePreview` on transition away; `clearModel` drops cache; `saveGcodeTo` reads live-state-or-cache + toasts on every failure (no silent swallow); `shareGcode` same cache fallback
 - `printer/PrintProgressNotifierTest.kt` (3) — print progress notification logic
 - `PreparePreviewCacheTest.kt` (10) — B49 Prepare preview cache state machine: fresh load, tab switch cache hit, GL upload after cache hit, repeated effect dedup, parse effect cache guard, B59b togglePrimeTower cache invalidation contract
 - `SingleColorExtruderConfigTest.kt` (6) — B56 single-color extruder selection filamentType propagation: E1-E4 material types, round-trip, missing preset fallback
