@@ -18,9 +18,8 @@ The decisive hardware fact: the **Snapmaker U1 is a toolchanger** with four
 independent extruders/nozzles. Tool changes are mechanical, so alternation costs
 **print time, not purge waste** — no prime/wipe tower is required for the colour
 blending itself. This is exactly the architecture Prusa identifies as *ideal* for
-their ColorMix (toolchangers like the Prusa XL). The only physical prerequisite
-is **accurate XY nozzle-offset calibration** so alternating layers register on top
-of one another.
+their ColorMix (toolchangers like the Prusa XL). The U1 handles nozzle alignment
+itself, so there is no extra calibration prerequisite to worry about.
 
 This supersedes the original F14 blocker ("ratdoux fork v0.9.4 alpha, untested on
 hardware, wait for v1.0"): the capability is now appearing in **Snapmaker's own
@@ -129,7 +128,7 @@ core slicing path:
   firmly retired.
 
 **Residual (not gating the engine decision):** a confirmatory real-U1 print
-(quality + nozzle-offset registration) — folded into **M2**, not M0. M0 is
+(blend quality) — folded into **M2**, not M0. M0 is
 satisfied: the capability exists in the vendor fork and is fully reproducible
 headless via config. The dominant remaining cost is the **submodule jump from
 2.2.4 `f11a7bf` to a post-#375 commit** and re-applying the Android patch set
@@ -178,9 +177,8 @@ with the submodule checked out.
 
 ### M2 — Feasibility slice
 Drive a full-spectrum slice through SAPIL from a test config. Inspect the G-code
-(tool changes per layer, time estimate, registration). Validate with **one real
-U1 print** to confirm blended colours read correctly and nozzle offsets register.
-This is the go/no-go on print quality.
+(tool changes per layer, time estimate). Validate with **one real U1 print** to
+confirm blended colours read correctly. This is the go/no-go on print quality.
 
 ### M3 — Compose UI (thin)
 Target-colour picker → engine recipe across the four loaded filaments. Surface a
@@ -212,8 +210,6 @@ same assignment substrate.
 - **Print-cost transparency** — a painted *mixed* region prints by per-layer
   alternation, so Smart Paint could silently multiply tool changes / print time.
   Needs a cost indicator (e.g. tool-change count or time delta) when mixes are in play.
-- **Registration dependency** — painted mixed regions rely on the user's XY
-  nozzle-offset calibration (shared M2/M3 risk).
 
 This item does **not** gate engine adoption (M0–M2 are colour-source agnostic);
 it gates only how M3's UI is shaped. Capture the data-model decision in the M3 spec.
@@ -232,9 +228,6 @@ presets.
 
 - **GUI-gated capability** — full-spectrum may only be exposed in Snapmaker's
   desktop UI, not via config. **M0 retires this risk** before any engine work.
-- **Calibration dependency** — blended colour quality depends on the user's XY
-  nozzle-offset calibration; poor calibration → visible mis-registration. Document
-  the prerequisite; consider a UI warning.
 - **Print-time blow-up** — per-layer tool changes multiply print time. Estimate it
   and show the user up front (M3).
 - **Colour fidelity without M4** — a naive layer-ratio blend may not match the
