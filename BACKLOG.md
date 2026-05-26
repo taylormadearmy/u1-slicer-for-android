@@ -567,8 +567,8 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
-### F87 + F91 — Orca profile import + filament library expansion (GitHub #147, #155) — IMPLEMENTED on `feature/f87-f91-orca-profiles`, awaiting device verification + confidence check
-- **Status (2026-05-25)**: implementation complete on branch. Full unit suite green (1356 tests, +38 from main baseline). No native rebuild needed — all new keys were already on `profile_keys[]` (audited 2026-05-25, `sapil_print.cpp:683+`). Plan: `docs/superpowers/specs/2026-05-25-f87-f91-orca-profiles-plan.md`. Public ship strategy: bundle both in one release after on-device confidence check + E2E batch.
+### F87 + F91 — Orca profile import + filament library expansion (GitHub #147, #155) — DONE v2.8.0
+- **Released 2026-05-26** as v2.8.0 (versionCode 298). 1362 JVM unit + 345 instrumented + 16/16 E2E PASS on Pixel 8a; every established baseline matched exactly. Plan: `docs/superpowers/specs/2026-05-25-f87-f91-orca-profiles-plan.md`.
 
 #### F87 — Process profile import (GitHub #147)
 - **What**: Settings → "Process Profiles" → import `.orca_process` / `.json`. Imported profiles persist in DataStore; one can be marked active. At slice time, the active profile's keys layer between the bundled Snapmaker process defaults and the user's Prepare-screen overrides.
