@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -53,7 +55,7 @@ fun FilamentScreen(
         try {
             val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
                 ?: throw Exception("Could not read file")
-            val profiles = parseFilamentJson(json)
+            val profiles = parseFilamentJson(json, context)
             if (profiles.isEmpty()) throw Exception("No valid filament profiles found in file")
             onImport(profiles)
         } catch (e: Exception) {
@@ -97,10 +99,19 @@ fun FilamentScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
-                    }) {
-                        Icon(Icons.Default.FolderOpen, "Import JSON")
+                    TextButton(
+                        onClick = {
+                            importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                        },
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Import JSON")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -248,14 +259,38 @@ private fun FilamentEditDialog(
     var retractLength by remember { mutableStateOf(filament?.retractLength?.toString() ?: "0.8") }
     var retractSpeed by remember { mutableStateOf(filament?.retractSpeed?.toInt()?.toString() ?: "45") }
 
+    // F91: extended fields. Empty string == "use library default" (stored as null).
+    var nozzleTempInitial by remember { mutableStateOf(filament?.nozzleTempInitialLayer?.toString() ?: "") }
+    var bedTempInitial by remember { mutableStateOf(filament?.bedTempInitialLayer?.toString() ?: "") }
+    var flowRatio by remember { mutableStateOf(filament?.flowRatio?.toString() ?: "") }
+    var maxVolumetricSpeed by remember { mutableStateOf(filament?.maxVolumetricSpeed?.toString() ?: "") }
+    var filamentCost by remember { mutableStateOf(filament?.filamentCost?.toString() ?: "") }
+    var fanMinSpeed by remember { mutableStateOf(filament?.fanMinSpeed?.toString() ?: "") }
+    var fanMaxSpeed by remember { mutableStateOf(filament?.fanMaxSpeed?.toString() ?: "") }
+    var overhangFanSpeed by remember { mutableStateOf(filament?.overhangFanSpeed?.toString() ?: "") }
+    var additionalCoolingFanSpeed by remember { mutableStateOf(filament?.additionalCoolingFanSpeed?.toString() ?: "") }
+    var slowDownLayerTime by remember { mutableStateOf(filament?.slowDownLayerTime?.toString() ?: "") }
+    var slowDownMinSpeed by remember { mutableStateOf(filament?.slowDownMinSpeed?.toString() ?: "") }
+    var closeFanFirstLayers by remember { mutableStateOf(filament?.closeFanFirstLayers?.toString() ?: "") }
+    var fullFanSpeedLayer by remember { mutableStateOf(filament?.fullFanSpeedLayer?.toString() ?: "") }
+    var enablePressureAdvance by remember { mutableStateOf(filament?.enablePressureAdvance) }
+    var pressureAdvance by remember { mutableStateOf(filament?.pressureAdvance?.toString() ?: "") }
+    var filamentMinimalPurge by remember { mutableStateOf(filament?.filamentMinimalPurgeOnWipeTower?.toString() ?: "") }
+
     val materials = listOf("PLA", "PETG", "ABS", "TPU", "ASA", "PA", "PVA")
     var materialExpanded by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (filament != null) "Edit Filament" else "Add Filament") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(scrollState)
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -292,43 +327,60 @@ private fun FilamentEditDialog(
                     }
                 }
 
+                SectionLabel("Temperatures")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = nozzleTemp,
-                        onValueChange = { nozzleTemp = it },
-                        label = { Text("Nozzle \u00B0C") },
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = bedTemp,
-                        onValueChange = { bedTemp = it },
-                        label = { Text("Bed \u00B0C") },
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
+                    NumberField("Nozzle \u00B0C", nozzleTemp, Modifier.weight(1f)) { nozzleTemp = it }
+                    NumberField("Bed \u00B0C", bedTemp, Modifier.weight(1f)) { bedTemp = it }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OptionalNumberField("Nozzle initial \u00B0C", nozzleTempInitial, Modifier.weight(1f)) { nozzleTempInitial = it }
+                    OptionalNumberField("Bed initial \u00B0C", bedTempInitial, Modifier.weight(1f)) { bedTempInitial = it }
                 }
 
+                SectionLabel("Retraction")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = retractLength,
-                        onValueChange = { retractLength = it },
-                        label = { Text("Retract (mm)") },
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = retractSpeed,
-                        onValueChange = { retractSpeed = it },
-                        label = { Text("Retract spd") },
-                        modifier = Modifier.weight(1f),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true
-                    )
+                    DecimalField("Retract (mm)", retractLength, Modifier.weight(1f)) { retractLength = it }
+                    NumberField("Retract spd", retractSpeed, Modifier.weight(1f)) { retractSpeed = it }
                 }
+
+                SectionLabel("Flow & limits")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OptionalDecimalField("Flow ratio", flowRatio, Modifier.weight(1f)) { flowRatio = it }
+                    OptionalDecimalField("Max vol. (mm\u00B3/s)", maxVolumetricSpeed, Modifier.weight(1f)) { maxVolumetricSpeed = it }
+                }
+                OptionalDecimalField("Cost (per kg)", filamentCost, Modifier.fillMaxWidth()) { filamentCost = it }
+
+                SectionLabel("Cooling")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OptionalNumberField("Fan min %", fanMinSpeed, Modifier.weight(1f)) { fanMinSpeed = it }
+                    OptionalNumberField("Fan max %", fanMaxSpeed, Modifier.weight(1f)) { fanMaxSpeed = it }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OptionalNumberField("Overhang fan %", overhangFanSpeed, Modifier.weight(1f)) { overhangFanSpeed = it }
+                    OptionalNumberField("Aux cool fan %", additionalCoolingFanSpeed, Modifier.weight(1f)) { additionalCoolingFanSpeed = it }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OptionalDecimalField("Slowdown layer time (s)", slowDownLayerTime, Modifier.weight(1f)) { slowDownLayerTime = it }
+                    OptionalDecimalField("Slowdown min spd", slowDownMinSpeed, Modifier.weight(1f)) { slowDownMinSpeed = it }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OptionalNumberField("Close fan first N", closeFanFirstLayers, Modifier.weight(1f)) { closeFanFirstLayers = it }
+                    OptionalNumberField("Full fan layer", fullFanSpeedLayer, Modifier.weight(1f)) { fullFanSpeedLayer = it }
+                }
+
+                SectionLabel("Pressure advance")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = enablePressureAdvance == true,
+                        onCheckedChange = { enablePressureAdvance = if (it) true else null }
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("Enable", modifier = Modifier.weight(1f))
+                }
+                OptionalDecimalField("Pressure advance value", pressureAdvance, Modifier.fillMaxWidth()) { pressureAdvance = it }
+
+                SectionLabel("Wipe tower")
+                OptionalDecimalField("Minimal purge (mm\u00B3)", filamentMinimalPurge, Modifier.fillMaxWidth()) { filamentMinimalPurge = it }
             }
         },
         confirmButton = {
@@ -344,7 +396,23 @@ private fun FilamentEditDialog(
                         bedTemp = bedTemp.toIntOrNull() ?: 55,
                         retractLength = retractLength.toFloatOrNull() ?: 0.8f,
                         retractSpeed = retractSpeed.toFloatOrNull() ?: 45f,
-                        isDefault = false
+                        nozzleTempInitialLayer = nozzleTempInitial.toIntOrNull(),
+                        bedTempInitialLayer = bedTempInitial.toIntOrNull(),
+                        flowRatio = flowRatio.toFloatOrNull(),
+                        maxVolumetricSpeed = maxVolumetricSpeed.toFloatOrNull(),
+                        filamentCost = filamentCost.toFloatOrNull(),
+                        fanMinSpeed = fanMinSpeed.toIntOrNull(),
+                        fanMaxSpeed = fanMaxSpeed.toIntOrNull(),
+                        overhangFanSpeed = overhangFanSpeed.toIntOrNull(),
+                        additionalCoolingFanSpeed = additionalCoolingFanSpeed.toIntOrNull(),
+                        slowDownLayerTime = slowDownLayerTime.toFloatOrNull(),
+                        slowDownMinSpeed = slowDownMinSpeed.toFloatOrNull(),
+                        closeFanFirstLayers = closeFanFirstLayers.toIntOrNull(),
+                        fullFanSpeedLayer = fullFanSpeedLayer.toIntOrNull(),
+                        enablePressureAdvance = enablePressureAdvance,
+                        pressureAdvance = pressureAdvance.toFloatOrNull(),
+                        filamentMinimalPurgeOnWipeTower = filamentMinimalPurge.toFloatOrNull(),
+                        isDefault = filament?.isDefault ?: false,
                     )
                     onSave(profile)
                 },
@@ -359,6 +427,67 @@ private fun FilamentEditDialog(
     )
 }
 
+@Composable
+private fun SectionLabel(text: String) {
+    Spacer(Modifier.height(4.dp))
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+@Composable
+private fun NumberField(label: String, value: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label) },
+        modifier = modifier,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true
+    )
+}
+
+@Composable
+private fun DecimalField(label: String, value: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label) },
+        modifier = modifier,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true
+    )
+}
+
+@Composable
+private fun OptionalNumberField(label: String, value: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label) },
+        placeholder = { Text("default") },
+        modifier = modifier,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true
+    )
+}
+
+@Composable
+private fun OptionalDecimalField(label: String, value: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label) },
+        placeholder = { Text("default") },
+        modifier = modifier,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true
+    )
+}
+
 /**
  * Parses filament profiles from JSON. Supports:
  *  1. Array of simple objects: [{ "name": "...", "material": "PLA", "nozzle_temp": 220, ... }]
@@ -368,7 +497,7 @@ private fun FilamentEditDialog(
  *
  * Simple keys accept camelCase or snake_case. Bambu/Orca keys use arrays — first non-nil value is used.
  */
-internal fun parseFilamentJson(json: String): List<FilamentProfile> {
+internal fun parseFilamentJson(json: String, context: Context? = null): List<FilamentProfile> {
     val trimmed = json.trim()
 
     // Try array first
@@ -377,7 +506,7 @@ internal fun parseFilamentJson(json: String): List<FilamentProfile> {
         val results = mutableListOf<FilamentProfile>()
         for (i in 0 until arr.length()) {
             val obj = try { arr.getJSONObject(i) } catch (_: Exception) { null } ?: continue
-            parseOneFilamentObject(obj)?.let { results += it }
+            parseOneFilamentObject(resolveInheritsIfPossible(obj, context))?.let { results += it }
         }
         return results
     }
@@ -396,13 +525,24 @@ internal fun parseFilamentJson(json: String): List<FilamentProfile> {
         val results = mutableListOf<FilamentProfile>()
         for (i in 0 until inner.length()) {
             val item = try { inner.getJSONObject(i) } catch (_: Exception) { null } ?: continue
-            parseOneFilamentObject(item)?.let { results += it }
+            parseOneFilamentObject(resolveInheritsIfPossible(item, context))?.let { results += it }
         }
         return results
     }
 
     // Single Bambu/Orca/simple profile object
-    return listOfNotNull(parseOneFilamentObject(obj))
+    return listOfNotNull(parseOneFilamentObject(resolveInheritsIfPossible(obj, context)))
+}
+
+/**
+ * F91 follow-up: when [obj] is a Bambu-style profile with an `inherits` key, walk the
+ * bundled Bambu profile chain to produce a flattened JSONObject. When [context] is null
+ * (unit-test path) or no `inherits` key exists, returns [obj] unchanged.
+ */
+private fun resolveInheritsIfPossible(obj: JSONObject, context: Context?): JSONObject {
+    if (context == null) return obj
+    if (!obj.has("inherits")) return obj
+    return com.u1.slicer.data.BambuProfileResolver.flatten(context, obj) ?: obj
 }
 
 /** Returns null if the object doesn't have enough data to form a profile. */
@@ -428,10 +568,12 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
             ?.toIntOrNull() ?: materialNozzleDefault(material))
             .coerceIn(100, 400)
 
-        bedTemp = (extractBambuValue(obj, "bed_temperature")
-            ?: extractBambuValue(obj, "cool_plate_temp")
-            ?.toIntOrNull()?.let { null }  // cool_plate_temp is not bed temp
-            .let { extractBambuValue(obj, "bed_temperature") })
+        // Bambu profiles store the actual print-bed target under per-plate-type keys.
+        // U1 uses the textured/engineering plate equivalent (hot_plate). Prefer that;
+        // fall back to legacy `bed_temperature`, then material default.
+        bedTemp = (extractBambuValue(obj, "hot_plate_temp")
+            ?: extractBambuValue(obj, "textured_plate_temp")
+            ?: extractBambuValue(obj, "bed_temperature"))
             ?.toIntOrNull() ?: materialBedDefault(material)
 
         retractLength = (extractBambuValue(obj, "filament_retraction_length")
@@ -447,13 +589,81 @@ private fun parseOneFilamentObject(obj: JSONObject): FilamentProfile? {
         retractSpeed = obj.optDouble("retract_speed", obj.optDouble("retractSpeed", 45.0)).toFloat()
     }
 
+    // F91: extended per-filament tuning fields. Optional — null when absent so library
+    // entries imported from older JSON files keep behaving like before.
+    val nozzleTempInitial = if (isBambu) extractBambuValue(obj, "nozzle_temperature_initial_layer")?.toIntOrNull()
+        else obj.optInt("nozzleTempInitialLayer", obj.optInt("nozzle_temp_initial_layer", Int.MIN_VALUE))
+            .let { if (it == Int.MIN_VALUE) null else it }
+    val bedTempInitial = if (isBambu)
+        (extractBambuValue(obj, "hot_plate_temp_initial_layer")
+            ?: extractBambuValue(obj, "textured_plate_temp_initial_layer")
+            ?: extractBambuValue(obj, "bed_temperature_initial_layer"))?.toIntOrNull()
+        else obj.optInt("bedTempInitialLayer", Int.MIN_VALUE).let { if (it == Int.MIN_VALUE) null else it }
+    val flowRatio = if (isBambu) extractBambuValue(obj, "filament_flow_ratio")?.toFloatOrNull()
+        else obj.optDouble("flowRatio", Double.NaN).let { if (it.isNaN()) null else it.toFloat() }
+    val maxVolumetricSpeed = if (isBambu) extractBambuValue(obj, "filament_max_volumetric_speed")?.toFloatOrNull()
+        else obj.optDouble("maxVolumetricSpeed", Double.NaN).let { if (it.isNaN()) null else it.toFloat() }
+    val filamentCost = if (isBambu) extractBambuValue(obj, "filament_cost")?.toFloatOrNull()
+        else obj.optDouble("filamentCost", Double.NaN).let { if (it.isNaN()) null else it.toFloat() }
+    val fanMinSpeed = if (isBambu) extractBambuValue(obj, "fan_min_speed")?.toIntOrNull()
+        else obj.optInt("fanMinSpeed", Int.MIN_VALUE).let { if (it == Int.MIN_VALUE) null else it }
+    val fanMaxSpeed = if (isBambu) extractBambuValue(obj, "fan_max_speed")?.toIntOrNull()
+        else obj.optInt("fanMaxSpeed", Int.MIN_VALUE).let { if (it == Int.MIN_VALUE) null else it }
+    val overhangFanSpeed = if (isBambu) extractBambuValue(obj, "overhang_fan_speed")?.toIntOrNull()
+        else obj.optInt("overhangFanSpeed", Int.MIN_VALUE).let { if (it == Int.MIN_VALUE) null else it }
+    val additionalCoolingFanSpeed = if (isBambu) extractBambuValue(obj, "additional_cooling_fan_speed")?.toIntOrNull()
+        else obj.optInt("additionalCoolingFanSpeed", Int.MIN_VALUE).let { if (it == Int.MIN_VALUE) null else it }
+    val slowDownLayerTime = if (isBambu) extractBambuValue(obj, "slow_down_layer_time")?.toFloatOrNull()
+        else obj.optDouble("slowDownLayerTime", Double.NaN).let { if (it.isNaN()) null else it.toFloat() }
+    val slowDownMinSpeed = if (isBambu) extractBambuValue(obj, "slow_down_min_speed")?.toFloatOrNull()
+        else obj.optDouble("slowDownMinSpeed", Double.NaN).let { if (it.isNaN()) null else it.toFloat() }
+    val closeFanFirstLayers = if (isBambu) extractBambuValue(obj, "close_fan_the_first_x_layers")?.toIntOrNull()
+        else obj.optInt("closeFanFirstLayers", Int.MIN_VALUE).let { if (it == Int.MIN_VALUE) null else it }
+    val fullFanSpeedLayer = if (isBambu) extractBambuValue(obj, "full_fan_speed_layer")?.toIntOrNull()
+        else obj.optInt("fullFanSpeedLayer", Int.MIN_VALUE).let { if (it == Int.MIN_VALUE) null else it }
+    val enablePressureAdvance = if (isBambu) extractBambuValue(obj, "enable_pressure_advance")?.let { it == "1" || it.equals("true", ignoreCase = true) }
+        else if (obj.has("enablePressureAdvance")) obj.optBoolean("enablePressureAdvance") else null
+    val pressureAdvance = if (isBambu) extractBambuValue(obj, "pressure_advance")?.toFloatOrNull()
+        else obj.optDouble("pressureAdvance", Double.NaN).let { if (it.isNaN()) null else it.toFloat() }
+    val filamentMinimalPurgeOnWipeTower = if (isBambu) extractBambuValue(obj, "filament_minimal_purge_on_wipe_tower")?.toFloatOrNull()
+        else obj.optDouble("filamentMinimalPurgeOnWipeTower", Double.NaN).let { if (it.isNaN()) null else it.toFloat() }
+
+    // Density: Bambu profiles store as `filament_density`; simple format uses `density`.
+    // Falls back to material-specific default (matches the FilamentProfile data class default).
+    val density: Float = if (isBambu)
+        extractBambuValue(obj, "filament_density")?.toFloatOrNull() ?: materialDensityDefault(material)
+        else obj.optDouble("density", Double.NaN).let { if (it.isNaN()) materialDensityDefault(material) else it.toFloat() }
+
+    // Colour: Bambu profiles sometimes carry `default_filament_colour`; simple format uses `color`.
+    val color: String = if (isBambu)
+        extractBambuValue(obj, "default_filament_colour") ?: extractBambuValue(obj, "filament_colour") ?: "#808080"
+        else obj.optString("color", "#808080").ifBlank { "#808080" }
+
     return FilamentProfile(
         name = name,
         material = material,
         nozzleTemp = nozzleTemp,
         bedTemp = bedTemp,
         retractLength = retractLength,
-        retractSpeed = retractSpeed
+        retractSpeed = retractSpeed,
+        color = color,
+        density = density,
+        nozzleTempInitialLayer = nozzleTempInitial,
+        bedTempInitialLayer = bedTempInitial,
+        flowRatio = flowRatio,
+        maxVolumetricSpeed = maxVolumetricSpeed,
+        filamentCost = filamentCost,
+        fanMinSpeed = fanMinSpeed,
+        fanMaxSpeed = fanMaxSpeed,
+        overhangFanSpeed = overhangFanSpeed,
+        additionalCoolingFanSpeed = additionalCoolingFanSpeed,
+        slowDownLayerTime = slowDownLayerTime,
+        slowDownMinSpeed = slowDownMinSpeed,
+        closeFanFirstLayers = closeFanFirstLayers,
+        fullFanSpeedLayer = fullFanSpeedLayer,
+        enablePressureAdvance = enablePressureAdvance,
+        pressureAdvance = pressureAdvance,
+        filamentMinimalPurgeOnWipeTower = filamentMinimalPurgeOnWipeTower,
     )
 }
 
@@ -499,4 +709,9 @@ private fun materialNozzleDefault(material: String) = when (material) {
 
 private fun materialBedDefault(material: String) = when (material) {
     "PETG" -> 70; "ABS" -> 90; "ASA" -> 90; "PA" -> 100; "TPU" -> 60; "PVA" -> 65; else -> 55
+}
+
+private fun materialDensityDefault(material: String): Float = when (material) {
+    "PETG" -> 1.27f; "ABS" -> 1.04f; "ASA" -> 1.07f; "PA" -> 1.14f
+    "TPU" -> 1.21f; "PVA" -> 1.23f; "PC" -> 1.20f; else -> 1.24f  // PLA
 }

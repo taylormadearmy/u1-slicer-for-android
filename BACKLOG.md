@@ -567,17 +567,61 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
-### F91: Filament library — expose full Orca Slicer filament settings and plumb through to slice (GitHub #155)
-- **What**: Filament library currently exposes a small subset of Orca Slicer's filament settings (material type, colour, nozzle temp). Extend the library editor so it exposes all filament-level settings OrcaSlicer supports (filament diameter, density, cost, flow ratio, max volumetric speed, per-filament retraction length/speed/restart-extra, wipe distance, pressure advance, fan min/max, fan slowdown layer time, chamber temp, bed temp per plate type, soluble flag, support-interface flag, etc.). Authoritative key list to be derived from OrcaSlicer's `FilamentConfig` in `PrintConfig.cpp`, not hand-rolled.
-- **Plumbing** (each setting must be wired end-to-end):
-  1. Storage — added to filament profile schema (DataStore + `SettingsBackup` round-trip).
-  2. UI — editable in the filament library form with defaults + per-field validation.
-  3. Slice path — applied at slice time when the filament is selected for a slot, via both `applyConfigToPrusa()` fallback (raw STL) and `profile_keys[]` whitelist (embedded Bambu profiles).
-  4. Override interaction — Prepare-screen overrides still win over library defaults; library defaults still win over file-declared values when no override is set.
-- **Why**: Per-filament tuning (flow ratio, max volumetric speed, pressure advance, retraction, fan curves) is critical for print quality across TPU, PETG-CF, ASA, silk PLA, etc. Users currently have to bake these into a desktop Orca profile and slice off-device, defeating the on-device workflow.
-- **Out of scope**: per-print process-profile settings (F87); printer-level settings (A2).
-- **Notes**: Native rebuild may be needed if any new keys aren't already on the `profile_keys[]` whitelist. Imported filament JSON (Settings → Import filament JSON) should accept and persist the new fields.
+### F87 + F91 — Orca profile import + filament library expansion (GitHub #147, #155) — IMPLEMENTED on `feature/f87-f91-orca-profiles`, awaiting device verification + confidence check
+- **Status (2026-05-25)**: implementation complete on branch. Full unit suite green (1356 tests, +38 from main baseline). No native rebuild needed — all new keys were already on `profile_keys[]` (audited 2026-05-25, `sapil_print.cpp:683+`). Plan: `docs/superpowers/specs/2026-05-25-f87-f91-orca-profiles-plan.md`. Public ship strategy: bundle both in one release after on-device confidence check + E2E batch.
+
+#### F87 — Process profile import (GitHub #147)
+- **What**: Settings → "Process Profiles" → import `.orca_process` / `.json`. Imported profiles persist in DataStore; one can be marked active. At slice time, the active profile's keys layer between the bundled Snapmaker process defaults and the user's Prepare-screen overrides.
+- **Implementation**: `ProcessProfile` data class + `ProcessProfilesRepository` (DataStore JSON, modelled on `PrintersRepository`); `ProcessProfileParser` handles single object / array / `{ process_profiles: [...] }` wrapper, drops provenance keys (`type`, `name`, `inherits`, `compatible_printers`, …); `ProfileEmbedder.buildConfig(processProfileKeys = …)` slots the keys after the bundled process JSON and before `filamentSettings`/`overrides`; `SettingsBackup` bumped to v3 with v1/v2 backwards-compat.
+- **UI**: Settings card showing imported count + active profile, dedicated `ProcessProfilesScreen` for import/select/rename/delete.
+- **Tests**: 17 new unit tests (`ProcessProfileParserTest`, `ProcessProfilesConfigTest`, `SettingsBackupTest` v3 cases).
+- **Source**: Kevin, 2026-05-23 (post-v2.4.0).
+
+#### F91 — Filament library expansion (GitHub #155)
+- **What**: `FilamentProfile` grows 16 nullable columns mapped 1:1 to OrcaSlicer per-filament keys: nozzle/bed initial-layer temps, flow ratio, max volumetric speed, cost, fan min/max + overhang + auxiliary cooling, slow-down layer time / min speed, close-fan-first-N layers, full-fan-from layer, pressure advance enable + value, minimal purge on wipe tower. Null = "library default" (slicer uses bundled profile / OrcaSlicer default).
+- **Implementation**:
+  1. Storage — Room `MIGRATION_6_7` adds nullable `ALTER TABLE` columns; round-tripped via `SettingsBackup`.
+  2. UI — `FilamentEditDialog` becomes scrollable with sections: Temperatures, Retraction, Flow & limits, Cooling, Pressure advance, Wipe tower. Optional fields show "default" placeholder when null.
+  3. Slice path — `buildFilamentLibrarySettings(slotCount, usedSlots, presets, filaments)` resolves each slot's linked `FilamentProfile` and emits per-slot arrays for each key with at least one non-null value. Empty slots forward/back-fill from neighbours so arrays stay length-`slotCount` (OrcaSlicer crashes on length-mismatched per-extruder arrays). When no slot has a value for a given field, the key is omitted entirely so the bundled profile / OrcaSlicer default stands.
+  4. Override interaction — file → bundled profile → process profile (F87) → library → user overrides; later wins.
+- **Parser**: `parseFilamentJson` reads new keys from both OrcaSlicer Bambu shape and simple JSON shape; absent keys parse as null.
+- **Tests**: 21 new unit tests (`BuildFilamentLibrarySettingsTest`, `FilamentJsonImportExtendedTest`, `SettingsBackupTest` v3 extended-filament cases).
+- **Out of scope**: per-print process-profile settings (F87 above); printer-level settings (A2); per-feature speeds (already in `SlicingOverrides`).
 - **Source**: Kevin, 2026-05-24.
+
+#### Native clamp gap — FIXED 2026-05-25
+Originally surfaced while writing on-device F87/F91 verification: `applyConfigToPrusa` in `sapil_print.cpp` ran AFTER the `profile_keys[]` loop and unconditionally overwrote many keys with U1 hardware defaults, so embed-routed imported values were silently lost. Same gap also broke `SlicingOverrides.seamPosition` etc.
+
+**Fix landed 2026-05-25**:
+- `sapil_print.cpp`: gate `sparse_infill_pattern`, `sparse_infill_density`, `filament_max_volumetric_speed`, `fan_min_speed`, `fan_max_speed`, `overhang_fan_speed`, `slow_down_layer_time`, `slow_down_min_speed`, `seam_position`, `reduce_infill_retraction` on `!has_embedded_profile`. When Kotlin's `ProfileEmbedder` produces a Snapmaker-authored embed (`is_snapmaker_profile=true`), the embed's values win. Raw STL with no embed keeps the U1 hardware defaults exactly as before.
+- `sapil_print.cpp`: add `filament_cost` to `profile_keys[]` so library cost values reach the slicer.
+- `ProfileEmbedder.kt` preserve path (Bambu): overlay the U1-safe cooling/flow values from bundled `pla.json` (`U1_FILAMENT_SAFETY_OVERLAY` set) on top of `sourceConfig` BEFORE `filamentSettings` + `overrides`. This prevents Bambu's potentially-wrong-for-U1 values (e.g. PETG `fan_min_speed=60`) from reaching the slicer when no library override exists; library overrides still win because they're layered after.
+- `wall_generator` stays clamped to Arachne: surfaced when un-gating that OrcaSlicer 2.2.4's classic perimeter generator SIGSEGVs on the U1 config (PerimeterGenerator::process_classic / MultiPoint dtor). Pre-existing OrcaSlicer bug. Re-clamping until fixed upstream.
+
+**Native build**: NDK 26 / Release / 20.8 MB stripped / Clang 17.0.2 / 34 JNI symbols (matches `external fun` count). Verified on Pixel 8a.
+
+**Verified working F87 keys**: `layer_height` (sentinel-gated), `wall_loops`, `top_shell_layers`, `bottom_shell_layers`, `top_surface_pattern`, `bottom_surface_pattern`, `seam_position`, `sparse_infill_density`, `sparse_infill_pattern`, `reduce_infill_retraction`, `ironing_type`, support settings, prime-tower settings. `wall_generator` accepted but stays Arachne (see above).
+
+**Verified working F91 keys** (all 15 fields):
+- Per-extruder cooling: `fan_min_speed`, `fan_max_speed`, `overhang_fan_speed`, `additional_cooling_fan_speed`, `slow_down_layer_time`, `slow_down_min_speed`, `close_fan_the_first_x_layers`, `full_fan_speed_layer`.
+- Per-extruder flow: `filament_flow_ratio`, `filament_max_volumetric_speed`.
+- Per-extruder PA: `enable_pressure_advance`, `pressure_advance`.
+- Per-extruder cost/temps: `filament_cost`, `nozzle_temperature_initial_layer`, `hot_plate_temp_initial_layer`.
+- Wipe tower: `filament_minimal_purge_on_wipe_tower`.
+
+**Regression coverage 2026-05-25** (all on Pixel 8a):
+- 4/4 new F87+F91 instrumented tests
+- 32/32 `ProfileEmbedderIntegrationTest`
+- 41/41 `BambuPipelineIntegrationTest`
+- 52/52 `SlicingIntegrationTest`
+- Full JVM unit suite
+
+#### Remaining for ship
+- ✅ Native rebuild + .so committed.
+- ✅ All instrumented + unit tests pass on Pixel 8a (post-rebuild).
+- Manual UI verification on device: import a process profile via Settings → Process Profiles, slice a model, confirm the profile's keys reach the G-code header.
+- Manual UI verification: edit a library filament with `pressure_advance=0.05` + `fan_min_speed=80`, slice, confirm header shows both.
+- Version bump + GitHub release (after manual verifications pass).
 
 ### F90: Foreground-service coverage for all long-running operations (GitHub #154) — DONE v2.7.1
 - Shipped v2.7.0. `SlicingService` renamed to `LongOpService` with stack-based stage labels: nested `start(stage)` pushes; `stop()` pops; the persistent notification always renders the top-of-stack. `update(progress, stage?)` replaces the top frame so the native slicer progress listener keeps its existing rename-on-tick behaviour. Wrap points: `loadModel(uri)`, `loadModelFromFile`, `selectPlate`, `addModelFromFile[ForPlate]`, `confirmAddPlate`, `startSlicing`. Each wrap is start/stop-paired via try/finally so cancellation/exception pop the stage. Manifest `foregroundServiceType="specialUse"` retained (sideloaded; no Play subtype review); subtype updated to "3D model preparation, loading and slicing". 9 unit tests in `LongOpServiceStackTest.kt`.

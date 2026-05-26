@@ -138,6 +138,24 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
     config.machine_start_gcode = getString("machineStartGcode");
     config.machine_end_gcode = getString("machineEndGcode");
 
+    // F91: per-extruder filament tuning from the user's filament library.
+    config.filament_flow_ratios = getFloatArray("filamentFlowRatios");
+    config.filament_max_volumetric_speeds = getFloatArray("filamentMaxVolumetricSpeeds");
+    config.filament_fan_min_speeds = getIntArray("filamentFanMinSpeeds");
+    config.filament_fan_max_speeds = getIntArray("filamentFanMaxSpeeds");
+    config.filament_overhang_fan_speeds = getIntArray("filamentOverhangFanSpeeds");
+    config.filament_additional_cooling_fan_speeds = getIntArray("filamentAdditionalCoolingFanSpeeds");
+    config.filament_slow_down_layer_times = getFloatArray("filamentSlowDownLayerTimes");
+    config.filament_slow_down_min_speeds = getFloatArray("filamentSlowDownMinSpeeds");
+    config.filament_close_fan_first_layers = getIntArray("filamentCloseFanFirstLayers");
+    config.filament_full_fan_speed_layers = getIntArray("filamentFullFanSpeedLayers");
+    config.filament_enable_pressure_advance = getIntArray("filamentEnablePressureAdvance");
+    config.filament_pressure_advances = getFloatArray("filamentPressureAdvances");
+    config.filament_minimal_purge_on_wipe_tower = getFloatArray("filamentMinimalPurgeOnWipeTower");
+    config.filament_nozzle_temp_initial_layers = getIntArray("filamentNozzleTempInitialLayers");
+    config.filament_bed_temp_initial_layers = getIntArray("filamentBedTempInitialLayers");
+    config.filament_costs = getFloatArray("filamentCosts");
+
     env->DeleteLocalRef(cls);
     return config;
 }

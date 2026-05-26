@@ -10,16 +10,19 @@ import org.json.JSONObject
  *  v1 — single-printer: top-level `printerUrl` + `extruderPresets` array
  *  v2 — multi-printer:  `printers` array + `activePrinterId`; also writes legacy
  *        top-level fields from the active printer so a v1 reader can still load the file.
+ *  v3 — F87: adds `processProfiles` array + `activeProcessProfileId`. v3 readers also
+ *        accept v1/v2 backups (the new keys are simply absent).
  */
 object SettingsBackup {
 
-    private const val VERSION = 2
+    private const val VERSION = 3
 
     data class BackupData(
         val sliceConfig: SliceConfig?,
         val slicingOverrides: SlicingOverrides?,
         val printersConfig: PrintersConfig?,
         val filamentProfiles: List<FilamentProfile>?,
+        val processProfilesConfig: ProcessProfilesConfig? = null,
         val makerWorldCookies: String? = null,
     )
 
@@ -65,11 +68,22 @@ object SettingsBackup {
             else -> null
         }
 
+        val processProfilesConfig: ProcessProfilesConfig? = root.optJSONArray("processProfiles")?.let { arr ->
+            val profiles = (0 until arr.length()).mapNotNull { i ->
+                arr.optJSONObject(i)?.let { ProcessProfilesConfig.profileFromJson(it) }
+            }
+            val activeId = if (root.has("activeProcessProfileId"))
+                root.optString("activeProcessProfileId").takeIf { it.isNotBlank() }
+            else null
+            ProcessProfilesConfig(profiles = profiles, activeId = activeId)
+        }
+
         return BackupData(
             sliceConfig = root.optJSONObject("sliceConfig")?.let { parseSliceConfig(it) },
             slicingOverrides = root.optJSONObject("slicingOverrides")?.let { SlicingOverrides.fromJson(it.toString()) },
             printersConfig = printersConfig,
             filamentProfiles = root.optJSONArray("filamentProfiles")?.let { parseFilamentProfilesArray(it) },
+            processProfilesConfig = processProfilesConfig,
             makerWorldCookies = if (root.has("makerWorldCookies")) root.getString("makerWorldCookies") else null,
         )
     }
@@ -91,6 +105,16 @@ object SettingsBackup {
             root.put("filamentProfiles", exportFilamentProfiles(profiles))
         }
         data.makerWorldCookies?.let { if (it.isNotEmpty()) root.put("makerWorldCookies", it) }
+
+        // F87: process profiles. Absent when not in use, so v3 backups are still backwards-compatible.
+        data.processProfilesConfig?.let { ppCfg ->
+            if (ppCfg.profiles.isNotEmpty()) {
+                val arr = JSONArray()
+                ppCfg.profiles.forEach { arr.put(ProcessProfilesConfig.profileToJson(it)) }
+                root.put("processProfiles", arr)
+                ppCfg.activeId?.let { root.put("activeProcessProfileId", it) }
+            }
+        }
 
         data.printersConfig?.let { cfg ->
             // v2 schema: full list
@@ -120,6 +144,7 @@ object SettingsBackup {
         filamentNameResolver: (Long) -> String? = { null },
         makerWorldCookies: String = "",
         printersConfig: PrintersConfig? = null,
+        processProfilesConfig: ProcessProfilesConfig? = null,
     ): String {
         // If a full PrintersConfig is provided (v2 path), use it.
         // Otherwise synthesise a single-printer config from the legacy flat fields.
@@ -147,6 +172,7 @@ object SettingsBackup {
                 // because that field doesn't exist; the resolver is used in exportExtruderPresets.
                 p
             },
+            processProfilesConfig = processProfilesConfig,
             makerWorldCookies = makerWorldCookies.takeIf { it.isNotEmpty() },
         )
 
@@ -281,6 +307,24 @@ object SettingsBackup {
                     put("retractSpeed", p.retractSpeed.toDouble())
                     put("color", p.color)
                     put("density", p.density.toDouble())
+                    // F91: extended OrcaSlicer per-filament settings. Optional — omitted when null
+                    // so older readers see nothing surprising.
+                    p.nozzleTempInitialLayer?.let { put("nozzleTempInitialLayer", it) }
+                    p.bedTempInitialLayer?.let { put("bedTempInitialLayer", it) }
+                    p.flowRatio?.let { put("flowRatio", it.toDouble()) }
+                    p.maxVolumetricSpeed?.let { put("maxVolumetricSpeed", it.toDouble()) }
+                    p.filamentCost?.let { put("filamentCost", it.toDouble()) }
+                    p.fanMinSpeed?.let { put("fanMinSpeed", it) }
+                    p.fanMaxSpeed?.let { put("fanMaxSpeed", it) }
+                    p.overhangFanSpeed?.let { put("overhangFanSpeed", it) }
+                    p.additionalCoolingFanSpeed?.let { put("additionalCoolingFanSpeed", it) }
+                    p.slowDownLayerTime?.let { put("slowDownLayerTime", it.toDouble()) }
+                    p.slowDownMinSpeed?.let { put("slowDownMinSpeed", it.toDouble()) }
+                    p.closeFanFirstLayers?.let { put("closeFanFirstLayers", it) }
+                    p.fullFanSpeedLayer?.let { put("fullFanSpeedLayer", it) }
+                    p.enablePressureAdvance?.let { put("enablePressureAdvance", it) }
+                    p.pressureAdvance?.let { put("pressureAdvance", it.toDouble()) }
+                    p.filamentMinimalPurgeOnWipeTower?.let { put("filamentMinimalPurgeOnWipeTower", it.toDouble()) }
                 })
             }
         }
@@ -297,7 +341,24 @@ object SettingsBackup {
                 retractLength = obj.optDouble("retractLength", 0.8).toFloat(),
                 retractSpeed = obj.optDouble("retractSpeed", 45.0).toFloat(),
                 color = obj.optString("color", "#808080"),
-                density = obj.optDouble("density", 1.24).toFloat()
+                density = obj.optDouble("density", 1.24).toFloat(),
+                // F91: nullable round-trip — absent in v1/v2 backups, falls back to null.
+                nozzleTempInitialLayer = if (obj.has("nozzleTempInitialLayer")) obj.getInt("nozzleTempInitialLayer") else null,
+                bedTempInitialLayer = if (obj.has("bedTempInitialLayer")) obj.getInt("bedTempInitialLayer") else null,
+                flowRatio = if (obj.has("flowRatio")) obj.getDouble("flowRatio").toFloat() else null,
+                maxVolumetricSpeed = if (obj.has("maxVolumetricSpeed")) obj.getDouble("maxVolumetricSpeed").toFloat() else null,
+                filamentCost = if (obj.has("filamentCost")) obj.getDouble("filamentCost").toFloat() else null,
+                fanMinSpeed = if (obj.has("fanMinSpeed")) obj.getInt("fanMinSpeed") else null,
+                fanMaxSpeed = if (obj.has("fanMaxSpeed")) obj.getInt("fanMaxSpeed") else null,
+                overhangFanSpeed = if (obj.has("overhangFanSpeed")) obj.getInt("overhangFanSpeed") else null,
+                additionalCoolingFanSpeed = if (obj.has("additionalCoolingFanSpeed")) obj.getInt("additionalCoolingFanSpeed") else null,
+                slowDownLayerTime = if (obj.has("slowDownLayerTime")) obj.getDouble("slowDownLayerTime").toFloat() else null,
+                slowDownMinSpeed = if (obj.has("slowDownMinSpeed")) obj.getDouble("slowDownMinSpeed").toFloat() else null,
+                closeFanFirstLayers = if (obj.has("closeFanFirstLayers")) obj.getInt("closeFanFirstLayers") else null,
+                fullFanSpeedLayer = if (obj.has("fullFanSpeedLayer")) obj.getInt("fullFanSpeedLayer") else null,
+                enablePressureAdvance = if (obj.has("enablePressureAdvance")) obj.getBoolean("enablePressureAdvance") else null,
+                pressureAdvance = if (obj.has("pressureAdvance")) obj.getDouble("pressureAdvance").toFloat() else null,
+                filamentMinimalPurgeOnWipeTower = if (obj.has("filamentMinimalPurgeOnWipeTower")) obj.getDouble("filamentMinimalPurgeOnWipeTower").toFloat() else null,
             )
         }
     }

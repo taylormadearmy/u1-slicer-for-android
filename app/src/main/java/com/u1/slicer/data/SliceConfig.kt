@@ -70,4 +70,28 @@ data class SliceConfig(
     // time. Empty string = use OrcaSlicer's built-in default (bare G28 for STL).
     @JvmField var machineStartGcode: String = "",
     @JvmField var machineEndGcode: String = "",
+
+    // F91 (2026-05-25): per-extruder filament tuning sourced from the user's filament
+    // library at slice time. Empty array = "user hasn't set this — let the
+    // applyConfigToPrusa fallback / embed value stand". When non-empty, native treats
+    // these as the user's explicit override and applies them after profile_keys[].
+    // Fixes cheeky_b52's "16 mm³/s flow limit not abided by" 2026-05-25 — STL slices
+    // skip ProfileEmbedder, so the previous filamentSettings-via-embed plumbing never
+    // reached them. SliceConfig fields are the path that works for STL AND 3MF.
+    @JvmField var filamentFlowRatios: FloatArray = floatArrayOf(),
+    @JvmField var filamentMaxVolumetricSpeeds: FloatArray = floatArrayOf(),
+    @JvmField var filamentFanMinSpeeds: IntArray = intArrayOf(),
+    @JvmField var filamentFanMaxSpeeds: IntArray = intArrayOf(),
+    @JvmField var filamentOverhangFanSpeeds: IntArray = intArrayOf(),
+    @JvmField var filamentAdditionalCoolingFanSpeeds: IntArray = intArrayOf(),
+    @JvmField var filamentSlowDownLayerTimes: FloatArray = floatArrayOf(),
+    @JvmField var filamentSlowDownMinSpeeds: FloatArray = floatArrayOf(),
+    @JvmField var filamentCloseFanFirstLayers: IntArray = intArrayOf(),
+    @JvmField var filamentFullFanSpeedLayers: IntArray = intArrayOf(),
+    @JvmField var filamentEnablePressureAdvance: IntArray = intArrayOf(),   // 0 = unset / off, 1 = on
+    @JvmField var filamentPressureAdvances: FloatArray = floatArrayOf(),
+    @JvmField var filamentMinimalPurgeOnWipeTower: FloatArray = floatArrayOf(),
+    @JvmField var filamentNozzleTempInitialLayers: IntArray = intArrayOf(),
+    @JvmField var filamentBedTempInitialLayers: IntArray = intArrayOf(),
+    @JvmField var filamentCosts: FloatArray = floatArrayOf(),
 )

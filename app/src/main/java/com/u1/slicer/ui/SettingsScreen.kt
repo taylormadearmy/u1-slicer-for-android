@@ -77,6 +77,7 @@ fun SettingsScreen(
     printerViewModel: PrinterViewModel? = null,
     onShareDiagnostics: () -> Unit = {},
     onNavigateFilaments: (() -> Unit)? = null,
+    onNavigateProcessProfiles: (() -> Unit)? = null,
     onNavigatePrepare: () -> Unit = {},
     onNavigatePreview: () -> Unit = {},
     onNavigatePrinter: () -> Unit = {},
@@ -460,6 +461,47 @@ fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) { Text("Browse MakerWorld in App") }
+                }
+            }
+
+            // ---- Process Profiles (F87) ----
+            if (onNavigateProcessProfiles != null) {
+                val ppCfg by viewModel.processProfilesConfig.collectAsState()
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigateProcessProfiles() },
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Tune, null, tint = MaterialTheme.colorScheme.primary)
+                            Column {
+                                Text("Process Profiles", fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    "${ppCfg.profiles.size} imported" +
+                                        (ppCfg.active?.let { " · Active: ${it.name}" } ?: ""),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, null,
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                    }
                 }
             }
 

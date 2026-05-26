@@ -96,6 +96,29 @@ struct SliceConfig {
     // template expressions at G-code generation time.
     std::string machine_start_gcode;
     std::string machine_end_gcode;
+
+    // F91 (2026-05-25): per-extruder filament tuning sourced from the user's filament
+    // library on the Kotlin side at slice time. Empty vector = "user has not set this
+    // — fall back to the embed value (via profile_keys[]) or the U1 hardware default".
+    // When non-empty, applyConfigToPrusa uses these AS the final value, overriding
+    // both the embed value and the hardware default. This makes the library reach STL
+    // slices too (which bypass ProfileEmbedder entirely on the Kotlin side).
+    std::vector<float> filament_flow_ratios;
+    std::vector<float> filament_max_volumetric_speeds;
+    std::vector<int>   filament_fan_min_speeds;
+    std::vector<int>   filament_fan_max_speeds;
+    std::vector<int>   filament_overhang_fan_speeds;
+    std::vector<int>   filament_additional_cooling_fan_speeds;
+    std::vector<float> filament_slow_down_layer_times;
+    std::vector<float> filament_slow_down_min_speeds;
+    std::vector<int>   filament_close_fan_first_layers;
+    std::vector<int>   filament_full_fan_speed_layers;
+    std::vector<int>   filament_enable_pressure_advance;   // 0 = unset/off, 1 = on
+    std::vector<float> filament_pressure_advances;
+    std::vector<float> filament_minimal_purge_on_wipe_tower;
+    std::vector<int>   filament_nozzle_temp_initial_layers;
+    std::vector<int>   filament_bed_temp_initial_layers;
+    std::vector<float> filament_costs;
 };
 
 // ---- Model Info ----
