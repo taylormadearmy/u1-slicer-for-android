@@ -11,15 +11,15 @@
 
 **Test:**
 ```bash
-./gradlew testDebugUnitTest                 # 1190 JVM unit tests
-./gradlew connectedDebugAndroidTest         # 304 instrumented tests
+./gradlew testDebugUnitTest                 # 1362 JVM unit tests
+./gradlew connectedDebugAndroidTest         # 345 instrumented tests
 ```
 
 **Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs and adb targets.
 **Public-safe rule:** never deploy automated tests to personal or non-phone devices.
 
 **App ID:** `com.u1.slicer.orca`
-**Current release:** `v2.2.6` (`versionCode 279`)
+**Current release:** `v2.8.0` (`versionCode 298`)
 
 **SDK / Gradle / AVD locations:** the user has moved these to `D:` to keep `C:` free.
 The persistent user env vars `ANDROID_HOME=D:\Android\Sdk`,

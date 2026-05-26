@@ -6,7 +6,7 @@ Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 ex
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v2.2.17` (`versionCode 290`)
+Current release: `v2.8.0` (`versionCode 298`)
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -25,7 +25,8 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 - **Moonraker connectivity** — send G-code directly to your printer; remote screen support for paxx12 extended firmware
 - **Slicer overrides** — per-job control over layer height, infill, support, shell layers, surface patterns, speeds, wipe tower, and more
 - **MakerWorld integration** — share models from Bambu Handy to slice locally
-- **Filament library** — manage profiles with temps, speeds, retraction settings
+- **Filament library** — manage profiles with temps, retraction, flow ratio, max volumetric speed, fan curves, pressure advance, and 10+ other OrcaSlicer per-filament settings. Imports Bambu Studio filament profile JSONs and resolves the `inherits` chain against bundled BBL / generic parents (v2.8.0)
+- **Process profile import** — Settings → Process Profiles imports OrcaSlicer `.orca_process` / `.json` files; the active profile's keys layer between bundled Snapmaker defaults and Prepare-screen overrides at slice time (v2.8.0)
 - **Settings backup/restore** — export and import all app settings as JSON
 - **Background slicing** — foreground service keeps slicing alive when app is backgrounded
 - **Auto-resume** (v2.6.0): If Android closes the app while you have a model loaded, sliced, or being edited, a "Resume <name>?" banner appears on next launch to restore your session. Sliced sessions resume on the Preview tab instantly; the model loads in the background for editing.
@@ -88,7 +89,7 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 
 ```bash
 ./gradlew testDebugUnitTest              # 1307 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 334 instrumented tests (ARM64 device required)
+./gradlew connectedDebugAndroidTest      # 345 instrumented tests (ARM64 device required)
 ```
 
 **1574 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament list, and more.
