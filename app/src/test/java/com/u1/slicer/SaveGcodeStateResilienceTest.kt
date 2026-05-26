@@ -123,4 +123,44 @@ class SaveGcodeStateResilienceTest {
                 shareBody.contains("_lastSliceResult")
         )
     }
+
+    // 2026-05-26 follow-up — the ACTUAL cause of the 0-byte save (confirmed by
+    // on-device SaveGcode logs): a 272 MB H2C plate takes ~80 s to remap + copy,
+    // but the save ran as a plain viewModelScope.launch with no foreground service.
+    // When the user backgrounded the app to check the file in Drive, Android's
+    // cached-app freezer suspended the process (~70 s later) before the copy
+    // finished, leaving the picker's pre-created 0-byte destination empty. The fix
+    // wraps the coroutine body in the F90 beginLongOp/endLongOp foreground-service
+    // helpers (try/finally) so the freezer can't suspend it mid-operation.
+
+    @Test
+    fun saveGcodeHoldsForegroundServiceForDuration() {
+        val saveStart = source.indexOf("fun saveGcodeTo(uri: Uri)")
+        val saveEnd = source.indexOf("\n    fun ", saveStart + 1)
+        val saveBody = source.substring(saveStart, if (saveEnd > 0) saveEnd else source.length)
+        assertTrue(
+            "saveGcodeTo must hold a LongOpService foreground service (beginLongOp) across the " +
+                "remap+copy so the cached-app freezer can't kill it when the user backgrounds the app.",
+            Regex("""beginLongOp\("Saving G-code"\)""").containsMatchIn(saveBody)
+        )
+        assertTrue(
+            "saveGcodeTo must release the foreground service in a finally block (endLongOp).",
+            Regex("""finally\s*\{\s*endLongOp\(""").containsMatchIn(saveBody)
+        )
+    }
+
+    @Test
+    fun shareGcodeHoldsForegroundServiceForDuration() {
+        val shareStart = source.indexOf("fun shareGcode()")
+        val shareEnd = source.indexOf("\n    fun ", shareStart + 1)
+        val shareBody = source.substring(shareStart, if (shareEnd > 0) shareEnd else source.length)
+        assertTrue(
+            "shareGcode must hold a LongOpService foreground service across the remap.",
+            Regex("""beginLongOp\(""").containsMatchIn(shareBody)
+        )
+        assertTrue(
+            "shareGcode must release the foreground service in a finally block.",
+            Regex("""finally\s*\{\s*endLongOp\(""").containsMatchIn(shareBody)
+        )
+    }
 }

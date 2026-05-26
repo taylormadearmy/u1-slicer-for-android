@@ -5460,35 +5460,42 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
-            val sourceFile = File(result.gcodePath)
-            val baseName = com.u1.slicer.data.ModelFileNaming.baseName(
-                currentModelName.ifBlank { null }, sourceFile.name
-            )
-            val shareFile = File(
-                sourceFile.parentFile,
-                "$baseName.share.gcode"
-            )
-            if (!prepareExportableGcode(sourceFile, shareFile)) {
-                _toastEvents.tryEmit("Share G-code failed: sliced file is missing")
-                return@launch
-            }
-
-            val uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                shareFile
-            )
-
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/octet-stream"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            withContext(Dispatchers.Main) {
-                context.startActivity(
-                    Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Foreground service for the same reason as saveGcodeTo: the remap of a
+            // large G-code can outlast the freezer's background grace period.
+            val longOpCtx = beginLongOp("Preparing G-code")
+            try {
+                val sourceFile = File(result.gcodePath)
+                val baseName = com.u1.slicer.data.ModelFileNaming.baseName(
+                    currentModelName.ifBlank { null }, sourceFile.name
                 )
+                val shareFile = File(
+                    sourceFile.parentFile,
+                    "$baseName.share.gcode"
+                )
+                if (!prepareExportableGcode(sourceFile, shareFile)) {
+                    _toastEvents.tryEmit("Share G-code failed: sliced file is missing")
+                    return@launch
+                }
+
+                val uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    shareFile
+                )
+
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/octet-stream"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                withContext(Dispatchers.Main) {
+                    context.startActivity(
+                        Intent.createChooser(intent, "Share G-code").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            } finally {
+                endLongOp(longOpCtx)
             }
         }
     }
@@ -5519,6 +5526,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
+            // Hold a foreground service for the duration. The remap + copy of a
+            // large G-code (272 MB H2C plates take ~80 s) would otherwise be killed
+            // by Android's cached-app freezer the moment the user backgrounds the
+            // app (e.g. to check the saved file in Drive), leaving the picker's
+            // pre-created 0-byte destination empty. See SaveGcodeStateResilienceTest.
+            val longOpCtx = beginLongOp("Saving G-code")
             val sourceFile = File(result.gcodePath)
             val srcExists = sourceFile.exists()
             val srcLen = if (srcExists) sourceFile.length() else -1L
@@ -5585,6 +5598,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         "uri" to uri.toString()
                     )
                 )
+            } finally {
+                endLongOp(longOpCtx)
             }
         }
     }

@@ -318,19 +318,29 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     fun sendAndPrint(physical: com.u1.slicer.gcode.PhysicalGcodePath, modelName: String? = null) {
         _sendingState.value = SendingState.Uploading
         viewModelScope.launch(Dispatchers.IO) {
-            val file = physical.toFile()
-            if (!file.exists()) {
-                _sendingState.value = SendingState.Error("G-code file not found")
-                return@launch
-            }
-            // F84: prefer the original model name over the on-disk gcode name
-            // so the printer's file browser shows distinct, recognisable jobs.
-            val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
-            val ok = printerRepo.uploadAndPrint(file, filename)
-            _sendingState.value = if (ok) {
-                SendingState.PrintStarted
-            } else {
-                SendingState.Error("Failed to upload or start print")
+            // Hold a foreground service across the upload. A 272 MB G-code can take
+            // minutes over WAN; without this the cached-app freezer suspends the
+            // process the moment the user backgrounds the app, truncating the
+            // upload to the printer.
+            val ctx = getApplication<Application>()
+            com.u1.slicer.LongOpService.start(ctx, "Uploading to printer")
+            try {
+                val file = physical.toFile()
+                if (!file.exists()) {
+                    _sendingState.value = SendingState.Error("G-code file not found")
+                    return@launch
+                }
+                // F84: prefer the original model name over the on-disk gcode name
+                // so the printer's file browser shows distinct, recognisable jobs.
+                val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
+                val ok = printerRepo.uploadAndPrint(file, filename)
+                _sendingState.value = if (ok) {
+                    SendingState.PrintStarted
+                } else {
+                    SendingState.Error("Failed to upload or start print")
+                }
+            } finally {
+                com.u1.slicer.LongOpService.stop(ctx)
             }
         }
     }
@@ -342,19 +352,27 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     fun sendUploadOnly(physical: com.u1.slicer.gcode.PhysicalGcodePath, modelName: String? = null) {
         _sendingState.value = SendingState.Uploading
         viewModelScope.launch(Dispatchers.IO) {
-            val file = physical.toFile()
-            if (!file.exists()) {
-                _sendingState.value = SendingState.Error("G-code file not found")
-                return@launch
-            }
-            val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
-            val ok = printerRepo.uploadOnly(file, filename)
-            _sendingState.value = if (ok) SendingState.UploadComplete else SendingState.Error("Upload failed")
-            if (ok) {
-                com.u1.slicer.AppEventNotifier.notify(
-                    getApplication(),
-                    com.u1.slicer.AppEventNotifier.Event.UploadComplete(filename)
-                )
+            // Foreground service across the upload — see sendAndPrint. A truncated
+            // upload-only would leave a corrupt G-code on the printer's storage.
+            val ctx = getApplication<Application>()
+            com.u1.slicer.LongOpService.start(ctx, "Uploading to printer")
+            try {
+                val file = physical.toFile()
+                if (!file.exists()) {
+                    _sendingState.value = SendingState.Error("G-code file not found")
+                    return@launch
+                }
+                val filename = PrinterRepository.resolveUploadBaseName(modelName, file.name)
+                val ok = printerRepo.uploadOnly(file, filename)
+                _sendingState.value = if (ok) SendingState.UploadComplete else SendingState.Error("Upload failed")
+                if (ok) {
+                    com.u1.slicer.AppEventNotifier.notify(
+                        getApplication(),
+                        com.u1.slicer.AppEventNotifier.Event.UploadComplete(filename)
+                    )
+                }
+            } finally {
+                com.u1.slicer.LongOpService.stop(ctx)
             }
         }
     }
