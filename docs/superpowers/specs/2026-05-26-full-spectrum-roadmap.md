@@ -1,0 +1,125 @@
+# Full-Spectrum (Optically-Blended) Colour — Strategy & Roadmap
+
+**Date:** 2026-05-26
+**Status:** Strategy / roadmap (no implementation committed yet)
+**Backlog:** F14 (GitHub #18) — re-scoped by this doc. Cross-links D1 (engine upgrade process).
+
+## 1. Goal & framing
+
+Add full-spectrum (optically-blended) colour to U1-Slicer — producing perceived
+intermediate colours (e.g. blue + yellow → green) that the four loaded filaments
+cannot achieve individually.
+
+Every candidate source uses the **same physical technique**: **layer/line
+alternation across the toolheads**, exploiting human visual halftoning at normal
+viewing distance. There is **no mixing hotend** involved in any of them.
+
+The decisive hardware fact: the **Snapmaker U1 is a toolchanger** with four
+independent extruders/nozzles. Tool changes are mechanical, so alternation costs
+**print time, not purge waste** — no prime/wipe tower is required for the colour
+blending itself. This is exactly the architecture Prusa identifies as *ideal* for
+their ColorMix (toolchangers like the Prusa XL). The only physical prerequisite
+is **accurate XY nozzle-offset calibration** so alternating layers register on top
+of one another.
+
+This supersedes the original F14 blocker ("ratdoux fork v0.9.4 alpha, untested on
+hardware, wait for v1.0"): the capability is now appearing in **Snapmaker's own
+Orca fork**, and the per-layer-purge concern that would have plagued a
+single-nozzle machine does not apply to a toolchanger.
+
+## 2. Architecture invariants (true regardless of source)
+
+- We **never** use OrcaSlicer's GUI. We drive the slicing core through SAPIL/JNI
+  with our own Jetpack Compose UI. So whichever engine ships the capability, the
+  U1-Slicer **UX and config-key plumbing are always ours to build.**
+- New slicer settings must be wired through **both** paths in `sapil_print.cpp`
+  (`applyConfigToPrusa()` fallback + `profile_keys[]` whitelist) and, if
+  user-controllable, `buildProfileOverrides()` in `SlicerViewModel.kt`. See the
+  "Profile Key Pipeline" checklist in `CLAUDE.md`.
+- Native `.so` rebuilds are pre-authorised and follow the existing
+  NDK-26 / Release / size + compiler-verification checklist in `CLAUDE.md` and
+  `ENGINE_UPGRADE_GUIDE.md`.
+
+## 3. Engine-source decision matrix
+
+> This remains an **explicit decision point**. Recommendation given, final pick to
+> be confirmed at M0.
+
+| Source | What it provides | What we still build | Long-term cost |
+|---|---|---|---|
+| **Snapmaker's own Orca fork** *(recommended)* | Full-spectrum capability arrives on a submodule bump from 2.2.4 to the newer Snapmaker Orca. Same base, same patch surface (~2,400 lines), one engine to track. | Our Compose UI + config-key wiring. | Lowest — stays on the vendor mainline we already patch. |
+| **ratdoux/OrcaSlicer-FullSpectrum** | The original F14 target; a fork of Snapmaker Orca 2.2.4 adding pseudo-extruder alternation. | Same UI work. | Likely **redundant** now; perpetual rebase of our patches onto a diverging third-party fork. |
+| **Prusa `prusa-fdm-mixer`** | MIT C++17 / TS library that **predicts the perceived colour from a layer ratio**. Not toolpath generation. | Everything else. | N/A as primary engine — it is the **colour-accuracy layer** (see M4), not the slicer. |
+
+**Recommendation:** Snapmaker's own fork as the engine; Prusa's mixer as the
+colour-prediction layer on top (M4). ratdoux retired unless M0 shows Snapmaker's
+native support is unusable.
+
+## 4. Milestones / sub-projects
+
+Each milestone gets its own spec → plan → implementation cycle when reached.
+
+### M0 — Verify capability (gate)
+Confirm the chosen Snapmaker Orca fork **actually contains** full-spectrum, and
+that it is reachable **through config keys / SAPIL** — not locked behind their
+desktop GUI workflow. Identify the new config key names and the expected input
+(target colour? per-region assignment? CMYKW filament roles?). Cheapest possible
+check; **nothing else proceeds until this passes.**
+
+### M1 — Engine bump
+Move the `app/src/main/cpp/orcaslicer` submodule to the target Snapmaker commit,
+re-apply the Android patch catalogue (per `ENGINE_UPGRADE_GUIDE.md`), rebuild the
+`.so`, and confirm the **full existing test suite stays green** (1367 unit + 345
+instrumented). Closes/advances D1.
+
+### M2 — Feasibility slice
+Drive a full-spectrum slice through SAPIL from a test config. Inspect the G-code
+(tool changes per layer, time estimate, registration). Validate with **one real
+U1 print** to confirm blended colours read correctly and nozzle offsets register.
+This is the go/no-go on print quality.
+
+### M3 — Compose UI (thin)
+Target-colour picker → engine recipe across the four loaded filaments. Surface a
+print-time estimate up front. Clearly-labelled mode. Wire the M0 config keys
+through `applyConfigToPrusa()` + `profile_keys[]` + `buildProfileOverrides()`.
+Add unit tests for any new parsing/mapping logic.
+
+### M4 — Colour-accuracy fast-follow
+Integrate **`prusa-fdm-mixer`** (MIT, C++17) so the picker predicts the *perceived*
+colour from a given layer ratio — honest "achievable colour" feedback rather than a
+naive blend. This is the one genuinely hard sub-problem (4-filament mix → what the
+eye sees) and Prusa open-sourced exactly it.
+
+### M5 — Stretch
+Preview rendering of blended colours in the 3D/G-code preview; saved palettes /
+presets.
+
+## 5. Key risks & unknowns
+
+- **GUI-gated capability** — full-spectrum may only be exposed in Snapmaker's
+  desktop UI, not via config. **M0 retires this risk** before any engine work.
+- **Calibration dependency** — blended colour quality depends on the user's XY
+  nozzle-offset calibration; poor calibration → visible mis-registration. Document
+  the prerequisite; consider a UI warning.
+- **Print-time blow-up** — per-layer tool changes multiply print time. Estimate it
+  and show the user up front (M3).
+- **Colour fidelity without M4** — a naive layer-ratio blend may not match the
+  target colour; M4 addresses this.
+- **Filament-role assumptions** — CMYKW-style models assume specific filaments
+  loaded; we have four arbitrary user filaments. The colour decomposition must work
+  from whatever is loaded, or guide the user on what to load.
+
+## 6. Backlog / issue sync
+
+- Re-scope **F14** in `BACKLOG.md` from "ratdoux fork, blocked on v1.0" to "track
+  this roadmap"; link this doc.
+- Keep **GitHub #18** in sync with the re-scope.
+- Cross-link **D1** (engine upgrade process) — M1 exercises it.
+
+## 7. Decision rejected
+
+**"Own the full-spectrum logic in our own layer"** (treat the engine as a dumb
+multi-tool toolpath generator and implement colour decomposition ourselves):
+maximum control and fork-independence, but re-solves what the fork already does
+plus a large amount of new native code. Over-engineering given we already drive the
+core through SAPIL. Rejected unless M0 shows no usable engine support anywhere.
