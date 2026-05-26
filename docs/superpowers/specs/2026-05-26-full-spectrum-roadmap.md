@@ -96,10 +96,44 @@ check; **nothing else proceeds until this passes.**
   upstream — the dominant cost of M1, and a bleeding-edge stability risk until
   Snapmaker tags a release containing #375.
 
-**M0 remaining work (hands-on):** clone the fork at a post-#375 commit, slice a
-mixed-filament model in their desktop build, and inspect the exported 3MF's
-`project_settings.config` + model data to confirm the mix recipe is reproducible
-headless through SAPIL. Decision to adopt is gated on this.
+#### M0 source verification — PASS (2026-05-26)
+Inspected PR #375 source at merge commit `ac3dafe`. **The mixing is fully
+config-driven and headless-reachable through SAPIL** — no GUI dependency in the
+core slicing path:
+
+- **The recipe is a single config string.** `PrintConfig.cpp` adds
+  **`mixed_filament_definitions` (`coString`)** — the serialized output of
+  `MixedFilamentManager::serialize_custom_entries()`. `bbs_3mf.cpp` / the print
+  path reads it back: `config.option<ConfigOptionString>("mixed_filament_definitions")`
+  → `MixedFilamentManager::load_custom_entries(...)` → rebuilds the virtual
+  filaments and slices. Set this key in `project_settings.config` and the engine
+  reproduces the blend with no GUI involved.
+- **~15 scalar tuning keys**, all plain `ConfigOptionDef`s we can whitelist:
+  `mixed_color_layer_height_a/b`, `mixed_filament_gradient_mode`,
+  `mixed_filament_height_lower_bound/upper_bound`, `mixed_filament_advanced_dithering`,
+  `mixed_filament_pointillism_pixel_size/line_gap`,
+  `mixed_filament_component_bias_enabled`, `mixed_filament_surface_indentation`,
+  `mixed_filament_region_collapse`, plus a `dithering_*` / `dithering_local_z_*`
+  family (`dithering_z_step_size`, `dithering_local_z_mode`, ...).
+- **Virtual filament IDs** are numbered `num_physical + 1` (so IDs 5,6,7,8 on our
+  4-extruder U1). They are assigned to objects/regions exactly like physical
+  extruders — i.e. through the **same paint / `objectExtruderMap` machinery we
+  already handle from Phase 1** (`TriangleSelector` for per-region, object extruder
+  for whole-object). No new assignment channel needed.
+- **Data model** (`MixedFilament` struct): `component_a/b` (1-based physical IDs),
+  `ratio_a/b` cadence, `mix_b_percent`, three `DistributionMode`s
+  (LayerCycle / SameLayerPointillisme / Simple), gradient component lists +
+  weights, manual pattern strings, per-row Local-Z cap, surface offsets.
+- **Convergence confirmed:** uses a `FilamentMixer` library for display-colour
+  blending (Blue+Yellow→Green) — the same engine ratdoux adopted. ratdoux is now
+  firmly retired.
+
+**Residual (not gating the engine decision):** a confirmatory real-U1 print
+(quality + nozzle-offset registration) — folded into **M2**, not M0. M0 is
+satisfied: the capability exists in the vendor fork and is fully reproducible
+headless via config. The dominant remaining cost is the **submodule jump from
+2.2.4 `f11a7bf` to a post-#375 commit** and re-applying the Android patch set
+(**M1**).
 
 ### M1 — Engine bump
 Move the `app/src/main/cpp/orcaslicer` submodule to the target Snapmaker commit,
