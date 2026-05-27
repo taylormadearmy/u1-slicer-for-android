@@ -59,10 +59,13 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private val travelLayerRanges = mutableListOf<TravelLayerRange>()
 
     private var totalLayers = 0
+    // B129: clamp the upper bound to >= 0 so a setLayerRange() call that races
+    // ahead of an async G-code upload (totalLayers still 0) can't throw
+    // "Cannot coerce value to an empty range" (coerceIn(0, -1)).
     var minLayer = 0
-        set(value) { field = value.coerceIn(0, totalLayers - 1) }
+        set(value) { field = value.coerceIn(0, (totalLayers - 1).coerceAtLeast(0)) }
     var maxLayer = 0
-        set(value) { field = value.coerceIn(0, totalLayers - 1) }
+        set(value) { field = value.coerceIn(0, (totalLayers - 1).coerceAtLeast(0)) }
     var showTravel = false
 
     @Volatile var pendingGcode: ParsedGcode? = null
