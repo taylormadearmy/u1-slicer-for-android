@@ -73,6 +73,15 @@ fun FilamentMappingDialog(
      * re-maps to a slot with a different material than what was sliced.
      */
     sliceTimeColorMapping: List<Int>? = null,
+    /**
+     * B128 — the material the slice actually used per canonical fileIndex
+     * (from the shared per-filament resolver). When provided it is the source
+     * of truth for the "Sliced as X" mismatch check, so a declared multi-colour
+     * filament that sliced with the FILE's material doesn't fire a false
+     * mismatch against the slot preset. Falls back to the slot-preset lookup
+     * (legacy behaviour) when null.
+     */
+    sliceTimeMaterials: List<String>? = null,
     onConfirm: (List<Int>) -> Unit,
     onDismiss: () -> Unit,
     activeNickname: String = "",
@@ -164,8 +173,12 @@ fun FilamentMappingDialog(
                         // reports "Sliced as E1 material" for the support row.
                         val sliceTimeSlot = sliceTimeColorMapping?.getOrNull(displayFileIndex)
                             ?: displayFileIndex
-                        val sliceTimeSlotMaterial = extruderPresets
-                            .firstOrNull { it.index == sliceTimeSlot }?.materialType
+                        // B128: prefer the actual sliced material (file-declared
+                        // when applicable) so the mismatch check matches the
+                        // slice; fall back to the slot preset when the caller
+                        // didn't supply resolved materials.
+                        val sliceTimeSlotMaterial = sliceTimeMaterials?.getOrNull(displayFileIndex)
+                            ?: extruderPresets.firstOrNull { it.index == sliceTimeSlot }?.materialType
                         FilamentMappingRow(
                             fileIndex = displayFileIndex,
                             fileColor = entry.color,

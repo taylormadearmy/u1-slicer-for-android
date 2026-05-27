@@ -98,6 +98,7 @@ fun U1NavGraph(
             val slicerState by viewModel.state.collectAsState()
             val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
             val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
+            val previewLayerRange by viewModel.previewLayerRange.collectAsState()
             val slicerLayerCount = (slicerState as? com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete)?.result?.totalLayers ?: 0
             if (parsedGcode != null) {
                 // B48: H2C models (>4 model colours) — slicer's T0-T3 are physical
@@ -120,6 +121,11 @@ fun U1NavGraph(
                     resolvedFilamentColors = canonicalFilamentColors
                         .takeIf { it.isNotEmpty() }
                         ?: resolvedFilamentColors,
+                    // B129: remember the layer-slider position across navigation
+                    // (e.g. when the user leaves to move/rotate the model) so it
+                    // doesn't reset to the top. Reset only happens on a new slice.
+                    initialLayerRange = previewLayerRange,
+                    onLayerRangeChange = { lo, hi -> viewModel.setPreviewLayerRange(lo, hi) },
                     onBack = { navController.popBackStack() }
                 )
             }

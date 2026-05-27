@@ -101,14 +101,22 @@ class PerFilamentResolverTest {
     }
 
     @Test
-    fun noOverrides_mappedSlotMaterials_matchPrepareRows() {
+    fun noOverrides_declaredMultiColour_injectiveMapping_fileMaterialWins() {
+        // B128: a normal multi-colour 3MF that DECLARES per-filament materials.
+        // The file's declared material is the authoritative default — it wins
+        // over the auto-mapped slot's preset material (which is just whatever
+        // spool the user happens to have configured in that physical slot).
+        // This is the inverse of the pre-B128 contract; the Prepare row now
+        // shows the file's material, and the slice matches it.
         val canonical = CanonicalFilamentList(
             filaments = listOf(
                 FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
-                FilamentEntry(1, "#00FF00", "PLA", FilamentSource.FILE_COLOUR),
-                FilamentEntry(2, "#0000FF", null, FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PETG", FilamentSource.FILE_COLOUR),
+                FilamentEntry(2, "#0000FF", "TPU", FilamentSource.FILE_COLOUR),
             )
         )
+        // Presets deliberately differ from the file so a regression to
+        // slot-preset authority is observable.
         val presets = listOf(
             ExtruderPreset(index = 0, color = "#FF0000", materialType = "PETG"),
             ExtruderPreset(index = 1, color = "#00FF00", materialType = "ABS"),
@@ -121,10 +129,149 @@ class PerFilamentResolverTest {
             presets = presets,
             filamentLibrary = emptyList(),
         )
-        // fileIdx 0 -> PETG (from slot 0 preset), fileIdx 1 -> ABS (from slot 1 preset),
-        // fileIdx 2 -> PLA (canonical null, falls back to slot 2 preset = PLA).
-        assertEquals(listOf("PETG", "ABS", "PLA"), types)
-        assertEquals(listOf(235, 270, 220), temps)
+        assertEquals(listOf("PLA", "PETG", "TPU"), types)
+        // Temp comes from the FILE material's default when file material wins
+        // and the mapped slot's material differs (slot's tuned profile no longer
+        // applies). PLA=220, PETG=235, TPU=225.
+        assertEquals(listOf(220, 235, 225), temps)
+    }
+
+    @Test
+    fun noOverrides_declaredFileMaterialNull_fallsBackToSlotPreset() {
+        // B128 guard: when the file does NOT declare a material for a filament
+        // (materialType == null), there is nothing to honour, so the mapped
+        // slot's preset material still supplies the default.
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PETG", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#0000FF", null, FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FF0000", materialType = "ABS"),
+            ExtruderPreset(index = 1, color = "#0000FF", materialType = "PLA"),
+        )
+        val (types, _) = resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+        // fileIdx 0 declares PETG -> file wins. fileIdx 1 declares null -> slot 1 preset (PLA).
+        assertEquals(listOf("PETG", "PLA"), types)
+    }
+
+    @Test
+    fun noOverrides_declaredFileMaterialMatchesSlot_keepsLinkedProfileTemp() {
+        // B128: when the file's declared material equals the mapped slot's
+        // material, the slot's tuned filament-profile temp is still applicable
+        // and must survive (we only drop the profile temp when the resolved
+        // material differs from the slot's material).
+        val library = listOf(
+            FilamentProfile(
+                id = 42, name = "Custom PLA", material = "PLA",
+                nozzleTemp = 215, bedTemp = 60, retractLength = 0.8f, retractSpeed = 45f,
+            )
+        )
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PETG", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, materialType = "PLA", filamentProfileId = 42),
+            ExtruderPreset(index = 1, materialType = "PETG"),
+        )
+        val (types, temps) = resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1),
+            presets = presets,
+            filamentLibrary = library,
+        )
+        assertEquals(listOf("PLA", "PETG"), types)
+        // slot 0 material (PLA) == file material (PLA) -> linked profile 215 survives.
+        assertEquals(listOf(215, 235), temps)
+    }
+
+    @Test
+    fun noOverrides_declaredButColourCollision_slotWinsForCollidingFilaments() {
+        // B128 guard: file-material authority requires an INJECTIVE mapping —
+        // a filament that shares a physical slot with another is a fold case,
+        // so the physical slot's material is authoritative for the colliding
+        // filaments. Only the filament with its own slot honours the file.
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PETG", FilamentSource.FILE_COLOUR),
+                FilamentEntry(2, "#0000FF", "TPU", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, materialType = "ABS"),
+            ExtruderPreset(index = 1, materialType = "ABS"),
+        )
+        val (types, _) = resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1, 1), // fileIdx 1 and 2 collide on slot 1
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+        // fileIdx 0 -> own slot 0 -> file PLA. fileIdx 1,2 -> shared slot 1 -> slot ABS.
+        assertEquals(listOf("PLA", "ABS", "ABS"), types)
+    }
+
+    @Test
+    fun noOverrides_paintFoldFile_slotWinsEvenWhenInjective() {
+        // B128 guard: paint-segmentation files (non-empty paintStateMap, e.g.
+        // SEMM/H2C) keep mapped-slot authority even with an injective mapping,
+        // because their "filaments" are paint states, not declared spools.
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PLA", FilamentSource.FILE_COLOUR),
+            ),
+            paintStateMap = mapOf(1 to 0, 2 to 1),
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, materialType = "PETG"),
+            ExtruderPreset(index = 1, materialType = "ABS"),
+        )
+        val (types, _) = resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+        assertEquals(listOf("PETG", "ABS"), types)
+    }
+
+    @Test
+    fun noOverrides_singleColourDeclared_keepsSlotPresetMaterial_b118guard() {
+        // B118 must not regress: a single-colour 3MF declaring PLA with E1 set
+        // to PETG still slices as the loaded spool (PETG). File-material
+        // authority is scoped to MULTI-colour files.
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PLA", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, materialType = "PETG"),
+        )
+        val (types, temps) = resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+        assertEquals(listOf("PETG"), types)
+        assertEquals(listOf(235), temps)
     }
 
     @Test

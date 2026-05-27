@@ -1611,4 +1611,53 @@ class BambuPipelineIntegrationTest {
         )
     }
 
+    /**
+     * B128 end-to-end — a multi-colour 3MF that DECLARES distinct per-filament
+     * materials must surface those FILE materials (not the user's all-PLA slot
+     * presets) through the shared per-filament resolver, exercised on a real
+     * file on-device.
+     *
+     * jons-bug.3mf declares `filament_type = ["PETG", "TPU"]`. With default
+     * all-PLA presets and an injective 1:1 colour→slot mapping, the resolved
+     * per-filament types must be PETG + TPU (and their temps), driving both the
+     * Prepare chip strip (via `displayedFilamentMaterials`) and the slice (via
+     * `buildPerFilamentTypeAndTemp`). Pre-B128 this collapsed to all-PLA because
+     * the mapped slot preset won — DC15's "2nd/3rd show none/wrong material"
+     * report.
+     */
+    @Test
+    fun b128_jonsBug_declaredFileMaterialsDriveResolvedTypes() {
+        val input = asset("jons-bug.3mf")
+        val canonical = com.u1.slicer.data.canonicalListAtLoad(input)
+        assertNotNull("canonicalListAtLoad must build a list for jons-bug.3mf", canonical)
+        canonical!!
+        assertTrue("jons-bug declares >= 2 filaments, got ${canonical.size}", canonical.size >= 2)
+
+        // Default presets are all PLA — deliberately different from the file so
+        // a regression to slot-preset authority is observable.
+        val presets = com.u1.slicer.data.defaultExtruderPresets()
+        assertTrue("default presets must all be PLA", presets.all { it.materialType == "PLA" })
+
+        // Injective 1:1 mapping (no slot collisions) → declared file materials win.
+        val injectiveMapping = (0 until canonical.size).toList()
+        val (types, temps) = com.u1.slicer.data.resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = injectiveMapping,
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+
+        assertEquals("file declares PETG for filament 0", "PETG", types[0])
+        assertEquals("file declares TPU for filament 1", "TPU", types[1])
+        // Temps follow the resolved (file) material, not the PLA slot default.
+        assertEquals("PETG temp for filament 0", 235, temps[0])
+        assertEquals("TPU temp for filament 1", 225, temps[1])
+        assertFalse(
+            "B128 regression: declared file materials must not collapse to all-PLA " +
+                "(the mapped slot presets), got $types",
+            types.take(2).all { it == "PLA" },
+        )
+    }
+
 }

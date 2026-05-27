@@ -49,17 +49,23 @@ class FilamentTypeHeaderPatchTest {
 
     @Test
     fun `header patch types use canonical mapping even when canonical size fits physical slots`() {
+        // B102 (physical-slot indexing) + B128 (declared file material wins for
+        // an injective multi-colour mapping): the file declares PETG for
+        // filament 3, mapped to physical slot 2 whose preset is ABS. The header
+        // must carry the file's PETG at physical position 2 — proving both that
+        // the array is physical-slot-indexed AND that the file's declared
+        // material beats the slot preset for a declared, injective filament.
         val canonical = CanonicalFilamentList(
             filaments = listOf(
                 FilamentEntry(0, "#0086D6", "PLA", FilamentSource.FILE_COLOUR),
                 FilamentEntry(1, "#FFFF00", "PLA", FilamentSource.FILE_COLOUR),
-                FilamentEntry(2, "#FFFFFF", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(2, "#FFFFFF", "PETG", FilamentSource.FILE_COLOUR),
             )
         )
         val presets = listOf(
             ExtruderPreset(index = 0, color = "#0086D6", materialType = "PLA"),
             ExtruderPreset(index = 1, color = "#FFFF00", materialType = "PLA"),
-            ExtruderPreset(index = 2, color = "#FFFFFF", materialType = "PETG"),
+            ExtruderPreset(index = 2, color = "#FFFFFF", materialType = "ABS"),
             ExtruderPreset(index = 3, color = "#6A00D5", materialType = "ABS"),
         )
 
