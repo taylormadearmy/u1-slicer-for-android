@@ -867,11 +867,20 @@ class MainActivity : ComponentActivity() {
                                         pendingMappingSend = null
                                         navigateTab(Routes.PRINTER)
                                         sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                            val physical = com.u1.slicer.gcode.applyPrintTimeRemap(
-                                                source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
-                                                output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
-                                                colorMapping = expanded,
-                                            )
+                                            // Foreground service across the ~80 s
+                                            // remap of a large G-code so the freezer
+                                            // can't kill it once the user backgrounds
+                                            // the app; the upload step starts its own.
+                                            LongOpService.start(toastContext, "Preparing G-code")
+                                            val physical = try {
+                                                com.u1.slicer.gcode.applyPrintTimeRemap(
+                                                    source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
+                                                    output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
+                                                    colorMapping = expanded,
+                                                )
+                                            } finally {
+                                                LongOpService.stop(toastContext)
+                                            }
                                             val modelName = viewModel.modelFileName.value
                                             withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 when (pending.action) {
@@ -908,9 +917,16 @@ class MainActivity : ComponentActivity() {
                                 // the source as already physical-slot
                                 // (v1.6.13-era contract) and copy
                                 // verbatim into the typed output.
-                                viewModel.prepareExportableGcodeWithMapping(
-                                    sourceFile, exportedFile, mapping = null
-                                )
+                                // Foreground service across the copy so the
+                                // freezer can't kill it (see canonical path).
+                                LongOpService.start(toastContext, "Preparing G-code")
+                                try {
+                                    viewModel.prepareExportableGcodeWithMapping(
+                                        sourceFile, exportedFile, mapping = null
+                                    )
+                                } finally {
+                                    LongOpService.stop(toastContext)
+                                }
                                 val physical = com.u1.slicer.gcode.PhysicalGcodePath.of(exportedFile)
                                 val modelName = viewModel.modelFileName.value
                                 withContext(kotlinx.coroutines.Dispatchers.Main) {
