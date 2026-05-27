@@ -40,14 +40,16 @@ class LongOpService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        if (action == ACTION_STOP) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
-        }
         val stage = intent?.getStringExtra(EXTRA_STAGE)
-        if (stage.isNullOrBlank()) {
-            // Process restart after kill with empty stack: nothing meaningful to render.
+        // B130 (#158): every onStartCommand reached via startForegroundService()
+        // MUST call startForeground() within Android's 5s watchdog — even when we
+        // immediately want to stop. The ACTION_STOP and empty-stage (post-kill
+        // restart) paths previously returned without promoting to foreground, so
+        // a stop / empty command arriving as the start crashed the app with
+        // ForegroundServiceDidNotStartInTimeException under rapid start/stop churn
+        // (more likely on a hot / busy phone). Promote first on every path, then stop.
+        if (action == ACTION_STOP || stage.isNullOrBlank()) {
+            startForeground(NOTIFICATION_ID, buildNotification(stage ?: "Working", 0))
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY

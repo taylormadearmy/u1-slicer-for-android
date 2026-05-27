@@ -4,12 +4,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B130: LongOpService foreground-service-did-not-start-in-time crash under load (GitHub #158) — OPEN
+### B130: LongOpService foreground-service-did-not-start-in-time crash under load (GitHub #158) — PARTIAL FIX v2.9.2, residual OPEN
 - **Symptom**: App crashes with `ForegroundServiceDidNotStartInTimeException` for `com.u1.slicer.LongOpService` — `startForegroundService()` called but `startForeground()` not reached within Android's 5s watchdog. Happens when a long op (load/slice/save/share/send) starts while the phone is thermally throttled / memory-pressured (hot or busy phone, large files).
-- **Surfaced**: v2.9.0 2h instrumented sweep (`PreparePreviewViewModelTest#flippy_layerToolOnly...`, `GcodeBaselineDiffTest#snapshot_coloredBenchy_semm` — both PASS in isolation on an idle device); user suspects seeing it in real use. Not v2.9.0-specific — the LongOpService wrap dates to F90 (v2.7.x).
-- **Fix direction**: call `startForeground()` synchronously in `LongOpService.onStartCommand`/`onCreate` (post the notification immediately before any work); guard the start/stop race so a fast-finishing op doesn't leave a dangling `startForegroundService`; re-check the F90 v2.7.1 debounce interaction.
-- **Severity**: rare real-world crash; no correctness/data-loss impact (F89 session-resume covers process death).
-- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/158
+- **Surfaced**: v2.9.0 2h instrumented sweep (failing test varies run-to-run — `flippy_layerToolOnly...`, `snapshot_coloredBenchy_semm`, `dragonPlate3_selectPlate...`; all PASS in isolation on an idle device); user suspects seeing it in real use. Not v2.9.0-specific — the LongOpService wrap dates to F90 (v2.7.x).
+- **Two distinct causes:**
+  1. **Deterministic (FIXED v2.9.2)**: `onStartCommand`'s `ACTION_STOP` and empty-stage paths returned after `stopForeground()`/`stopSelf()` **without** first calling `startForeground()`, so a stop/empty command arriving as the start crashed under rapid start/stop churn. Fix: promote to foreground on *every* `onStartCommand` path before stopping. Structural guard in `LongOpServiceStackTest`.
+  2. **Residual (still OPEN)**: under sustained heavy load the OS is too slow to even *deliver* `onStartCommand` within 5s of `startForegroundService()` — the watchdog trips before our code runs, so no `onStartCommand` change can fix it. The v2.9.2 run still showed 1 such flake (different test, passes in isolation). **Mitigation = debounce the FGS start**: don't call `startForegroundService` for ops expected to finish in <~400ms (extend the F90 v2.7.1 preview-prep debounce to all `LongOpService.start()` callers), so the short `loadModel`/`selectPlate` churn never arms the watchdog. Bigger redesign of the start/stop companion — own follow-up.
+- **Severity**: rare real-world crash; no correctness/data-loss impact (F89 session-resume covers process death). v2.9.2 reduces exposure; residual remains until the debounce mitigation.
+- **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/158 (stays open for the residual)
 
 ### B129: Moving/rotating the model resets the G-code preview layer slider to the top of the print (GitHub #157) — FIXED v2.9.0 (full-screen viewer) + v2.9.1 (inline Preview-tab viewer)
 - **Symptom**: After slicing, open the sliced G-code preview and move the layer slider to some position. Then move or rotate the model on the build plate. The G-code preview's layer slider jumps back to the top of the print.
