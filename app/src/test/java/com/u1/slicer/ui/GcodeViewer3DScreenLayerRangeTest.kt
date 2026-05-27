@@ -34,6 +34,31 @@ class GcodeViewer3DScreenLayerRangeTest {
     private val viewModel get() = source("app/src/main/java/com/u1/slicer/SlicerViewModel.kt")
 
     @Test
+    fun inlineGcodePreview_alsoPersistsLayerRange() {
+        // B129 v2.9.1 follow-up: the INLINE Preview-tab viewer (InlineGcodePreview
+        // in MainActivity) has its own slider and must use the same
+        // previewLayerRange plumbing, or it resets to the top on move/rotate even
+        // though the full-screen viewer is fixed.
+        val main = source("app/src/main/java/com/u1/slicer/MainActivity.kt")
+        assertTrue(
+            "InlineGcodePreview must accept initialLayerRange + onLayerRangeChange.",
+            main.contains("initialLayerRange: Pair<Int, Int>?") &&
+                main.contains("onLayerRangeChange: (Int, Int) -> Unit"),
+        )
+        assertTrue(
+            "InlineGcodePreview call site must feed previewLayerRange + setPreviewLayerRange.",
+            main.contains("initialLayerRange = previewLayerRange") &&
+                main.contains("viewModel.setPreviewLayerRange("),
+        )
+        // The inline LaunchedEffect must NOT hard-reset the slider to the top.
+        assertTrue(
+            "InlineGcodePreview must not reset `maxLayer = gcodeLayerCount - 1` in its " +
+                "LaunchedEffect (that reset is the B129 bug).",
+            !main.contains("maxLayer = gcodeLayerCount - 1"),
+        )
+    }
+
+    @Test
     fun screen_exposesLayerRangeParams() {
         val src = screen
         assertTrue(

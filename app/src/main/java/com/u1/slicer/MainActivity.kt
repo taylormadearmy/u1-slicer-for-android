@@ -1870,6 +1870,7 @@ fun PreviewScreen(
     val sliceStale by viewModel.sliceStale.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
+    val previewLayerRange by viewModel.previewLayerRange.collectAsState()
 
     Scaffold(
         topBar = {
@@ -1983,6 +1984,10 @@ fun PreviewScreen(
                             resolvedFilamentColors = canonicalFilamentColors
                                 .takeIf { it.isNotEmpty() }
                                 ?: resolvedFilamentColors,
+                            // B129: same remembered layer range as the full-screen
+                            // viewer, so the inline slider survives move/rotate too.
+                            initialLayerRange = previewLayerRange,
+                            onLayerRangeChange = { lo, hi -> viewModel.setPreviewLayerRange(lo, hi) },
                         )
                         }
                     }
@@ -4668,6 +4673,13 @@ fun InlineGcodePreview(
     // G-code Preview shows the file's colours (matching the Prepare 3D
     // preview).
     resolvedFilamentColors: List<String> = emptyList(),
+    // B129 (v2.9.1 follow-up) — the layer range remembered across navigation,
+    // shared with the full-screen viewer via SlicerViewModel.previewLayerRange.
+    // Null = show the full print (fresh slice). [onLayerRangeChange] persists
+    // the user's slider position so moving/rotating the model (which leaves the
+    // Preview tab) doesn't reset it to the top.
+    initialLayerRange: Pair<Int, Int>? = null,
+    onLayerRangeChange: (Int, Int) -> Unit = { _, _ -> },
 ) {
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.GcodeViewerView?>(null) }
     var viewerLoading by remember(parsedGcode) { mutableStateOf(true) }
@@ -4675,7 +4687,14 @@ fun InlineGcodePreview(
     val gcodeLayerCount = parsedGcode.layers.size
     // Use slicer's totalLayers for display (correct print layers), fall back to parsed count
     val displayLayerCount = if (slicerLayerCount > 0) slicerLayerCount else gcodeLayerCount
-    var maxLayer by remember { mutableIntStateOf(gcodeLayerCount - 1) }
+    // B129: seed from the saved range (preserved across navigation), clamped to
+    // this slice's layer count. The inline viewer only exposes the top of the
+    // range (min fixed at 0), so it reads/writes the max.
+    var maxLayer by remember(parsedGcode) {
+        mutableIntStateOf(
+            com.u1.slicer.ui.resolveInitialLayerRange(initialLayerRange, gcodeLayerCount).second
+        )
+    }
     val displayLayer = if (gcodeLayerCount > 0)
         ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
     else 1
@@ -4687,13 +4706,24 @@ fun InlineGcodePreview(
     LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState) {
         val v = viewerView ?: return@LaunchedEffect
         viewerLoading = true
-        maxLayer = gcodeLayerCount - 1
         if (previewColors.isNotEmpty()) {
             v.setExtruderColors(previewColors)
         }
         v.setGcode(parsedGcode)
         cameraState?.let { v.applyCameraState(it) }
         v.requestRender()
+    }
+
+    // B129: re-apply the remembered layer range AFTER the async G-code upload
+    // finishes (viewerLoading flips false → totalLayers is known). Applying it
+    // synchronously after setGcode raced the GL upload and crashed the renderer
+    // (totalLayers still 0). A fresh slice seeds maxLayer to the top so this is a
+    // no-op; a position restored across navigation re-applies here.
+    LaunchedEffect(viewerLoading, maxLayer, gcodeLayerCount) {
+        if (!viewerLoading && maxLayer in 0 until (gcodeLayerCount - 1)) {
+            viewerView?.setLayerRange(0, maxLayer)
+            viewerView?.requestRender()
+        }
     }
 
     Card(
@@ -4810,6 +4840,9 @@ fun InlineGcodePreview(
                             onValueChange = { v ->
                                 maxLayer = v.roundToInt()
                                 viewerView?.setLayerRange(0, maxLayer)
+                                // B129: persist so the position survives leaving
+                                // the Preview tab to move/rotate the model.
+                                onLayerRangeChange(0, maxLayer)
                             },
                             valueRange = 0f..(gcodeLayerCount - 1).toFloat(),
                             modifier = Modifier.fillMaxWidth()

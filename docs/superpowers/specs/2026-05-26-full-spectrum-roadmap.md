@@ -140,6 +140,17 @@ re-apply the Android patch catalogue (per `ENGINE_UPGRADE_GUIDE.md`), rebuild th
 `.so`, and confirm the **full existing test suite stays green** (1367 unit + 345
 instrumented). Closes/advances D1.
 
+> **Build checklist add (16KB page alignment):** while we're rebuilding the `.so`
+> here anyway, build it **16KB-page-aligned** (NDK `-Wl,-z,max-page-size=16384`,
+> or AGP `android.experimental.enableNewResourceShrinker`/`useLegacyPackaging`
+> off + NDK r26+ default). Today `libprusaslicer-jni.so` is 4KB-aligned, so on
+> Android 15+ devices configured for 16KB pages users get a "may not be
+> optimized" compat dialog at startup and will eventually hit a hard load
+> failure. This is **compatibility, not performance** (no slicing speedup) — so
+> it's not worth a standalone native rebuild now, but it's free to fold into this
+> engine bump. Verify with `llvm-readelf -l libprusaslicer-jni.so` showing
+> `LOAD` segments aligned to `0x4000`.
+
 #### M1 pre-flight analysis (2026-05-26)
 Cross-referenced our Android patch surface (per `ENGINE_UPGRADE_GUIDE.md` patch
 catalog) against the files PR #375 rewrote, and spot-checked current `main`.
