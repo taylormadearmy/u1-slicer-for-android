@@ -103,9 +103,14 @@ internal fun AiPaintViewer(
         }
     }
 
-    // The mesh is built ONCE per pipeline run. Subsequent paints mutate extruderIndices in
-    // place via ModelViewerView.updateExtruderIndices — far cheaper than rebuilding the VBO.
-    val mesh = remember(recenteredPositions, displayRegions) {
+    // The mesh is built ONCE per pipeline run, keyed on geometry only. Subsequent paints and
+    // colour changes mutate extruderIndices in place via the recolor LaunchedEffect below
+    // (updateExtruderIndices / recolorMesh) — far cheaper than rebuilding the VBO, and crucially
+    // camera-safe: rebuilding the mesh re-fires LaunchedEffect(mesh), which re-applies fitCamera
+    // and snaps the viewer back to the default orientation. `displayRegions` is read here only to
+    // size the initial extruderIndices for the full mesh (B115); it must NOT be a remember key,
+    // or every paint stroke would rebuild the VBO and reset the user's view.
+    val mesh = remember(recenteredPositions) {
         if (displayRegions.isEmpty()) null
         else AiPaintMeshBuilder.build(recenteredPositions, displayRegions)
     }

@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v2.9.2` (`versionCode 302`)
+Current release: `v2.9.3` (`versionCode 303`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -68,7 +68,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1394 JVM unit tests
+./gradlew testDebugUnitTest                        # 1397 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 346 instrumented tests — uses Orchestrator
 ```
 
@@ -78,7 +78,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1394 tests across 119 classes
+### Unit tests (`app/src/test/`) - 1397 tests across 120 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -143,6 +143,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/SupportFilamentOptionTest.kt` (5) — B99 support/interface filament option labels and config values for H2C, STL, non-identity, and sparse color mappings
 - `ui/SlicedWithMaterialTest.kt` (8) — B118 Map & Print dialog material-mismatch cascade: override priority, sliceTime-slot priority, file-declared fallback, DC15 single-colour PETG-slot repro, explicit override on single-colour, multi-colour mapped-slot resolution; B121 support-row uses displayFileIndex not slot-0 when colorMapping too short
 - `ui/InlineModelPreviewRotationKeysTest.kt` (5) — B109 Compose-only structural guards: (a) placement LaunchedEffect lists `effPlaceSizeX/Y` so the object drag callback re-captures the rotated footprint on rotation, (b) placement LaunchedEffect lists `wipeTowerWidth/Depth` so the wipe-tower drag callback re-captures on prime-tower dimension change, (c) the `onMeshCached` lambda calls `setRotatedMeshSize` so the ViewModel's rotated-AABB cache repopulates after each mesh fetch, (d) F77 placement LaunchedEffect lists `perObjectSizes` so the drag clamp re-captures per-object footprints when files are added to the bed, (e) B124 perObjectSizes gated on hasMultipleDistinctObjects so single multi-volume 3MF doesn't trigger multiObjectMode. The math itself is unit-tested in `CopyArrangeCalculatorTest.effectivePlacementFootprint_*`.
+- `ui/AiPaintViewerCameraResetTest.kt` (3) — Smart Paint camera-reset regression guards (v2.9.3): (a) the `mesh` remember must NOT key on per-paint `displayRegions`/`triangleRegions` (keying on it rebuilt the VBO on every paint → re-fired `LaunchedEffect(mesh)` → `applyCameraState(fitCamera)` → viewer snapped back to default orientation; regression from `fd59a72`), (b) `mesh` remember must key on geometry (`recenteredPositions`), (c) the per-paint recolor `LaunchedEffect` (keyed on `displayRegions`) must never call `setMesh`/`applyCameraState` — colours mutate in place via `updateExtruderIndices`. Source-grep guards; see BACKLOG A4 for the planned behavioural harness.
 - `PrepareMeshCacheInvalidationTest.kt` (3) — B109 v2.2.6 lifecycle guard: `SlicerViewModel.invalidatePrepareMeshCache()` must clear `cachedPrepareMesh`, `cachedPrepareMeshPath`, AND `_rotatedMeshSizeXY` so stale rotated bounds never leak across a rotation change.
 - `ui/PreparePreviewLongOpWrapTest.kt` (3) — F90 v2.7.1 follow-up structural guard: the `InlineModelPreview` `LaunchedEffect` that fetches `lib.getPreparePreviewMesh(...)` must (a) call `LongOpService.start(..., "Preparing preview")`, (b) pair it with `LongOpService.stop(...)` in a `finally` block, AND (c) place the `start(...)` call AFTER `kotlinx.coroutines.delay(300)`. Putting `start` before the debounce causes `ForegroundServiceDidNotStartInTimeException` under rotation-slider drag because each cancelled-mid-debounce LaunchedEffect still fires `startForegroundService` and Android's per-call 5-second watchdog can't be satisfied during the rapid cancel/restart churn.
 - `network/UpdateCheckerTest.kt` (12) — F70 GitHub release JSON parsing, semantic version comparison, download URL extraction

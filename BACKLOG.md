@@ -594,6 +594,17 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Status (2026-05-22)**: not observed in any release since the v1.5.0 native rebuild (B38 fix). v2.x runs through E2E batches and instrumented sweeps clean. Considering resolved; doc retained for forensic reference.
 - **If symptom returns**: poisoned-Clipper coordinates (`Long.MIN_VALUE` / `Long.MAX_VALUE`) in slicing output, intermittent across reinstalls on Pixel 9a more than Pixel 8a. Re-open this entry and the investigation doc.
 
+### A4: Reusable GL-viewer camera-state test harness (GitHub #159)
+- **Status**: NOT STARTED. Estimated ~1.5 days (Tier 1 + Tier 2). Hardening, not a correctness blocker.
+- **Driver**: The Smart Paint camera-reset regression (v2.9.3) was a *behavioural* bug — painting reset the 3D viewer orientation — but the project has no way to assert "operation X must not disturb the camera" except brittle source-grep guards (`AiPaintViewerCameraResetTest`, `InlineModelPreviewRotationKeysTest`). The same class of bug recurs across the app (B49 prepare-preview cache, B109 rotation, B129 G-code slider persistence): an in-place edit unexpectedly resets view/preview state. A shared harness would catch these behaviourally instead of by text-matching.
+- **Why it generalises**: `ModelViewerView` (Smart Paint *and* Prepare inline preview), `GcodeViewerView` (G-code preview), and `BaseGLViewerView` all share one `Camera` with `snapshot()` / `restore()` / `CameraViewState`. `androidx.compose.ui:ui-test-junit4` + `ui-test-manifest` are already declared in `app/build.gradle` but unused — no `createComposeRule` anywhere — so the Compose UI harness is wired but unproven.
+- **Scope**:
+  - **Tier 1 — pure-logic JVM test.** Extract the camera-reset *decision* out of `ModelRenderer.onDrawFrame` (currently GL-coupled) into a pure function, e.g. `cameraActionOnMeshUpload(preserve, hasMesh): Reset | Keep`. Unit-test the contract (`preserve=true ⇒ Keep`) in the fast JVM suite. Benefits every screen since all render through `ModelRenderer`.
+  - **Tier 2 — reusable instrumented harness (the real win).** One helper, e.g. `renderViewerAndSnapshot(view, mesh) { op -> ... }`, that mounts a GL viewer on-device, waits N frames via a `CountDownLatch` on a render callback (never `Thread.sleep` — that is the flakiness trap), runs `op`, and returns `camera.snapshot()`. First consumer: Smart Paint (`updateExtruderIndices` must not move the camera). Fast-follow consumers: Prepare preview (rotate/scale/recolor/prime-tower toggle) and `GcodeViewerView` (layer-slider drag, colour-mode switch).
+  - **Tier 3 (optional, deferred).** Full Compose UI instrumented test via the already-present `createComposeRule`, mounting `AiPaintViewer` and firing a paint callback. Most faithful to the actual regression (the `remember` key wiring) but Compose-idle ↔ GL-render-thread sync is fiddly and the path is unproven; only invest if Smart Paint keeps churning.
+- **Out of scope**: any native rebuild; replacing the existing source-grep guards (they stay as cheap belt-and-braces).
+- **Note**: while here, correct the stale "no Compose UI harness in project" line in `CLAUDE.md` — the dependency exists, it is just unused.
+
 ## Open Features
 
 ### F87 + F91 — Orca profile import + filament library expansion (GitHub #147, #155) — DONE v2.8.0
