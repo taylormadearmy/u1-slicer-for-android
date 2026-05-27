@@ -3,6 +3,7 @@ package com.u1.slicer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -108,5 +109,34 @@ class LongOpServiceStackTest {
         threads.forEach { it.join() }
         // All pushes were paired with pops — stack must be empty.
         assertNull(LongOpService.currentStageOrNull())
+    }
+
+    /**
+     * B130 (#158) structural guard: Android force-crashes the app with
+     * ForegroundServiceDidNotStartInTimeException if an `onStartCommand` (reached
+     * via `startForegroundService()`) returns without calling `startForeground()`
+     * within 5s — EVEN on the stop / empty-stage paths. So `onStartCommand` must
+     * promote to foreground BEFORE any `stopForeground()`/`stopSelf()`. A unit
+     * test can't drive the real Service, so this greps the source.
+     */
+    @Test
+    fun `onStartCommand promotes to foreground before any stop`() {
+        val src = java.io.File("src/main/java/com/u1/slicer/LongOpService.kt").readText()
+        val start = src.indexOf("fun onStartCommand")
+        assertTrue("onStartCommand must exist", start >= 0)
+        val after = src.indexOf("\n    private fun", start + 1)
+        val body = src.substring(start, if (after > start) after else src.length)
+        val firstStartFg = body.indexOf("startForeground(")
+        val firstStop = minOf(
+            body.indexOf("stopForeground(").let { if (it < 0) Int.MAX_VALUE else it },
+            body.indexOf("stopSelf(").let { if (it < 0) Int.MAX_VALUE else it },
+        )
+        assertTrue("onStartCommand must call startForeground()", firstStartFg >= 0)
+        assertTrue(
+            "B130: startForeground() must be called BEFORE any stopForeground()/stopSelf() " +
+                "in onStartCommand so the foreground-service watchdog is satisfied on the " +
+                "ACTION_STOP and empty-stage paths too (not just the normal path).",
+            firstStop == Int.MAX_VALUE || firstStartFg < firstStop,
+        )
     }
 }
