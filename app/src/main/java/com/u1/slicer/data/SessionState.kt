@@ -31,6 +31,13 @@ data class SessionState(
     val wasSliceComplete: Boolean,
     val savedAtEpochMs: Long,
     val appVersionCode: Int,
+    // ---- F66 (schema v3) ----
+    val selectedObjectIndex: Int? = null,
+    val selectedVolumeIndex: Int? = null,
+    val perObjectPoses: Map<Int, PerObjectPose> = emptyMap(),
+    val perVolumeExtruders: Map<String, Int> = emptyMap(), // key = "objIdx:volIdx", value = 1-indexed slot
+    val splitObjectOperations: List<Int> = emptyList(),    // replay order: load-time-indexed obj indices that were split
+    val splitVolumeOperations: List<String> = emptyList(), // replay order: "objIdx:volIdx" entries
 ) {
     data class AdditionalFile(val path: String, val plateIdx: Int)
 
@@ -55,7 +62,13 @@ data class SessionState(
             sliceJobId == other.sliceJobId &&
             wasSliceComplete == other.wasSliceComplete &&
             savedAtEpochMs == other.savedAtEpochMs &&
-            appVersionCode == other.appVersionCode
+            appVersionCode == other.appVersionCode &&
+            selectedObjectIndex == other.selectedObjectIndex &&
+            selectedVolumeIndex == other.selectedVolumeIndex &&
+            perObjectPoses == other.perObjectPoses &&
+            perVolumeExtruders == other.perVolumeExtruders &&
+            splitObjectOperations == other.splitObjectOperations &&
+            splitVolumeOperations == other.splitVolumeOperations
     }
 
     override fun hashCode(): Int {
@@ -75,11 +88,17 @@ data class SessionState(
         result = 31 * result + wasSliceComplete.hashCode()
         result = 31 * result + savedAtEpochMs.hashCode()
         result = 31 * result + appVersionCode
+        result = 31 * result + (selectedObjectIndex ?: 0)
+        result = 31 * result + (selectedVolumeIndex ?: 0)
+        result = 31 * result + perObjectPoses.hashCode()
+        result = 31 * result + perVolumeExtruders.hashCode()
+        result = 31 * result + splitObjectOperations.hashCode()
+        result = 31 * result + splitVolumeOperations.hashCode()
         return result
     }
 
     companion object {
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 3
 
         fun toJson(state: SessionState): String {
             val obj = JSONObject()
@@ -124,6 +143,39 @@ data class SessionState(
             obj.put("wasSliceComplete", state.wasSliceComplete)
             obj.put("savedAtEpochMs", state.savedAtEpochMs)
             obj.put("appVersionCode", state.appVersionCode)
+
+            // ---- F66 (v3) fields ----
+            state.selectedObjectIndex?.let { obj.put("selectedObjectIndex", it) }
+            state.selectedVolumeIndex?.let { obj.put("selectedVolumeIndex", it) }
+            if (state.perObjectPoses.isNotEmpty()) {
+                val posesObj = JSONObject()
+                state.perObjectPoses.forEach { (idx, pose) ->
+                    posesObj.put(idx.toString(), JSONObject().apply {
+                        put("rx", pose.rotXDeg.toDouble())
+                        put("ry", pose.rotYDeg.toDouble())
+                        put("rz", pose.rotZDeg.toDouble())
+                        put("sx", pose.scaleX.toDouble())
+                        put("sy", pose.scaleY.toDouble())
+                        put("sz", pose.scaleZ.toDouble())
+                    })
+                }
+                obj.put("perObjectPoses", posesObj)
+            }
+            if (state.perVolumeExtruders.isNotEmpty()) {
+                val extObj = JSONObject()
+                state.perVolumeExtruders.forEach { (k, v) -> extObj.put(k, v) }
+                obj.put("perVolumeExtruders", extObj)
+            }
+            if (state.splitObjectOperations.isNotEmpty()) {
+                val arr = JSONArray()
+                state.splitObjectOperations.forEach { arr.put(it) }
+                obj.put("splitObjectOperations", arr)
+            }
+            if (state.splitVolumeOperations.isNotEmpty()) {
+                val arr = JSONArray()
+                state.splitVolumeOperations.forEach { arr.put(it) }
+                obj.put("splitVolumeOperations", arr)
+            }
             return obj.toString()
         }
 
@@ -151,6 +203,49 @@ data class SessionState(
                     val f = filesArr.getJSONObject(i)
                     AdditionalFile(path = f.getString("path"), plateIdx = f.getInt("plateIdx"))
                 }
+                // ---- F66 (v3) fields ----
+                val selectedObjectIndex =
+                    if (obj.has("selectedObjectIndex")) obj.getInt("selectedObjectIndex") else null
+                val selectedVolumeIndex =
+                    if (obj.has("selectedVolumeIndex")) obj.getInt("selectedVolumeIndex") else null
+                val perObjectPoses: Map<Int, PerObjectPose> = if (obj.has("perObjectPoses")) {
+                    val posesObj = obj.getJSONObject("perObjectPoses")
+                    val out = HashMap<Int, PerObjectPose>(posesObj.length())
+                    val keys = posesObj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        val idx = k.toIntOrNull() ?: return null
+                        val po = posesObj.getJSONObject(k)
+                        out[idx] = PerObjectPose(
+                            rotXDeg = po.getDouble("rx").toFloat(),
+                            rotYDeg = po.getDouble("ry").toFloat(),
+                            rotZDeg = po.getDouble("rz").toFloat(),
+                            scaleX = po.getDouble("sx").toFloat(),
+                            scaleY = po.getDouble("sy").toFloat(),
+                            scaleZ = po.getDouble("sz").toFloat(),
+                        )
+                    }
+                    out
+                } else emptyMap()
+                val perVolumeExtruders: Map<String, Int> = if (obj.has("perVolumeExtruders")) {
+                    val extObj = obj.getJSONObject("perVolumeExtruders")
+                    val out = HashMap<String, Int>(extObj.length())
+                    val keys = extObj.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        out[k] = extObj.getInt(k)
+                    }
+                    out
+                } else emptyMap()
+                val splitObjectOperations: List<Int> = if (obj.has("splitObjectOperations")) {
+                    val arr = obj.getJSONArray("splitObjectOperations")
+                    (0 until arr.length()).map { arr.getInt(it) }
+                } else emptyList()
+                val splitVolumeOperations: List<String> = if (obj.has("splitVolumeOperations")) {
+                    val arr = obj.getJSONArray("splitVolumeOperations")
+                    (0 until arr.length()).map { arr.getString(it) }
+                } else emptyList()
+
                 SessionState(
                     modelName = modelName,
                     rawInputPath = rawInputPath,
@@ -168,6 +263,12 @@ data class SessionState(
                     wasSliceComplete = obj.optBoolean("wasSliceComplete", false),
                     savedAtEpochMs = obj.getLong("savedAtEpochMs"),
                     appVersionCode = obj.getInt("appVersionCode"),
+                    selectedObjectIndex = selectedObjectIndex,
+                    selectedVolumeIndex = selectedVolumeIndex,
+                    perObjectPoses = perObjectPoses,
+                    perVolumeExtruders = perVolumeExtruders,
+                    splitObjectOperations = splitObjectOperations,
+                    splitVolumeOperations = splitVolumeOperations,
                 )
             } catch (e: JSONException) {
                 null

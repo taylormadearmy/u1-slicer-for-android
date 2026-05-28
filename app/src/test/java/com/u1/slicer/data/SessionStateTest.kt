@@ -125,19 +125,19 @@ class SessionStateTest {
 
     @Test
     fun fromJson_missingRequiredModelName_returnsNull() {
-        val noName = """{"version":2,"rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
+        val noName = """{"version":3,"rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
         assertNull(SessionState.fromJson(noName))
     }
 
     @Test
     fun fromJson_missingRequiredRawInputPath_returnsNull() {
-        val noPath = """{"version":2,"modelName":"x","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
+        val noPath = """{"version":3,"modelName":"x","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"savedAtEpochMs":0,"appVersionCode":0}"""
         assertNull(SessionState.fromJson(noPath))
     }
 
     @Test
     fun fromJson_oddLengthCustomObjectPositions_returnsNull() {
-        val odd = """{"version":2,"modelName":"x","rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"customObjectPositions":[1,2,3],"additionalFiles":[],"savedAtEpochMs":0,"appVersionCode":0}"""
+        val odd = """{"version":3,"modelName":"x","rawInputPath":"/a","modelScale":{"x":1,"y":1,"z":1},"modelRotation":{"x":0,"y":0,"z":0},"copyCount":1,"customObjectPositions":[1,2,3],"additionalFiles":[],"savedAtEpochMs":0,"appVersionCode":0}"""
         assertNull(SessionState.fromJson(odd))
     }
 
