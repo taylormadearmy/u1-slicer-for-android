@@ -294,4 +294,116 @@ Java_com_u1_slicer_NativeLibrary_cancelSlice(JNIEnv*, jobject) {
     sapil::SlicerEngine::cancelSlice();
 }
 
+// =============================================================================
+// F66 — Split + Auto-Orient + per-object pose JNI bridges
+// =============================================================================
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeIsObjectSplittable(JNIEnv*, jobject, jint objIdx) {
+    return (g_engine && g_engine->isObjectSplittable(objIdx)) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeIsVolumeSplittable(JNIEnv*, jobject, jint objIdx, jint volIdx) {
+    return (g_engine && g_engine->isVolumeSplittable(objIdx, volIdx)) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jintArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeSplitObject(JNIEnv* env, jobject, jint objIdx) {
+    if (!g_engine) return nullptr;
+    auto res = g_engine->splitObject(objIdx);
+    if (!res) return nullptr;
+    jintArray out = env->NewIntArray(2);
+    jint vals[2] = { res->removedIdx, res->addedCount };
+    env->SetIntArrayRegion(out, 0, 2, vals);
+    return out;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeSplitVolume(JNIEnv*, jobject, jint objIdx, jint volIdx) {
+    if (!g_engine) return -1;
+    return g_engine->splitVolume(objIdx, volIdx);
+}
+
+JNIEXPORT jdoubleArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeAutoOrientObject(JNIEnv* env, jobject, jint objIdx) {
+    if (!g_engine) return nullptr;
+    auto res = g_engine->autoOrientObject(objIdx);
+    if (!res) return nullptr;
+    jdoubleArray out = env->NewDoubleArray(3);
+    jdouble vals[3] = { (*res)[0], (*res)[1], (*res)[2] };
+    env->SetDoubleArrayRegion(out, 0, 3, vals);
+    return out;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeAutoOrientAll(JNIEnv*, jobject) {
+    if (!g_engine) return 0;
+    return g_engine->autoOrientAll();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeSetObjectRotation(
+        JNIEnv*, jobject, jint objIdx, jfloat x, jfloat y, jfloat z) {
+    return (g_engine && g_engine->setObjectRotation(objIdx, x, y, z)) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetObjectRotation(JNIEnv* env, jobject, jint objIdx) {
+    jfloatArray out = env->NewFloatArray(3);
+    if (!g_engine) {
+        jfloat zeros[3] = { 0.f, 0.f, 0.f };
+        env->SetFloatArrayRegion(out, 0, 3, zeros);
+        return out;
+    }
+    auto r = g_engine->getObjectRotation(objIdx);
+    jfloat vals[3] = { r[0], r[1], r[2] };
+    env->SetFloatArrayRegion(out, 0, 3, vals);
+    return out;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeSetObjectScale(
+        JNIEnv*, jobject, jint objIdx, jfloat sx, jfloat sy, jfloat sz) {
+    return (g_engine && g_engine->setObjectScale(objIdx, sx, sy, sz)) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetObjectScale(JNIEnv* env, jobject, jint objIdx) {
+    jfloatArray out = env->NewFloatArray(3);
+    if (!g_engine) {
+        jfloat ones[3] = { 1.f, 1.f, 1.f };
+        env->SetFloatArrayRegion(out, 0, 3, ones);
+        return out;
+    }
+    auto s = g_engine->getObjectScale(objIdx);
+    jfloat vals[3] = { s[0], s[1], s[2] };
+    env->SetFloatArrayRegion(out, 0, 3, vals);
+    return out;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetObjectName(JNIEnv* env, jobject, jint objIdx) {
+    if (!g_engine) return env->NewStringUTF("");
+    return env->NewStringUTF(g_engine->getObjectName(objIdx).c_str());
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetVolumeName(JNIEnv* env, jobject, jint objIdx, jint volIdx) {
+    if (!g_engine) return env->NewStringUTF("");
+    return env->NewStringUTF(g_engine->getVolumeName(objIdx, volIdx).c_str());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetVolumeExtruder(
+        JNIEnv*, jobject, jint objIdx, jint volIdx) {
+    return g_engine ? g_engine->getVolumeExtruder(objIdx, volIdx) : 0;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeSetVolumeExtruder(
+        JNIEnv*, jobject, jint objIdx, jint volIdx, jint slot) {
+    return (g_engine && g_engine->setVolumeExtruder(objIdx, volIdx, slot)) ? JNI_TRUE : JNI_FALSE;
+}
+
 } // extern "C"
