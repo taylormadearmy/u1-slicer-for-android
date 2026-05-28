@@ -5179,6 +5179,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             wasSliceComplete = _state.value is SlicerState.SliceComplete,
             savedAtEpochMs = System.currentTimeMillis(),
             appVersionCode = BuildConfig.VERSION_CODE,
+            // ---- F66 ----
+            selectedObjectIndex = _selection.value.objectIndex,
+            selectedVolumeIndex = _selection.value.volumeIndex,
+            perObjectPoses = _perObjectPoses.value,
+            perVolumeExtruders = _perVolumeExtruders.value,
+            splitObjectOperations = _splitObjectOps.value,
+            splitVolumeOperations = _splitVolumeOps.value,
         )
     }
 
@@ -5446,6 +5453,51 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val tower = saved.customWipeTowerPos
         if (positions != null && tower != null) {
             applyPlacementPositions(positions, tower)
+        }
+        // ---- F66 restore ----
+        // Order matters: split ops first (they change object count and re-index
+        // everything), then volume splits, then per-object pose, then per-volume
+        // extruders, then selection.
+        for (idx in saved.splitObjectOperations) {
+            splitObject(idx)  // each call appends to _splitObjectOps; that's the same list we just replayed,
+                              // so blank it before iterating and let splitObject rebuild it from the replay.
+        }
+        // splitObject() pushed onto _splitObjectOps during replay — replace
+        // the live list with the canonical persisted one to avoid duplicates.
+        _splitObjectOps.value = saved.splitObjectOperations
+        for (entry in saved.splitVolumeOperations) {
+            val parts = entry.split(":")
+            if (parts.size == 2) {
+                val o = parts[0].toIntOrNull()
+                val v = parts[1].toIntOrNull()
+                if (o != null && v != null) splitVolume(o, v)
+            }
+        }
+        _splitVolumeOps.value = saved.splitVolumeOperations
+        // Per-object pose — also captures load-time baselines first so Reset
+        // works (snapshotLoadTimePoses reads native; the pose has not been
+        // mutated by the saved state yet because the loadModelFromFile +
+        // splits above produced the same model state).
+        snapshotLoadTimePoses()
+        for ((idx, pose) in saved.perObjectPoses) {
+            setObjectRotation(idx, pose.rotXDeg, pose.rotYDeg, pose.rotZDeg)
+            setObjectScale(idx, pose.scaleX, pose.scaleY, pose.scaleZ)
+        }
+        // Per-volume extruder assignments.
+        for ((key, slot) in saved.perVolumeExtruders) {
+            val parts = key.split(":")
+            if (parts.size == 2) {
+                val o = parts[0].toIntOrNull()
+                val v = parts[1].toIntOrNull()
+                if (o != null && v != null) setVolumeExtruder(o, v, slot)
+            }
+        }
+        // Selection — non-null even if the object is gone (defensive: clamp to current count).
+        val objCount = native.nativeGetObjectCount()
+        val selObj = saved.selectedObjectIndex
+        if (selObj != null && selObj in 0 until objCount) {
+            selectObject(selObj)
+            saved.selectedVolumeIndex?.let { selectVolume(it) }
         }
         // 6. Post-slice restore: if the saved session was past slicing AND the
         //    SliceJob row still exists in Room with a valid gcode file, restore
