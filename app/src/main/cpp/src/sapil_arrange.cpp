@@ -1,6 +1,7 @@
 #include "../include/sapil.h"
 #include "sapil_internal.h"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Orient.hpp"
 #include <cmath>
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/TriangleMesh.hpp"
@@ -479,6 +480,163 @@ bool SlicerEngine::setObjectPositions(const std::vector<std::pair<float, float>>
     }
     invalidatePreviewMeshCache();
     SAPIL_LOGI("setObjectPositions: positioned %d objects", (int)positions.size());
+    return true;
+}
+
+// =============================================================================
+// F66 — Split + Auto-Orient + per-object pose
+// =============================================================================
+
+static bool f66_objIdxValid(int objIdx) {
+    if (!isModelLoaded()) return false;
+    const auto& objs = getGlobalModel().objects;
+    return objIdx >= 0 && objIdx < (int)objs.size();
+}
+
+static bool f66_volIdxValid(int objIdx, int volIdx) {
+    if (!f66_objIdxValid(objIdx)) return false;
+    const auto& vols = getGlobalModel().objects[objIdx]->volumes;
+    return volIdx >= 0 && volIdx < (int)vols.size();
+}
+
+bool SlicerEngine::isObjectSplittable(int objIdx) const {
+    if (!f66_objIdxValid(objIdx)) return false;
+    auto* obj = getGlobalModel().objects[objIdx];
+    return obj->parts_count() > 1;
+}
+
+bool SlicerEngine::isVolumeSplittable(int objIdx, int volIdx) const {
+    if (!f66_volIdxValid(objIdx, volIdx)) return false;
+    return getGlobalModel().objects[objIdx]->volumes[volIdx]->is_splittable();
+}
+
+std::optional<SlicerEngine::SplitResult> SlicerEngine::splitObject(int objIdx) {
+    if (!f66_objIdxValid(objIdx)) return std::nullopt;
+    Slic3r::Model& model = getGlobalModel();
+
+    Slic3r::ModelObjectPtrs new_objects;
+    model.objects[objIdx]->split(&new_objects);
+    if (new_objects.size() <= 1) return std::nullopt;
+
+    delete model.objects[objIdx];
+    model.objects.erase(model.objects.begin() + objIdx);
+    for (size_t i = 0; i < new_objects.size(); ++i) {
+        model.objects.insert(model.objects.begin() + objIdx + i, new_objects[i]);
+    }
+    invalidatePreviewMeshCache();
+    SAPIL_LOGI("splitObject: split %d into %d new objects", objIdx, (int)new_objects.size());
+    return SplitResult{objIdx, (int)new_objects.size()};
+}
+
+int SlicerEngine::splitVolume(int objIdx, int volIdx) {
+    if (!f66_volIdxValid(objIdx, volIdx)) return -1;
+    auto* obj = getGlobalModel().objects[objIdx];
+    constexpr unsigned MAX_EXTRUDERS = 4; // U1 hardware limit
+    obj->volumes[volIdx]->split(MAX_EXTRUDERS);
+    invalidatePreviewMeshCache();
+    return (int)obj->volumes.size();
+}
+
+std::optional<std::array<double, 3>> SlicerEngine::autoOrientObject(int objIdx) {
+    if (!f66_objIdxValid(objIdx)) return std::nullopt;
+    auto* obj = getGlobalModel().objects[objIdx];
+    if (obj->instances.empty()) return std::nullopt;
+    try {
+        Slic3r::orientation::orient(obj);
+    } catch (...) {
+        SAPIL_LOGE("autoOrientObject: orient threw on object %d", objIdx);
+        return std::nullopt;
+    }
+    obj->invalidate_bounding_box();
+    Slic3r::Vec3d rot = obj->instances[0]->get_rotation();
+    invalidatePreviewMeshCache();
+    return std::array<double, 3>{rot.x(), rot.y(), rot.z()};
+}
+
+int SlicerEngine::autoOrientAll() {
+    if (!isModelLoaded()) return 0;
+    int succeeded = 0;
+    for (auto* obj : getGlobalModel().objects) {
+        if (obj->instances.empty()) continue;
+        try {
+            Slic3r::orientation::orient(obj);
+            obj->invalidate_bounding_box();
+            succeeded++;
+        } catch (...) {
+            // skip degenerate objects
+        }
+    }
+    if (succeeded > 0) invalidatePreviewMeshCache();
+    return succeeded;
+}
+
+bool SlicerEngine::setObjectRotation(int objIdx, float rxDeg, float ryDeg, float rzDeg) {
+    if (!f66_objIdxValid(objIdx)) return false;
+    auto* obj = getGlobalModel().objects[objIdx];
+    if (obj->instances.empty()) return false;
+    constexpr double DEG2RAD = 3.14159265358979323846 / 180.0;
+    obj->instances[0]->set_rotation(Slic3r::Vec3d(
+        rxDeg * DEG2RAD, ryDeg * DEG2RAD, rzDeg * DEG2RAD));
+    obj->invalidate_bounding_box();
+    invalidatePreviewMeshCache();
+    return true;
+}
+
+std::array<float, 3> SlicerEngine::getObjectRotation(int objIdx) const {
+    std::array<float, 3> out{0.f, 0.f, 0.f};
+    if (!f66_objIdxValid(objIdx)) return out;
+    auto* obj = getGlobalModel().objects[objIdx];
+    if (obj->instances.empty()) return out;
+    constexpr double RAD2DEG = 180.0 / 3.14159265358979323846;
+    Slic3r::Vec3d rot = obj->instances[0]->get_rotation();
+    out[0] = static_cast<float>(rot.x() * RAD2DEG);
+    out[1] = static_cast<float>(rot.y() * RAD2DEG);
+    out[2] = static_cast<float>(rot.z() * RAD2DEG);
+    return out;
+}
+
+bool SlicerEngine::setObjectScale(int objIdx, float sx, float sy, float sz) {
+    if (!f66_objIdxValid(objIdx)) return false;
+    auto* obj = getGlobalModel().objects[objIdx];
+    if (obj->instances.empty()) return false;
+    obj->instances[0]->set_scaling_factor(Slic3r::Vec3d(sx, sy, sz));
+    obj->invalidate_bounding_box();
+    invalidatePreviewMeshCache();
+    return true;
+}
+
+std::array<float, 3> SlicerEngine::getObjectScale(int objIdx) const {
+    std::array<float, 3> out{1.f, 1.f, 1.f};
+    if (!f66_objIdxValid(objIdx)) return out;
+    auto* obj = getGlobalModel().objects[objIdx];
+    if (obj->instances.empty()) return out;
+    Slic3r::Vec3d s = obj->instances[0]->get_scaling_factor();
+    out[0] = static_cast<float>(s.x());
+    out[1] = static_cast<float>(s.y());
+    out[2] = static_cast<float>(s.z());
+    return out;
+}
+
+std::string SlicerEngine::getObjectName(int objIdx) const {
+    if (!f66_objIdxValid(objIdx)) return "";
+    return getGlobalModel().objects[objIdx]->name;
+}
+
+std::string SlicerEngine::getVolumeName(int objIdx, int volIdx) const {
+    if (!f66_volIdxValid(objIdx, volIdx)) return "";
+    return getGlobalModel().objects[objIdx]->volumes[volIdx]->name;
+}
+
+int SlicerEngine::getVolumeExtruder(int objIdx, int volIdx) const {
+    if (!f66_volIdxValid(objIdx, volIdx)) return 0;
+    return getGlobalModel().objects[objIdx]->volumes[volIdx]->extruder_id();
+}
+
+bool SlicerEngine::setVolumeExtruder(int objIdx, int volIdx, int slot) {
+    if (!f66_volIdxValid(objIdx, volIdx)) return false;
+    if (slot < 1 || slot > 16) return false;  // sanity bound
+    auto* vol = getGlobalModel().objects[objIdx]->volumes[volIdx];
+    vol->config.set_key_value("extruder", new Slic3r::ConfigOptionInt(slot));
     return true;
 }
 
