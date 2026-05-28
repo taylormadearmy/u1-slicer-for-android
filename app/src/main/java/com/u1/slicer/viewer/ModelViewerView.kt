@@ -356,7 +356,14 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             // Brush already painted on DOWN and during MOVE; just clear the touch-indicator.
             brushStrokeActive = false
             onBrushTouchAt?.invoke(-1f, -1f)
-        } else if (!wasDragging && !tapMovedTooFar && (onTriangleTapped != null || onEmptyTap != null)) {
+        } else if (!tapMovedTooFar && (onTriangleTapped != null || onEmptyTap != null)) {
+            // F66 fix: a touch on the model in placement mode immediately sets
+            // draggingIndex on ACTION_DOWN, so `wasDragging` is true even when the
+            // user never moved their finger. Treat any finger-down/finger-up
+            // sequence with no movement-past-touch-slop and <300ms duration as a
+            // tap, regardless of whether a drag candidate was set up. The drag
+            // branch above already ran for actually-dragged gestures and cleaned
+            // up state, so firing onTriangleTapped here is additive.
             val dt = event.eventTime - tapDownTime
             if (dt < 300L) {
                 val triIdx = pickTriangle(event.x, event.y)
