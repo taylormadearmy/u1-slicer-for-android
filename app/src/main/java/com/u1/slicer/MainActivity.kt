@@ -1459,9 +1459,13 @@ fun PrepareScreen(
                                         cachedResult.paintedModelPath, modelPath
                                     )
                             }
+                            val f66Selection by viewModel.selection.collectAsState()
                             InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
+                                selectedObjectIndex = f66Selection.objectIndex,
+                                onObjectTapped = { idx -> viewModel.selectObject(idx) },
+                                onEmptyTap = { viewModel.deselect() },
                                 onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
                                     onNavigateModelViewer else ({}),
                                 extruderColors = extruderColors,
@@ -3021,6 +3025,15 @@ fun InlineModelPreview(
     // icon (no model loaded, large-preview fallback, or feature unavailable).
     onSmartPaint: (() -> Unit)? = null,
     isReeditSmartPaint: Boolean = false,
+    // ---- F66 ----
+    // Index of the tap-selected object (null = no selection). When non-null the renderer
+    // applies its drag-highlight tint to that object.
+    selectedObjectIndex: Int? = null,
+    // Tap on an object surface: emits the owning object index (resolved from objectMeshRanges).
+    // No-op if the renderer hasn't populated ranges yet (single-object STL).
+    onObjectTapped: ((Int) -> Unit)? = null,
+    // Tap on empty bed background: caller typically clears selection.
+    onEmptyTap: (() -> Unit)? = null,
 ) {
     // B49: initialize from ViewModel cache for instant reload on tab switch
     var mesh by remember { mutableStateOf(cachedMesh) }
@@ -3202,6 +3215,15 @@ fun InlineModelPreview(
             // Mesh not ready yet but colors changed — just update instance colors
             v.setExtruderColors(extruderColors)
         }
+    }
+
+    // F66 — push the tap-selected object index into the renderer's highlight slot.
+    // The existing drag path temporarily overrides this; after drag-end the renderer
+    // returns to highlightIndex=-1 until the next selection change. Acceptable for now.
+    LaunchedEffect(viewerView, selectedObjectIndex) {
+        val v = viewerView ?: return@LaunchedEffect
+        v.renderer.highlightIndex = selectedObjectIndex ?: -1
+        v.requestRender()
     }
 
     // Update renderer with model scale
@@ -3433,6 +3455,22 @@ fun InlineModelPreview(
                             view.setOnContentReady { viewerLoading = false }
                             mesh?.let { view.setMesh(it) }
                             cameraState?.let { view.applyCameraState(it) }
+                            // F66: wire tap-to-select on the Prepare viewer. The existing
+                            // dispatcher in ModelViewerView already filters pan/tilt/zoom
+                            // before firing these callbacks, so no new gesture code needed.
+                            view.onTriangleTapped = { triIdx ->
+                                val ranges = view.renderer.objectMeshRanges
+                                val cb = onObjectTapped
+                                if (ranges != null && cb != null) {
+                                    val owner = ranges.indexOfFirst { r ->
+                                        val triStart = r.vertexStart / 3
+                                        val triEnd = (r.vertexStart + r.vertexCount) / 3
+                                        triIdx in triStart until triEnd
+                                    }
+                                    if (owner >= 0) cb(owner)
+                                }
+                            }
+                            view.onEmptyTap = { onEmptyTap?.invoke() }
                         }
                     },
                     update = { view ->
