@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <optional>
+#include <array>
 #include <android/log.h>
 
 #define SAPIL_TAG "SAPIL"
@@ -242,6 +244,50 @@ public:
     // positions[i*2], positions[i*2+1] is the lower-left corner for g_model.objects[i].
     // positions.size() / 2 must equal g_model.objects.size().
     bool setObjectPositions(const std::vector<std::pair<float, float>>& positions);
+
+    // ---- F66: Split + Auto-Orient + per-object pose ----
+
+    // True iff g_model.objects[objIdx] has more than one connected component
+    // (cheap probe used by Kotlin to enable/disable the Split-to-Objects button).
+    bool isObjectSplittable(int objIdx) const;
+
+    // True iff g_model.objects[objIdx]->volumes[volIdx]->is_splittable() is true.
+    bool isVolumeSplittable(int objIdx, int volIdx) const;
+
+    // Split the object at objIdx into its connected components, replacing the
+    // original at the same index. On success returns {removedIdx, addedCount}.
+    // On a one-island input returns std::nullopt without mutating the model.
+    struct SplitResult { int removedIdx; int addedCount; };
+    std::optional<SplitResult> splitObject(int objIdx);
+
+    // Split one volume's mesh into multiple volumes within the same object.
+    // Returns the new volume count for the object on success, -1 on failure.
+    int splitVolume(int objIdx, int volIdx);
+
+    // Run Slic3r::orientation::orient on one object and apply the result to
+    // its instances[0] rotation. Returns the new euler [x, y, z] in radians,
+    // or std::nullopt on failure (model not loaded, objIdx OOR, orient bailout).
+    std::optional<std::array<double, 3>> autoOrientObject(int objIdx);
+
+    // Iterate every object on the bed and call autoOrientObject. Returns the
+    // number of objects successfully oriented.
+    int autoOrientAll();
+
+    // Set/get instances[0] rotation (degrees, Euler XYZ) for one object.
+    bool setObjectRotation(int objIdx, float rxDeg, float ryDeg, float rzDeg);
+    std::array<float, 3> getObjectRotation(int objIdx) const;
+
+    // Set/get instances[0] scaling factor (per-axis) for one object.
+    bool setObjectScale(int objIdx, float sx, float sy, float sz);
+    std::array<float, 3> getObjectScale(int objIdx) const;
+
+    // Display name. Returns empty string on OOR or no-model.
+    std::string getObjectName(int objIdx) const;
+
+    // Per-volume metadata + extruder. Slot is 1-indexed per Orca convention.
+    std::string getVolumeName(int objIdx, int volIdx) const;
+    int  getVolumeExtruder(int objIdx, int volIdx) const;
+    bool setVolumeExtruder(int objIdx, int volIdx, int slot);
 
 private:
     struct Impl;
