@@ -22,8 +22,11 @@ import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
+import com.u1.slicer.data.PerObjectPose
 import com.u1.slicer.data.PlateType
 import com.u1.slicer.data.SessionState
+import com.u1.slicer.data.remapPerObjectMapOnSplit
+import com.u1.slicer.ui.ObjectSelection
 import com.u1.slicer.data.SessionStateRepository
 import com.u1.slicer.data.SettingsBackup
 import com.u1.slicer.data.SliceConfig
@@ -51,6 +54,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -389,6 +393,41 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _selectedExtruder = MutableStateFlow(0)
     val selectedExtruder: StateFlow<Int> = _selectedExtruder.asStateFlow()
 
+    // ---- F66: per-object selection + pose state -----------------------------
+
+    /** Tap-to-select selection. `objectIndex == null` → bed-wide mode (controls
+     *  act on the whole scene, current behaviour). When non-null, Edit panel
+     *  actions and the existing Rotate/Scale sliders target this single object. */
+    private val _selection = MutableStateFlow(ObjectSelection())
+    val selection: StateFlow<ObjectSelection> = _selection.asStateFlow()
+
+    /** Per-object current pose. Read by the F77 multi-object renderer to
+     *  compose per-instance model matrices, and by the EditPanel to wire the
+     *  Rotate/Scale dials when an object is selected. */
+    private val _perObjectPoses = MutableStateFlow<Map<Int, PerObjectPose>>(emptyMap())
+    val perObjectPoses: StateFlow<Map<Int, PerObjectPose>> = _perObjectPoses.asStateFlow()
+
+    /** Per-object pose snapshot at model-load time. `resetObjectRotation` /
+     *  `resetObjectScale` restore from this — so a 3MF that declares its own
+     *  rotation/scale keeps that rotation/scale as the Reset target rather
+     *  than collapsing to identity. */
+    private val _loadTimePoses = MutableStateFlow<Map<Int, PerObjectPose>>(emptyMap())
+    val loadTimePoses: StateFlow<Map<Int, PerObjectPose>> = _loadTimePoses.asStateFlow()
+
+    /** Per-volume extruder assignment overrides set via the Parts panel.
+     *  Key = `"objIdx:volIdx"`, value = 1-indexed extruder slot.
+     *  Empty map = honour each volume's file-declared extruder. */
+    private val _perVolumeExtruders = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val perVolumeExtruders: StateFlow<Map<String, Int>> = _perVolumeExtruders.asStateFlow()
+
+    /** F89 replay state — load-time-indexed object indices that were split
+     *  this session. Persisted in v3 SessionState and replayed on resume. */
+    private val _splitObjectOps = MutableStateFlow<List<Int>>(emptyList())
+    val splitObjectOps: StateFlow<List<Int>> = _splitObjectOps.asStateFlow()
+
+    private val _splitVolumeOps = MutableStateFlow<List<String>>(emptyList())
+    val splitVolumeOps: StateFlow<List<String>> = _splitVolumeOps.asStateFlow()
+
     // Phase 2.6b — per-filament user overrides from the Prepare screen.
     // Map key = file filament index (0-based, matches CanonicalFilamentList
     // ordering and slicer T-emission). Values:
@@ -633,6 +672,178 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun resetToolRemapState() {
         toolRemapSlots = null
     }
+
+    // ---- F66: per-object selection + pose actions ---------------------------
+
+    /** Set the tap-to-selected object. `null` returns to bed-wide mode. */
+    fun selectObject(idx: Int?) {
+        _selection.value = if (idx == null) ObjectSelection() else _selection.value.withObject(idx)
+    }
+
+    /** Set the active Parts-panel volume within the currently-selected object. */
+    fun selectVolume(idx: Int?) {
+        _selection.value = _selection.value.withVolume(idx)
+    }
+
+    /** Clear selection, returning to bed-wide control mode. */
+    fun deselect() {
+        _selection.value = ObjectSelection()
+    }
+
+    /**
+     * F66 — snapshot every object's current pose as its "load-time baseline".
+     * Called after a successful load / addModel / split so subsequent Reset
+     * operations restore each object to the pose it had immediately after
+     * loading (preserving any rotation a 3MF file declared).
+     */
+    fun snapshotLoadTimePoses() {
+        val n = native.nativeGetObjectCount()
+        val snap = HashMap<Int, PerObjectPose>(n)
+        for (i in 0 until n) {
+            val r = native.nativeGetObjectRotation(i)
+            val s = native.nativeGetObjectScale(i)
+            snap[i] = PerObjectPose(r[0], r[1], r[2], s[0], s[1], s[2])
+        }
+        _loadTimePoses.value = snap
+        _perObjectPoses.value = snap
+    }
+
+    fun setObjectRotation(objIdx: Int, x: Float, y: Float, z: Float) {
+        if (!native.nativeSetObjectRotation(objIdx, x, y, z)) return
+        _perObjectPoses.update { it + (objIdx to (it[objIdx] ?: PerObjectPose()).copy(
+            rotXDeg = x, rotYDeg = y, rotZDeg = z)) }
+        _sliceStale.value = true
+        invalidatePrepareMeshCache()
+    }
+
+    fun setObjectScale(objIdx: Int, sx: Float, sy: Float, sz: Float) {
+        if (!native.nativeSetObjectScale(objIdx, sx, sy, sz)) return
+        _perObjectPoses.update { it + (objIdx to (it[objIdx] ?: PerObjectPose()).copy(
+            scaleX = sx, scaleY = sy, scaleZ = sz)) }
+        _sliceStale.value = true
+        invalidatePrepareMeshCache()
+    }
+
+    fun resetObjectRotation(objIdx: Int) {
+        val baseline = _loadTimePoses.value[objIdx] ?: return
+        setObjectRotation(objIdx, baseline.rotXDeg, baseline.rotYDeg, baseline.rotZDeg)
+    }
+
+    fun resetObjectScale(objIdx: Int) {
+        val baseline = _loadTimePoses.value[objIdx] ?: return
+        setObjectScale(objIdx, baseline.scaleX, baseline.scaleY, baseline.scaleZ)
+    }
+
+    fun resetAllRotations() {
+        _loadTimePoses.value.keys.toList().forEach { resetObjectRotation(it) }
+    }
+
+    fun resetAllScales() {
+        _loadTimePoses.value.keys.toList().forEach { resetObjectScale(it) }
+    }
+
+    /**
+     * F66 — split the object at [objIdx] into its connected components.
+     * Remaps per-object state to follow the new indices and auto-advances
+     * selection to the first new piece (desktop Orca convention).
+     *
+     * Returns `true` if the object was actually split, `false` otherwise
+     * (single-island object — native returned null without mutating).
+     */
+    fun splitObject(objIdx: Int): Boolean {
+        val res = native.nativeSplitObject(objIdx) ?: return false
+        val removedIdx = res[0]
+        val addedCount = res[1]
+        _perObjectPoses.value = remapPerObjectMapOnSplit(_perObjectPoses.value, removedIdx, addedCount)
+        _loadTimePoses.value = remapPerObjectMapOnSplit(_loadTimePoses.value, removedIdx, addedCount)
+        // Snapshot defaults for the new pieces so Reset works.
+        val poses = _loadTimePoses.value.toMutableMap()
+        val current = _perObjectPoses.value.toMutableMap()
+        for (i in removedIdx until removedIdx + addedCount) {
+            val r = native.nativeGetObjectRotation(i)
+            val s = native.nativeGetObjectScale(i)
+            val baseline = PerObjectPose(r[0], r[1], r[2], s[0], s[1], s[2])
+            poses[i] = baseline
+            current[i] = baseline
+        }
+        _loadTimePoses.value = poses
+        _perObjectPoses.value = current
+        _selection.value = _selection.value.onSplit(removedIdx, addedCount).withObject(removedIdx)
+        _splitObjectOps.value = _splitObjectOps.value + removedIdx
+        _sliceStale.value = true
+        invalidatePrepareMeshCache()
+        return true
+    }
+
+    /**
+     * F66 — split one volume within an object into multiple volumes.
+     * Returns the new volume count, or `-1` on failure.
+     */
+    fun splitVolume(objIdx: Int, volIdx: Int): Int {
+        val newCount = native.nativeSplitVolume(objIdx, volIdx)
+        if (newCount > 0) {
+            _splitVolumeOps.value = _splitVolumeOps.value + "$objIdx:$volIdx"
+            _sliceStale.value = true
+            invalidatePrepareMeshCache()
+        }
+        return newCount
+    }
+
+    /**
+     * F66 — auto-orient one object. Wrapped in LongOpService since TBB-parallel
+     * `Slic3r::orientation::orient` can take seconds on heavy meshes.
+     */
+    suspend fun autoOrientObject(objIdx: Int) {
+        val ctx = beginLongOp("Auto-orienting object")
+        try {
+            withContext(Dispatchers.IO) {
+                val euler = native.nativeAutoOrientObject(objIdx) ?: return@withContext
+                val r = native.nativeGetObjectRotation(objIdx)
+                _perObjectPoses.update { it + (objIdx to (it[objIdx] ?: PerObjectPose())
+                    .copy(rotXDeg = r[0], rotYDeg = r[1], rotZDeg = r[2])) }
+            }
+            _sliceStale.value = true
+            invalidatePrepareMeshCache()
+        } finally {
+            endLongOp(ctx)
+        }
+    }
+
+    suspend fun autoOrientAll() {
+        val ctx = beginLongOp("Auto-orienting all objects")
+        try {
+            withContext(Dispatchers.IO) {
+                native.nativeAutoOrientAll()
+                val n = native.nativeGetObjectCount()
+                val updated = HashMap(_perObjectPoses.value)
+                for (i in 0 until n) {
+                    val r = native.nativeGetObjectRotation(i)
+                    updated[i] = (updated[i] ?: PerObjectPose())
+                        .copy(rotXDeg = r[0], rotYDeg = r[1], rotZDeg = r[2])
+                }
+                _perObjectPoses.value = updated
+            }
+            _sliceStale.value = true
+            invalidatePrepareMeshCache()
+        } finally {
+            endLongOp(ctx)
+        }
+    }
+
+    /** F66 — assign a per-volume extruder slot from the Parts panel. */
+    fun setVolumeExtruder(objIdx: Int, volIdx: Int, slot: Int) {
+        if (!native.nativeSetVolumeExtruder(objIdx, volIdx, slot)) return
+        _perVolumeExtruders.update { it + ("$objIdx:$volIdx" to slot) }
+        _sliceStale.value = true
+    }
+
+    /** F66 — convenience queries for the Edit panel UI. */
+    fun objectName(objIdx: Int): String = native.nativeGetObjectName(objIdx) ?: ""
+    fun volumeName(objIdx: Int, volIdx: Int): String = native.nativeGetVolumeName(objIdx, volIdx) ?: ""
+    fun volumeCount(objIdx: Int): Int = native.nativeGetVolumeCount(objIdx)
+    fun volumeExtruder(objIdx: Int, volIdx: Int): Int = native.nativeGetVolumeExtruder(objIdx, volIdx)
+    fun isObjectSplittable(objIdx: Int): Boolean = native.nativeIsObjectSplittable(objIdx)
+    fun isVolumeSplittable(objIdx: Int, volIdx: Int): Boolean = native.nativeIsVolumeSplittable(objIdx, volIdx)
 
     // Filament library — StateFlow so .value is accessible synchronously (e.g. for nozzle temp lookup at slice time)
     val filaments = filamentDao.getAll()
