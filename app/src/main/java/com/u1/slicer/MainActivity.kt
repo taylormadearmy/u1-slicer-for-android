@@ -1536,6 +1536,15 @@ fun PrepareScreen(
                                 )
                             }
                         }
+                        // F66 — Edit panel: bed-wide controls when nothing is
+                        // selected, object-scoped controls (Auto-orient, Split,
+                        // Reset rotation/scale, Parts panel) when an object is.
+                        if (currentModelName.isNotEmpty()) {
+                            com.u1.slicer.ui.EditPanel(
+                                viewModel = viewModel,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            )
+                        }
                         // File/plate label row — always shown when a model is loaded
                         if (currentModelName.isNotEmpty()) {
                             Row(
