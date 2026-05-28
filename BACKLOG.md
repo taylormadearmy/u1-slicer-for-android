@@ -594,6 +594,15 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Status (2026-05-22)**: not observed in any release since the v1.5.0 native rebuild (B38 fix). v2.x runs through E2E batches and instrumented sweeps clean. Considering resolved; doc retained for forensic reference.
 - **If symptom returns**: poisoned-Clipper coordinates (`Long.MIN_VALUE` / `Long.MAX_VALUE`) in slicing output, intermittent across reinstalls on Pixel 9a more than Pixel 8a. Re-open this entry and the investigation doc.
 
+### A5: SEMM canonical filament count leaks into Map & Print dialog + Slice Summary (GitHub #160)
+- **Status**: NOT STARTED. Pre-existing post-v2.2.18 behaviour, shipped through v2.3.0 → v2.9.2 → v2.9.3.
+- **Symptom**: On `colored_3DBenchy (1).3mf` (and other SEMM-painted files with canonical spread > physical count) Prepare shows `Filaments(4)` with 4 chips, but Slice Summary shows 9 per-extruder rows and Map & Print dialog header reads "Assign each of the **9** filaments to a physical extruder". G-code is correct (canonical T0..T9 → PrintTimeRemap collapses to physical at upload); only the UI/summary layer surfaces the canonical count.
+- **Why it matters**: Map & Print asks the user to map 9 things that collapse to 4 physical slots anyway — confusing. Slice Summary mm/g figures are split across canonical positions that don't correspond to physically loadable spools.
+- **Provenance**: introduced 2026-05-22 (`6d71183`, SEMM-fold removal v2.2.18). Confirmed via v2.9.0..HEAD geographic isolation that the v2.9.3 release does not touch any of `FilamentMapping`/`displayedFilamentMaterials`/`sliceSummary`/`perExtruderFilamentMm`/`PerExtruderRow` code paths.
+- **Suggested fix**: fold `displayedFilamentMaterials` and `perExtruderFilamentMm` through `colorMapping` → physical-slot reduction before feeding the Slice Summary / Map & Print dialog, mirroring the G-code remap that already happens at send time. Decide whether canonical view is ever needed (probably not, given the user only has 4 physical spools).
+- **Tests**: instrumented regression on `colored_3DBenchy (1).3mf` asserting `displayedFilamentMaterials.size == 4` and matching dialog row count. Update Universal post-slice rubric in `e2e-testing.md` to assert dialog count == physical slot count.
+- **Out of scope**: any change to canonical G-code emission.
+
 ### A4: Reusable GL-viewer camera-state test harness (GitHub #159)
 - **Status**: NOT STARTED. Estimated ~1.5 days (Tier 1 + Tier 2). Hardening, not a correctness blocker.
 - **Driver**: The Smart Paint camera-reset regression (v2.9.3) was a *behavioural* bug — painting reset the 3D viewer orientation — but the project has no way to assert "operation X must not disturb the camera" except brittle source-grep guards (`AiPaintViewerCameraResetTest`, `InlineModelPreviewRotationKeysTest`). The same class of bug recurs across the app (B49 prepare-preview cache, B109 rotation, B129 G-code slider persistence): an in-place edit unexpectedly resets view/preview state. A shared harness would catch these behaviourally instead of by text-matching.
