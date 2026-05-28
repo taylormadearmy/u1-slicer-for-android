@@ -235,6 +235,58 @@ class NativeLibrary {
      */
     external fun nativeGetPreviewVolumeTriangleCounts(): IntArray?
 
+    // ---- F66: Split + Auto-Orient + per-object pose ----
+
+    /** True iff `g_model.objects[objIdx]->parts_count() > 1` — cheap probe used
+     *  to enable/disable the Split-to-Objects button. */
+    external fun nativeIsObjectSplittable(objIdx: Int): Boolean
+
+    /** True iff `volume.is_splittable()` — cheap probe for the Split-to-Parts button. */
+    external fun nativeIsVolumeSplittable(objIdx: Int, volIdx: Int): Boolean
+
+    /** Split the object at `objIdx` into its connected components. Returns
+     *  `[removedIdx, addedCount]` on success, `null` if the object had only one
+     *  connected component (no mutation). The replacement objects occupy indices
+     *  `[removedIdx, removedIdx + addedCount)`; objects above shift up by `addedCount - 1`. */
+    external fun nativeSplitObject(objIdx: Int): IntArray?
+
+    /** Split one volume into multiple volumes within the same object. Returns the
+     *  new volume count, or -1 on failure. */
+    external fun nativeSplitVolume(objIdx: Int, volIdx: Int): Int
+
+    /** Auto-orient one object so a stable face is on the bed. Returns the new
+     *  Euler rotation `[x, y, z]` in radians, or `null` on failure. TBB-parallel
+     *  internally — callers wrap this in LongOpService. */
+    external fun nativeAutoOrientObject(objIdx: Int): DoubleArray?
+
+    /** Auto-orient every object on the bed. Returns the count of successfully
+     *  oriented objects. Same threading discipline as `nativeAutoOrientObject`. */
+    external fun nativeAutoOrientAll(): Int
+
+    /** Set `instances[0]` rotation for one object. Angles in degrees, Euler XYZ. */
+    external fun nativeSetObjectRotation(objIdx: Int, x: Float, y: Float, z: Float): Boolean
+
+    /** Get `instances[0]` rotation for one object as `[x, y, z]` degrees (length 3). */
+    external fun nativeGetObjectRotation(objIdx: Int): FloatArray
+
+    /** Set `instances[0]` per-axis scaling factor for one object. */
+    external fun nativeSetObjectScale(objIdx: Int, sx: Float, sy: Float, sz: Float): Boolean
+
+    /** Get `instances[0]` per-axis scaling factor as `[sx, sy, sz]` (length 3). */
+    external fun nativeGetObjectScale(objIdx: Int): FloatArray
+
+    /** Display name for the object. Empty string if no model loaded or OOR. */
+    external fun nativeGetObjectName(objIdx: Int): String?
+
+    /** Display name for one volume within an object. */
+    external fun nativeGetVolumeName(objIdx: Int, volIdx: Int): String?
+
+    /** 1-indexed extruder slot the volume is assigned to (Orca convention). */
+    external fun nativeGetVolumeExtruder(objIdx: Int, volIdx: Int): Int
+
+    /** Assign a 1-indexed extruder slot to one volume — used by the Parts panel. */
+    external fun nativeSetVolumeExtruder(objIdx: Int, volIdx: Int, slot: Int): Boolean
+
     // ---- Progress Callback (called from native code) ----
     fun onSliceProgress(percentage: Int, stage: String) {
         progressListener?.invoke(percentage, stage)
