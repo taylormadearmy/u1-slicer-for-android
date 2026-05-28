@@ -61,6 +61,13 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
      *  background space). Used by AI Paint to "click off the model to clear the highlight". */
     var onEmptyTap: (() -> Unit)? = null
 
+    /** F66 — persistent tap-selection. Set by Compose layer whenever
+     *  `viewModel.selection.objectIndex` changes; -1 = no selection. The
+     *  drag-cancel/drag-end handlers below restore the renderer's
+     *  `highlightIndex` to this value (not to -1) so the selection highlight
+     *  survives an intervening drag gesture. */
+    var persistentSelectionIndex: Int = -1
+
     var brushRadiusWorld: Float = 0f
 
     /** fix42 polygon lasso mode. When `lassoMode = true` AND `onLassoLoop` is set:
@@ -233,7 +240,8 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     override fun handlePointerDown() {
         if (draggingIndex >= 0) {
             draggingIndex = -1
-            renderer.highlightIndex = -1
+            // F66: restore selection highlight rather than clearing.
+            renderer.highlightIndex = persistentSelectionIndex
             requestRender()
         }
         // F54 fix34 — second finger landed while a brush stroke was active. Stop the stroke
@@ -318,7 +326,8 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         val wasDragging = draggingIndex >= 0
         if (wasDragging) {
             draggingIndex = -1
-            renderer.highlightIndex = -1
+            // F66: restore selection highlight rather than clearing.
+            renderer.highlightIndex = persistentSelectionIndex
             requestRender()
             onDragEnded?.invoke()
         }

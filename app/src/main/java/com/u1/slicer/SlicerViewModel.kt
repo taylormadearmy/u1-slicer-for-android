@@ -770,6 +770,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perObjectPoses.value = current
         _selection.value = _selection.value.onSplit(removedIdx, addedCount).withObject(removedIdx)
         _splitObjectOps.value = _splitObjectOps.value + removedIdx
+
+        // F66: split promotes the model to multi-object mode so the renderer
+        // gives each new piece its own draw call + per-object drag + per-object
+        // hit-test. Mirrors the F77 addModel layout sequence: pull fresh
+        // bounding boxes, generate a grid layout, commit positions to native,
+        // remember as the custom placement.
+        val newCount = native.nativeGetObjectCount()
+        if (newCount > 1) {
+            hasMultipleDistinctObjectsVar = true
+            val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
+            _objectBoundingBoxes.value = boxes
+            if (boxes.size >= 3) {
+                val positions = com.u1.slicer.model.CopyArrangeCalculator
+                    .buildMultiObjectPositions(boxes)
+                native.setObjectPositions(positions)
+                customObjectPositions = positions
+            }
+        }
+
         _sliceStale.value = true
         invalidatePrepareMeshCache()
         return true

@@ -12,6 +12,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.data.PerObjectPose
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * F66 — The Edit panel that appears beneath the inline 3D preview on the
@@ -133,6 +135,37 @@ private fun ObjectScopedEditSection(
             }
         }
 
+        // Per-object rotation dials (X / Y / Z). Range 0..360 degrees with 1-degree
+        // snap on release for readability; sub-degree precision isn't useful at the
+        // small touch-screen size.
+        AxisSlider(
+            label = "Rotate X",
+            value = pose.rotXDeg,
+            range = 0f..360f,
+            onChange = { viewModel.setObjectRotation(objIdx, it, pose.rotYDeg, pose.rotZDeg) },
+        )
+        AxisSlider(
+            label = "Rotate Y",
+            value = pose.rotYDeg,
+            range = 0f..360f,
+            onChange = { viewModel.setObjectRotation(objIdx, pose.rotXDeg, it, pose.rotZDeg) },
+        )
+        AxisSlider(
+            label = "Rotate Z",
+            value = pose.rotZDeg,
+            range = 0f..360f,
+            onChange = { viewModel.setObjectRotation(objIdx, pose.rotXDeg, pose.rotYDeg, it) },
+        )
+        // Uniform scale slider — 10..400% mapped to scale factor 0.1..4.0. The U1
+        // bed is 270mm so anything beyond 4x is rarely useful. The native engine
+        // exposes per-axis scale; this UI restricts to uniform for the common case
+        // and matches the existing global scale-slider behaviour.
+        ScaleSlider(
+            label = "Scale",
+            value = pose.scaleX,
+            onChange = { v -> viewModel.setObjectScale(objIdx, v, v, v) },
+        )
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilledTonalButton(
                 onClick = { scope.launch { viewModel.autoOrientObject(objIdx) } },
@@ -172,5 +205,58 @@ private fun ObjectScopedEditSection(
         if (volumeCount > 1) {
             PartsPanel(objIdx = objIdx, viewModel = viewModel)
         }
+    }
+}
+
+@Composable
+private fun AxisSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onChange: (Float) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(end = 4.dp))
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = range,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${value.roundToInt()}°",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+    }
+}
+
+@Composable
+private fun ScaleSlider(
+    label: String,
+    value: Float,
+    onChange: (Float) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(end = 4.dp))
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = 0.1f..4f,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            "${(value * 100).roundToInt()}%",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(start = 4.dp),
+        )
     }
 }

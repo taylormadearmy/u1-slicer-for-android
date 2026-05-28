@@ -3226,12 +3226,14 @@ fun InlineModelPreview(
         }
     }
 
-    // F66 — push the tap-selected object index into the renderer's highlight slot.
-    // The existing drag path temporarily overrides this; after drag-end the renderer
-    // returns to highlightIndex=-1 until the next selection change. Acceptable for now.
+    // F66 — push the tap-selected object index into the renderer's highlight slot
+    // AND the viewer's persistentSelectionIndex so the drag-cancel/drag-end paths
+    // restore back to it instead of -1 after a drag finishes.
     LaunchedEffect(viewerView, selectedObjectIndex) {
         val v = viewerView ?: return@LaunchedEffect
-        v.renderer.highlightIndex = selectedObjectIndex ?: -1
+        val idx = selectedObjectIndex ?: -1
+        v.persistentSelectionIndex = idx
+        v.renderer.highlightIndex = idx
         v.requestRender()
     }
 
@@ -3467,16 +3469,26 @@ fun InlineModelPreview(
                             // F66: wire tap-to-select on the Prepare viewer. The existing
                             // dispatcher in ModelViewerView already filters pan/tilt/zoom
                             // before firing these callbacks, so no new gesture code needed.
+                            //
+                            // When the renderer has populated per-object ranges (F77 multi-file
+                            // load), use them to identify which object owns the tapped triangle.
+                            // Otherwise — the common single-file case where one ModelObject holds
+                            // every volume — fall back to selecting object 0 so the user can
+                            // reach Auto-orient / Split / Reset on the lone object.
                             view.onTriangleTapped = { triIdx ->
-                                val ranges = view.renderer.objectMeshRanges
                                 val cb = onObjectTapped
-                                if (ranges != null && cb != null) {
-                                    val owner = ranges.indexOfFirst { r ->
-                                        val triStart = r.vertexStart / 3
-                                        val triEnd = (r.vertexStart + r.vertexCount) / 3
-                                        triIdx in triStart until triEnd
+                                if (cb != null) {
+                                    val ranges = view.renderer.objectMeshRanges
+                                    if (ranges.isNullOrEmpty()) {
+                                        cb(0)
+                                    } else {
+                                        val owner = ranges.indexOfFirst { r ->
+                                            val triStart = r.vertexStart / 3
+                                            val triEnd = (r.vertexStart + r.vertexCount) / 3
+                                            triIdx in triStart until triEnd
+                                        }
+                                        cb(if (owner >= 0) owner else 0)
                                     }
-                                    if (owner >= 0) cb(owner)
                                 }
                             }
                             view.onEmptyTap = { onEmptyTap?.invoke() }

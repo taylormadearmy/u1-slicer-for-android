@@ -37,10 +37,16 @@ After auto-orient, manual rotation, or scale changes, a **Reset rotation** / **R
 
 If you close and reopen the app mid-edit, the bed comes back exactly as you left it: selected object, per-object rotations + scales, every Split operation replayed in order, every per-part filament assignment, and per-volume extruder overrides. The F89 session schema bumped to v3 to carry this; older v2 sessions return null and clear (consistent with existing F89 behaviour).
 
+### Per-object rotation and scale dials
+
+When an object is selected, the Edit panel exposes three rotation sliders (X / Y / Z, 0–360°) plus a uniform scale slider (10–400%). Sliders drive the selected object only; the existing bed-wide Rotate/Scale chips outside the panel are unchanged.
+
+### Tap discoverability
+
+Tap-to-select works on every model — single-island STLs, single-3MF multi-volume files (e.g. button packs, dual-colour cali cubes), and multi-file scenes. When the renderer has per-object mesh ranges (multi-file load or post-split scene) the tapped object is picked precisely; otherwise the lone object is selected and the Edit panel reveals its scoped controls.
+
 ### Known limitations in this release
 
-- **Per-object manual rotation dials are not yet on the Edit panel.** Auto-orient is the only way to set per-object orientation in this release. Manual per-object rotate/scale dials are a follow-up; the existing global Rotate/Scale sliders still act bed-wide regardless of selection.
-- **Selection highlight is briefly lost during a drag.** When you drag an object the renderer temporarily shows the drag-highlight; on drag-end it doesn't restore the selection highlight automatically. Tap the object again to re-highlight.
 - **Compose UI gestures are not covered by an automated harness in this project.** Engine-level and ViewModel-level paths have full test coverage; gesture quality was verified manually on the Pixel 8a smoke install.
 
 ## Test coverage added in this release
