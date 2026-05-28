@@ -514,18 +514,47 @@ std::optional<SlicerEngine::SplitResult> SlicerEngine::splitObject(int objIdx) {
     if (!f66_objIdxValid(objIdx)) return std::nullopt;
     Slic3r::Model& model = getGlobalModel();
 
+    // ModelObject::split appends each new piece to m_model->objects via
+    // m_model->add_object() (Model.cpp:2020). On a non-splittable input it
+    // still emits one trivial copy. We collect the appended pointers,
+    // remove them from the back of model.objects, delete the original via
+    // the Model API (which is friend of ~ModelObject), and insert the new
+    // pieces in the original's slot — but only if there's more than one.
+    const size_t before_size = model.objects.size();
     Slic3r::ModelObjectPtrs new_objects;
     model.objects[objIdx]->split(&new_objects);
-    if (new_objects.size() <= 1) return std::nullopt;
+    const size_t added = new_objects.size();
 
-    delete model.objects[objIdx];
-    model.objects.erase(model.objects.begin() + objIdx);
-    for (size_t i = 0; i < new_objects.size(); ++i) {
-        model.objects.insert(model.objects.begin() + objIdx + i, new_objects[i]);
+    if (added <= 1) {
+        // Undo the trivial copy split() appended (if any) and report no-split.
+        // The appended objects sit at indices [before_size .. before_size + added).
+        for (size_t i = 0; i < added; ++i) {
+            model.delete_object(model.objects.size() - 1);  // pop & delete the last
+        }
+        return std::nullopt;
     }
+
+    // The new pieces are contiguous at indices [before_size .. before_size + added).
+    // Pull them out of the vector without deleting (raw-pointer manipulation),
+    // delete the original via Model API, then insert the new pieces at objIdx.
+    std::vector<Slic3r::ModelObject*> tail_ptrs;
+    tail_ptrs.reserve(added);
+    for (size_t i = 0; i < added; ++i) {
+        tail_ptrs.push_back(model.objects[before_size + i]);
+    }
+    model.objects.erase(model.objects.begin() + before_size,
+                        model.objects.begin() + before_size + added);
+
+    // Now original sits at objIdx. delete_object properly invokes ~ModelObject.
+    model.delete_object(static_cast<size_t>(objIdx));
+
+    // Insert the new pieces at objIdx.
+    model.objects.insert(model.objects.begin() + objIdx,
+                        tail_ptrs.begin(), tail_ptrs.end());
+
     invalidatePreviewMeshCache();
-    SAPIL_LOGI("splitObject: split %d into %d new objects", objIdx, (int)new_objects.size());
-    return SplitResult{objIdx, (int)new_objects.size()};
+    SAPIL_LOGI("splitObject: split %d into %d new objects", objIdx, (int)added);
+    return SplitResult{objIdx, (int)added};
 }
 
 int SlicerEngine::splitVolume(int objIdx, int volIdx) {
