@@ -39,7 +39,8 @@ fun PartsPanel(
     viewModel: SlicerViewModel,
     modifier: Modifier = Modifier,
 ) {
-    val volumeCount = remember(objIdx) { viewModel.volumeCount(objIdx) }
+    val modelVersion by viewModel.modelAddVersion.collectAsState()
+    val volumeCount = remember(objIdx, modelVersion) { viewModel.volumeCount(objIdx) }
     val perVolume by viewModel.perVolumeExtruders.collectAsState()
     val activeColors by viewModel.activeExtruderColors.collectAsState()
     var expanded by remember(objIdx) { mutableStateOf(false) }
@@ -54,7 +55,7 @@ fun PartsPanel(
             for (v in 0 until volumeCount) {
                 val key = "$objIdx:$v"
                 val slot = perVolume[key] ?: viewModel.volumeExtruder(objIdx, v).coerceAtLeast(1)
-                val name = remember(objIdx, v) {
+                val name = remember(objIdx, v, modelVersion) {
                     viewModel.volumeName(objIdx, v).ifBlank { "Part ${v + 1}" }
                 }
                 PartRow(

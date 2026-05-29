@@ -3509,6 +3509,34 @@ fun InlineModelPreview(
                                 view.applyCameraState(it)
                             }
                         }
+                        // F66 — re-bind the tap callbacks on every recomposition.
+                        // Without this, the view keeps the first-composition
+                        // closures forever; any later state change in those
+                        // lambdas (different ViewModel reference, different
+                        // callback identity) would be silently lost.
+                        view.onTriangleTapped = { triIdx ->
+                            val cb = onObjectTapped
+                            if (cb != null) {
+                                val ranges = view.renderer.objectMeshRanges
+                                if (ranges.isNullOrEmpty()) {
+                                    cb(0)
+                                } else {
+                                    val owner = ranges.indexOfFirst { r ->
+                                        val triStart = r.vertexStart / 3
+                                        val triEnd = (r.vertexStart + r.vertexCount) / 3
+                                        triIdx in triStart until triEnd
+                                    }
+                                    cb(if (owner >= 0) owner else 0)
+                                }
+                            }
+                        }
+                        view.onEmptyTap = { onEmptyTap?.invoke() }
+                        // F66 — re-supply picking positions on every recomp.
+                        // The setMesh path only refreshes them when the mesh
+                        // ref changes; if Compose recomposes for a non-mesh
+                        // reason the view could otherwise keep stale picking
+                        // data and pickTriangle would return -1.
+                        mesh?.let { view.setTrianglePickingPositions(it.toPickingPositions()) }
                     },
                     onRelease = { view ->
                         if (viewerView === view) { viewerView = null; onViewerReady?.invoke(null) }

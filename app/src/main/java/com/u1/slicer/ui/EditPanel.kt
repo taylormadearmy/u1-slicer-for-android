@@ -109,11 +109,18 @@ private fun ObjectScopedEditSection(
 ) {
     val poses by viewModel.perObjectPoses.collectAsState()
     val loadTime by viewModel.loadTimePoses.collectAsState()
+    val modelVersion by viewModel.modelAddVersion.collectAsState()
     val pose = poses[objIdx] ?: PerObjectPose()
     val baseline = loadTime[objIdx] ?: PerObjectPose()
-    val name = remember(objIdx) { viewModel.objectName(objIdx).ifBlank { "Object ${objIdx + 1}" } }
-    val isSplittable = remember(objIdx) { viewModel.isObjectSplittable(objIdx) }
-    val volumeCount = remember(objIdx) { viewModel.volumeCount(objIdx) }
+    // F66 — re-key on modelAddVersion (bumped by every structural mutation
+    // and every per-object pose change) so a split that changes object 5's
+    // name / splittable-ness / volume count refreshes the panel instead of
+    // showing the pre-split values.
+    val name = remember(objIdx, modelVersion) {
+        viewModel.objectName(objIdx).ifBlank { "Object ${objIdx + 1}" }
+    }
+    val isSplittable = remember(objIdx, modelVersion) { viewModel.isObjectSplittable(objIdx) }
+    val volumeCount = remember(objIdx, modelVersion) { viewModel.volumeCount(objIdx) }
 
     val rotationDirty = pose.rotXDeg != baseline.rotXDeg ||
         pose.rotYDeg != baseline.rotYDeg || pose.rotZDeg != baseline.rotZDeg

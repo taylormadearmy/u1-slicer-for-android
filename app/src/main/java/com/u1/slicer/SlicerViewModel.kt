@@ -311,6 +311,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         additionalModelFiles.clear()
         _pendingAddFile.value?.copiedFile?.delete()
         _pendingAddFile.value = null
+        // F66 — drop all per-file F66 state. File-A's selection / per-object
+        // pose / split history / per-volume overrides must not bleed into the
+        // file-B native model whose object indices are entirely different.
+        _selection.value = ObjectSelection()
+        _perObjectPoses.value = emptyMap()
+        _loadTimePoses.value = emptyMap()
+        _perVolumeExtruders.value = emptyMap()
+        _splitObjectOps.value = emptyList()
+        _splitVolumeOps.value = emptyList()
     }
 
     /**
@@ -666,6 +675,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         cachedPrepareMesh = null
         cachedPrepareMeshPath = null
         _rotatedMeshSizeXY.value = null
+        // F66 — bump the modelAddVersion StateFlow so InlineModelPreview's
+        // mesh-fetch LaunchedEffect re-keys and re-fetches. The bare cache
+        // fields above are plain @Volatile vars that Compose doesn't observe,
+        // so callers like setObjectRotation/setObjectScale/autoOrientObject
+        // would otherwise mutate native state and never trigger a re-render.
+        _modelAddVersion.value++
     }
 
     /** Reset toolRemapSlots so a fresh load doesn't carry stale slot state forward. */
@@ -675,9 +690,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     // ---- F66: per-object selection + pose actions ---------------------------
 
-    /** Set the tap-to-selected object. `null` returns to bed-wide mode. */
+    /**
+     * Set the tap-to-selected object. `null` returns to bed-wide mode.
+     * Tapping the already-selected object toggles to deselected — matches
+     * desktop Orca's click-elsewhere-to-deselect convention and gives users
+     * a way out of "selection-stuck" on a single-object load (where every
+     * tap on the model used to re-affirm the same selection forever).
+     */
     fun selectObject(idx: Int?) {
-        _selection.value = if (idx == null) ObjectSelection() else _selection.value.withObject(idx)
+        val current = _selection.value
+        _selection.value = when {
+            idx == null -> ObjectSelection()
+            current.objectIndex == idx -> ObjectSelection()  // tap-same → deselect
+            else -> current.withObject(idx)
+        }
     }
 
     /** Set the active Parts-panel volume within the currently-selected object. */
@@ -1477,6 +1503,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         if (fileBytes >= LARGE_FILE_NOTIFY_BYTES) {
                             AppEventNotifier.notify(ctx, AppEventNotifier.Event.ModelLoaded(filename))
                         }
+                        // F66 — snapshot per-object rotation+scale as the Reset baseline
+                        // for every object now in the model. Without this, the Reset
+                        // rotation / scale buttons on the Edit panel silently no-op (the
+                        // baseline map stays empty) on every fresh load.
+                        snapshotLoadTimePoses()
                     }
                     prevState is SlicerState.Slicing && newState is SlicerState.SliceComplete -> {
                         val filename = currentModelFile?.name ?: "model"
@@ -2451,6 +2482,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         slicingJob?.cancel()
         _showPlateSelector.value = false
         cancelPendingAdd()
+        // F66 — switching plates rebuilds the native model with new object
+        // indices. Clear all F66 per-object state so the next preview /
+        // selection starts fresh on the post-switch model.
+        _selection.value = ObjectSelection()
+        _perObjectPoses.value = emptyMap()
+        _loadTimePoses.value = emptyMap()
+        _perVolumeExtruders.value = emptyMap()
+        _splitObjectOps.value = emptyList()
+        _splitVolumeOps.value = emptyList()
         // Always extract from the full processed multi-plate file so that switching plates
         // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
         // _multiPlateSourceFile is set once on load and never overwritten (B83 fix).
@@ -3810,6 +3850,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // fails early or throws — avoids leaking a full-resolution screen-capture Bitmap.
         val capturedBitmap = pendingThumbnailBitmap.also { pendingThumbnailBitmap = null }
         _sliceStale.value = false
+        // F66 — close the Edit panel and clear the selection highlight before
+        // slicing. The re-embed/clearModel+loadModel inside the slice path
+        // can invalidate object indices; the Edit panel would otherwise point
+        // at a stale objIdx and the selection-scoped sliders would mutate the
+        // wrong object on the post-slice model.
+        _selection.value = ObjectSelection()
         slicingJob = viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>()
             try {
@@ -5671,6 +5717,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _multiObjectPositions.value = null
         _pendingAddFile.value?.copiedFile?.delete()
         _pendingAddFile.value = null
+        // F66 — same teardown as beginNewModelLoad. clearModel runs on the
+        // "X" close button + on app teardown; without this the next model
+        // load would see stale selection / split history / per-volume overrides.
+        _selection.value = ObjectSelection()
+        _perObjectPoses.value = emptyMap()
+        _loadTimePoses.value = emptyMap()
+        _perVolumeExtruders.value = emptyMap()
+        _splitObjectOps.value = emptyList()
+        _splitVolumeOps.value = emptyList()
         resetToolRemapState()
         // Reset multi-extruder config to single extruder
         _config.value = _config.value.copy(

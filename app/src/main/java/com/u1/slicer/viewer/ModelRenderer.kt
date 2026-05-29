@@ -394,6 +394,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
         GLES30.glUniform1f(useVertexColorLoc, if (mesh.hasPerVertexColor) 1f else 0f)
+        // F66: drawModel is the single-mesh fallback path with no per-object
+        // selection; clear the highlight uniform so a previous draw's tint
+        // doesn't leak into this one.
+        GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
         GLES30.glBindVertexArray(0)
@@ -423,9 +427,18 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
 
-        val color = if (highlighted) floatArrayOf(1f, 0.6f, 0.2f, 1f) else baseColor
-        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
+        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, baseColor, 0)
         GLES30.glUniform1f(useVertexColorLoc, if (mesh.hasPerVertexColor) 1f else 0f)
+        // F66 — selection/drag highlight via the dedicated u_Highlight uniform.
+        // The fragment shader mixes the base colour toward this tint by alpha so
+        // the highlight remains visible on per-vertex-coloured meshes (3MF /
+        // painted / multi-extruder), where v_Color comes from a_Color and the
+        // previous u_Color override approach was a silent no-op.
+        if (highlighted) {
+            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 1f, 0.6f, 0.2f, 0.55f)
+        } else {
+            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
+        }
 
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
@@ -455,9 +468,15 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
 
-        val color = if (highlighted) floatArrayOf(1f, 0.6f, 0.2f, 1f) else baseColor
-        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
+        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, baseColor, 0)
         GLES30.glUniform1f(useVertexColorLoc, if (mesh.hasPerVertexColor) 1f else 0f)
+        // F66 — see drawModelAt comment. Same u_Highlight path so multi-object
+        // F77 scenes get a visible selection too.
+        if (highlighted) {
+            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 1f, 0.6f, 0.2f, 0.55f)
+        } else {
+            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
+        }
 
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, range.vertexStart, range.vertexCount)
@@ -477,10 +496,17 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
 
-        val color = if (highlighted) floatArrayOf(1f, 0.85f, 0.2f, 1f) else wipeTowerColor
-        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, color, 0)
+        GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, wipeTowerColor, 0)
         GLES30.glUniform1f(useVertexColorLoc, 0f)
         GLES30.glVertexAttrib4f(2, 1f, 1f, 1f, 1f)
+        // F66: wipe tower drag-highlight via u_Highlight (was previously a
+        // hard u_Color swap which worked for the wipe tower since it has no
+        // per-vertex colour, but unifies the code path with model highlight).
+        if (highlighted) {
+            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 1f, 0.85f, 0.2f, 0.6f)
+        } else {
+            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
+        }
 
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)

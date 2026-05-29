@@ -229,8 +229,14 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
                     val anchor = bed0 ?: bedHit!!
                     lastBedX = anchor[0]
                     lastBedY = anchor[1]
-                    renderer.highlightIndex = draggingIndex
-                    requestRender()
+                    // F66 — DO NOT set renderer.highlightIndex here. A bare
+                    // touch on the model (intended as "tap to select" or
+                    // "start an orbit") used to flash an orange drag-anchor
+                    // highlight on the model the instant the finger landed,
+                    // which read as "the model was already selected" before
+                    // the user did anything. The drag highlight is now
+                    // applied lazily on the first MOVE past touch slop
+                    // (see handleActionMove).
                     onActionDownHandled = true  // suppress long-press pan while dragging an object
                 }
             }
@@ -315,6 +321,13 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             val dy = bed[1] - lastBedY
             lastBedX = bed[0]
             lastBedY = bed[1]
+            // F66 — show the drag-anchor highlight only once the drag is
+            // actually moving (tapMovedTooFar set by base class once the touch
+            // crosses touch slop). A still finger now reads as "tap to select"
+            // visually instead of "already selected".
+            if (tapMovedTooFar) {
+                renderer.highlightIndex = draggingIndex
+            }
             onObjectMoved?.invoke(draggingIndex, dx, dy)
             requestRender()
             return true
@@ -486,7 +499,11 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
 
     override fun handleActionCancel() {
         draggingIndex = -1
-        renderer.highlightIndex = -1
+        // F66 — restore the selection highlight on cancel (parallels the
+        // ACTION_UP and pointer-down paths). Without this, an interrupted
+        // gesture (multi-touch, system overlay) would clear the selection
+        // visual until the user re-tapped.
+        renderer.highlightIndex = persistentSelectionIndex
         if (brushStrokeActive) {
             brushStrokeActive = false
             onBrushTouchAt?.invoke(-1f, -1f)
