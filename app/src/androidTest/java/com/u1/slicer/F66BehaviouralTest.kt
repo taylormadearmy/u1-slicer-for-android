@@ -47,13 +47,13 @@ class F66BehaviouralTest {
         return dst
     }
 
-    private fun awaitLoaded() {
-        val deadline = System.currentTimeMillis() + 30_000L
+    private fun awaitLoaded(timeoutMs: Long = 30_000L) {
+        val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (vm.state.value is SlicerViewModel.SlicerState.ModelLoaded) return
             Thread.sleep(50)
         }
-        error("model didn't reach ModelLoaded within 30s; last state = ${vm.state.value}")
+        error("model didn't reach ModelLoaded within ${timeoutMs / 1000}s; last state = ${vm.state.value}")
     }
 
     // ---- Selection ergonomics ------------------------------------------------
@@ -174,6 +174,34 @@ class F66BehaviouralTest {
     }
 
     // ---- Slice + plate-switch auto-deselect ---------------------------------
+
+    @Test
+    fun nativeGetObjectWorldAABBMins_matchesObjectCount_forMultiObjectFile() {
+        // Issue 4 — Button-for-S-trousers loads as N native ModelObjects. The
+        // promote-on-load path reads each object's world-space AABB min via
+        // the new JNI and uses it as customObjectPositions. This test exercises
+        // the JNI directly (bypassing the ViewModel's full load state machine,
+        // which routes through plate selection for some 3MFs and is awkward to
+        // drive from an instrumented test).
+        val lib = com.u1.slicer.NativeLibrary()
+        val asset = copyAsset("Button-for-S-trousers.3mf")
+        assertTrue(lib.loadModel(asset.absolutePath))
+        val objectCount = lib.nativeGetObjectCount()
+        assertTrue("expected multi-object load, got $objectCount", objectCount >= 2)
+
+        val worldMins = lib.nativeGetObjectWorldAABBMins()
+        assertEquals(
+            "world-AABB-min array must have 2 floats per object so the renderer can match positions to ranges",
+            objectCount * 2,
+            worldMins.size,
+        )
+        // The values come directly from the engine's instance-transform AABB
+        // computation. We deliberately don't bed-bounds-check them here —
+        // some files declare raw layouts spanning >270mm and the ViewModel's
+        // `promoteToMultiObjectIfApplicable` centres the group before
+        // surfacing the positions to the renderer.
+        lib.clearModel()
+    }
 
     @Test
     fun startSlicing_deselectsCurrentObject() {

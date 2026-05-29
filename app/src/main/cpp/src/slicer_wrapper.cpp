@@ -265,6 +265,19 @@ Java_com_u1_slicer_NativeLibrary_getObjectBoundingBoxes(JNIEnv* env, jobject) {
     return result;
 }
 
+// F66 — per-object world-space AABB min, [minX0, minY0, minX1, minY1, ...].
+// Format matches setObjectPositions input — feeding it back is idempotent.
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetObjectWorldAABBMins(JNIEnv* env, jobject) {
+    if (!g_engine) return env->NewFloatArray(0);
+    auto positions = g_engine->getObjectWorldAABBMins();
+    jfloatArray result = env->NewFloatArray(static_cast<jsize>(positions.size()));
+    if (!positions.empty()) {
+        env->SetFloatArrayRegion(result, 0, static_cast<jsize>(positions.size()), positions.data());
+    }
+    return result;
+}
+
 // positions: flat [x0, y0, x1, y1, ...] in mm — one lower-left corner per object.
 JNIEXPORT jboolean JNICALL
 Java_com_u1_slicer_NativeLibrary_setObjectPositions(JNIEnv* env, jobject, jfloatArray jpositions) {

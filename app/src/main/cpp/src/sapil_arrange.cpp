@@ -413,6 +413,39 @@ std::vector<float> SlicerEngine::getInstanceWorldZMins() const {
     return result;
 }
 
+std::vector<float> SlicerEngine::getObjectWorldAABBMins() const {
+    std::vector<float> result;
+    if (!isModelLoaded()) return result;
+    const Slic3r::Model& model = getGlobalModel();
+    // One (minX, minY) pair per object — uses instance[0] only (the renderer
+    // and placement layer work in instance[0] space).
+    for (const auto* obj : model.objects) {
+        if (obj->instances.empty()) {
+            result.push_back(0.f);
+            result.push_back(0.f);
+            continue;
+        }
+        const Slic3r::Transform3d inst_full =
+            obj->instances[0]->get_transformation().get_matrix();
+        Slic3r::BoundingBoxf3 instBB;
+        for (const auto* v : obj->volumes) {
+            if (v->is_model_part()) {
+                instBB.merge(
+                    v->mesh().transformed_bounding_box(inst_full * v->get_matrix())
+                );
+            }
+        }
+        if (instBB.defined) {
+            result.push_back(static_cast<float>(instBB.min.x()));
+            result.push_back(static_cast<float>(instBB.min.y()));
+        } else {
+            result.push_back(0.f);
+            result.push_back(0.f);
+        }
+    }
+    return result;
+}
+
 std::vector<float> SlicerEngine::getObjectBoundingBoxes() const {
     std::vector<float> result;
     if (!isModelLoaded()) return result;

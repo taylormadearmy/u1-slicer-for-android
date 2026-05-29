@@ -733,10 +733,90 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perObjectPoses.value = snap
     }
 
-    // F66 — `promoteToMultiObjectIfApplicable` was attempted and reverted; see
-    // the comment block in the state-watcher above for the regression details
-    // and the conditions needed before it can be re-attempted (per-object
-    // world-AABB-min from native + position-independent splitMeshByObjects).
+    /**
+     * F66 — if the freshly-loaded model contains more than one native ModelObject,
+     * promote to multi-object mode so the user can tap-select / drag / split each
+     * one individually from the moment the file appears on the bed.
+     *
+     * The previous attempt flipped only the flag, leaving `customObjectPositions`
+     * null. The renderer's per-object dispatch requires `objectMeshRanges.size ==
+     * instancePositions.size / 2`; with N ranges and 1 default position it fell
+     * back to drawing the combined mesh at world origin — the B129 "buttons file
+     * no longer in middle of bed" regression. The fix is to read each object's
+     * actual file-declared world-space AABB min from native via the new
+     * [NativeLibrary.nativeGetObjectWorldAABBMins] (added Step 1 of this round)
+     * and use those as `customObjectPositions`. The values are the engine's own,
+     * so passing them through is layout-preserving rather than grid-imposing:
+     * Button-for-S-trousers' tessellated buttons stay where the file put them,
+     * and painted multi-extruder 3MFs (Dragon Scale, etc.) keep their canonical
+     * coherent layouts.
+     */
+    private fun promoteToMultiObjectIfApplicable() {
+        val n = native.nativeGetObjectCount()
+        if (n <= 1) return
+        val worldMins = runCatching { native.nativeGetObjectWorldAABBMins() }
+            .getOrDefault(floatArrayOf())
+        if (worldMins.size / 2 != n) {
+            // Defensive: a JNI mismatch (size != 2*n) is recoverable by leaving
+            // the model in single-mesh mode; per-object selection just won't be
+            // available until the user splits.
+            Log.w("SlicerVM", "promoteToMultiObject: AABB min count ${worldMins.size / 2} != object count $n; skipping promotion")
+            return
+        }
+        val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
+        if (boxes.size / 3 != n) {
+            Log.w("SlicerVM", "promoteToMultiObject: bbox count ${boxes.size / 3} != $n; skipping")
+            return
+        }
+
+        // File-declared positions can sit outside the 270×270 bed (Button-for-
+        // S-trousers' raw layout spans far past x=270). Single-object render
+        // path masked this by auto-centring the combined mesh in drawModelAt.
+        // Per-object render path draws each object at its position verbatim,
+        // so an off-bed object would render off-bed. Offset the whole group
+        // by a single (dx, dy) so the combined AABB is centred on the bed —
+        // preserves relative layout, lands every piece on-bed.
+        var combinedMinX = Float.MAX_VALUE; var combinedMinY = Float.MAX_VALUE
+        var combinedMaxX = -Float.MAX_VALUE; var combinedMaxY = -Float.MAX_VALUE
+        for (i in 0 until n) {
+            val px = worldMins[i * 2]
+            val py = worldMins[i * 2 + 1]
+            val sx = boxes[i * 3]
+            val sy = boxes[i * 3 + 1]
+            combinedMinX = minOf(combinedMinX, px)
+            combinedMinY = minOf(combinedMinY, py)
+            combinedMaxX = maxOf(combinedMaxX, px + sx)
+            combinedMaxY = maxOf(combinedMaxY, py + sy)
+        }
+        val combinedW = combinedMaxX - combinedMinX
+        val combinedH = combinedMaxY - combinedMinY
+        // Target lower-left of the combined AABB so it sits centred on the bed.
+        // If combined > 270 in either axis the group genuinely doesn't fit and
+        // we clamp the lower-left to 0 — the user can scale or remove pieces.
+        val targetMinX = ((270f - combinedW) / 2f).coerceAtLeast(0f)
+        val targetMinY = ((270f - combinedH) / 2f).coerceAtLeast(0f)
+        val dx = targetMinX - combinedMinX
+        val dy = targetMinY - combinedMinY
+        val centered = FloatArray(worldMins.size)
+        for (i in 0 until n) {
+            centered[i * 2]     = worldMins[i * 2]     + dx
+            centered[i * 2 + 1] = worldMins[i * 2 + 1] + dy
+        }
+
+        hasMultipleDistinctObjectsVar = true
+        _objectBoundingBoxes.value = boxes
+        customObjectPositions = centered
+        _multiObjectPositions.value = centered
+        // Push to native so the engine, the renderer, and the Kotlin layer
+        // all agree on each object's current bed position. The native side
+        // computes new instance offsets from these positions; idempotent on
+        // a load where the file already places everything on-bed.
+        runCatching { native.setObjectPositions(centered) }
+        // Bump modelAddVersion so InlineModelPreview's mesh-fetch LaunchedEffect
+        // re-keys. Without this the mesh + ranges + positions stay the
+        // single-object values that were resolved before this promotion ran.
+        _modelAddVersion.value++
+    }
 
     fun setObjectRotation(objIdx: Int, x: Float, y: Float, z: Float) {
         if (!native.nativeSetObjectRotation(objIdx, x, y, z)) return
@@ -1512,15 +1592,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // rotation / scale buttons on the Edit panel silently no-op (the
                         // baseline map stays empty) on every fresh load.
                         snapshotLoadTimePoses()
-                        // F66 — "promote to multi-object on load" is REVERTED. Earlier
-                        // attempt flipped hasMultipleDistinctObjects=true without
-                        // matched per-object positions, causing the renderer to fall
-                        // back to drawing the combined mesh at world origin (B129
-                        // regression: "buttons file no longer in middle of bed").
-                        // Tap-to-select on internal ModelObjects of a single-file load
-                        // requires a Split first, until we expose per-object world-AABB
-                        // min positions through native and re-wire splitMeshByObjects
-                        // to not depend on a pre-computed multiObjectPositions array.
+                        // F66 — files that contain multiple native ModelObjects from load
+                        // (Button-for-S-trousers, every painted multi-extruder 3MF, …)
+                        // become individually selectable from the moment they appear on
+                        // the bed. The previous attempt broke layout because it didn't
+                        // populate per-object positions; this now uses
+                        // nativeGetObjectWorldAABBMins() to read each object's true
+                        // file-declared bed position, so the grid layout problem from
+                        // buildMultiObjectPositions is avoided entirely.
+                        promoteToMultiObjectIfApplicable()
                     }
                     prevState is SlicerState.Slicing && newState is SlicerState.SliceComplete -> {
                         val filename = currentModelFile?.name ?: "model"

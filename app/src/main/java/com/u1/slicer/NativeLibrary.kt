@@ -90,6 +90,19 @@ class NativeLibrary {
     // positions.size / 2 must equal object count.
     external fun setObjectPositions(positions: FloatArray): Boolean
 
+    /**
+     * F66 — per-object world-space AABB min, returned as flat `[minX0, minY0, minX1, minY1, ...]`.
+     * Each `(minX, minY)` is one object's current bed-space lower-left corner, computed from
+     * its instance transform applied to its model-part volumes. Format matches
+     * [setObjectPositions] input — feeding the result back into setObjectPositions is
+     * idempotent (the engine already has these positions internally).
+     *
+     * Used by promoteToMultiObjectIfApplicable to populate `customObjectPositions` after a
+     * multi-object load without imposing a forced grid layout on intentionally-positioned
+     * files (Button-for-S-trousers' tessellated buttons, painted multi-extruder 3MFs).
+     */
+    external fun nativeGetObjectWorldAABBMins(): FloatArray
+
     // ---- Multiple copies ----
     // positions: flat array [x0, y0, x1, y1, ...] in mm (bed-space)
     external fun setModelInstances(positions: FloatArray): Boolean

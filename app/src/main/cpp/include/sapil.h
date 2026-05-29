@@ -245,6 +245,17 @@ public:
     // positions.size() / 2 must equal g_model.objects.size().
     bool setObjectPositions(const std::vector<std::pair<float, float>>& positions);
 
+    // F66 — returns flat [minX0, minY0, minX1, minY1, ...] world-space AABB
+    // min for each object, computed from instance[0]'s full transform applied
+    // to each model-part volume's mesh bounding box. The values are exactly
+    // what setObjectPositions consumes — feeding them back is idempotent.
+    //
+    // Used to populate `customObjectPositions` after a multi-object load
+    // (e.g. Button-for-S-trousers, multi-extruder 3MF) so the per-object
+    // renderer dispatch + drag + tap-to-select all work from load without
+    // imposing a forced grid layout on intentionally-positioned files.
+    std::vector<float> getObjectWorldAABBMins() const;
+
     // ---- F66: Split + Auto-Orient + per-object pose ----
 
     // True iff g_model.objects[objIdx] has more than one connected component
