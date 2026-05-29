@@ -964,6 +964,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (!native.nativeSetVolumeExtruder(objIdx, volIdx, slot)) return
         _perVolumeExtruders.update { it + ("$objIdx:$volIdx" to slot) }
         _sliceStale.value = true
+        // F66 — invalidating the prepare cache bumps _modelAddVersion, which
+        // is a key on InlineModelPreview's mesh-fetch LaunchedEffect. Without
+        // this, the slot change goes to native + state but the rendered mesh
+        // still has the previous per-triangle extruder indices, so the user
+        // doesn't see the colour change until something else (e.g. selecting
+        // a different part) triggers a recomposition.
+        invalidatePrepareMeshCache()
     }
 
     /** F66 — convenience queries for the Edit panel UI. */

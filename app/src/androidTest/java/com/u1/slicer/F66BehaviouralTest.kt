@@ -204,6 +204,37 @@ class F66BehaviouralTest {
     }
 
     @Test
+    fun setVolumeExtruder_bumpsModelAddVersion_soPreviewRefreshes() {
+        // User report: "select a part, change its colour — you don't see the
+        // change until you deselect or pick another part." Root cause was
+        // setVolumeExtruder mutating state without invalidating the prepare
+        // mesh cache, so the InlineModelPreview LaunchedEffect (keyed on
+        // modelAddVersion) didn't refire and the per-triangle extruder
+        // indices stayed stale. This test guards the cache-invalidation wire.
+        val before = vm.modelAddVersion.value
+        // Note: we don't need a real model loaded — the JNI no-op'd path
+        // wouldn't bump _modelAddVersion either. Load any STL so
+        // nativeSetVolumeExtruder returns true.
+        val stl = copyAsset("3DBenchy.stl")
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.loadModelFromFile(stl)
+        }
+        awaitLoaded()
+        Thread.sleep(200)
+        val afterLoad = vm.modelAddVersion.value
+
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.setVolumeExtruder(0, 0, 2)
+        }
+        Thread.sleep(100)
+        assertTrue(
+            "modelAddVersion must bump on setVolumeExtruder so the InlineModelPreview LaunchedEffect re-keys",
+            vm.modelAddVersion.value > afterLoad,
+        )
+        assertEquals(2, vm.perVolumeExtruders.value["0:0"])
+    }
+
+    @Test
     fun startSlicing_deselectsCurrentObject() {
         // Manual symptom: after slicing the Edit panel stayed in object-scoped
         // mode pointing at a stale objIdx that the re-embed had invalidated.

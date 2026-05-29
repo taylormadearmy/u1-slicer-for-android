@@ -699,6 +699,13 @@ bool SlicerEngine::setVolumeExtruder(int objIdx, int volIdx, int slot) {
     if (slot < 1 || slot > 16) return false;  // sanity bound
     auto* vol = getGlobalModel().objects[objIdx]->volumes[volIdx];
     vol->config.set_key_value("extruder", new Slic3r::ConfigOptionInt(slot));
+    // F66 — invalidate the native preview cache so the next
+    // getPreparePreviewMesh re-reads volume->extruder_id() and emits the
+    // updated per-triangle extruder indices. Without this, the Compose-side
+    // recolor pipeline keeps assigning the old palette colours to the part's
+    // triangles, so the visible colour doesn't change until something else
+    // unrelated triggers a mesh rebuild (e.g. selecting a different part).
+    invalidatePreviewMeshCache();
     return true;
 }
 
