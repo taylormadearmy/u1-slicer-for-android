@@ -544,6 +544,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Per-object bounding boxes: flat [sizeX0,sizeY0,sizeZ0, sizeX1,...] populated from
     // native.getObjectBoundingBoxes() after each load or addModelFile call.
     private val _objectBoundingBoxes = MutableStateFlow<FloatArray>(floatArrayOf())
+
+    /**
+     * F66 — load-time per-object bounding-box sizes [sizeX0, sizeY0, sizeZ0, ...].
+     * Captured alongside `_loadTimePoses` in `snapshotLoadTimePoses`. The
+     * per-object Scale UX uses this as the "100%" reference so the mm-mode
+     * input shows the post-scale dimension relative to a stable baseline,
+     * matching the bed-wide `loadTimeSize` parameter on `ScaleSection`.
+     */
+    private val _loadTimeObjectBoundingBoxes = MutableStateFlow<FloatArray>(floatArrayOf())
+    val loadTimeObjectBoundingBoxes: StateFlow<FloatArray> = _loadTimeObjectBoundingBoxes.asStateFlow()
     val objectBoundingBoxes: StateFlow<FloatArray> = _objectBoundingBoxes.asStateFlow()
     // True when multiple distinct objects from different files are on the bed.
     // Switches placement to setObjectPositions instead of setModelInstances at slice time.
@@ -731,6 +741,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         _loadTimePoses.value = snap
         _perObjectPoses.value = snap
+        // Also snapshot bounding boxes — used as the "100%" mm-mode reference
+        // in the per-object Scale UX. Done here (not after every refreshObject
+        // …PoseChange) so the reference doesn't drift as the user scales.
+        _loadTimeObjectBoundingBoxes.value = runCatching { native.getObjectBoundingBoxes() }
+            .getOrDefault(floatArrayOf())
     }
 
     /**
@@ -823,6 +838,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perObjectPoses.update { it + (objIdx to (it[objIdx] ?: PerObjectPose()).copy(
             rotXDeg = x, rotYDeg = y, rotZDeg = z)) }
         _sliceStale.value = true
+        refreshObjectGeometryAfterPoseChange()
         invalidatePrepareMeshCache()
     }
 
@@ -831,7 +847,33 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perObjectPoses.update { it + (objIdx to (it[objIdx] ?: PerObjectPose()).copy(
             scaleX = sx, scaleY = sy, scaleZ = sz)) }
         _sliceStale.value = true
+        refreshObjectGeometryAfterPoseChange()
         invalidatePrepareMeshCache()
+    }
+
+    /**
+     * F66 — after a per-object rotation or scale change in multi-object mode,
+     * refresh the bounding-box + per-object position arrays the renderer relies
+     * on. Without this, the cache invalidation + mesh refetch produce a new
+     * mesh with the scaled vertices baked in, but `splitMeshByObjects` and the
+     * renderer's drag clamps both use stale per-object sizes — so the new
+     * geometry gets misclassified and the user sees no visible change.
+     */
+    private fun refreshObjectGeometryAfterPoseChange() {
+        if (!hasMultipleDistinctObjectsVar) return
+        val boxes = runCatching { native.getObjectBoundingBoxes() }
+            .getOrDefault(_objectBoundingBoxes.value)
+        _objectBoundingBoxes.value = boxes
+        // Also refresh world-AABB mins so splitMeshByObjects can re-classify
+        // triangles against the new sizes. The native engine's instance
+        // transform has been updated by the set call above, so this read
+        // returns the post-transform positions.
+        val worldMins = runCatching { native.nativeGetObjectWorldAABBMins() }
+            .getOrDefault(floatArrayOf())
+        if (worldMins.size / 2 == boxes.size / 3 && worldMins.size >= 2) {
+            customObjectPositions = worldMins
+            _multiObjectPositions.value = worldMins
+        }
     }
 
     fun resetObjectRotation(objIdx: Int) {
