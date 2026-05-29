@@ -3928,6 +3928,34 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         profileNeedsReEmbed = false
 
+                        // F66 — replay any pending split-to-objects/parts ops.
+                        // The clearModel() + loadModel() above wiped the in-memory
+                        // post-split state; without replay, slicing would use the
+                        // original 1-object layout, the slice output would be wrong,
+                        // and the Prepare preview would jump back to the pre-split
+                        // model the next time the cache refetched. We hold the ops
+                        // in _splitObjectOps / _splitVolumeOps for exactly this case.
+                        if (_splitObjectOps.value.isNotEmpty() || _splitVolumeOps.value.isNotEmpty()) {
+                            for (idx in _splitObjectOps.value) {
+                                native.nativeSplitObject(idx)
+                            }
+                            for (entry in _splitVolumeOps.value) {
+                                val parts = entry.split(":")
+                                if (parts.size == 2) {
+                                    val o = parts[0].toIntOrNull()
+                                    val v = parts[1].toIntOrNull()
+                                    if (o != null && v != null) native.nativeSplitVolume(o, v)
+                                }
+                            }
+                            // Refresh bounding boxes after splits — the per-object
+                            // size cache feeds the renderer's drag clamps.
+                            _objectBoundingBoxes.value = runCatching {
+                                native.getObjectBoundingBoxes()
+                            }.getOrDefault(floatArrayOf())
+                            Log.i("SlicerVM", "F66: replayed ${_splitObjectOps.value.size} object split(s) " +
+                                "+ ${_splitVolumeOps.value.size} volume split(s) after re-embed")
+                        }
+
                         // Re-add any extra files that were on the bed before the embed reload
                         // cleared the native model. Without this, Combo 1/3 (3MF primary with
                         // extruderCount > 1) would fail at setObjectPositions with a count mismatch.

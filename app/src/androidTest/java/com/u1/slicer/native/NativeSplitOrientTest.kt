@@ -97,6 +97,43 @@ class NativeSplitOrientTest {
         assertEquals("count delta", before - 1 + added, lib.nativeGetObjectCount())
     }
 
+    @Test
+    fun splitObject_replayAfterClearAndLoad_restoresPostSplitObjectCount() {
+        // F66 regression: the slice path does a `clearModel + loadModel` to
+        // re-embed the profile before slicing. Without replaying the recorded
+        // split operations afterwards, the slice + post-slice Prepare preview
+        // both fall back to the original 1-object layout — matching the
+        // user-reported "showing original placement / weird broken view" bug.
+        // This test proves the replay sequence works at the native level.
+        val path = copyAsset("Button-for-S-trousers.3mf")
+        assertTrue(lib.loadModel(path))
+        val baseCount = lib.nativeGetObjectCount()
+        val splittableIdx = (0 until baseCount)
+            .firstOrNull { lib.nativeIsObjectSplittable(it) }
+            ?: error("expected at least one splittable object in Button-for-S-trousers")
+        val res = lib.nativeSplitObject(splittableIdx)
+        assertNotNull("split should succeed", res)
+        val postSplitCount = lib.nativeGetObjectCount()
+        assertTrue("post-split count > base count", postSplitCount > baseCount)
+
+        // Simulate the slice path's clearModel + loadModel pair.
+        lib.clearModel()
+        assertEquals("clearModel zeros object count", 0, lib.nativeGetObjectCount())
+        assertTrue(lib.loadModel(path))
+        assertEquals("loadModel restores the file's natural object count", baseCount, lib.nativeGetObjectCount())
+
+        // Replay the recorded split op. SlicerViewModel persists this as
+        // `_splitObjectOps.value = listOf(splittableIdx)`; the slice path
+        // (and F89 restore) walks it after the loadModel.
+        val replayRes = lib.nativeSplitObject(splittableIdx)
+        assertNotNull("replay split should succeed on the freshly-loaded model", replayRes)
+        assertEquals(
+            "replayed split must restore the post-split object count",
+            postSplitCount,
+            lib.nativeGetObjectCount(),
+        )
+    }
+
     // ---- Auto-orient ----------------------------------------------------------
 
     @Test
