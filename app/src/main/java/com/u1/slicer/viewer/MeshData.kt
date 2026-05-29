@@ -27,6 +27,24 @@ data class MeshData(
     val hasPerVertexColor get() = extruderIndices != null
 
     /**
+     * Extract a flat per-triangle xyz array suitable for [ModelViewerView.setTrianglePickingPositions].
+     * Layout: 9 floats per triangle (v0xyz, v1xyz, v2xyz), in the same world space as the
+     * mesh vertices. Caller must reapply this whenever the mesh changes.
+     */
+    fun toPickingPositions(): FloatArray {
+        val out = FloatArray(vertexCount * 3)
+        val buf = vertices
+        for (v in 0 until vertexCount) {
+            val srcBase = v * FLOATS_PER_VERTEX
+            val dstBase = v * 3
+            out[dstBase]     = buf.get(srcBase)
+            out[dstBase + 1] = buf.get(srcBase + 1)
+            out[dstBase + 2] = buf.get(srcBase + 2)
+        }
+        return out
+    }
+
+    /**
      * Writes per-vertex RGBA into the interleaved buffer based on extruder indices
      * and the provided color palette. Each triangle's 3 vertices get the same color
      * from the palette entry corresponding to its extruder index.

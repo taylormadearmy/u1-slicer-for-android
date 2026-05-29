@@ -74,6 +74,61 @@ class ModelViewerTapDispatchTest {
     }
 
     @Test
+    fun setTrianglePickingPositions_fromMeshData_populatesPickingArray() {
+        // Proves the wire that v2.10.0 was missing: a real loaded mesh produces
+        // a non-empty per-triangle picking array via MeshData.toPickingPositions,
+        // and view.setTrianglePickingPositions stores it. Before the fix,
+        // pickingPositions stayed null after a Prepare-screen mesh load and
+        // every tap on the model fired onEmptyTap (the user's reported symptom).
+        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val asset = java.io.File(ctx.cacheDir, "tap-pick-test.stl")
+        InstrumentationRegistry.getInstrumentation().context.assets
+            .open("3DBenchy.stl").use { input -> asset.outputStream().use { input.copyTo(it) } }
+
+        val lib = com.u1.slicer.NativeLibrary()
+        assertTrue(lib.loadModel(asset.absolutePath))
+        val previewMesh = lib.getPreparePreviewMesh()
+        assertNotNull("preview mesh should be available", previewMesh)
+        val meshData = previewMesh!!.toMeshData()
+        assertNotNull("toMeshData should succeed", meshData)
+        assertTrue("mesh should have triangles", meshData!!.vertexCount > 0)
+
+        val pickPositions = meshData.toPickingPositions()
+        assertEquals(
+            "picking array length must be vertexCount * 3 (xyz per vertex)",
+            meshData.vertexCount * 3,
+            pickPositions.size,
+        )
+        // Spot-check: the first vertex's xyz must equal the mesh's vertex 0
+        // positions extracted from the interleaved buffer (offsets 0,1,2).
+        assertEquals(meshData.vertices.get(0), pickPositions[0], 0.0001f)
+        assertEquals(meshData.vertices.get(1), pickPositions[1], 0.0001f)
+        assertEquals(meshData.vertices.get(2), pickPositions[2], 0.0001f)
+
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val view = ModelViewerView(ctx)
+            view.setMesh(meshData)
+            view.setTrianglePickingPositions(pickPositions)
+
+            // Reflect-read pickingPositions to prove the wiring stored the
+            // array. If null, the InlineModelPreview LaunchedEffect change
+            // didn't take effect.
+            val field = ModelViewerView::class.java.getDeclaredField("pickingPositions")
+            field.isAccessible = true
+            val stored = field.get(view) as FloatArray?
+            assertNotNull(
+                "pickingPositions must be non-null after setTrianglePickingPositions. " +
+                    "If null, pickTriangle returns -1 for every tap and the Edit panel " +
+                    "is structurally unreachable on the Prepare screen.",
+                stored,
+            )
+            assertEquals(pickPositions.size, stored!!.size)
+        }
+
+        lib.clearModel()
+    }
+
+    @Test
     fun handleActionUp_withRealMovement_doesNotFireTapCallback() {
         // Guards against false-positive tap firing on actual drags. If the user
         // moves past touch slop, tapMovedTooFar becomes true and the dispatcher

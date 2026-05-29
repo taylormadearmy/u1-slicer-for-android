@@ -3173,6 +3173,12 @@ fun InlineModelPreview(
             // Only call setMesh when the mesh instance actually changed
             if (m !== lastSetMesh) {
                 v.setMesh(m, objectMeshRanges)
+                // F66: feed picking positions to the viewer's tap dispatcher.
+                // Without this pickTriangle() returns -1 and every tap on the
+                // model fires onEmptyTap → viewModel.deselect(), making the
+                // Edit panel unreachable. The Smart Paint viewer already does
+                // this — the Prepare viewer did not until now.
+                v.setTrianglePickingPositions(m.toPickingPositions())
                 cameraState?.let { v.applyCameraState(it) }
                 lastSetMesh = m
             }
