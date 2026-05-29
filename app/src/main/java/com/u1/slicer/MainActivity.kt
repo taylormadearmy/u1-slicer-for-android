@@ -3173,12 +3173,19 @@ fun InlineModelPreview(
             // Only call setMesh when the mesh instance actually changed
             if (m !== lastSetMesh) {
                 v.setMesh(m, objectMeshRanges)
-                // F66: feed picking positions to the viewer's tap dispatcher.
-                // Without this pickTriangle() returns -1 and every tap on the
-                // model fires onEmptyTap → viewModel.deselect(), making the
-                // Edit panel unreachable. The Smart Paint viewer already does
-                // this — the Prepare viewer did not until now.
-                v.setTrianglePickingPositions(m.toPickingPositions())
+                // F66: feed picking positions to the viewer's tap dispatcher in
+                // the SAME coordinate space the renderer draws in (drawModelAt /
+                // drawObjectRange translate the mesh into bed-space by way of
+                // `instancePositions` and global `modelScale`). Passing raw
+                // mesh vertices misses every triangle on a single-STL load
+                // because the rendered geometry sits ~135mm out on the bed.
+                v.setTrianglePickingPositions(
+                    m.toWorldSpacePickingPositions(
+                        objectMeshRanges = objectMeshRanges,
+                        instancePositions = v.renderer.instancePositions,
+                        modelScale = v.renderer.modelScale,
+                    )
+                )
                 cameraState?.let { v.applyCameraState(it) }
                 lastSetMesh = m
             }
@@ -3531,12 +3538,21 @@ fun InlineModelPreview(
                             }
                         }
                         view.onEmptyTap = { onEmptyTap?.invoke() }
-                        // F66 — re-supply picking positions on every recomp.
-                        // The setMesh path only refreshes them when the mesh
-                        // ref changes; if Compose recomposes for a non-mesh
-                        // reason the view could otherwise keep stale picking
-                        // data and pickTriangle would return -1.
-                        mesh?.let { view.setTrianglePickingPositions(it.toPickingPositions()) }
+                        // F66 — re-supply picking positions on every recomp,
+                        // in WORLD SPACE so picking aligns with what's drawn.
+                        // Re-runs even when the mesh ref didn't change, so a
+                        // position-only update (drag commit, splitObject layout,
+                        // setObjectPositions from another path) still refreshes
+                        // the picker. See MeshData.toWorldSpacePickingPositions.
+                        mesh?.let { m ->
+                            view.setTrianglePickingPositions(
+                                m.toWorldSpacePickingPositions(
+                                    objectMeshRanges = view.renderer.objectMeshRanges,
+                                    instancePositions = view.renderer.instancePositions,
+                                    modelScale = view.renderer.modelScale,
+                                )
+                            )
+                        }
                     },
                     onRelease = { view ->
                         if (viewerView === view) { viewerView = null; onViewerReady?.invoke(null) }

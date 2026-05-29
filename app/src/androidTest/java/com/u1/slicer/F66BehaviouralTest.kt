@@ -59,14 +59,23 @@ class F66BehaviouralTest {
     // ---- Selection ergonomics ------------------------------------------------
 
     @Test
-    fun tapSameObjectTwice_togglesToDeselected() {
-        // Manual symptom: on a single STL, selection was sticky — tap once
-        // selected, every subsequent tap on the same object re-affirmed the
-        // selection. With toggle semantics, tap-on-already-selected returns
-        // to bed-wide mode.
+    fun tapSameObjectTwice_remainsSelected() {
+        // selectObject(same idx) is idempotent — re-tapping the selected
+        // object keeps it selected. Toggle semantics caused every other tap
+        // on a single-STL load to look like a dropped tap (alternating
+        // select/deselect with no visible second-tap distinction).
         vm.selectObject(0)
         assertEquals(0, vm.selection.value.objectIndex)
-        vm.selectObject(0)   // tap same → deselect
+        vm.selectObject(0)
+        assertEquals(0, vm.selection.value.objectIndex)
+    }
+
+    @Test
+    fun selectObjectNull_returnsToBedWide() {
+        // Deselect path: tap on empty bed → viewModel.deselect() (or
+        // selectObject(null)) → bed-wide mode.
+        vm.selectObject(0)
+        vm.selectObject(null)
         assertNull(vm.selection.value.objectIndex)
     }
 

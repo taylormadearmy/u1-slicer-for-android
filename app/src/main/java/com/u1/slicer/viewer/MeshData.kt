@@ -28,8 +28,9 @@ data class MeshData(
 
     /**
      * Extract a flat per-triangle xyz array suitable for [ModelViewerView.setTrianglePickingPositions].
-     * Layout: 9 floats per triangle (v0xyz, v1xyz, v2xyz), in the same world space as the
-     * mesh vertices. Caller must reapply this whenever the mesh changes.
+     * Layout: 9 floats per triangle (v0xyz, v1xyz, v2xyz), in the same coordinate space as the
+     * mesh vertices themselves. Use [toWorldSpacePickingPositions] if you need vertices in the
+     * space the renderer actually draws in (after instance translation and global scale).
      */
     fun toPickingPositions(): FloatArray {
         val out = FloatArray(vertexCount * 3)
@@ -40,6 +41,85 @@ data class MeshData(
             out[dstBase]     = buf.get(srcBase)
             out[dstBase + 1] = buf.get(srcBase + 1)
             out[dstBase + 2] = buf.get(srcBase + 2)
+        }
+        return out
+    }
+
+    /**
+     * Build picking positions in the same world space the renderer's draw path produces.
+     *
+     * For each instance the renderer applies (see [com.u1.slicer.viewer.ModelRenderer.drawModelAt]
+     * / [com.u1.slicer.viewer.ModelRenderer.drawObjectRange]):
+     *   T(x + halfW*sx, y + halfH*sy, halfD*sz)  *  S(sx, sy, sz)  *  T(-min - half)
+     *
+     * Without this transform the ray-cast in `pickTriangle` misses every triangle on a
+     * single-instance load — the mesh vertices live near the origin while the rendered
+     * geometry sits ~135mm out on the bed. F66's tap-to-select symptom on single STLs
+     * was exactly this mismatch.
+     *
+     * @param objectMeshRanges null for single-mesh draws; populated for multi-object scenes.
+     *        When null, the single mesh is treated as one range covering all vertices.
+     * @param instancePositions flat `[x0, y0, x1, y1, …]` bed-space lower-left corners, one
+     *        per range. Must be non-null and well-sized for multi-object output to be useful.
+     * @param modelScale per-axis `[sx, sy, sz]` global scale applied around the per-instance
+     *        bounding-box centre (the renderer's default `modelScale` field).
+     */
+    fun toWorldSpacePickingPositions(
+        objectMeshRanges: List<com.u1.slicer.viewer.ModelRenderer.ObjectMeshRange>?,
+        instancePositions: FloatArray?,
+        modelScale: FloatArray,
+    ): FloatArray {
+        val out = FloatArray(vertexCount * 3)
+        val buf = vertices
+        val sx = modelScale[0]; val sy = modelScale[1]; val sz = modelScale[2]
+
+        if (!objectMeshRanges.isNullOrEmpty() && instancePositions != null
+            && instancePositions.size / 2 == objectMeshRanges.size) {
+            // Multi-object scene: each range gets its own translation from instancePositions.
+            for ((rangeIdx, range) in objectMeshRanges.withIndex()) {
+                val x = instancePositions[rangeIdx * 2]
+                val y = instancePositions[rangeIdx * 2 + 1]
+                val halfW = (range.maxX - range.minX) / 2f
+                val halfH = (range.maxY - range.minY) / 2f
+                val halfD = (range.maxZ - range.minZ) / 2f
+                val tx = x + halfW * sx
+                val ty = y + halfH * sy
+                val tz = halfD * sz
+                val ox = -range.minX - halfW
+                val oy = -range.minY - halfH
+                val oz = -range.minZ - halfD
+                val vStart = range.vertexStart
+                val vEnd = vStart + range.vertexCount
+                for (v in vStart until vEnd) {
+                    val srcBase = v * FLOATS_PER_VERTEX
+                    val dstBase = v * 3
+                    out[dstBase]     = (buf.get(srcBase) + ox) * sx + tx
+                    out[dstBase + 1] = (buf.get(srcBase + 1) + oy) * sy + ty
+                    out[dstBase + 2] = (buf.get(srcBase + 2) + oz) * sz + tz
+                }
+            }
+            return out
+        }
+
+        // Single-mesh path. Use the first instance position if any (single STL on Prepare has
+        // exactly one entry at `[centerX, centerY]`); otherwise fall back to identity.
+        val x = instancePositions?.getOrNull(0) ?: 0f
+        val y = instancePositions?.getOrNull(1) ?: 0f
+        val halfW = (maxX - minX) / 2f
+        val halfH = (maxY - minY) / 2f
+        val halfD = (maxZ - minZ) / 2f
+        val tx = x + halfW * sx
+        val ty = y + halfH * sy
+        val tz = halfD * sz
+        val ox = -minX - halfW
+        val oy = -minY - halfH
+        val oz = -minZ - halfD
+        for (v in 0 until vertexCount) {
+            val srcBase = v * FLOATS_PER_VERTEX
+            val dstBase = v * 3
+            out[dstBase]     = (buf.get(srcBase) + ox) * sx + tx
+            out[dstBase + 1] = (buf.get(srcBase + 1) + oy) * sy + ty
+            out[dstBase + 2] = (buf.get(srcBase + 2) + oz) * sz + tz
         }
         return out
     }

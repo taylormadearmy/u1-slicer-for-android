@@ -211,6 +211,21 @@ private fun ObjectScopedEditSection(
 
         if (volumeCount > 1) {
             PartsPanel(objIdx = objIdx, viewModel = viewModel)
+        } else if (volumeCount == 1) {
+            // F66 — single-volume objects also get a filament picker. Without
+            // this the user has no way to assign a colour to a one-volume object
+            // (no Parts panel was shown, and the bed-wide filament chip strip
+            // doesn't expose per-object overrides).
+            Text(
+                "Filament",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            SingleObjectFilamentRow(
+                objIdx = objIdx,
+                viewModel = viewModel,
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }

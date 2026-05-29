@@ -321,15 +321,17 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             val dy = bed[1] - lastBedY
             lastBedX = bed[0]
             lastBedY = bed[1]
-            // F66 — show the drag-anchor highlight only once the drag is
-            // actually moving (tapMovedTooFar set by base class once the touch
-            // crosses touch slop). A still finger now reads as "tap to select"
-            // visually instead of "already selected".
+            // F66 — only commit a move (visual highlight + position callback)
+            // once the gesture has crossed touch slop. Otherwise every tap
+            // with a tiny finger jitter would commit a sub-mm position
+            // change that the user perceives as the model "jumping" on
+            // release, AND would flash a drag-anchor highlight that read as
+            // "the model is already selected".
             if (tapMovedTooFar) {
                 renderer.highlightIndex = draggingIndex
+                onObjectMoved?.invoke(draggingIndex, dx, dy)
+                requestRender()
             }
-            onObjectMoved?.invoke(draggingIndex, dx, dy)
-            requestRender()
             return true
         }
         return false

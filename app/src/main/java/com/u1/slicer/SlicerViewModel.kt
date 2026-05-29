@@ -692,18 +692,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Set the tap-to-selected object. `null` returns to bed-wide mode.
-     * Tapping the already-selected object toggles to deselected — matches
-     * desktop Orca's click-elsewhere-to-deselect convention and gives users
-     * a way out of "selection-stuck" on a single-object load (where every
-     * tap on the model used to re-affirm the same selection forever).
+     *
+     * Same-index re-selection is intentionally idempotent (no toggle). The
+     * "tap-same toggles deselect" version of this method made every other tap
+     * on a single-object load look like a dropped tap — selection alternated
+     * select/deselect with no visible difference on the second tap. Deselect
+     * is now exclusively via tap on empty bed (which fires onEmptyTap →
+     * deselect), the × button on the Edit panel header, or any path that
+     * resets state (file load, plate switch, slice).
      */
     fun selectObject(idx: Int?) {
-        val current = _selection.value
-        _selection.value = when {
-            idx == null -> ObjectSelection()
-            current.objectIndex == idx -> ObjectSelection()  // tap-same → deselect
-            else -> current.withObject(idx)
-        }
+        _selection.value = if (idx == null) ObjectSelection() else _selection.value.withObject(idx)
     }
 
     /** Set the active Parts-panel volume within the currently-selected object. */
@@ -732,6 +731,37 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         _loadTimePoses.value = snap
         _perObjectPoses.value = snap
+    }
+
+    /**
+     * F66 — if the freshly-loaded model contains more than one native ModelObject,
+     * flip `hasMultipleDistinctObjects` so the renderer takes the per-object code
+     * path (drawObjectRange + splitMeshByObjects + per-object hit-test ranges).
+     *
+     * Without this, multi-object 3MFs like Button-for-S-trousers were rendered as
+     * one welded blob until something else flipped the flag (add-to-bed, split).
+     * The "I selected a single item in a group I never broke up" symptom was
+     * exactly this hidden multi-object structure becoming visible after an
+     * unrelated action.
+     *
+     * Positions are NOT overwritten — the engine already places objects at their
+     * file-declared instance offsets, and forcing a grid layout here would scatter
+     * Button-for-S-trousers' intentionally-tessellated buttons.
+     */
+    private fun promoteToMultiObjectIfApplicable() {
+        val n = native.nativeGetObjectCount()
+        if (n > 1) {
+            hasMultipleDistinctObjectsVar = true
+            _objectBoundingBoxes.value = runCatching { native.getObjectBoundingBoxes() }
+                .getOrDefault(floatArrayOf())
+            // Bump modelAddVersion so InlineModelPreview's mesh-fetch
+            // LaunchedEffect re-keys. Without this the mesh is still the
+            // single-object blob that was fetched before the flag flipped,
+            // and splitMeshByObjects (which needs hasMultipleDistinctObjects)
+            // never runs — leaving objectMeshRanges null and per-object hit
+            // testing impossible.
+            _modelAddVersion.value++
+        }
     }
 
     fun setObjectRotation(objIdx: Int, x: Float, y: Float, z: Float) {
@@ -1508,6 +1538,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // rotation / scale buttons on the Edit panel silently no-op (the
                         // baseline map stays empty) on every fresh load.
                         snapshotLoadTimePoses()
+                        // F66 — files that contain multiple native ModelObjects from load
+                        // (Button-for-S-trousers, every painted multi-extruder 3MF, …)
+                        // become individually selectable from the moment they appear on
+                        // the bed. Same model that's true after split / after add-to-bed,
+                        // applied consistently from the start.
+                        promoteToMultiObjectIfApplicable()
                     }
                     prevState is SlicerState.Slicing && newState is SlicerState.SliceComplete -> {
                         val filename = currentModelFile?.name ?: "model"
