@@ -641,6 +641,20 @@ void invalidatePreviewMeshCache() {
     g_preview_volume_triangle_counts.clear();
 }
 
+// F66 — sync the static preview-extruder override cache when the user assigns
+// a new filament slot to a volume. The preview-mesh build (line ~485) reads
+// g_model_preview_extruders[objIdx][volIdx] as an override on top of
+// volume->extruder_id(); if the override stays at the file-declared value while
+// the volume's actual extruder changes, the slice gets the new colour but the
+// Prepare preview keeps painting triangles with the file's original colour.
+// Called by sapil_arrange.cpp's setVolumeExtruder.
+void setPreviewExtruderOverride(int objIdx, int volIdx, int slot) {
+    if (objIdx < 0 || objIdx >= (int)g_model_preview_extruders.size()) return;
+    auto& vols = g_model_preview_extruders[objIdx];
+    if (volIdx < 0 || volIdx >= (int)vols.size()) return;
+    vols[volIdx] = slot;
+}
+
 void SlicerEngine::cancelPreviewMesh() {
     g_preview_cancel.store(true, std::memory_order_release);
     SAPIL_LOGI("cancelPreviewMesh: signalled cancellation");
