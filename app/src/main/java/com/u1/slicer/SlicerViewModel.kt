@@ -973,6 +973,51 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         invalidatePrepareMeshCache()
     }
 
+    /**
+     * F66 — bulk-assign every volume of an object to the same filament slot.
+     * Used by the EditPanel's whole-object filament row: "this object is one
+     * colour" lets the user paint every part identically with one tap.
+     *
+     * Single cache invalidation at the end (vs the per-call invalidation in
+     * [setVolumeExtruder]) keeps the preview-mesh refetch to one fetch even
+     * for objects with many parts.
+     */
+    fun setObjectFilament(objIdx: Int, slot: Int) {
+        val volumeCount = native.nativeGetVolumeCount(objIdx)
+        if (volumeCount <= 0) return
+        val updates = HashMap<String, Int>(volumeCount)
+        var any = false
+        for (v in 0 until volumeCount) {
+            if (native.nativeSetVolumeExtruder(objIdx, v, slot)) {
+                updates["$objIdx:$v"] = slot
+                any = true
+            }
+        }
+        if (any) {
+            _perVolumeExtruders.update { it + updates }
+            _sliceStale.value = true
+            invalidatePrepareMeshCache()
+        }
+    }
+
+    /**
+     * F66 — derive the aggregated filament slot for an object. Returns the
+     * common slot when every volume shares the same assignment, or `null` when
+     * volumes use different slots ("mixed"). The whole-object filament row
+     * displays "Mixed" + no highlight in the picker in the mixed case.
+     */
+    fun aggregatedObjectFilament(objIdx: Int): Int? {
+        val volumeCount = native.nativeGetVolumeCount(objIdx)
+        if (volumeCount <= 0) return null
+        val overrides = _perVolumeExtruders.value
+        val first = overrides["$objIdx:0"] ?: native.nativeGetVolumeExtruder(objIdx, 0).coerceAtLeast(1)
+        for (v in 1 until volumeCount) {
+            val s = overrides["$objIdx:$v"] ?: native.nativeGetVolumeExtruder(objIdx, v).coerceAtLeast(1)
+            if (s != first) return null
+        }
+        return first
+    }
+
     /** F66 — convenience queries for the Edit panel UI. */
     fun objectName(objIdx: Int): String = native.nativeGetObjectName(objIdx) ?: ""
     fun volumeName(objIdx: Int, volIdx: Int): String = native.nativeGetVolumeName(objIdx, volIdx) ?: ""

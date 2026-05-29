@@ -209,19 +209,16 @@ private fun ObjectScopedEditSection(
             ) { Text("Reset scale") }
         }
 
-        if (volumeCount > 1) {
-            PartsPanel(objIdx = objIdx, viewModel = viewModel)
-        } else if (volumeCount == 1) {
-            // F66 — single-volume objects also get a filament picker. Without
-            // this the user has no way to assign a colour to a one-volume object
-            // (no Parts panel was shown, and the bed-wide filament chip strip
-            // doesn't expose per-object overrides).
+        if (volumeCount >= 1) {
+            // F66 — unified filament panel. Always shows a whole-object row
+            // (works for single-volume too); for multi-volume objects also
+            // exposes a "Parts (N) ▼" expander for per-part control.
             Text(
                 "Filament",
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.padding(top = 4.dp),
             )
-            SingleObjectFilamentRow(
+            ObjectFilamentPanel(
                 objIdx = objIdx,
                 viewModel = viewModel,
                 modifier = Modifier.padding(top = 4.dp),
