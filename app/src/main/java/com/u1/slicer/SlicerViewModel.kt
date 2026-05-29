@@ -4101,6 +4101,26 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             Log.i("SlicerVM", "F66: replayed ${_splitObjectOps.value.size} object split(s) " +
                                 "+ ${_splitVolumeOps.value.size} volume split(s) after re-embed")
                         }
+                        // F66 — replay per-volume extruder overrides. Same logic as
+                        // splits: clearModel+loadModel wiped the in-memory `vol->config
+                        // ["extruder"]` overrides, so without replay the slice falls
+                        // back to the file's declared per-volume extruders and the
+                        // user's Parts-panel colour changes have no effect on the
+                        // sliced G-code.
+                        if (_perVolumeExtruders.value.isNotEmpty()) {
+                            var replayedCount = 0
+                            for ((key, slot) in _perVolumeExtruders.value) {
+                                val parts = key.split(":")
+                                if (parts.size == 2) {
+                                    val o = parts[0].toIntOrNull()
+                                    val v = parts[1].toIntOrNull()
+                                    if (o != null && v != null) {
+                                        if (native.nativeSetVolumeExtruder(o, v, slot)) replayedCount++
+                                    }
+                                }
+                            }
+                            Log.i("SlicerVM", "F66: replayed $replayedCount per-volume extruder override(s) after re-embed")
+                        }
 
                         // Re-add any extra files that were on the bed before the embed reload
                         // cleared the native model. Without this, Combo 1/3 (3MF primary with
