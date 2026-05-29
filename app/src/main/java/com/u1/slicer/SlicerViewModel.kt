@@ -4208,6 +4208,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             }
                             Log.i("SlicerVM", "F66: replayed $replayedCount per-volume extruder override(s) after re-embed")
                         }
+                        // F66 — replay per-object rotation + scale. The clearModel+
+                        // loadModel wiped `instance[0]->set_rotation` / `set_scaling_factor`
+                        // overrides on every object; without replay the slice runs
+                        // with each object's file-declared identity rotation/scale
+                        // and the user's per-object dial changes are lost in the
+                        // G-code output (visible-on-Prepare-but-wrong-on-Preview).
+                        if (_perObjectPoses.value.isNotEmpty()) {
+                            var replayedPoses = 0
+                            for ((idx, p) in _perObjectPoses.value) {
+                                if (idx < 0 || idx >= native.nativeGetObjectCount()) continue
+                                val rOk = native.nativeSetObjectRotation(idx, p.rotXDeg, p.rotYDeg, p.rotZDeg)
+                                val sOk = native.nativeSetObjectScale(idx, p.scaleX, p.scaleY, p.scaleZ)
+                                if (rOk && sOk) replayedPoses++
+                            }
+                            // Refresh per-object world AABB mins + sizes after replay so
+                            // the post-slice Prepare preview comes back with positions in
+                            // sync with the now-rebaked instance transforms.
+                            _objectBoundingBoxes.value = runCatching {
+                                native.getObjectBoundingBoxes()
+                            }.getOrDefault(_objectBoundingBoxes.value)
+                            val worldMins = runCatching {
+                                native.nativeGetObjectWorldAABBMins()
+                            }.getOrDefault(floatArrayOf())
+                            if (worldMins.size / 2 == _objectBoundingBoxes.value.size / 3 && worldMins.size >= 2) {
+                                customObjectPositions = worldMins
+                                _multiObjectPositions.value = worldMins
+                            }
+                            Log.i("SlicerVM", "F66: replayed $replayedPoses per-object pose(s) after re-embed")
+                        }
 
                         // Re-add any extra files that were on the bed before the embed reload
                         // cleared the native model. Without this, Combo 1/3 (3MF primary with
