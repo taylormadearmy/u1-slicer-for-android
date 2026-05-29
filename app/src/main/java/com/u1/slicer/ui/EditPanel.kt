@@ -1,14 +1,25 @@
 package com.u1.slicer.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -17,14 +28,19 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -173,30 +189,10 @@ private fun ObjectScopedEditSection(
             }
         }
 
-        // Per-object rotation dials (X / Y / Z). Range 0..360 degrees with 1-degree
-        // snap on release for readability; sub-degree precision isn't useful at the
-        // small touch-screen size.
-        AxisSlider(
-            label = "Rotate X",
-            value = pose.rotXDeg,
-            range = 0f..360f,
-            onChange = { viewModel.setObjectRotation(objIdx, it, pose.rotYDeg, pose.rotZDeg) },
-        )
-        AxisSlider(
-            label = "Rotate Y",
-            value = pose.rotYDeg,
-            range = 0f..360f,
-            onChange = { viewModel.setObjectRotation(objIdx, pose.rotXDeg, it, pose.rotZDeg) },
-        )
-        AxisSlider(
-            label = "Rotate Z",
-            value = pose.rotZDeg,
-            range = 0f..360f,
-            onChange = { viewModel.setObjectRotation(objIdx, pose.rotXDeg, pose.rotYDeg, it) },
-        )
-        // Per-object scale — uniform / non-uniform toggle, % / mm modes,
-        // matching the bed-wide ScaleSection in MainActivity for parity.
-        ObjectScaleControl(objIdx = objIdx, viewModel = viewModel)
+        // Per-object Scale + Rotation in the same Card+Tabs shape as the
+        // bed-wide ScaleSection (MainActivity.kt:4256). Two tabs for visual
+        // parity; no Copies tab because copies are a whole-model concept.
+        ObjectTransformCard(objIdx = objIdx, viewModel = viewModel, pose = pose)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilledTonalButton(
@@ -250,6 +246,110 @@ private fun ObjectScopedEditSection(
             )
         }
     }
+}
+
+/**
+ * F66 — per-object Scale + Rotation in a Card with TabRow, matching the
+ * bed-wide `ScaleSection` in MainActivity (`Scale, Copies & Rotation`).
+ * Title omits "Copies" since copies are a whole-model concept.
+ *
+ *  ┌─────────────────────────────────────────────────────────┐
+ *  │  ⊕  Scale & Rotation                                 ⌃  │
+ *  │  ─────────────────────────────────────────────────────  │
+ *  │     [ Scale ]    [ Rotation ]                           │
+ *  │     <tab body — see ObjectScaleControl / RotationTab>   │
+ *  └─────────────────────────────────────────────────────────┘
+ */
+@Composable
+private fun ObjectTransformCard(
+    objIdx: Int,
+    viewModel: SlicerViewModel,
+    pose: PerObjectPose,
+) {
+    var expanded by remember(objIdx) { mutableStateOf(true) }
+    var selectedTab by remember(objIdx) { mutableIntStateOf(0) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.OpenWith,
+                        null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scale & Rotation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TabRow(selectedTabIndex = selectedTab) {
+                        Tab(
+                            selected = selectedTab == 0,
+                            onClick = { selectedTab = 0 },
+                            text = { Text("Scale") },
+                        )
+                        Tab(
+                            selected = selectedTab == 1,
+                            onClick = { selectedTab = 1 },
+                            text = { Text("Rotation") },
+                        )
+                    }
+                    if (selectedTab == 0) {
+                        ObjectScaleControl(objIdx = objIdx, viewModel = viewModel)
+                    } else {
+                        ObjectRotationControl(objIdx = objIdx, viewModel = viewModel, pose = pose)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ObjectRotationControl(
+    objIdx: Int,
+    viewModel: SlicerViewModel,
+    pose: PerObjectPose,
+) {
+    AxisSlider(
+        label = "Rotate X",
+        value = pose.rotXDeg,
+        range = 0f..360f,
+        onChange = { viewModel.setObjectRotation(objIdx, it, pose.rotYDeg, pose.rotZDeg) },
+    )
+    AxisSlider(
+        label = "Rotate Y",
+        value = pose.rotYDeg,
+        range = 0f..360f,
+        onChange = { viewModel.setObjectRotation(objIdx, pose.rotXDeg, it, pose.rotZDeg) },
+    )
+    AxisSlider(
+        label = "Rotate Z",
+        value = pose.rotZDeg,
+        range = 0f..360f,
+        onChange = { viewModel.setObjectRotation(objIdx, pose.rotXDeg, pose.rotYDeg, it) },
+    )
 }
 
 @Composable
