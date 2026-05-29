@@ -7,17 +7,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,15 +31,22 @@ import androidx.compose.ui.unit.dp
 import com.u1.slicer.SlicerViewModel
 
 /**
- * F66 — Parts panel for the Edit panel. Shows one row per volume of the
- * selected object. Each row renders the volume's currently-assigned filament
- * the SAME way as [com.u1.slicer.MainActivity.SingleColorFilamentRow] —
- * colour swatch + filament label + material chip — so the per-volume picker
- * is consistent with how the rest of the Prepare screen presents filaments.
+ * F66 — Parts panel. Source-of-truth for each filament row depends on whether
+ * the model declares filaments:
  *
- * The picker dialog lists the four U1 extruder slots, each rendered as a
- * colour swatch + material chip. Slot-to-physical mapping happens at Send
- * time via the existing FilamentMappingDialog (unchanged).
+ *   - **3MF with `canonicalFilamentList`** (multi-colour Bambu / SEMM / Hueforge):
+ *     rows + picker entries come from the **file's** declared filaments
+ *     (`resolvedFilamentColors` for colour, `displayedFilamentMaterials` for
+ *     material). The picker shows N filaments (file-declared count), not 4
+ *     printer slots. Label is "Filament N" matching `PrintSetupSection`.
+ *
+ *   - **STL / non-canonical**: fall back to the 4 printer extruder slots with
+ *     their loaded colours/materials. STLs genuinely don't declare filaments
+ *     so picking a printer slot is the right thing.
+ *
+ * The `setVolumeExtruder` JNI call still takes a 1-based index. For 3MFs the
+ * native side already interprets `extruder_id` as a file-filament index
+ * (`sapil_arrange.cpp:661`), so the same write path works for both cases.
  */
 @Composable
 fun PartsPanel(
@@ -53,11 +57,9 @@ fun PartsPanel(
     val modelVersion by viewModel.modelAddVersion.collectAsState()
     val volumeCount = remember(objIdx, modelVersion) { viewModel.volumeCount(objIdx) }
     val perVolume by viewModel.perVolumeExtruders.collectAsState()
-    val activeColors by viewModel.activeExtruderColors.collectAsState()
-    val presets by viewModel.extruderPresets.collectAsState()
-    var expanded by remember(objIdx) { mutableStateOf(false) }
-
     if (volumeCount <= 1) return
+
+    var expanded by remember(objIdx) { mutableStateOf(false) }
 
     Column(modifier.fillMaxWidth()) {
         TextButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
@@ -73,8 +75,7 @@ fun PartsPanel(
                 PartFilamentRow(
                     partName = partName,
                     currentSlot = slot,
-                    extruderColors = activeColors,
-                    extruderPresets = presets,
+                    viewModel = viewModel,
                     onSelectSlot = { newSlot -> viewModel.setVolumeExtruder(objIdx, v, newSlot) },
                     modifier = Modifier.padding(vertical = 4.dp).fillMaxWidth(),
                 )
@@ -83,12 +84,6 @@ fun PartsPanel(
     }
 }
 
-/**
- * F66 — per-object filament picker for single-volume objects. Surfaced on the
- * [EditPanel] when the selected object has exactly one volume and the model is
- * multi-colour — answers the user complaint "if you select a single part with
- * no part list then there's no way to colour it".
- */
 @Composable
 fun SingleObjectFilamentRow(
     objIdx: Int,
@@ -97,11 +92,7 @@ fun SingleObjectFilamentRow(
 ) {
     val modelVersion by viewModel.modelAddVersion.collectAsState()
     val perVolume by viewModel.perVolumeExtruders.collectAsState()
-    val activeColors by viewModel.activeExtruderColors.collectAsState()
-    val presets by viewModel.extruderPresets.collectAsState()
 
-    // Treat the lone volume as "the part" — same setVolumeExtruder API,
-    // single fixed volIdx = 0.
     val key = "$objIdx:0"
     val slot = perVolume[key] ?: viewModel.volumeExtruder(objIdx, 0).coerceAtLeast(1)
     val name = remember(objIdx, modelVersion) {
@@ -111,26 +102,51 @@ fun SingleObjectFilamentRow(
     PartFilamentRow(
         partName = name,
         currentSlot = slot,
-        extruderColors = activeColors,
-        extruderPresets = presets,
+        viewModel = viewModel,
         onSelectSlot = { newSlot -> viewModel.setVolumeExtruder(objIdx, 0, newSlot) },
         modifier = modifier.fillMaxWidth(),
     )
 }
 
+/** Resolve the (colour, material, label) tuple for a given filament index, choosing
+ *  between the file's canonical filament list (for 3MFs) and the printer's slot
+ *  presets (for STLs). Returns 1-based label since slots are 1-indexed by Orca
+ *  convention. */
+@Composable
+private fun resolveFilamentChip(
+    slot: Int,                                  // 1-based
+    viewModel: SlicerViewModel,
+): Triple<androidx.compose.ui.graphics.Color, String, String> {
+    val canonical by viewModel.canonicalFilamentList.collectAsState()
+    val resolvedColors by viewModel.resolvedFilamentColors.collectAsState()
+    val displayedMaterials by viewModel.displayedFilamentMaterials.collectAsState()
+    val activeColors by viewModel.activeExtruderColors.collectAsState()
+    val presets by viewModel.extruderPresets.collectAsState()
+
+    val canonicalSize = canonical?.size ?: 0
+    val useFile = canonical != null && slot - 1 < canonicalSize
+
+    return if (useFile) {
+        val idx = slot - 1
+        val hex = resolvedColors.getOrNull(idx) ?: ""
+        val mat = displayedMaterials.getOrNull(idx)?.first ?: "PLA"
+        Triple(parseHexColor(hex), mat, "Filament $slot")
+    } else {
+        val hex = activeColors.getOrNull(slot - 1) ?: ""
+        val mat = presets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+        Triple(parseHexColor(hex), mat, "Filament $slot")
+    }
+}
+
 @Composable
 private fun PartFilamentRow(
     partName: String,
-    currentSlot: Int,                              // 1-indexed
-    extruderColors: List<String>,
-    extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    currentSlot: Int,
+    viewModel: SlicerViewModel,
     onSelectSlot: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val color = parseHexColor(extruderColors.getOrNull(currentSlot - 1) ?: "")
-    val material = remember(currentSlot, extruderPresets) {
-        extruderPresets.firstOrNull { it.index == currentSlot }?.materialType ?: "PLA"
-    }
+    val (color, material, _) = resolveFilamentChip(currentSlot, viewModel)
     var picking by remember { mutableStateOf(false) }
 
     Row(
@@ -161,10 +177,9 @@ private fun PartFilamentRow(
     }
 
     if (picking) {
-        FilamentSlotChooserDialog(
+        FilamentChooserDialog(
             currentSlot = currentSlot,
-            extruderColors = extruderColors,
-            extruderPresets = extruderPresets,
+            viewModel = viewModel,
             onPick = { newSlot ->
                 onSelectSlot(newSlot)
                 picking = false
@@ -175,27 +190,32 @@ private fun PartFilamentRow(
 }
 
 @Composable
-private fun FilamentSlotChooserDialog(
+private fun FilamentChooserDialog(
     currentSlot: Int,
-    extruderColors: List<String>,
-    extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    viewModel: SlicerViewModel,
     onPick: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val canonical by viewModel.canonicalFilamentList.collectAsState()
+    // File-filament count for 3MFs; otherwise 4 physical slots.
+    val rowCount = canonical?.size ?: 4
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Assign to filament") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "Slot mapping happens when you tap Send →",
+                    if (canonical != null)
+                        "Pick which file-declared filament this part uses. Slot mapping happens at Send →"
+                    else
+                        "Slot mapping happens when you tap Send →",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
-                for (slot in 1..4) {
-                    val swatch = parseHexColor(extruderColors.getOrNull(slot - 1) ?: "")
-                    val mat = extruderPresets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+                for (slot in 1..rowCount) {
+                    val (swatch, mat, label) = resolveFilamentChip(slot, viewModel)
                     val isCurrent = slot == currentSlot
                     Row(
                         modifier = Modifier
@@ -219,7 +239,7 @@ private fun FilamentSlotChooserDialog(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "Filament $slot" + if (isCurrent) " · current" else "",
+                                label + if (isCurrent) " · current" else "",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Medium,
                             )

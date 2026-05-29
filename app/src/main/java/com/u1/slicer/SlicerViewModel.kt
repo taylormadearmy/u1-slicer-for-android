@@ -733,36 +733,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perObjectPoses.value = snap
     }
 
-    /**
-     * F66 — if the freshly-loaded model contains more than one native ModelObject,
-     * flip `hasMultipleDistinctObjects` so the renderer takes the per-object code
-     * path (drawObjectRange + splitMeshByObjects + per-object hit-test ranges).
-     *
-     * Without this, multi-object 3MFs like Button-for-S-trousers were rendered as
-     * one welded blob until something else flipped the flag (add-to-bed, split).
-     * The "I selected a single item in a group I never broke up" symptom was
-     * exactly this hidden multi-object structure becoming visible after an
-     * unrelated action.
-     *
-     * Positions are NOT overwritten — the engine already places objects at their
-     * file-declared instance offsets, and forcing a grid layout here would scatter
-     * Button-for-S-trousers' intentionally-tessellated buttons.
-     */
-    private fun promoteToMultiObjectIfApplicable() {
-        val n = native.nativeGetObjectCount()
-        if (n > 1) {
-            hasMultipleDistinctObjectsVar = true
-            _objectBoundingBoxes.value = runCatching { native.getObjectBoundingBoxes() }
-                .getOrDefault(floatArrayOf())
-            // Bump modelAddVersion so InlineModelPreview's mesh-fetch
-            // LaunchedEffect re-keys. Without this the mesh is still the
-            // single-object blob that was fetched before the flag flipped,
-            // and splitMeshByObjects (which needs hasMultipleDistinctObjects)
-            // never runs — leaving objectMeshRanges null and per-object hit
-            // testing impossible.
-            _modelAddVersion.value++
-        }
-    }
+    // F66 — `promoteToMultiObjectIfApplicable` was attempted and reverted; see
+    // the comment block in the state-watcher above for the regression details
+    // and the conditions needed before it can be re-attempted (per-object
+    // world-AABB-min from native + position-independent splitMeshByObjects).
 
     fun setObjectRotation(objIdx: Int, x: Float, y: Float, z: Float) {
         if (!native.nativeSetObjectRotation(objIdx, x, y, z)) return
@@ -1538,12 +1512,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // rotation / scale buttons on the Edit panel silently no-op (the
                         // baseline map stays empty) on every fresh load.
                         snapshotLoadTimePoses()
-                        // F66 — files that contain multiple native ModelObjects from load
-                        // (Button-for-S-trousers, every painted multi-extruder 3MF, …)
-                        // become individually selectable from the moment they appear on
-                        // the bed. Same model that's true after split / after add-to-bed,
-                        // applied consistently from the start.
-                        promoteToMultiObjectIfApplicable()
+                        // F66 — "promote to multi-object on load" is REVERTED. Earlier
+                        // attempt flipped hasMultipleDistinctObjects=true without
+                        // matched per-object positions, causing the renderer to fall
+                        // back to drawing the combined mesh at world origin (B129
+                        // regression: "buttons file no longer in middle of bed").
+                        // Tap-to-select on internal ModelObjects of a single-file load
+                        // requires a Split first, until we expose per-object world-AABB
+                        // min positions through native and re-wire splitMeshByObjects
+                        // to not depend on a pre-computed multiObjectPositions array.
                     }
                     prevState is SlicerState.Slicing && newState is SlicerState.SliceComplete -> {
                         val filename = currentModelFile?.name ?: "model"
