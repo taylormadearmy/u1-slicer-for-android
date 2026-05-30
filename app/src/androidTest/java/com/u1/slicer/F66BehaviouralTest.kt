@@ -434,4 +434,34 @@ class F66BehaviouralTest {
             60f, survived.rotZDeg, 0.5f,
         )
     }
+
+    // ---- F66 review-2026-05-30 P0: 40-instance render regression -------------
+    // After loading a multi-volume Bambu file like Button-for-S-trousers,
+    // getPlacementPositions() must return a SINGLE [x, y] pair so the renderer
+    // draws ONE combined mesh. The previous promote-on-load logic populated
+    // customObjectPositions with N entries — the renderer's per-instance loop
+    // then drew the combined mesh N times ("way too many sets of buttons"
+    // user report on Pixel 9).
+
+    @Test
+    fun loadModel_singleFile_singleInstancePosition_noOverInstancing() {
+        loadBenchyAndAwait()
+        val positions = vm.getPlacementPositions()
+        assertEquals(
+            "getPlacementPositions() must return exactly one [x, y] pair on a fresh single-file load. " +
+                "More than one pair means promote-on-load is back and the renderer will draw the " +
+                "combined mesh once per pair — the over-instancing render regression.",
+            2, positions.size,
+        )
+    }
+
+    @Test
+    fun loadModel_singleFile_doesNotFlipHasMultipleDistinctObjects() {
+        loadBenchyAndAwait()
+        assertEquals(
+            "hasMultipleDistinctObjects must stay false on a single-file load. Promote-on-load " +
+                "flipping this on broke B124 and gated multiObjectMode in the renderer.",
+            false, vm.hasMultipleDistinctObjects.value,
+        )
+    }
 }

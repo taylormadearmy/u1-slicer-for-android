@@ -1761,15 +1761,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // rotation / scale buttons on the Edit panel silently no-op (the
                         // baseline map stays empty) on every fresh load.
                         snapshotLoadTimePoses()
-                        // F66 — files that contain multiple native ModelObjects from load
-                        // (Button-for-S-trousers, every painted multi-extruder 3MF, …)
-                        // become individually selectable from the moment they appear on
-                        // the bed. The previous attempt broke layout because it didn't
-                        // populate per-object positions; this now uses
-                        // nativeGetObjectWorldAABBMins() to read each object's true
-                        // file-declared bed position, so the grid layout problem from
-                        // buildMultiObjectPositions is avoided entirely.
-                        promoteToMultiObjectIfApplicable()
+                        // F66 review-2026-05-30: promote-on-load is DISABLED. Earlier
+                        // commits (15a4ba3) tried to make multi-volume Bambu files like
+                        // Button-for-S-trousers individually selectable from the moment
+                        // they hit the bed. That broke the renderer two ways:
+                        //   (a) hasMultipleDistinctObjectsVar=true → multiObjectMode=true
+                        //       on a single-volume cluster → drag had no visual effect
+                        //       (B124 regression).
+                        //   (b) hasMultipleDistinctObjectsVar=false + N customObjectPositions
+                        //       (the half-fix) → renderer's per-instance loop drew the
+                        //       combined mesh N times = "way too many sets of buttons"
+                        //       on Pixel 9.
+                        // Per-object selection (outline + selection.objectIndex) still
+                        // works via objectMeshRanges produced when the Composable runs
+                        // splitMeshByObjects post-load. Per-object pose/drag editing
+                        // requires the user to tap "Split to Objects" first — explicit
+                        // > implicit. doAddFile (multi-file) and splitObject (user
+                        // action) still set hasMultipleDistinctObjectsVar themselves.
                     }
                     prevState is SlicerState.Slicing && newState is SlicerState.SliceComplete -> {
                         val filename = currentModelFile?.name ?: "model"
@@ -5797,6 +5805,39 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 saved.modelRotation.first, saved.modelRotation.second, saved.modelRotation.third
             ))
             setCopyCount(saved.copyCount)
+            // F66 review-2026-05-30: replay split/pose/extruder state BEFORE
+            // applyPlacementPositions so the saved customObjectPositions count
+            // matches the post-split object count. Without this, a Cali-cube
+            // session that was split + sliced + resumed would silently load
+            // the original 1-object cube and then apply N positions, leaving
+            // the renderer to draw the un-split cube N times ("multiple sets
+            // of the object on the plate" user report).
+            for (idx in saved.splitObjectOperations) {
+                splitObject(idx)
+            }
+            _splitObjectOps.value = saved.splitObjectOperations
+            for (entry in saved.splitVolumeOperations) {
+                val parts = entry.split(":")
+                if (parts.size == 2) {
+                    val o = parts[0].toIntOrNull()
+                    val v = parts[1].toIntOrNull()
+                    if (o != null && v != null) splitVolume(o, v)
+                }
+            }
+            _splitVolumeOps.value = saved.splitVolumeOperations
+            snapshotLoadTimePoses()
+            for ((idx, pose) in saved.perObjectPoses) {
+                setObjectRotation(idx, pose.rotXDeg, pose.rotYDeg, pose.rotZDeg)
+                setObjectScale(idx, pose.scaleX, pose.scaleY, pose.scaleZ)
+            }
+            for ((key, slot) in saved.perVolumeExtruders) {
+                val parts = key.split(":")
+                if (parts.size == 2) {
+                    val o = parts[0].toIntOrNull()
+                    val v = parts[1].toIntOrNull()
+                    if (o != null && v != null) setVolumeExtruder(o, v, slot)
+                }
+            }
             val positions = saved.customObjectPositions
             val tower = saved.customWipeTowerPos
             if (positions != null && tower != null) {
