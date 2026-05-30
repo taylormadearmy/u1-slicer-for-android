@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -79,7 +83,14 @@ fun ObjectFilamentPanel(
                 onClick = { expanded = !expanded },
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             ) {
-                Text("Parts ($volumeCount) " + if (expanded) "▲" else "▼")
+                // F66 review-2026-05-30 P2: Material icons match bed-wide expand
+                // patterns (Compose ExpandLess/More) and stay readable for
+                // screen readers.
+                Text("Parts ($volumeCount)", modifier = Modifier.padding(end = 4.dp))
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse parts list" else "Expand parts list",
+                )
             }
             if (expanded) {
                 val perVolume by viewModel.perVolumeExtruders.collectAsState()
