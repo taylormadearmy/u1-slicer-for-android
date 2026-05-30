@@ -46,10 +46,14 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private val modelColorDefault = floatArrayOf(0.91f, 0.48f, 0f, 1f)
     private val wipeTowerColor = floatArrayOf(1f, 0.76f, 0.03f, 0.7f)
 
-    // F66 — selection-outline silhouette colour + thickness (in world-space mm
-    // before global modelScale is applied; the per-pass divider compensates).
+    // F66 — selection-outline silhouette colour + thickness.
+    // OUTLINE_EXPAND is in clip-space NDC units (vertex shader does
+    // screen-space expansion), so visible thickness stays constant across
+    // zoom levels. 0.020 NDC ≈ 11 px on a 1080-wide screen — visible from
+    // bed-overview zoom and large enough to mask inverted-hull artifacts
+    // (sharp-edge normal flips) when zoomed in close.
     private val OUTLINE_COLOR = floatArrayOf(1f, 0.65f, 0.1f, 1f)
-    private val OUTLINE_EXPAND_MM = 1.2f
+    private val OUTLINE_EXPAND_NDC = 0.020f
 
     // Per-instance colors from extruder slot assignments (RGBA 0..1). When set, each instance
     // is tinted with its assigned extruder color; single-color models use the first entry.
@@ -514,10 +518,10 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         camera.computeMVP(modelMatrix)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
-        // Expand width is in model space; we divide by the global scale so the
-        // visible thickness on screen stays roughly constant across scale changes.
-        val expand = OUTLINE_EXPAND_MM / maxOf(s[0], s[1], s[2], 0.0001f)
-        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), expand)
+        // Expand is in NDC; vertex shader handles screen-space projection
+        // and compensates for perspective divide. Visible thickness stays
+        // constant across zoom because the offset is post-MVP.
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), OUTLINE_EXPAND_NDC)
         GLES30.glUniform4fv(shader.getUniformLocation("u_OutlineColor"), 1, OUTLINE_COLOR, 0)
         // useVertexColor doesn't matter when u_OutlineExpand > 0 (fragment
         // shader bails out to u_OutlineColor) but set 0 defensively.
@@ -548,8 +552,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         camera.computeMVP(modelMatrix)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
-        val expand = OUTLINE_EXPAND_MM / maxOf(s[0], s[1], s[2], 0.0001f)
-        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), expand)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), OUTLINE_EXPAND_NDC)
         GLES30.glUniform4fv(shader.getUniformLocation("u_OutlineColor"), 1, OUTLINE_COLOR, 0)
         GLES30.glUniform1f(useVertexColorLoc, 0f)
         GLES30.glCullFace(GLES30.GL_FRONT)
@@ -578,8 +581,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         camera.computeMVP(modelMatrix)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
-        val expand = OUTLINE_EXPAND_MM / maxOf(s[0], s[1], s[2], 0.0001f)
-        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), expand)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), OUTLINE_EXPAND_NDC)
         GLES30.glUniform4fv(shader.getUniformLocation("u_OutlineColor"), 1, OUTLINE_COLOR, 0)
         GLES30.glUniform1f(useVertexColorLoc, 0f)
         GLES30.glCullFace(GLES30.GL_FRONT)

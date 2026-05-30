@@ -214,6 +214,82 @@ class NativeSplitOrientTest {
     }
 
     @Test
+    fun setVolumeExtruder_propagatesToNextPreviewMeshExtruderIndices() {
+        // Regression guard for the user-reported "I change a part's colour
+        // and the Prepare preview doesn't update" bug.
+        //
+        // Pipeline this test exercises:
+        //   nativeSetVolumeExtruder
+        //     → vol->config["extruder"] = slot
+        //     → setPreviewExtruderOverride(o, v, slot) keeps the static
+        //       `g_model_preview_extruders` cache in sync
+        //     → invalidatePreviewMeshCache() so the next mesh rebuild
+        //   getPreparePreviewMesh()
+        //     → rebuilds, per-triangle extruderIndices reflect the override
+        //
+        // Why this fixture: a single-volume STL with `compactPreviewIndices`
+        // collapses any unique extruder value to 0, so the mesh content
+        // wouldn't differentiate slot changes. Painted MMU files route
+        // state_idx>0 triangles independently of vol->extruder_id(), and a
+        // fully-painted volume has zero state_idx==0 triangles, so changing
+        // its slot also produces no visible mesh change.
+        //
+        // We therefore stack TWO STLs on the bed via `addModel`. Each is
+        // its own object with one volume. With both at slot 1, compaction
+        // produces only index 0. Switching obj 0 to slot 2 introduces a
+        // SECOND unique value → compacted distribution becomes {0, 1}. If
+        // the cache wasn't invalidated (the regression), the second call
+        // returns the byte-identical {0=N} mesh.
+        val benchy = copyAsset("3DBenchy.stl")
+        val cube = copyAsset("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(benchy))
+        assertTrue(lib.addModel(cube))
+        val objCount = lib.nativeGetObjectCount()
+        assertTrue("expected ≥2 objects after addModel, got $objCount", objCount >= 2)
+
+        // Force every volume of every object to slot 1.
+        for (o in 0 until objCount) {
+            val vc = lib.nativeGetVolumeCount(o)
+            for (v in 0 until vc) {
+                assertTrue(lib.nativeSetVolumeExtruder(o, v, 1))
+            }
+        }
+        val mesh1Bytes = lib.getPreparePreviewMesh()?.extruderIndices
+        assertNotNull("baseline preview mesh", mesh1Bytes)
+        val mesh1Unique = mesh1Bytes!!.map { it.toInt() and 0xFF }.toSet()
+        val mesh1Counts = mesh1Bytes.map { it.toInt() and 0xFF }
+            .groupingBy { it }.eachCount()
+
+        // Bump obj 0 vol 0 to slot 5 — now the model has two distinct slot
+        // values; compaction maps {0, 4} → {0, 1}.
+        assertTrue(lib.nativeSetVolumeExtruder(0, 0, 5))
+        assertEquals(5, lib.nativeGetVolumeExtruder(0, 0))
+
+        val mesh2Bytes = lib.getPreparePreviewMesh()?.extruderIndices
+        assertNotNull("post-change preview mesh", mesh2Bytes)
+        val mesh2Unique = mesh2Bytes!!.map { it.toInt() and 0xFF }.toSet()
+        val mesh2Counts = mesh2Bytes.map { it.toInt() and 0xFF }
+            .groupingBy { it }.eachCount()
+
+        // If the cache wasn't invalidated, mesh2 would equal mesh1 — both
+        // {0=N}. We assert that the unique set GAINED a new value.
+        assertNotEquals(
+            "after setVolumeExtruder(obj 0, vol 0, slot 5) the preview-mesh extruder-index " +
+                "distribution must change. Equal distribution means the preview-mesh cache " +
+                "wasn't invalidated and the user won't see the colour change — regression of " +
+                "the original 'colour change not visible in Prepare preview' bug.\n" +
+                "  mesh1 distribution: $mesh1Counts\n  mesh2 distribution: $mesh2Counts",
+            mesh1Counts, mesh2Counts,
+        )
+        assertTrue(
+            "mesh2 must have at least 2 distinct compacted extruder indices after the slot " +
+                "change. Got $mesh2Unique. This means the per-triangle indices weren't " +
+                "rebuilt with the new slot — preview wouldn't show the colour change.",
+            mesh2Unique.size >= 2,
+        )
+    }
+
+    @Test
     fun setVolumeExtruder_outOfRangeSlot_returnsFalse() {
         assertTrue(lib.loadModel(copyAsset("3DBenchy.stl")))
         assertFalse("slot 0 invalid (1-indexed)", lib.nativeSetVolumeExtruder(0, 0, 0))
