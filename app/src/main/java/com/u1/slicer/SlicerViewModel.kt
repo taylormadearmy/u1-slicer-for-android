@@ -4222,19 +4222,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 val sOk = native.nativeSetObjectScale(idx, p.scaleX, p.scaleY, p.scaleZ)
                                 if (rOk && sOk) replayedPoses++
                             }
-                            // Refresh per-object world AABB mins + sizes after replay so
-                            // the post-slice Prepare preview comes back with positions in
-                            // sync with the now-rebaked instance transforms.
+                            // Refresh sizes only — scaling changes per-object footprint,
+                            // and downstream `setObjectPositions(customObjectPositions)`
+                            // needs accurate sizes to place AABB-min corners correctly.
+                            //
+                            // Do NOT also overwrite customObjectPositions here from the
+                            // post-replay world mins — that would clobber the user's
+                            // chosen drag positions with the post-pose-replay native
+                            // positions, producing the user-reported "objects moved and
+                            // overlapped after slice" symptom. customObjectPositions
+                            // already holds the user's target AABB-min corners and the
+                            // upcoming setObjectPositions(custom) call honours them.
                             _objectBoundingBoxes.value = runCatching {
                                 native.getObjectBoundingBoxes()
                             }.getOrDefault(_objectBoundingBoxes.value)
-                            val worldMins = runCatching {
-                                native.nativeGetObjectWorldAABBMins()
-                            }.getOrDefault(floatArrayOf())
-                            if (worldMins.size / 2 == _objectBoundingBoxes.value.size / 3 && worldMins.size >= 2) {
-                                customObjectPositions = worldMins
-                                _multiObjectPositions.value = worldMins
-                            }
                             Log.i("SlicerVM", "F66: replayed $replayedPoses per-object pose(s) after re-embed")
                         }
 
