@@ -6,6 +6,13 @@ uniform mat4 u_NormalMatrix;
 uniform vec4 u_Color;
 uniform float u_UseVertexColor;
 
+// F66 — outline pass. When `u_OutlineExpand > 0` the vertex is pushed
+// outward along its model-space normal by that amount before the MVP
+// transform. Combined with front-face culling in the draw call this
+// produces a silhouette around the selected object — visible as a thin
+// outline / glow regardless of the object's surface colour.
+uniform float u_OutlineExpand;
+
 layout(location = 0) in vec3 a_Position;
 layout(location = 1) in vec3 a_Normal;
 layout(location = 2) in vec4 a_Color;
@@ -23,7 +30,11 @@ const float DIFFUSE_FRONT = 0.3;
 const float SPECULAR_TOP = 0.125;
 
 void main() {
-    gl_Position = u_MVPMatrix * vec4(a_Position, 1.0);
+    vec3 pos = a_Position;
+    if (u_OutlineExpand > 0.0) {
+        pos += normalize(a_Normal) * u_OutlineExpand;
+    }
+    gl_Position = u_MVPMatrix * vec4(pos, 1.0);
 
     vec3 normal = normalize((u_NormalMatrix * vec4(a_Normal, 0.0)).xyz);
 

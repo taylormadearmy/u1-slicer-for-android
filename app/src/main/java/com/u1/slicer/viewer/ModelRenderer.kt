@@ -46,6 +46,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private val modelColorDefault = floatArrayOf(0.91f, 0.48f, 0f, 1f)
     private val wipeTowerColor = floatArrayOf(1f, 0.76f, 0.03f, 0.7f)
 
+    // F66 — selection-outline silhouette colour + thickness (in world-space mm
+    // before global modelScale is applied; the per-pass divider compensates).
+    private val OUTLINE_COLOR = floatArrayOf(1f, 0.65f, 0.1f, 1f)
+    private val OUTLINE_EXPAND_MM = 1.2f
+
     // Per-instance colors from extruder slot assignments (RGBA 0..1). When set, each instance
     // is tinted with its assigned extruder color; single-color models use the first entry.
     @Volatile var instanceColors: List<FloatArray>? = null
@@ -278,9 +283,19 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                         val r = ranges[i]
                         val px = positions[i * 2]
                         val py = positions[i * 2 + 1]
-                        val highlighted = (highlightIndex == i)
                         val color = colors?.getOrNull(i) ?: colors?.getOrNull(0) ?: modelColorDefault
-                        drawObjectRange(mesh, r, px, py, highlighted, color)
+                        drawObjectRange(mesh, r, px, py, color)
+                    }
+                    // F66 — outline pass for the selected object. Drawn after
+                    // the normal passes so the silhouette sits on top of the
+                    // colour render. Uses front-face culling so only the
+                    // back-faces of the expanded mesh are visible — the
+                    // classic "inverted hull" outline technique.
+                    if (highlightIndex in ranges.indices) {
+                        val r = ranges[highlightIndex]
+                        val px = positions[highlightIndex * 2]
+                        val py = positions[highlightIndex * 2 + 1]
+                        drawObjectOutline(mesh, r, px, py)
                     }
                 } else {
                     // Fallback: no per-object ranges yet (pre-first fetch). Draw combined mesh
@@ -292,13 +307,20 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 for (i in 0 until count) {
                     val px = positions[i * 2]
                     val py = positions[i * 2 + 1]
-                    val highlighted = (highlightIndex == i)
                     val color = colors?.getOrNull(i) ?: colors?.getOrNull(0) ?: modelColorDefault
-                    drawModelAt(mesh, px, py, highlighted, color)
+                    drawModelAt(mesh, px, py, color)
+                }
+                // F66 — outline pass for the selected instance.
+                if (highlightIndex in 0 until count) {
+                    val px = positions[highlightIndex * 2]
+                    val py = positions[highlightIndex * 2 + 1]
+                    drawInstanceOutline(mesh, px, py)
                 }
             } else {
                 val color = colors?.getOrNull(0) ?: modelColorDefault
                 drawModel(mesh, color)
+                // F66 — single-mesh outline. highlightIndex 0 means the lone object.
+                if (highlightIndex == 0) drawSingleMeshOutline(mesh)
             }
         }
 
@@ -403,18 +425,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindVertexArray(0)
     }
 
-    private fun drawModelAt(mesh: MeshData, x: Float, y: Float, highlighted: Boolean,
+    private fun drawModelAt(mesh: MeshData, x: Float, y: Float,
                             baseColor: FloatArray = modelColorDefault) {
         val shader = modelShader ?: return
         shader.use()
 
         val modelMatrix = FloatArray(16)
         Matrix.setIdentityM(modelMatrix, 0)
-        // Position (x, y) is the scaled model's min corner on the bed.
-        // Transform order (applied right-to-left):
-        //   1. Center mesh at origin (-minX - halfW, -minY - halfH, -minZ)
-        //   2. Scale about origin
-        //   3. Translate so scaled min corner lands at (x, y, 0)
         val s = modelScale
         val halfW = (mesh.maxX - mesh.minX) / 2f
         val halfH = (mesh.maxY - mesh.minY) / 2f
@@ -426,19 +443,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         camera.computeMVP(modelMatrix)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
-
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, baseColor, 0)
         GLES30.glUniform1f(useVertexColorLoc, if (mesh.hasPerVertexColor) 1f else 0f)
-        // F66 — selection/drag highlight via the dedicated u_Highlight uniform.
-        // The fragment shader mixes the base colour toward this tint by alpha so
-        // the highlight remains visible on per-vertex-coloured meshes (3MF /
-        // painted / multi-extruder), where v_Color comes from a_Color and the
-        // previous u_Color override approach was a silent no-op.
-        if (highlighted) {
-            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 1f, 0.6f, 0.2f, 0.55f)
-        } else {
-            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
-        }
+        // F66 — selection highlight migrated from u_Highlight tint to a
+        // dedicated outline pass (see drawObjectOutline). Clear both
+        // uniforms so a stale value from a previous draw doesn't leak.
+        GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
 
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
@@ -447,7 +458,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     private fun drawObjectRange(
         mesh: MeshData, range: ObjectMeshRange,
-        x: Float, y: Float, highlighted: Boolean, baseColor: FloatArray
+        x: Float, y: Float, baseColor: FloatArray,
     ) {
         val shader = modelShader ?: return
         shader.use()
@@ -458,8 +469,6 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         val halfW = (range.maxX - range.minX) / 2f
         val halfH = (range.maxY - range.minY) / 2f
         val halfD = (range.maxZ - range.minZ) / 2f
-        // Same centering+reposition math as drawModelAt, using per-object range bounds.
-        // Net effect: the object's committed world position is removed and replaced with x,y.
         Matrix.translateM(modelMatrix, 0, x + halfW * s[0], y + halfH * s[1], halfD * s[2])
         Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
         Matrix.translateM(modelMatrix, 0, -range.minX - halfW, -range.minY - halfH, -range.minZ - halfD)
@@ -467,20 +476,118 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         camera.computeMVP(modelMatrix)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
         GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
-
         GLES30.glUniform4fv(shader.getUniformLocation("u_Color"), 1, baseColor, 0)
         GLES30.glUniform1f(useVertexColorLoc, if (mesh.hasPerVertexColor) 1f else 0f)
-        // F66 — see drawModelAt comment. Same u_Highlight path so multi-object
-        // F77 scenes get a visible selection too.
-        if (highlighted) {
-            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 1f, 0.6f, 0.2f, 0.55f)
-        } else {
-            GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
-        }
+        GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
 
         GLES30.glBindVertexArray(modelVAO)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, range.vertexStart, range.vertexCount)
         GLES30.glBindVertexArray(0)
+    }
+
+    /**
+     * F66 — selection outline via the classic "inverted hull" technique.
+     * Same model matrix as [drawObjectRange]; the vertex shader pushes
+     * each vertex outward by `u_OutlineExpand` along its model-space
+     * normal, and front-face culling means only the back-faces of the
+     * expanded mesh are visible — producing a thin silhouette around the
+     * object that's visible regardless of the surface colour.
+     */
+    private fun drawObjectOutline(
+        mesh: MeshData, range: ObjectMeshRange,
+        x: Float, y: Float,
+    ) {
+        val shader = modelShader ?: return
+        shader.use()
+
+        val modelMatrix = FloatArray(16)
+        Matrix.setIdentityM(modelMatrix, 0)
+        val s = modelScale
+        val halfW = (range.maxX - range.minX) / 2f
+        val halfH = (range.maxY - range.minY) / 2f
+        val halfD = (range.maxZ - range.minZ) / 2f
+        Matrix.translateM(modelMatrix, 0, x + halfW * s[0], y + halfH * s[1], halfD * s[2])
+        Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
+        Matrix.translateM(modelMatrix, 0, -range.minX - halfW, -range.minY - halfH, -range.minZ - halfD)
+
+        camera.computeMVP(modelMatrix)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
+        // Expand width is in model space; we divide by the global scale so the
+        // visible thickness on screen stays roughly constant across scale changes.
+        val expand = OUTLINE_EXPAND_MM / maxOf(s[0], s[1], s[2], 0.0001f)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), expand)
+        GLES30.glUniform4fv(shader.getUniformLocation("u_OutlineColor"), 1, OUTLINE_COLOR, 0)
+        // useVertexColor doesn't matter when u_OutlineExpand > 0 (fragment
+        // shader bails out to u_OutlineColor) but set 0 defensively.
+        GLES30.glUniform1f(useVertexColorLoc, 0f)
+
+        GLES30.glCullFace(GLES30.GL_FRONT)
+        GLES30.glBindVertexArray(modelVAO)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, range.vertexStart, range.vertexCount)
+        GLES30.glBindVertexArray(0)
+        GLES30.glCullFace(GLES30.GL_BACK)
+
+        // Clear so subsequent normal draws aren't affected.
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
+    }
+
+    private fun drawInstanceOutline(mesh: MeshData, x: Float, y: Float) {
+        val shader = modelShader ?: return
+        shader.use()
+        val modelMatrix = FloatArray(16)
+        Matrix.setIdentityM(modelMatrix, 0)
+        val s = modelScale
+        val halfW = (mesh.maxX - mesh.minX) / 2f
+        val halfH = (mesh.maxY - mesh.minY) / 2f
+        val halfD = (mesh.maxZ - mesh.minZ) / 2f
+        Matrix.translateM(modelMatrix, 0, x + halfW * s[0], y + halfH * s[1], halfD * s[2])
+        Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
+        Matrix.translateM(modelMatrix, 0, -mesh.minX - halfW, -mesh.minY - halfH, -mesh.minZ - halfD)
+        camera.computeMVP(modelMatrix)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
+        val expand = OUTLINE_EXPAND_MM / maxOf(s[0], s[1], s[2], 0.0001f)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), expand)
+        GLES30.glUniform4fv(shader.getUniformLocation("u_OutlineColor"), 1, OUTLINE_COLOR, 0)
+        GLES30.glUniform1f(useVertexColorLoc, 0f)
+        GLES30.glCullFace(GLES30.GL_FRONT)
+        GLES30.glBindVertexArray(modelVAO)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
+        GLES30.glBindVertexArray(0)
+        GLES30.glCullFace(GLES30.GL_BACK)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
+    }
+
+    private fun drawSingleMeshOutline(mesh: MeshData) {
+        val shader = modelShader ?: return
+        shader.use()
+        // drawModel uses identity (or just modelScale-centred) — mirror it.
+        val s = modelScale
+        val modelMatrix = FloatArray(16)
+        Matrix.setIdentityM(modelMatrix, 0)
+        if (s[0] != 1f || s[1] != 1f || s[2] != 1f) {
+            val cx = (mesh.minX + mesh.maxX) / 2f
+            val cy = (mesh.minY + mesh.maxY) / 2f
+            val cz = (mesh.minZ + mesh.maxZ) / 2f
+            Matrix.translateM(modelMatrix, 0, cx, cy, cz)
+            Matrix.scaleM(modelMatrix, 0, s[0], s[1], s[2])
+            Matrix.translateM(modelMatrix, 0, -cx, -cy, -cz)
+        }
+        camera.computeMVP(modelMatrix)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_MVPMatrix"), 1, false, camera.mvpMatrix, 0)
+        GLES30.glUniformMatrix4fv(shader.getUniformLocation("u_NormalMatrix"), 1, false, camera.normalMatrix, 0)
+        val expand = OUTLINE_EXPAND_MM / maxOf(s[0], s[1], s[2], 0.0001f)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), expand)
+        GLES30.glUniform4fv(shader.getUniformLocation("u_OutlineColor"), 1, OUTLINE_COLOR, 0)
+        GLES30.glUniform1f(useVertexColorLoc, 0f)
+        GLES30.glCullFace(GLES30.GL_FRONT)
+        GLES30.glBindVertexArray(modelVAO)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
+        GLES30.glBindVertexArray(0)
+        GLES30.glCullFace(GLES30.GL_BACK)
+        GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
     }
 
     private fun drawWipeTower(tower: WipeTowerInfo, highlighted: Boolean) {

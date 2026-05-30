@@ -1460,12 +1460,30 @@ fun PrepareScreen(
                                     )
                             }
                             val f66Selection by viewModel.selection.collectAsState()
+                            val f66Poses by viewModel.perObjectPoses.collectAsState()
+                            val f66LoadTimePoses by viewModel.loadTimePoses.collectAsState()
+                            val f66AnyRotationDirty = f66Poses.any { (k, v) ->
+                                val b = f66LoadTimePoses[k] ?: com.u1.slicer.data.PerObjectPose()
+                                v.rotXDeg != b.rotXDeg || v.rotYDeg != b.rotYDeg || v.rotZDeg != b.rotZDeg
+                            }
+                            val f66AnyScaleDirty = f66Poses.any { (k, v) ->
+                                val b = f66LoadTimePoses[k] ?: com.u1.slicer.data.PerObjectPose()
+                                v.scaleX != b.scaleX || v.scaleY != b.scaleY || v.scaleZ != b.scaleZ
+                            }
+                            val f66Scope = rememberCoroutineScope()
                             InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
                                 selectedObjectIndex = f66Selection.objectIndex,
                                 onObjectTapped = { idx -> viewModel.selectObject(idx) },
                                 onEmptyTap = { viewModel.deselect() },
+                                onAutoOrientAll = { f66Scope.launch { viewModel.autoOrientAll() } },
+                                onResetAllRotations = if (f66AnyRotationDirty) {
+                                    { viewModel.resetAllRotations() }
+                                } else null,
+                                onResetAllScales = if (f66AnyScaleDirty) {
+                                    { viewModel.resetAllScales() }
+                                } else null,
                                 onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
                                     onNavigateModelViewer else ({}),
                                 extruderColors = extruderColors,
@@ -3043,6 +3061,13 @@ fun InlineModelPreview(
     onObjectTapped: ((Int) -> Unit)? = null,
     // Tap on empty bed background: caller typically clears selection.
     onEmptyTap: (() -> Unit)? = null,
+    // F66 — bed-wide actions surfaced in the top-right overlay's 3-dot menu so
+    // they're discoverable without taking vertical space below the preview.
+    // Reset entries should be null when there's nothing to reset; the menu
+    // hides them entirely in that case.
+    onAutoOrientAll: (() -> Unit)? = null,
+    onResetAllRotations: (() -> Unit)? = null,
+    onResetAllScales: (() -> Unit)? = null,
 ) {
     // B49: initialize from ViewModel cache for instant reload on tab switch
     var mesh by remember { mutableStateOf(cachedMesh) }
@@ -3590,10 +3615,50 @@ fun InlineModelPreview(
                         )
                     }
                 }
-                if (onInfoClick != null) {
-                    IconButton(onClick = onInfoClick) {
-                        Icon(Icons.Default.Info, "Model info",
-                            tint = Color.White.copy(alpha = 0.8f))
+                // F66 — consolidated overflow menu: Model info + bed-wide
+                // actions (Auto-orient all, Reset all rotations/scales). Reset
+                // entries appear only when there's something to reset. The
+                // standalone Info icon was removed in favour of this menu so
+                // the overlay stays compact while keeping all actions one tap
+                // away.
+                if (onInfoClick != null || onAutoOrientAll != null
+                    || onResetAllRotations != null || onResetAllScales != null) {
+                    var menuOpen by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Default.MoreVert, "Actions",
+                                tint = Color.White.copy(alpha = 0.8f))
+                        }
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false },
+                        ) {
+                            if (onInfoClick != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Model info") },
+                                    leadingIcon = { Icon(Icons.Default.Info, null) },
+                                    onClick = { onInfoClick(); menuOpen = false },
+                                )
+                            }
+                            if (onAutoOrientAll != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Auto-orient all") },
+                                    onClick = { onAutoOrientAll(); menuOpen = false },
+                                )
+                            }
+                            if (onResetAllRotations != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Reset all rotations") },
+                                    onClick = { onResetAllRotations(); menuOpen = false },
+                                )
+                            }
+                            if (onResetAllScales != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Reset all scales") },
+                                    onClick = { onResetAllScales(); menuOpen = false },
+                                )
+                            }
+                        }
                     }
                 }
                 IconButton(onClick = onFullScreen) {

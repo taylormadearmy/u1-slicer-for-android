@@ -51,12 +51,15 @@ import kotlin.math.roundToInt
 
 /**
  * F66 — The Edit panel that appears beneath the inline 3D preview on the
- * Prepare screen. Has two visual states:
- *  - Nothing selected (default): bed-wide controls. Auto-Orient All + Reset
- *    all rotations/scales.
+ * Prepare screen.
+ *
+ *  - Nothing selected: panel is hidden entirely. Bed-wide actions
+ *    (Auto-orient all + Reset all) now live in the preview's top-right
+ *    overflow menu so they're accessible at all times without taking
+ *    vertical space below the preview.
  *  - Object selected: object-scoped controls. Auto-Orient (this object),
  *    Split to Objects, Split to Parts, Reset rotation/scale, Delete, plus
- *    the Parts panel when the selected object has >1 volume.
+ *    the unified ObjectFilamentPanel for whole-object + per-part colour.
  */
 @Composable
 fun EditPanel(
@@ -64,87 +67,15 @@ fun EditPanel(
     modifier: Modifier = Modifier,
 ) {
     val selection by viewModel.selection.collectAsState()
-    val poses by viewModel.perObjectPoses.collectAsState()
-    val loadTime by viewModel.loadTimePoses.collectAsState()
     val scope = rememberCoroutineScope()
 
-    val sel = selection.objectIndex
-    if (sel == null) {
-        BedWideEditSection(
-            anyRotationDirty = poses.any { (k, v) ->
-                val baseline = loadTime[k] ?: PerObjectPose()
-                v.rotXDeg != baseline.rotXDeg || v.rotYDeg != baseline.rotYDeg ||
-                    v.rotZDeg != baseline.rotZDeg
-            },
-            anyScaleDirty = poses.any { (k, v) ->
-                val baseline = loadTime[k] ?: PerObjectPose()
-                v.scaleX != baseline.scaleX || v.scaleY != baseline.scaleY ||
-                    v.scaleZ != baseline.scaleZ
-            },
-            onAutoOrientAll = { scope.launch { viewModel.autoOrientAll() } },
-            onResetAllRotations = { viewModel.resetAllRotations() },
-            onResetAllScales = { viewModel.resetAllScales() },
-            modifier = modifier,
-        )
-    } else {
-        ObjectScopedEditSection(
-            objIdx = sel,
-            viewModel = viewModel,
-            scope = scope,
-            modifier = modifier,
-        )
-    }
-}
-
-@Composable
-private fun BedWideEditSection(
-    anyRotationDirty: Boolean,
-    anyScaleDirty: Boolean,
-    onAutoOrientAll: () -> Unit,
-    onResetAllRotations: () -> Unit,
-    onResetAllScales: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    // Bed-wide actions are infrequent — "Auto-orient all" is a once-per-load
-    // affordance and the Reset buttons only appear post-edit. Collapse them
-    // into a single trailing 3-dot menu so the panel stays compact for the
-    // common "no selection, doing nothing" state, and so the Reset entries
-    // appear only when there's actually something to reset.
-    var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "Tap an object to edit",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            modifier = Modifier.weight(1f),
-        )
-        Box {
-            IconButton(onClick = { menuOpen = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = "Bed actions")
-            }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text("Auto-orient all") },
-                    onClick = { onAutoOrientAll(); menuOpen = false },
-                )
-                if (anyRotationDirty) {
-                    DropdownMenuItem(
-                        text = { Text("Reset all rotations") },
-                        onClick = { onResetAllRotations(); menuOpen = false },
-                    )
-                }
-                if (anyScaleDirty) {
-                    DropdownMenuItem(
-                        text = { Text("Reset all scales") },
-                        onClick = { onResetAllScales(); menuOpen = false },
-                    )
-                }
-            }
-        }
-    }
+    val sel = selection.objectIndex ?: return
+    ObjectScopedEditSection(
+        objIdx = sel,
+        viewModel = viewModel,
+        scope = scope,
+        modifier = modifier,
+    )
 }
 
 @Composable
