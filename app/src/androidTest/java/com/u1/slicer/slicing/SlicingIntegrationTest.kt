@@ -1353,4 +1353,55 @@ class SlicingIntegrationTest {
             )
         }
     }
+
+    // ─── F66 E2E: per-volume slot override reaches sliced G-code ──────────────
+    // Agent 4's P0 #1 — without this, the whole F66 value proposition (paint a
+    // part to E3 and have it print on E3) is unguarded by tests. A regression in
+    // the embed re-embed replay or the JNI passthrough would silently drop the
+    // user's per-part colour from the printed output.
+    @Test
+    fun f66_setVolumeExtruder_producesPerVolumeToolChangesInSlicedGcode() {
+        // Button-for-S-trousers is the canonical multi-volume Bambu fixture
+        // (~40 volumes; vol->extruder_id() drives slicing per-part).
+        val file = asset("Button-for-S-trousers.3mf")
+        assertTrue("Button-for-S-trousers should load", lib.loadModel(file.absolutePath))
+
+        val objCount = lib.nativeGetObjectCount()
+        assertTrue("Button fixture must have ≥1 object, got $objCount", objCount >= 1)
+        val volCount0 = lib.nativeGetVolumeCount(0)
+        assertTrue("Button object 0 must have ≥2 volumes, got $volCount0", volCount0 >= 2)
+
+        // Normalise every volume to slot 1 so baseline tool usage is dominated
+        // by T0 (slot-1 == extruder index 0 in 0-indexed G-code tool ids).
+        for (o in 0 until objCount) {
+            val vc = lib.nativeGetVolumeCount(o)
+            for (v in 0 until vc) {
+                assertTrue(
+                    "nativeSetVolumeExtruder($o, $v, 1) should succeed",
+                    lib.nativeSetVolumeExtruder(o, v, 1),
+                )
+            }
+        }
+        // Re-assign volume 0 of object 0 to slot 3 — this is what the user
+        // sees as "paint Part 1 with the slot-3 colour" in the Parts panel.
+        assertTrue(lib.nativeSetVolumeExtruder(0, 0, 3))
+        assertEquals(3, lib.nativeGetVolumeExtruder(0, 0))
+
+        // Slice with 4 extruders so the engine actually emits tool changes.
+        val multiExtCfg = DEFAULT_CONFIG.copy(extruderCount = 4)
+        val result = lib.slice(multiExtCfg)
+        assertNotNull("Slice should not be null", result)
+        assertTrue("Slice should succeed", result!!.success)
+        val gcode = File(result.gcodePath).readText()
+        assertTrue("G-code must be non-empty", gcode.isNotEmpty())
+
+        // Count tool occurrences. Slot 3 → T2 (0-indexed).
+        val t2Count = gcode.lineSequence().count { it.trim() == "T2" }
+        assertTrue(
+            "After setVolumeExtruder(obj 0, vol 0, slot 3) the sliced G-code must " +
+                "contain at least one `T2` tool change line — proves the per-part " +
+                "extruder assignment reaches the slicer engine. Found T2=$t2Count.",
+            t2Count > 0,
+        )
+    }
 }
