@@ -330,8 +330,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         // Draw wipe tower
         wipeTower?.let { tower ->
-            val highlighted = instancePositions != null &&
-                    highlightIndex == (instancePositions!!.size / 2)
+            // F66 review-2026-05-30 P0: capture @Volatile instancePositions once
+            // so the !!.size read can't NPE if the UI thread nulls it between
+            // the null-check and the size read.
+            val pos = instancePositions
+            val highlighted = pos != null && highlightIndex == (pos.size / 2)
             drawWipeTower(tower, highlighted)
         }
 

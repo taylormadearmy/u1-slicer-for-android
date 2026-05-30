@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.u1.slicer.data.PerObjectPose
 import com.u1.slicer.data.SessionState
 import com.u1.slicer.data.SessionStateRepository
 import com.u1.slicer.data.SliceJob
@@ -242,6 +243,77 @@ class SessionResumeIntegrationTest {
         // the test would fail. We just confirm the offer is null.
         kotlinx.coroutines.delay(100)
         assertNull(vm.sessionResumeOffer.value)
+    }
+
+    // F66 review-2026-05-30: gap #4 — F89 resume must restore selection,
+    // per-object poses, per-volume extruders, and split-ops in addition to the
+    // basic SessionState fields. The JSON round-trip is unit-tested, but the
+    // DataStore → ViewModel-restore path for F66 fields has had no coverage
+    // before this — a silent regression in restoreSession would only surface
+    // on user-visible "I rotated and saved but resume forgot the rotation".
+    @Test
+    fun acceptSessionResume_withF66State_restoresSelectionPosesSplitsAndVolumeOverrides() = runBlocking {
+        // Use 3DBenchy (single-object STL) so the resume path doesn't pause
+        // on the multi-plate selector — we only want to verify F66 state.
+        val asset = copyAssetToCache("3DBenchy.stl")
+        // Persist a session with non-default F66 state. Note: split ops are
+        // intentionally empty here because splitObject on Benchy is a no-op
+        // (single-island) and we don't want the replay to fail silently. The
+        // other F66 fields (selection, pose, slot override) exercise the
+        // restoreSession F66 block end-to-end.
+        repo.write(
+            SessionState(
+                modelName = "3DBenchy.stl",
+                rawInputPath = asset.absolutePath,
+                sourceModelPath = null, currentModelPath = null, multiPlateSourcePath = null,
+                selectedPlateId = null,
+                modelScale = Triple(1f, 1f, 1f),
+                modelRotation = Triple(0f, 0f, 0f),
+                copyCount = 1,
+                customObjectPositions = null, customWipeTowerPos = null,
+                additionalFiles = emptyList(),
+                selectedObjectIndex = 0,
+                selectedVolumeIndex = null,
+                perObjectPoses = mapOf(
+                    0 to PerObjectPose(rotXDeg = 0f, rotYDeg = 0f, rotZDeg = 45f,
+                                       scaleX = 1.25f, scaleY = 1.25f, scaleZ = 1.25f)
+                ),
+                perVolumeExtruders = mapOf("0:0" to 3),
+                splitObjectOperations = emptyList(),
+                splitVolumeOperations = emptyList(),
+                sliceJobId = null,
+                wasSliceComplete = false,
+                savedAtEpochMs = System.currentTimeMillis(),
+                appVersionCode = 310,
+            )
+        )
+
+        val vm = SlicerViewModel(app)
+        withTimeoutOrNull(5_000) { vm.sessionResumeOffer.first { it != null } }
+        vm.acceptSessionResume()
+
+        // Wait for restore completion (state hits ModelLoaded).
+        withTimeoutOrNull(60_000) {
+            vm.state.first { it is SlicerViewModel.SlicerState.ModelLoaded }
+        }
+        // Allow a few extra ticks for the F66 replay block to run.
+        delay(500)
+
+        // Selection
+        assertEquals(
+            "selectedObjectIndex must restore from SessionState — without this, resume drops to bed-wide mode unexpectedly",
+            0, vm.selection.value.objectIndex,
+        )
+        // Per-object pose
+        val pose = vm.perObjectPoses.value[0]
+        assertNotNull("perObjectPoses[0] must restore from SessionState", pose)
+        assertEquals("rotZ", 45f, pose!!.rotZDeg, 0.5f)
+        assertEquals("scaleX", 1.25f, pose.scaleX, 0.01f)
+        // Per-volume extruder
+        assertEquals(
+            "perVolumeExtruders 0:0 must restore from SessionState",
+            3, vm.perVolumeExtruders.value["0:0"],
+        )
     }
 
     @Test

@@ -19,6 +19,9 @@ extern void invalidatePreviewMeshCache();
 extern void setPreviewExtruderOverride(int objIdx, int volIdx, int slot);
 extern std::vector<Slic3r::Vec3d>& getRotationBasePositions();
 extern std::vector<Slic3r::Vec3d>& getRotationBaseRotations();
+extern void onSplitObjectReshape(int objIdx, int newCount, int newVolumeCount);
+extern void onSplitVolumeReshape(int objIdx, int newVolumeCount);
+extern void resetRotationBases();
 
 // Per-instance scaling factors snapshotted the first time setModelScale() is called
 // after a model load. See setModelScale() and resetLoadTimeScaleFactors() for details.
@@ -586,6 +589,14 @@ std::optional<SlicerEngine::SplitResult> SlicerEngine::splitObject(int objIdx) {
     model.objects.insert(model.objects.begin() + objIdx,
                         tail_ptrs.begin(), tail_ptrs.end());
 
+    // F66 review-2026-05-30 P0: keep the preview-extruder override cache in
+    // step with the new object layout, and discard any positional-by-instance
+    // snapshots that referenced the pre-split enumeration.
+    const int new_vol_count = tail_ptrs.empty() || tail_ptrs[0] == nullptr
+        ? 0 : (int)tail_ptrs[0]->volumes.size();
+    onSplitObjectReshape(objIdx, (int)added, new_vol_count);
+    resetLoadTimeScaleFactors();
+    resetRotationBases();
     invalidatePreviewMeshCache();
     SAPIL_LOGI("splitObject: split %d into %d new objects", objIdx, (int)added);
     return SplitResult{objIdx, (int)added};
@@ -596,6 +607,10 @@ int SlicerEngine::splitVolume(int objIdx, int volIdx) {
     auto* obj = getGlobalModel().objects[objIdx];
     constexpr unsigned MAX_EXTRUDERS = 4; // U1 hardware limit
     obj->volumes[volIdx]->split(MAX_EXTRUDERS);
+    // F66 review-2026-05-30 P0: keep the override cache + base snapshots in sync.
+    onSplitVolumeReshape(objIdx, (int)obj->volumes.size());
+    resetLoadTimeScaleFactors();
+    resetRotationBases();
     invalidatePreviewMeshCache();
     return (int)obj->volumes.size();
 }
@@ -612,6 +627,10 @@ std::optional<std::array<double, 3>> SlicerEngine::autoOrientObject(int objIdx) 
     }
     obj->invalidate_bounding_box();
     Slic3r::Vec3d rot = obj->instances[0]->get_rotation();
+    // F66 review-2026-05-30 P1: orient mutates per-instance rotation; if any
+    // user later calls global setModelRotation it must re-snapshot against
+    // the new orientation, not stack on the pre-orient base.
+    resetRotationBases();
     invalidatePreviewMeshCache();
     return std::array<double, 3>{rot.x(), rot.y(), rot.z()};
 }
@@ -629,7 +648,11 @@ int SlicerEngine::autoOrientAll() {
             // skip degenerate objects
         }
     }
-    if (succeeded > 0) invalidatePreviewMeshCache();
+    if (succeeded > 0) {
+        // F66 review-2026-05-30 P1: orient mutated per-instance rotations.
+        resetRotationBases();
+        invalidatePreviewMeshCache();
+    }
     return succeeded;
 }
 
@@ -641,6 +664,10 @@ bool SlicerEngine::setObjectRotation(int objIdx, float rxDeg, float ryDeg, float
     obj->instances[0]->set_rotation(Slic3r::Vec3d(
         rxDeg * DEG2RAD, ryDeg * DEG2RAD, rzDeg * DEG2RAD));
     obj->invalidate_bounding_box();
+    // F66 review-2026-05-30 P1: per-object rotation invalidates the global
+    // rotation-base snapshot — without this, a later setModelRotation would
+    // stack on a stale base, throwing the per-object pose away.
+    resetRotationBases();
     invalidatePreviewMeshCache();
     return true;
 }
@@ -664,6 +691,10 @@ bool SlicerEngine::setObjectScale(int objIdx, float sx, float sy, float sz) {
     if (obj->instances.empty()) return false;
     obj->instances[0]->set_scaling_factor(Slic3r::Vec3d(sx, sy, sz));
     obj->invalidate_bounding_box();
+    // F66 review-2026-05-30 P1: per-object scale invalidates the load-time
+    // scale snapshot. setModelScale walks instances against this baseline;
+    // leaving stale data multiplies the per-object scale incorrectly.
+    resetLoadTimeScaleFactors();
     invalidatePreviewMeshCache();
     return true;
 }

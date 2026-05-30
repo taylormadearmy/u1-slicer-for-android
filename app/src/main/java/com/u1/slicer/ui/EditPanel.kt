@@ -121,8 +121,8 @@ private fun ObjectScopedEditSection(
         }
 
         // Per-object Scale + Rotation in the same Card+Tabs shape as the
-        // bed-wide ScaleSection (MainActivity.kt:4256). Two tabs for visual
-        // parity; no Copies tab because copies are a whole-model concept.
+        // bed-wide ScaleSection in MainActivity. Two tabs for visual parity;
+        // no Copies tab because copies are a whole-model concept.
         ObjectTransformCard(objIdx = objIdx, viewModel = viewModel, pose = pose)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -137,14 +137,20 @@ private fun ObjectScopedEditSection(
             ) { Text("Split to Objects") }
         }
         if (volumeCount > 1) {
+            // F66 review-2026-05-30 P1: gate the button on whether ANY volume
+            // is splittable. Previously a click with no splittable volumes was
+            // a silent no-op — confusing UX.
+            val anyVolumeSplittable = remember(objIdx, volumeCount) {
+                (0 until volumeCount).any { viewModel.isVolumeSplittable(objIdx, it) }
+            }
             FilledTonalButton(
                 onClick = {
-                    // Split the first splittable volume in this object. If none, no-op.
                     val firstSplittable = (0 until volumeCount).firstOrNull {
                         viewModel.isVolumeSplittable(objIdx, it)
                     }
                     if (firstSplittable != null) viewModel.splitVolume(objIdx, firstSplittable)
                 },
+                enabled = anyVolumeSplittable,
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Split to Parts") }
         }

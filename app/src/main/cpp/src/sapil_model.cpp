@@ -655,6 +655,52 @@ void setPreviewExtruderOverride(int objIdx, int volIdx, int slot) {
     vols[volIdx] = slot;
 }
 
+// F66 review (review-2026-05-30 P0) — the preview-extruder override cache is
+// indexed positionally by object/volume, so any operation that adds/removes
+// objects or volumes must keep it in sync or the next preview build pulls
+// stale overrides from a different object.
+//
+// Called by splitObject after `model.objects` was mutated: erase the old slot
+// and insert `newCount` empty inner vectors at the same position so subsequent
+// `setPreviewExtruderOverride(objIdx + k, ...)` lands on a freshly-allocated
+// vector (no file-declared override carry-over).
+void onSplitObjectReshape(int objIdx, int newCount, int newVolumeCount) {
+    if (objIdx < 0) return;
+    if (objIdx < (int)g_model_preview_extruders.size()) {
+        g_model_preview_extruders.erase(g_model_preview_extruders.begin() + objIdx);
+    }
+    if (newCount <= 0) return;
+    const std::vector<int> empty_vols(newVolumeCount > 0 ? newVolumeCount : 0, 0);
+    g_model_preview_extruders.insert(
+        g_model_preview_extruders.begin() + std::min(objIdx, (int)g_model_preview_extruders.size()),
+        newCount, empty_vols);
+}
+
+// Called by splitVolume after `obj->volumes.size()` grew: resize the inner
+// vector to match so subsequent setPreviewExtruderOverride(..., volIdx, ...)
+// for the new volumes lands on a real slot.
+void onSplitVolumeReshape(int objIdx, int newVolumeCount) {
+    if (objIdx < 0 || objIdx >= (int)g_model_preview_extruders.size()) return;
+    if (newVolumeCount < 0) newVolumeCount = 0;
+    g_model_preview_extruders[objIdx].resize(newVolumeCount, 0);
+}
+
+// F66 review (review-2026-05-30 P0/P1) — explicit reset hooks for the
+// load-time scale + rotation-base snapshots. These are positional-by-instance
+// (or positional-by-object for rotation bases) and must be discarded whenever
+// the object/instance enumeration shifts — splitObject, splitVolume,
+// autoOrient (changes instance rotation), per-object setObjectRotation/Scale.
+//
+// Wrapper exists in sapil_arrange.cpp via the existing extern resetLastRotation
+// + resetLoadTimeScaleFactors; this helper also drops the rotation base
+// vectors so the next global setModelRotation re-snapshots against the
+// current state instead of stacking on a pre-split/pre-orient baseline.
+void resetRotationBases() {
+    g_rotation_base_positions.clear();
+    g_rotation_base_rotations.clear();
+    { extern void resetLastRotation(); resetLastRotation(); }
+}
+
 void SlicerEngine::cancelPreviewMesh() {
     g_preview_cancel.store(true, std::memory_order_release);
     SAPIL_LOGI("cancelPreviewMesh: signalled cancellation");

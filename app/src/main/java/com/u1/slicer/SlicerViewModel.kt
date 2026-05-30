@@ -749,6 +749,46 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * F66 review-2026-05-30 P0 — extend the load-time snapshot to cover newly
+     * added objects without clobbering existing baselines or user-applied
+     * poses. Called by [doAddFile] / [splitObject] / [splitVolume] so file-B
+     * objects (or new split pieces) get a Reset baseline + an mm-mode bbox
+     * reference without losing file-A's user-applied rotation/scale.
+     *
+     * Object indices NOT already in `_loadTimePoses` are treated as new and
+     * snapshotted from native. The full bounding-box array is always
+     * republished — its size must match `nativeGetObjectCount()`.
+     */
+    fun extendLoadTimePosesForNewObjects() {
+        val n = native.nativeGetObjectCount()
+        val existing = _loadTimePoses.value
+        if (existing.size >= n) {
+            // Bbox might still be stale (e.g. a split changed object count
+            // without growing it). Refresh defensively.
+            _loadTimeObjectBoundingBoxes.value = runCatching { native.getObjectBoundingBoxes() }
+                .getOrDefault(floatArrayOf())
+            return
+        }
+        val merged = HashMap<Int, PerObjectPose>(existing)
+        for (i in 0 until n) {
+            if (existing.containsKey(i)) continue
+            val r = native.nativeGetObjectRotation(i)
+            val s = native.nativeGetObjectScale(i)
+            merged[i] = PerObjectPose(r[0], r[1], r[2], s[0], s[1], s[2])
+        }
+        _loadTimePoses.value = merged
+        // Preserve any user-applied poses from existing entries; new entries
+        // also get a default-equals-load-time pose seeded into _perObjectPoses.
+        val mergedPer = HashMap<Int, PerObjectPose>(_perObjectPoses.value)
+        for ((idx, pose) in merged) {
+            if (!mergedPer.containsKey(idx)) mergedPer[idx] = pose
+        }
+        _perObjectPoses.value = mergedPer
+        _loadTimeObjectBoundingBoxes.value = runCatching { native.getObjectBoundingBoxes() }
+            .getOrDefault(floatArrayOf())
+    }
+
+    /**
      * F66 — if the freshly-loaded model contains more than one native ModelObject,
      * promote to multi-object mode so the user can tap-select / drag / split each
      * one individually from the moment the file appears on the bed.
@@ -920,6 +960,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         _loadTimePoses.value = poses
         _perObjectPoses.value = current
+        // F66 review-2026-05-30 P1: also refresh the load-time bounding-box
+        // reference so the ObjectScale mm-mode display has a non-zero "100%"
+        // figure for the new pieces. Without this, ScaleAxisRow's mm column
+        // shows blank for any post-split object.
+        _loadTimeObjectBoundingBoxes.value = runCatching { native.getObjectBoundingBoxes() }
+            .getOrDefault(floatArrayOf())
         _selection.value = _selection.value.onSplit(removedIdx, addedCount).withObject(removedIdx)
         _splitObjectOps.value = _splitObjectOps.value + removedIdx
 
@@ -967,17 +1013,38 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     suspend fun autoOrientObject(objIdx: Int) {
         val ctx = beginLongOp("Auto-orienting object")
         try {
+            var didOrient = false
             withContext(Dispatchers.IO) {
                 val euler = native.nativeAutoOrientObject(objIdx) ?: return@withContext
+                didOrient = true
                 val r = native.nativeGetObjectRotation(objIdx)
                 _perObjectPoses.update { it + (objIdx to (it[objIdx] ?: PerObjectPose())
                     .copy(rotXDeg = r[0], rotYDeg = r[1], rotZDeg = r[2])) }
             }
-            _sliceStale.value = true
-            invalidatePrepareMeshCache()
+            if (didOrient) {
+                _sliceStale.value = true
+                invalidatePrepareMeshCache()
+            } else {
+                // F66 review-2026-05-30 P1: surface a toast so the user knows
+                // the tap was acknowledged. Native returns null for flat or
+                // degenerate meshes the orienter rejects.
+                _toastEvents.tryEmit("Auto-orient didn't find a better orientation for this object")
+            }
         } finally {
             endLongOp(ctx)
         }
+    }
+
+    /**
+     * F66 review-2026-05-30 (MapAndPrintScopeRegression follow-on): fire-and-
+     * forget wrapper around [autoOrientAll] so the UI doesn't need to allocate
+     * a `rememberCoroutineScope` inside the Prepare-tab body. Production held
+     * the only `rememberCoroutineScope()` outside the Map & Print dialog gate
+     * (sendActionScope, line 521 of MainActivity); any other scope allocation
+     * past the gate is at risk if a future refactor moves the gate down.
+     */
+    fun launchAutoOrientAll() {
+        viewModelScope.launch { autoOrientAll() }
     }
 
     suspend fun autoOrientAll() {
@@ -2472,6 +2539,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (!addOk) return
         val publishPositions = customObjectPositions
         if (publishPositions != null) _multiObjectPositions.value = publishPositions
+        // F66 review-2026-05-30 P0: file-B's new objects had no entry in
+        // _loadTimePoses or _loadTimeObjectBoundingBoxes, so resetObjectRotation/
+        // Scale silently no-op'd on them and ObjectScaleControl's mm-mode
+        // reference fell back to zero. The extend variant adds baselines for
+        // the new indices without clobbering file-A's user-applied poses.
+        extendLoadTimePosesForNewObjects()
         _modelAddVersion.value++
         markSessionDirty()
         val objectCount = _objectBoundingBoxes.value.size / 3
@@ -4161,87 +4234,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         profileNeedsReEmbed = false
 
-                        // F66 — replay any pending split-to-objects/parts ops.
-                        // The clearModel() + loadModel() above wiped the in-memory
-                        // post-split state; without replay, slicing would use the
-                        // original 1-object layout, the slice output would be wrong,
-                        // and the Prepare preview would jump back to the pre-split
-                        // model the next time the cache refetched. We hold the ops
-                        // in _splitObjectOps / _splitVolumeOps for exactly this case.
-                        if (_splitObjectOps.value.isNotEmpty() || _splitVolumeOps.value.isNotEmpty()) {
-                            for (idx in _splitObjectOps.value) {
-                                native.nativeSplitObject(idx)
-                            }
-                            for (entry in _splitVolumeOps.value) {
-                                val parts = entry.split(":")
-                                if (parts.size == 2) {
-                                    val o = parts[0].toIntOrNull()
-                                    val v = parts[1].toIntOrNull()
-                                    if (o != null && v != null) native.nativeSplitVolume(o, v)
-                                }
-                            }
-                            // Refresh bounding boxes after splits — the per-object
-                            // size cache feeds the renderer's drag clamps.
-                            _objectBoundingBoxes.value = runCatching {
-                                native.getObjectBoundingBoxes()
-                            }.getOrDefault(floatArrayOf())
-                            Log.i("SlicerVM", "F66: replayed ${_splitObjectOps.value.size} object split(s) " +
-                                "+ ${_splitVolumeOps.value.size} volume split(s) after re-embed")
-                        }
-                        // F66 — replay per-volume extruder overrides. Same logic as
-                        // splits: clearModel+loadModel wiped the in-memory `vol->config
-                        // ["extruder"]` overrides, so without replay the slice falls
-                        // back to the file's declared per-volume extruders and the
-                        // user's Parts-panel colour changes have no effect on the
-                        // sliced G-code.
-                        if (_perVolumeExtruders.value.isNotEmpty()) {
-                            var replayedCount = 0
-                            for ((key, slot) in _perVolumeExtruders.value) {
-                                val parts = key.split(":")
-                                if (parts.size == 2) {
-                                    val o = parts[0].toIntOrNull()
-                                    val v = parts[1].toIntOrNull()
-                                    if (o != null && v != null) {
-                                        if (native.nativeSetVolumeExtruder(o, v, slot)) replayedCount++
-                                    }
-                                }
-                            }
-                            Log.i("SlicerVM", "F66: replayed $replayedCount per-volume extruder override(s) after re-embed")
-                        }
-                        // F66 — replay per-object rotation + scale. The clearModel+
-                        // loadModel wiped `instance[0]->set_rotation` / `set_scaling_factor`
-                        // overrides on every object; without replay the slice runs
-                        // with each object's file-declared identity rotation/scale
-                        // and the user's per-object dial changes are lost in the
-                        // G-code output (visible-on-Prepare-but-wrong-on-Preview).
-                        if (_perObjectPoses.value.isNotEmpty()) {
-                            var replayedPoses = 0
-                            for ((idx, p) in _perObjectPoses.value) {
-                                if (idx < 0 || idx >= native.nativeGetObjectCount()) continue
-                                val rOk = native.nativeSetObjectRotation(idx, p.rotXDeg, p.rotYDeg, p.rotZDeg)
-                                val sOk = native.nativeSetObjectScale(idx, p.scaleX, p.scaleY, p.scaleZ)
-                                if (rOk && sOk) replayedPoses++
-                            }
-                            // Refresh sizes only — scaling changes per-object footprint,
-                            // and downstream `setObjectPositions(customObjectPositions)`
-                            // needs accurate sizes to place AABB-min corners correctly.
-                            //
-                            // Do NOT also overwrite customObjectPositions here from the
-                            // post-replay world mins — that would clobber the user's
-                            // chosen drag positions with the post-pose-replay native
-                            // positions, producing the user-reported "objects moved and
-                            // overlapped after slice" symptom. customObjectPositions
-                            // already holds the user's target AABB-min corners and the
-                            // upcoming setObjectPositions(custom) call honours them.
-                            _objectBoundingBoxes.value = runCatching {
-                                native.getObjectBoundingBoxes()
-                            }.getOrDefault(_objectBoundingBoxes.value)
-                            Log.i("SlicerVM", "F66: replayed $replayedPoses per-object pose(s) after re-embed")
-                        }
+                        // F66 review-2026-05-30 P0 — replay order MUST be:
+                        //   1. Re-add additional files (so the object index space
+                        //      matches what the user saw when they performed
+                        //      splits / per-object poses / per-volume overrides).
+                        //   2. Replay splits (indices match user-action layout).
+                        //   3. Replay per-volume extruders (uses post-split vol IDs).
+                        //   4. Replay per-object poses (uses post-split obj IDs).
+                        // The previous order replayed splits BEFORE re-adding files,
+                        // so a split recorded against a file-B object (index >=
+                        // n_primary at user-action time) would be out-of-range
+                        // and silently no-op, leaving the user's bed missing the
+                        // split they performed.
 
-                        // Re-add any extra files that were on the bed before the embed reload
-                        // cleared the native model. Without this, Combo 1/3 (3MF primary with
-                        // extruderCount > 1) would fail at setObjectPositions with a count mismatch.
+                        // Step 1: Re-add any extra files that were on the bed before
+                        // the embed reload cleared the native model. Without this,
+                        // Combo 1/3 (3MF primary with extruderCount > 1) would fail
+                        // at setObjectPositions with a count mismatch.
                         if (hasMultipleDistinctObjectsVar && additionalModelFiles.isNotEmpty()) {
                             var allReAddOk = true
                             NativeLibrary.previewMutex.withLock {
@@ -4269,6 +4278,81 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 )
                                 return@launch
                             }
+                        }
+
+                        // Step 2: replay any pending split-to-objects/parts ops.
+                        // The clearModel() + loadModel() above wiped the in-memory
+                        // post-split state; without replay, slicing would use the
+                        // original layout and the user's split would be lost.
+                        if (_splitObjectOps.value.isNotEmpty() || _splitVolumeOps.value.isNotEmpty()) {
+                            for (idx in _splitObjectOps.value) {
+                                native.nativeSplitObject(idx)
+                            }
+                            for (entry in _splitVolumeOps.value) {
+                                val parts = entry.split(":")
+                                if (parts.size == 2) {
+                                    val o = parts[0].toIntOrNull()
+                                    val v = parts[1].toIntOrNull()
+                                    if (o != null && v != null) native.nativeSplitVolume(o, v)
+                                }
+                            }
+                            // Refresh bounding boxes after splits — the per-object
+                            // size cache feeds the renderer's drag clamps.
+                            _objectBoundingBoxes.value = runCatching {
+                                native.getObjectBoundingBoxes()
+                            }.getOrDefault(floatArrayOf())
+                            Log.i("SlicerVM", "F66: replayed ${_splitObjectOps.value.size} object split(s) " +
+                                "+ ${_splitVolumeOps.value.size} volume split(s) after re-embed")
+                        }
+
+                        // Step 3: replay per-volume extruder overrides. The
+                        // clearModel+loadModel wiped the in-memory vol->config
+                        // ["extruder"] overrides; without replay the slice falls
+                        // back to file-declared per-volume extruders and the
+                        // user's Parts-panel colour changes have no effect on the
+                        // sliced G-code.
+                        if (_perVolumeExtruders.value.isNotEmpty()) {
+                            var replayedCount = 0
+                            for ((key, slot) in _perVolumeExtruders.value) {
+                                val parts = key.split(":")
+                                if (parts.size == 2) {
+                                    val o = parts[0].toIntOrNull()
+                                    val v = parts[1].toIntOrNull()
+                                    if (o != null && v != null) {
+                                        if (native.nativeSetVolumeExtruder(o, v, slot)) replayedCount++
+                                    }
+                                }
+                            }
+                            Log.i("SlicerVM", "F66: replayed $replayedCount per-volume extruder override(s) after re-embed")
+                        }
+
+                        // Step 4: replay per-object rotation + scale. The
+                        // clearModel+loadModel wiped instance[0]->set_rotation /
+                        // set_scaling_factor overrides on every object; without
+                        // replay the slice runs with file-declared identity
+                        // rotation/scale and the user's per-object dial changes
+                        // are lost in the G-code output.
+                        if (_perObjectPoses.value.isNotEmpty()) {
+                            var replayedPoses = 0
+                            for ((idx, p) in _perObjectPoses.value) {
+                                if (idx < 0 || idx >= native.nativeGetObjectCount()) continue
+                                val rOk = native.nativeSetObjectRotation(idx, p.rotXDeg, p.rotYDeg, p.rotZDeg)
+                                val sOk = native.nativeSetObjectScale(idx, p.scaleX, p.scaleY, p.scaleZ)
+                                if (rOk && sOk) replayedPoses++
+                            }
+                            // Refresh sizes only — scaling changes per-object footprint,
+                            // and downstream setObjectPositions(customObjectPositions)
+                            // needs accurate sizes to place AABB-min corners correctly.
+                            //
+                            // Do NOT also overwrite customObjectPositions here from
+                            // the post-replay world mins — that would clobber the
+                            // user's chosen drag positions with the post-pose-replay
+                            // native positions, producing the user-reported "objects
+                            // moved and overlapped after slice" symptom.
+                            _objectBoundingBoxes.value = runCatching {
+                                native.getObjectBoundingBoxes()
+                            }.getOrDefault(_objectBoundingBoxes.value)
+                            Log.i("SlicerVM", "F66: replayed $replayedPoses per-object pose(s) after re-embed")
                         }
                     }
                 }
@@ -5769,8 +5853,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             else addModelFromFile(f)
             if (!awaitLoadCompletion()) return
         }
-        // 4. Scale / rotation / copies. These reset customObjectPositions, so they
-        //    MUST come before applyPlacementPositions in step 5.
+        // 4. Scale / rotation / copies. These reset customObjectPositions —
+        //    OK because we apply placement positions AFTER all F66 replays
+        //    (per-object pose replay also clobbers customObjectPositions via
+        //    refreshObjectGeometryAfterPoseChange).
         setModelScale(ModelScale(
             saved.modelScale.first, saved.modelScale.second, saved.modelScale.third
         ))
@@ -5778,16 +5864,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             saved.modelRotation.first, saved.modelRotation.second, saved.modelRotation.third
         ))
         setCopyCount(saved.copyCount)
-        // 5. Custom placement — must be last because every other mutator resets it.
-        val positions = saved.customObjectPositions
-        val tower = saved.customWipeTowerPos
-        if (positions != null && tower != null) {
-            applyPlacementPositions(positions, tower)
-        }
-        // ---- F66 restore ----
+        // ---- F66 restore (review-2026-05-30 P0 — runs BEFORE applyPlacementPositions) ----
         // Order matters: split ops first (they change object count and re-index
         // everything), then volume splits, then per-object pose, then per-volume
-        // extruders, then selection.
+        // extruders, then selection. Pose replay calls setObjectScale which fires
+        // refreshObjectGeometryAfterPoseChange — that writes worldMins to
+        // customObjectPositions, so applyPlacementPositions must come AFTER pose
+        // replay or the saved drag positions get overwritten with auto-mins.
         for (idx in saved.splitObjectOperations) {
             splitObject(idx)  // each call appends to _splitObjectOps; that's the same list we just replayed,
                               // so blank it before iterating and let splitObject rebuild it from the replay.
@@ -5821,6 +5904,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val v = parts[1].toIntOrNull()
                 if (o != null && v != null) setVolumeExtruder(o, v, slot)
             }
+        }
+        // 5. Custom placement — last so it overrides the per-object pose
+        // replay's customObjectPositions side-effect.
+        val positions = saved.customObjectPositions
+        val tower = saved.customWipeTowerPos
+        if (positions != null && tower != null) {
+            applyPlacementPositions(positions, tower)
         }
         // Selection — non-null even if the object is gone (defensive: clamp to current count).
         val objCount = native.nativeGetObjectCount()

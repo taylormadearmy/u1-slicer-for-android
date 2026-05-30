@@ -1470,14 +1470,13 @@ fun PrepareScreen(
                                 val b = f66LoadTimePoses[k] ?: com.u1.slicer.data.PerObjectPose()
                                 v.scaleX != b.scaleX || v.scaleY != b.scaleY || v.scaleZ != b.scaleZ
                             }
-                            val f66Scope = rememberCoroutineScope()
                             InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
                                 selectedObjectIndex = f66Selection.objectIndex,
                                 onObjectTapped = { idx -> viewModel.selectObject(idx) },
                                 onEmptyTap = { viewModel.deselect() },
-                                onAutoOrientAll = { f66Scope.launch { viewModel.autoOrientAll() } },
+                                onAutoOrientAll = { viewModel.launchAutoOrientAll() },
                                 onResetAllRotations = if (f66AnyRotationDirty) {
                                     { viewModel.resetAllRotations() }
                                 } else null,

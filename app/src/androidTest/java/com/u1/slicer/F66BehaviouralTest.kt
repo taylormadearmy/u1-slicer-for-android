@@ -249,4 +249,149 @@ class F66BehaviouralTest {
             vm.selection.value.objectIndex,
         )
     }
+
+    // ---- F66 review-2026-05-30: every mutator must bump modelAddVersion ------
+    // Agent #4's P1 #5 gap. setVolumeExtruder was the only mutator with an
+    // existing guard, but if any of the others drops invalidatePrepareMeshCache
+    // in a refactor the preview silently freezes for that operation. One test
+    // per mutator so a future regression names exactly the broken path.
+
+    private fun loadBenchyAndAwait() {
+        val stl = copyAsset("3DBenchy.stl")
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.loadModelFromFile(stl)
+        }
+        awaitLoaded()
+        Thread.sleep(200)
+    }
+
+    @Test
+    fun setObjectRotation_bumpsModelAddVersion() {
+        loadBenchyAndAwait()
+        val before = vm.modelAddVersion.value
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.setObjectRotation(0, 30f, 45f, 60f)
+        }
+        Thread.sleep(100)
+        assertTrue(
+            "modelAddVersion must bump on setObjectRotation so the InlineModelPreview LaunchedEffect re-keys",
+            vm.modelAddVersion.value > before,
+        )
+    }
+
+    @Test
+    fun setObjectScale_bumpsModelAddVersion() {
+        loadBenchyAndAwait()
+        val before = vm.modelAddVersion.value
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.setObjectScale(0, 1.5f, 1.5f, 1.5f)
+        }
+        Thread.sleep(100)
+        assertTrue(
+            "modelAddVersion must bump on setObjectScale",
+            vm.modelAddVersion.value > before,
+        )
+    }
+
+    @Test
+    fun setObjectFilament_bumpsModelAddVersion() {
+        loadBenchyAndAwait()
+        val before = vm.modelAddVersion.value
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.setObjectFilament(0, 2)
+        }
+        Thread.sleep(100)
+        assertTrue(
+            "modelAddVersion must bump on setObjectFilament so all volumes recolour at once",
+            vm.modelAddVersion.value > before,
+        )
+    }
+
+    @Test
+    fun resetObjectRotation_bumpsModelAddVersion() {
+        loadBenchyAndAwait()
+        // Rotate first so reset has something to revert.
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.setObjectRotation(0, 30f, 45f, 60f)
+        }
+        Thread.sleep(100)
+        val before = vm.modelAddVersion.value
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.resetObjectRotation(0)
+        }
+        Thread.sleep(100)
+        assertTrue(
+            "modelAddVersion must bump on resetObjectRotation — reset is implemented via setObjectRotation",
+            vm.modelAddVersion.value > before,
+        )
+    }
+
+    @Test
+    fun resetObjectScale_bumpsModelAddVersion() {
+        loadBenchyAndAwait()
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.setObjectScale(0, 1.5f, 1.5f, 1.5f)
+        }
+        Thread.sleep(100)
+        val before = vm.modelAddVersion.value
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.resetObjectScale(0)
+        }
+        Thread.sleep(100)
+        assertTrue(
+            "modelAddVersion must bump on resetObjectScale",
+            vm.modelAddVersion.value > before,
+        )
+    }
+
+    @Test
+    fun splitObject_singleIslandNoOp_doesNotBumpModelAddVersion() {
+        // Benchy is single-island so splitObject returns false — verify we
+        // do NOT spuriously bump the version when nothing changed.
+        loadBenchyAndAwait()
+        val before = vm.modelAddVersion.value
+        var splitResult: Boolean? = null
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            splitResult = vm.splitObject(0)
+        }
+        Thread.sleep(100)
+        assertEquals("Benchy is single-island; splitObject should return false", false, splitResult)
+        assertEquals(
+            "no split happened, no version bump — keeps Compose refetches predictable",
+            before, vm.modelAddVersion.value,
+        )
+    }
+
+    // ---- F66 review-2026-05-30: file-B baseline coverage ---------------------
+    // Agent #2's P0 #1. doAddFile must seed _loadTimePoses entries for the
+    // new file's objects or Reset silently no-ops on file-B objects.
+
+    @Test
+    fun addModelFromFile_seedsLoadTimePosesForNewObjects() {
+        loadBenchyAndAwait()
+        val initialPoses = vm.loadTimePoses.value
+        assertTrue("file A should have a baseline for object 0", initialPoses.containsKey(0))
+        val initialObjectCount = initialPoses.size
+
+        // Now add another file (use a different STL/3MF).
+        val secondFile = copyAsset("3DBenchy.stl")
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.addModelFromFile(secondFile)
+        }
+        Thread.sleep(500)
+
+        val merged = vm.loadTimePoses.value
+        assertTrue(
+            "addModel must extend _loadTimePoses with entries for the file-B objects so resetObjectRotation/Scale work on them. " +
+                "Initial size=$initialObjectCount, post-add size=${merged.size}",
+            merged.size > initialObjectCount,
+        )
+        // Existing baselines must be preserved (not clobbered by snapshotLoadTimePoses).
+        for ((idx, pose) in initialPoses) {
+            assertEquals(
+                "file-A baseline for object $idx must survive the add",
+                pose, merged[idx],
+            )
+        }
+    }
 }
