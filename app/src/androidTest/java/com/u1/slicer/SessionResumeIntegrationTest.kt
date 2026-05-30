@@ -296,8 +296,18 @@ class SessionResumeIntegrationTest {
         withTimeoutOrNull(60_000) {
             vm.state.first { it is SlicerViewModel.SlicerState.ModelLoaded }
         }
-        // Allow a few extra ticks for the F66 replay block to run.
-        delay(500)
+        // Poll for the F66 replay to finish — restoreSession runs setObjectScale/
+        // setVolumeExtruder synchronously AFTER the ModelLoaded transition,
+        // but JNI bbox refreshes inside refreshObjectGeometryAfterPoseChange
+        // can take ~100ms on a big model. Poll up to 5s.
+        val pollDeadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < pollDeadline) {
+            if (vm.perVolumeExtruders.value["0:0"] == 3 &&
+                vm.perObjectPoses.value[0]?.rotZDeg == 45f) {
+                break
+            }
+            delay(100)
+        }
 
         // Selection
         assertEquals(

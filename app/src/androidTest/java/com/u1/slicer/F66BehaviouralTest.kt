@@ -211,10 +211,7 @@ class F66BehaviouralTest {
         // mesh cache, so the InlineModelPreview LaunchedEffect (keyed on
         // modelAddVersion) didn't refire and the per-triangle extruder
         // indices stayed stale. This test guards the cache-invalidation wire.
-        val before = vm.modelAddVersion.value
-        // Note: we don't need a real model loaded — the JNI no-op'd path
-        // wouldn't bump _modelAddVersion either. Load any STL so
-        // nativeSetVolumeExtruder returns true.
+        // Load any STL so nativeSetVolumeExtruder returns true.
         val stl = copyAsset("3DBenchy.stl")
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             vm.loadModelFromFile(stl)
@@ -366,19 +363,32 @@ class F66BehaviouralTest {
     // Agent #2's P0 #1. doAddFile must seed _loadTimePoses entries for the
     // new file's objects or Reset silently no-ops on file-B objects.
 
+    private fun awaitAddFileComplete(initialObjectCount: Int, timeoutMs: Long = 30_000L) {
+        // addModelFromFile launches on viewModelScope.IO; wait for the bed
+        // object count (per _objectBoundingBoxes) to grow past the initial.
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val currentCount = vm.objectBoundingBoxes.value.size / 3
+            if (currentCount > initialObjectCount) return
+            Thread.sleep(100)
+        }
+        error("addModelFromFile didn't complete within ${timeoutMs / 1000}s; last objectCount=${vm.objectBoundingBoxes.value.size / 3}")
+    }
+
     @Test
     fun addModelFromFile_seedsLoadTimePosesForNewObjects() {
         loadBenchyAndAwait()
         val initialPoses = vm.loadTimePoses.value
         assertTrue("file A should have a baseline for object 0", initialPoses.containsKey(0))
         val initialObjectCount = initialPoses.size
+        val initialBedObjectCount = vm.objectBoundingBoxes.value.size / 3
 
-        // Now add another file (use a different STL/3MF).
+        // Add a second copy of the same file — addModel appends regardless.
         val secondFile = copyAsset("3DBenchy.stl")
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             vm.addModelFromFile(secondFile)
         }
-        Thread.sleep(500)
+        awaitAddFileComplete(initialBedObjectCount)
 
         val merged = vm.loadTimePoses.value
         assertTrue(
@@ -393,5 +403,35 @@ class F66BehaviouralTest {
                 pose, merged[idx],
             )
         }
+    }
+
+    @Test
+    fun addModelFromFile_preservesFileAUserAppliedPoses() {
+        // Sister regression: doAddFile's extendLoadTimePosesForNewObjects
+        // must NOT clobber file-A's user-applied rotation/scale (only seeds
+        // baselines for the NEW objects).
+        loadBenchyAndAwait()
+        // Apply a per-object rotation on file A.
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.setObjectRotation(0, 30f, 45f, 60f)
+        }
+        Thread.sleep(150)
+        val fileAPose = vm.perObjectPoses.value[0]!!
+        assertEquals("file A rot Z set correctly", 60f, fileAPose.rotZDeg, 0.5f)
+
+        // Add file B.
+        val initialBedObjectCount = vm.objectBoundingBoxes.value.size / 3
+        val secondFile = copyAsset("3DBenchy.stl")
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            vm.addModelFromFile(secondFile)
+        }
+        awaitAddFileComplete(initialBedObjectCount)
+
+        // File A's user-applied pose must survive.
+        val survived = vm.perObjectPoses.value[0]!!
+        assertEquals(
+            "file A's user-applied rotation must survive the addFile — extendLoadTimePosesForNewObjects should add entries for new objects only, not clobber existing user poses",
+            60f, survived.rotZDeg, 0.5f,
+        )
     }
 }
