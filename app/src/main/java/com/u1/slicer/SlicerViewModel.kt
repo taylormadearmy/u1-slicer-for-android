@@ -858,7 +858,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             centered[i * 2 + 1] = worldMins[i * 2 + 1] + dy
         }
 
-        hasMultipleDistinctObjectsVar = true
+        // F66 review-2026-05-30 (B124 regression repair from 15a4ba3): do NOT
+        // set hasMultipleDistinctObjectsVar here. That flag controls
+        // multiObjectMode in the renderer (perObjectSizes != empty → per-object
+        // dispatch + drag). For single-file multi-volume loads like
+        // Button-for-S-trousers the user expects single-mesh drag — flipping
+        // the flag broke B124. The F66 per-object selection (outline pass +
+        // selection.objectIndex) still works regardless; this flag is reserved
+        // for genuine multi-file scenarios (doAddFile) and explicit splits
+        // (splitObject), both of which set it themselves.
         _objectBoundingBoxes.value = boxes
         customObjectPositions = centered
         _multiObjectPositions.value = centered
@@ -2562,7 +2570,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun loadModelFromFile(file: File, preserveDisplayName: String? = null, silent: Boolean = false) {
-        if (!silent) restoreSessionJob?.cancel()
+        // F66 review-2026-05-30: also gate on restoreInProgress like
+        // addModelFromFile / addModelFromFileForPlate / loadJobGcodeForViewer.
+        // Without this guard, restoreSession's own loadModelFromFile call
+        // cancels its parent restoreSessionJob → CancellationException at the
+        // next awaitLoadCompletion suspend point → F66 state replay + final
+        // selectObject never run. Surfaced by the new
+        // acceptSessionResume_withF66State integration test.
+        if (!silent && !restoreInProgress) restoreSessionJob?.cancel()
         if (!NativeLibrary.isLoaded) {
             if (!silent) {
                 _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
