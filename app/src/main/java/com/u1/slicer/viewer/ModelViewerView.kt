@@ -492,11 +492,70 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     private fun pickTriangle(screenX: Float, screenY: Float): Int {
         val positions = pickingPositions ?: return -1
         val ray = renderer.screenToRay(screenX, screenY) ?: return -1
+        if (positions.isEmpty()) {
+            // Chubby fix follow-on: when MeshData.toWorldSpacePickingPositions
+            // skipped allocating per-triangle positions (mesh > 1M vertices →
+            // would OOM), we still need tap-to-select to fire on the mesh but
+            // tap-on-empty-bed to deselect. Fall back to a ray–AABB hit test
+            // against the mesh's world-space bounding box. A hit returns
+            // triangle 0 (the higher-level dispatcher maps that to "object 0"
+            // via the empty-objectMeshRanges branch); a miss returns -1 so
+            // onEmptyTap fires and deselects.
+            val mesh = renderer.meshData ?: return -1
+            val inst = renderer.instancePositions
+            val s = renderer.modelScale
+            // Same world-space transform as MeshData.toWorldSpacePickingPositions
+            // single-mesh branch: T(x+halfW*sx, y+halfH*sy, halfD*sz) * S * T(-min - half)
+            val halfW = (mesh.maxX - mesh.minX) / 2f
+            val halfH = (mesh.maxY - mesh.minY) / 2f
+            val halfD = (mesh.maxZ - mesh.minZ) / 2f
+            val tx = (inst?.getOrNull(0) ?: 0f) + halfW * s[0]
+            val ty = (inst?.getOrNull(1) ?: 0f) + halfH * s[1]
+            val tz = halfD * s[2]
+            val ox = -mesh.minX - halfW
+            val oy = -mesh.minY - halfH
+            val oz = -mesh.minZ - halfD
+            // AABB-min and AABB-max in world space after the transform.
+            val aMinX = (mesh.minX + ox) * s[0] + tx
+            val aMaxX = (mesh.maxX + ox) * s[0] + tx
+            val aMinY = (mesh.minY + oy) * s[1] + ty
+            val aMaxY = (mesh.maxY + oy) * s[1] + ty
+            val aMinZ = (mesh.minZ + oz) * s[2] + tz
+            val aMaxZ = (mesh.maxZ + oz) * s[2] + tz
+            return if (rayHitsAABB(
+                    ray, minOf(aMinX, aMaxX), maxOf(aMinX, aMaxX),
+                    minOf(aMinY, aMaxY), maxOf(aMinY, aMaxY),
+                    minOf(aMinZ, aMaxZ), maxOf(aMinZ, aMaxZ),
+                )) 0 else -1
+        }
         return TrianglePicker.pick(
             positions,
             ray[0], ray[1], ray[2],
             ray[3], ray[4], ray[5]
         )
+    }
+
+    /**
+     * Standard slab-method ray-AABB intersection. Returns true iff the ray
+     * intersects the axis-aligned bounding box in front of the origin.
+     */
+    private fun rayHitsAABB(
+        ray: FloatArray,
+        minX: Float, maxX: Float,
+        minY: Float, maxY: Float,
+        minZ: Float, maxZ: Float,
+    ): Boolean {
+        val ox = ray[0]; val oy = ray[1]; val oz = ray[2]
+        val dx = ray[3]; val dy = ray[4]; val dz = ray[5]
+        val invDx = if (dx != 0f) 1f / dx else Float.POSITIVE_INFINITY
+        val invDy = if (dy != 0f) 1f / dy else Float.POSITIVE_INFINITY
+        val invDz = if (dz != 0f) 1f / dz else Float.POSITIVE_INFINITY
+        val t1x = (minX - ox) * invDx; val t2x = (maxX - ox) * invDx
+        val t1y = (minY - oy) * invDy; val t2y = (maxY - oy) * invDy
+        val t1z = (minZ - oz) * invDz; val t2z = (maxZ - oz) * invDz
+        val tMin = maxOf(minOf(t1x, t2x), minOf(t1y, t2y), minOf(t1z, t2z))
+        val tMax = minOf(maxOf(t1x, t2x), maxOf(t1y, t2y), maxOf(t1z, t2z))
+        return tMax >= maxOf(0f, tMin)
     }
 
     override fun handleActionCancel() {
