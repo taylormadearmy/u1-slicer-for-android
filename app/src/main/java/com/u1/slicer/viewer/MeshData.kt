@@ -69,6 +69,17 @@ data class MeshData(
         instancePositions: FloatArray?,
         modelScale: FloatArray,
     ): FloatArray {
+        // OOM guard (Chubby_Darth_Vader_MULTI_COLOR.3mf crash, user report
+        // 2026-05-31): MMU-painted meshes can land at 2-3M triangles because
+        // mmu_segmentation_facets bypasses the QEM decimation path. Allocating
+        // vertexCount * 3 floats then doubles app heap (the interleaved VBO
+        // already holds the positions) and pushes single-process OOM on
+        // mid-range Android. Return EMPTY for oversize meshes — the viewer's
+        // setTrianglePickingPositions(empty) falls back to whole-object taps
+        // (cb(0)) which is the right behaviour for single-object large files
+        // anyway. Multi-object selection on >1M-triangle scenes is not a
+        // supported use case yet.
+        if (vertexCount > MAX_PICKING_VERTEX_COUNT) return FloatArray(0)
         val out = FloatArray(vertexCount * 3)
         val buf = vertices
         val sx = modelScale[0]; val sy = modelScale[1]; val sz = modelScale[2]
@@ -197,6 +208,16 @@ data class MeshData(
     companion object {
         const val FLOATS_PER_VERTEX = 10 // x,y,z, nx,ny,nz, r,g,b,a
         const val BYTES_PER_VERTEX = FLOATS_PER_VERTEX * 4
+
+        /**
+         * Picking-array allocation threshold. Above this, [toWorldSpacePickingPositions]
+         * returns an empty array and the viewer falls back to whole-object taps. Set
+         * conservatively (1M vertices ≈ 12 MB extra heap) — the OOM crash on
+         * Chubby_Darth_Vader_MULTI_COLOR.3mf (8.5M vertices, ~100 MB extra allocation)
+         * happened on top of an already-loaded interleaved VBO plus native cache, so
+         * we leave room for the rest of the app.
+         */
+        const val MAX_PICKING_VERTEX_COUNT = 1_000_000
 
         fun allocateBuffer(triangleCount: Int): FloatBuffer {
             val floatCount = triangleCount * 3 * FLOATS_PER_VERTEX

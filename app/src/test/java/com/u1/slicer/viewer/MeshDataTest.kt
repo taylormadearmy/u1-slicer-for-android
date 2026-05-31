@@ -266,4 +266,52 @@ class MeshDataTest {
         assertEquals(0f, buf.get(base), 0.001f)
         assertEquals(1f, buf.get(base + 1), 0.001f)
     }
+
+    @Test
+    fun `toWorldSpacePickingPositions returns empty array for oversize mesh to avoid OOM`() {
+        // Chubby_Darth_Vader_MULTI_COLOR.3mf regression (user report 2026-05-31):
+        // a painted multi-colour 3MF arrived in Kotlin with ~2.85M triangles
+        // (8.5M vertices) because MMU paint state geometry bypasses the QEM
+        // decimation path. The F66 toWorldSpacePickingPositions function tried
+        // to allocate a 8.5M-float (~34 MB) FloatArray that compounded with the
+        // already-loaded VBO + native cache, OOM-killing the app within seconds
+        // of the preview appearing.
+        //
+        // Guard: when vertexCount > MAX_PICKING_VERTEX_COUNT, return EMPTY.
+        // The viewer's setTrianglePickingPositions(empty) falls back to
+        // whole-object tap dispatch via cb(0), which is the correct UX for a
+        // single large object anyway.
+        //
+        // We don't actually build a 2.85M-tri mesh here (the test would OOM
+        // itself). The triangle count is metadata; only the gate matters.
+        val triCount = 1
+        val mesh = makeMesh(triCount).copy(
+            vertexCount = MeshData.MAX_PICKING_VERTEX_COUNT + 1
+        )
+        val out = mesh.toWorldSpacePickingPositions(
+            objectMeshRanges = null,
+            instancePositions = floatArrayOf(135f, 135f),
+            modelScale = floatArrayOf(1f, 1f, 1f),
+        )
+        assertEquals(
+            "Oversize mesh must return EMPTY picking positions — non-empty would " +
+                "have allocated ${(MeshData.MAX_PICKING_VERTEX_COUNT + 1) * 3 * 4} " +
+                "extra bytes on top of the VBO and OOM'd the app (Chubby Darth Vader).",
+            0, out.size,
+        )
+    }
+
+    @Test
+    fun `toWorldSpacePickingPositions allocates normally for mesh at-or-below the cap`() {
+        // Regression guard: the OOM-gate must NOT fire on normal-sized meshes.
+        // A 3-triangle mesh is well under the 1M-vertex cap.
+        val mesh = makeMesh(triangleCount = 3)
+        val out = mesh.toWorldSpacePickingPositions(
+            objectMeshRanges = null,
+            instancePositions = floatArrayOf(0f, 0f),
+            modelScale = floatArrayOf(1f, 1f, 1f),
+        )
+        // 3 tris × 3 verts × 3 floats = 27 entries
+        assertEquals(27, out.size)
+    }
 }
