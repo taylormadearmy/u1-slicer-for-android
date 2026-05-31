@@ -24,6 +24,31 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
             }
             return -1
         }
+
+        /**
+         * Standard slab-method ray-AABB intersection. Returns true iff the ray
+         * intersects the axis-aligned bounding box in front of the origin.
+         * Exposed (internal) so the Chubby tap-to-select fallback can be
+         * unit-tested without spinning up a Compose / GL harness.
+         */
+        internal fun rayHitsAABBStatic(
+            ray: FloatArray,
+            minX: Float, maxX: Float,
+            minY: Float, maxY: Float,
+            minZ: Float, maxZ: Float,
+        ): Boolean {
+            val ox = ray[0]; val oy = ray[1]; val oz = ray[2]
+            val dx = ray[3]; val dy = ray[4]; val dz = ray[5]
+            val invDx = if (dx != 0f) 1f / dx else Float.POSITIVE_INFINITY
+            val invDy = if (dy != 0f) 1f / dy else Float.POSITIVE_INFINITY
+            val invDz = if (dz != 0f) 1f / dz else Float.POSITIVE_INFINITY
+            val t1x = (minX - ox) * invDx; val t2x = (maxX - ox) * invDx
+            val t1y = (minY - oy) * invDy; val t2y = (maxY - oy) * invDy
+            val t1z = (minZ - oz) * invDz; val t2z = (maxZ - oz) * invDz
+            val tMin = maxOf(minOf(t1x, t2x), minOf(t1y, t2y), minOf(t1z, t2z))
+            val tMax = minOf(maxOf(t1x, t2x), maxOf(t1y, t2y), maxOf(t1z, t2z))
+            return tMax >= maxOf(0f, tMin)
+        }
     }
 
     val renderer = ModelRenderer(context)
@@ -535,28 +560,12 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
         )
     }
 
-    /**
-     * Standard slab-method ray-AABB intersection. Returns true iff the ray
-     * intersects the axis-aligned bounding box in front of the origin.
-     */
     private fun rayHitsAABB(
         ray: FloatArray,
         minX: Float, maxX: Float,
         minY: Float, maxY: Float,
         minZ: Float, maxZ: Float,
-    ): Boolean {
-        val ox = ray[0]; val oy = ray[1]; val oz = ray[2]
-        val dx = ray[3]; val dy = ray[4]; val dz = ray[5]
-        val invDx = if (dx != 0f) 1f / dx else Float.POSITIVE_INFINITY
-        val invDy = if (dy != 0f) 1f / dy else Float.POSITIVE_INFINITY
-        val invDz = if (dz != 0f) 1f / dz else Float.POSITIVE_INFINITY
-        val t1x = (minX - ox) * invDx; val t2x = (maxX - ox) * invDx
-        val t1y = (minY - oy) * invDy; val t2y = (maxY - oy) * invDy
-        val t1z = (minZ - oz) * invDz; val t2z = (maxZ - oz) * invDz
-        val tMin = maxOf(minOf(t1x, t2x), minOf(t1y, t2y), minOf(t1z, t2z))
-        val tMax = minOf(maxOf(t1x, t2x), maxOf(t1y, t2y), maxOf(t1z, t2z))
-        return tMax >= maxOf(0f, tMin)
-    }
+    ): Boolean = rayHitsAABBStatic(ray, minX, maxX, minY, maxY, minZ, maxZ)
 
     override fun handleActionCancel() {
         draggingIndex = -1

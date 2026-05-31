@@ -549,6 +549,109 @@ class SemmSlicingTest {
     }
 
     /**
+     * Jon's bug — full end-to-end check (Discord 1509878155790258287, 2026-05-29):
+     * a multi-canonical 3MF with the user overriding EVERY filament to PETG must
+     * produce a G-code header where the saved `; filament_type = ...` line has
+     * ZERO "PLA" entries — every canonical position including the padded ones
+     * beyond `maxPhysicalSlot+1` must inherit the user's PETG override.
+     *
+     * Pre-fix the padded positions (4, 5, 6 in the 7-canonical case) fell back
+     * to slot preset materials, which are PLA by default — the printer then
+     * surfaced "PLA" on those rows when reading back the saved G-code.
+     *
+     * This complements the unit-level tests in FilamentTypeHeaderPatchTest by
+     * exercising the actual fixFilamentTypeHeader file rewrite on a real
+     * sliced output, so we'd catch a future regression where the resolver
+     * stays correct but the file-rewrite path drops the padding entries.
+     */
+    @Test
+    fun h2cBenchy_allFilamentsPetgOverride_savedGcodeHasZeroPlaPadding() {
+        val input = asset("3DBenchy-H2C-Multi-Color.3mf")
+        val origInfo = ThreeMfParser.parse(input)
+        val processed = BambuSanitizer.process(input, outDir)
+        val sourceConfig = java.util.zip.ZipFile(input).use { embedder.parseSourceConfig(it) }
+        val config = embedder.buildConfig(
+            info = origInfo,
+            sourceConfig = sourceConfig,
+            targetExtruderCount = 7
+        )
+        val embedded = embedder.embed(processed, config, outDir, origInfo)
+        assertTrue("loadModel must succeed", lib.loadModel(embedded.absolutePath))
+
+        val result = lib.slice(makeConfig(4))
+        assertNotNull("slice() must not return null", result)
+        result!!
+        assertTrue("slice must succeed: ${result.errorMessage}", result.success)
+
+        val canonical = CanonicalFilamentList(
+            filaments = origInfo.detectedColors.mapIndexed { idx, hex ->
+                FilamentEntry(idx, hex, "PLA", FilamentSource.FILE_COLOUR)
+            }
+        )
+        val presets = (0 until 4).map { idx ->
+            ExtruderPreset(index = idx, color = "#FFFFFF", materialType = "PLA")
+        }
+        // H2C fold: 7 canonical → 4 physical; canonical 4/5/6 collide with 0/1/2.
+        val colorMapping = listOf(0, 1, 2, 3, 0, 1, 2)
+        // Jon's case: user overrides EVERY filament to PETG.
+        val overrides = (0 until canonical.size)
+            .associateWith<Int, Pair<String?, String?>> { null to "PETG" }
+
+        val ftTypes = resolveFilamentTypesForHeaderPatch(
+            canonical = canonical,
+            overrides = overrides,
+            colorMapping = colorMapping,
+            presets = presets,
+            filamentLibrary = emptyList(),
+            padTo = canonical.size,
+        )
+        val ntTemps = resolveNozzleTempsForHeaderPatch(
+            canonical = canonical,
+            overrides = overrides,
+            colorMapping = colorMapping,
+            presets = presets,
+            filamentLibrary = emptyList(),
+            padTo = canonical.size,
+        )
+
+        assertTrue("filament_type patch must succeed",
+            fixFilamentTypeHeader(result.gcodePath, ftTypes))
+        assertTrue("nozzle_temperature patch must succeed",
+            fixNozzleTemperatureHeader(result.gcodePath, ntTemps))
+
+        val gcode = File(result.gcodePath).readText()
+        val filamentTypeLine = gcode.lines().first { it.startsWith("; filament_type = ") }
+        val nozzleTempLine = gcode.lines().first { it.startsWith("; nozzle_temperature = ") }
+        val types = filamentTypeLine.removePrefix("; filament_type = ").split(";")
+        val temps = nozzleTempLine.removePrefix("; nozzle_temperature = ")
+            .split(",").map { it.trim().toInt() }
+
+        // Jon's headline assertion: ZERO PLA entries when every filament was
+        // overridden to PETG. The padded positions (idx 4..6) MUST inherit the
+        // canonical-resolved PETG, not fall back to slot-preset PLA.
+        assertEquals(
+            "Jon-bug: filament_type must contain ZERO PLA entries when every " +
+                "filament is overridden to PETG. Got $types. " +
+                "Pre-fix bug surfaced 3+ PLA at canonical-overflow positions 4/5/6.",
+            0, types.count { it == "PLA" }
+        )
+        assertTrue(
+            "Jon-bug: every filament_type entry must be PETG. Got $types.",
+            types.all { it == "PETG" }
+        )
+        assertTrue(
+            "Jon-bug: every nozzle_temperature entry must be PETG's 235°C. Got $temps.",
+            temps.all { it == 235 }
+        )
+        // Length agreement (B110 contract).
+        assertEquals(
+            "B110: filament_type and nozzle_temperature must agree on length. " +
+                "types=$types temps=$temps",
+            types.size, temps.size
+        )
+    }
+
+    /**
      * B64: SEMM colour permutation — verify that a non-identity colour mapping
      * is applied to the sliced G-code.
      *

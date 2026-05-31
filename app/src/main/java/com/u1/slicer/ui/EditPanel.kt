@@ -136,19 +136,30 @@ private fun ObjectScopedEditSection(
                 modifier = Modifier.weight(1f),
             ) { Text("Split to Objects") }
         }
-        if (volumeCount > 1) {
-            // F66 review-2026-05-30 P1: gate the button on whether ANY volume
-            // is splittable. Previously a click with no splittable volumes was
-            // a silent no-op — confusing UX.
-            val anyVolumeSplittable = remember(objIdx, volumeCount) {
-                (0 until volumeCount).any { viewModel.isVolumeSplittable(objIdx, it) }
-            }
+        // F66 2026-05-31: "Split to Parts" must appear ALSO when there's a
+        // single volume whose mesh has multiple disconnected islands —
+        // OrcaSlicer's desktop "Split → To Parts" covers that case explicitly,
+        // and files like chain-20-links.stl (20 disconnected chain links in one
+        // STL volume) or Jumping+frog.3mf Object 1 are the canonical examples.
+        // Previously the button was hidden whenever volumeCount == 1, denying
+        // those splits even though native is_splittable() returns true.
+        val firstVolumeSplittable = remember(objIdx, volumeCount) {
+            volumeCount >= 1 && viewModel.isVolumeSplittable(objIdx, 0)
+        }
+        val anyVolumeSplittable = remember(objIdx, volumeCount) {
+            (0 until volumeCount).any { viewModel.isVolumeSplittable(objIdx, it) }
+        }
+        if (volumeCount > 1 || firstVolumeSplittable) {
             FilledTonalButton(
                 onClick = {
-                    val firstSplittable = (0 until volumeCount).firstOrNull {
+                    // For single-volume files, route the click directly to
+                    // volume 0. For multi-volume, pick the first volume that
+                    // can be split (typical case: only some volumes are
+                    // splittable; others are single-island parts).
+                    val target = (0 until volumeCount).firstOrNull {
                         viewModel.isVolumeSplittable(objIdx, it)
                     }
-                    if (firstSplittable != null) viewModel.splitVolume(objIdx, firstSplittable)
+                    if (target != null) viewModel.splitVolume(objIdx, target)
                 },
                 enabled = anyVolumeSplittable,
                 modifier = Modifier.fillMaxWidth(),
