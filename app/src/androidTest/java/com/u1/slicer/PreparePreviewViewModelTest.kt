@@ -375,7 +375,11 @@ class PreparePreviewViewModelTest {
 
             // Wait for extruderPresets to reflect the user presets we saved, and for
             // refreshMappedPreviewColors to propagate them into activeExtruderColors.
-            waitUntil("extruderPresets should have E4=pink from DataStore", timeoutMs = 5_000L) {
+            // 2026-05-31: bumped from 5s → 30s after a sustained-load sweep regression.
+            // The PrintersRepository.activePrinter → ViewModel.extruderPresets stateIn
+            // chain can take >5s under sustained device load even though each hop is
+            // microseconds in isolation. Passes in isolation, fails in 2h+ sweeps.
+            waitUntil("extruderPresets should have E4=pink from DataStore", timeoutMs = 30_000L) {
                 viewModel.extruderPresets.value.firstOrNull { it.index == 3 }?.color == "#FF69B4"
             }
             Thread.sleep(300) // allow refreshMappedPreviewColors coroutine to complete
@@ -2227,9 +2231,21 @@ class PreparePreviewViewModelTest {
             }
 
             // 1. Ensure slot 0 is linked to a library filament (Generic PLA seeded on first run).
-            val allFilaments = filamentDao.getAll().first()
-            val pla = allFilaments.firstOrNull { it.name == "Generic PLA" }
-                ?: throw AssertionError("seeded Generic PLA missing")
+            // Race guard: SeedCallback.onCreate launches the seeding on
+            // Dispatchers.IO asynchronously, so the DAO can emit an empty list
+            // before seeding completes. Wait for at least one Generic PLA row
+            // instead of taking whatever the DAO has on first() — that emission
+            // is racy under sustained sweep load (verified by 2026-05-31 sweep
+            // regression vs v2.9.3 baseline). Test passes in isolation either
+            // way; the wait makes it sweep-resilient.
+            val allFilaments = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                filamentDao.getAll().first { list ->
+                    list.any { it.name == "Generic PLA" }
+                }
+            } ?: throw AssertionError(
+                "seeded Generic PLA missing after 15s wait — SeedCallback may not have run"
+            )
+            val pla = allFilaments.first { it.name == "Generic PLA" }
 
             // Link slot 0 to the PLA profile via PrintersRepository, matching cheeky_b52's setup.
             val printersRepo = application.container.printersRepository

@@ -196,14 +196,19 @@ class PrinterRepositoryRebindTest {
 
     // ---- helpers ----
 
-    private fun waitForBaseUrl(expected: String, timeoutMs: Long = 4_000L) {
+    private fun waitForBaseUrl(expected: String, timeoutMs: Long = 30_000L) {
+        // 2026-05-31: bumped from 4s → 30s after a sustained-load sweep regression
+        // (the DataStore-write → PrintersRepository.config emission → init
+        // collect loop → MoonrakerClient.setBaseUrl chain can take >4s under
+        // device-thermal/coroutine pressure even though each hop is microseconds
+        // in isolation). Passes in isolation, failed twice in 2h+ sharded sweeps.
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (client.baseUrl == expected) return
             Thread.sleep(50)
         }
         throw AssertionError(
-            "Timed out waiting for client.baseUrl == \"$expected\". " +
+            "Timed out after ${timeoutMs}ms waiting for client.baseUrl == \"$expected\". " +
                 "Actual: \"${client.baseUrl}\""
         )
     }
