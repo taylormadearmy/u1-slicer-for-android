@@ -159,6 +159,99 @@ class FilamentTypeHeaderPatchTest {
         assertEquals(listOf("PLA", "PLA", "PETG", "ABS"), types)
     }
 
+    @Test
+    fun `Jon-bug 5 canonical collapse to 4 physical all PETG override produces no PLA padding`() {
+        // User report (Discord 1509878155790258287, 2026-05-29): 5-filament
+        // 3MF where two lines share a colour, so 5 canonical map to 4
+        // physical slots. User overrides every filament to PETG via Prepare.
+        // Prints fine direct-from-app, but when the G-code is pulled back
+        // from the printer's internal storage for reprint, the printer's UI
+        // shows ONE line as PLA so the user can't pick PETG for it.
+        //
+        // Root cause: the header is sized to max(maxPhysical+1, padTo).
+        // For 5 canonical → physicalSize=5, but the colorMapping forEach
+        // loop only writes to physical slots 0..3 (the seen set prevents
+        // canonical idx 4's slot collision from re-writing). Position 4 in
+        // result stays at its initial value — slotPresetByIndex[4]?.materialType
+        // ?: "PLA" — which is "PLA" because no preset has index 4.
+        //
+        // Fix: positions beyond maxPhysical+1 are canonical-overflow padding;
+        // fill them with the user's resolved material for canonical idx i
+        // (since semantically position i represents file filament i+1 once
+        // the array is longer than the physical slot range).
+        val canonical = CanonicalFilamentList(
+            filaments = (0 until 5).map { i ->
+                FilamentEntry(i, "#FF0000", "PLA", FilamentSource.FILE_COLOUR)
+            }
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FF0000", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#00FF00", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#0000FF", materialType = "PLA"),
+            ExtruderPreset(index = 3, color = "#FFFFFF", materialType = "PLA"),
+        )
+        // User overrides ALL FIVE to PETG via Prepare.
+        val overrides = (0 until 5).associate { i -> i to (null to "PETG") }
+        // 5 canonical → physical [0,1,2,3,0] (canonical 0 and 4 share slot 0).
+        val mapping = listOf(0, 1, 2, 3, 0)
+
+        val types = resolveFilamentTypesForHeaderPatch(
+            canonical = canonical,
+            overrides = overrides,
+            colorMapping = mapping,
+            presets = presets,
+            filamentLibrary = emptyList(),
+            padTo = 5,
+        )
+
+        // Header must NOT have "PLA" anywhere — every position the printer
+        // surfaces (including the 5th canonical-overflow line) must be PETG
+        // because the user explicitly chose PETG for every filament.
+        assertEquals(
+            "Jon's Discord report: padding position must inherit the user's " +
+                "PETG override at canonical idx 4, not fall back to a PLA default.",
+            listOf("PETG", "PETG", "PETG", "PETG", "PETG"),
+            types,
+        )
+    }
+
+    @Test
+    fun `H2C 7-canonical 4-physical all-PETG-override produces no PLA padding`() {
+        // Companion to the Jon-bug regression: SEMM H2C with 7 file filaments
+        // collapsing to 4 physical slots, user overrides every filament to PETG.
+        // Same code path as Jon's bug but with more padding positions.
+        val canonical = CanonicalFilamentList(
+            filaments = (0 until 7).map { i ->
+                FilamentEntry(i, "#FF0000", "PLA", FilamentSource.FILE_COLOUR)
+            }
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FF0000", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#00FF00", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#0000FF", materialType = "PLA"),
+            ExtruderPreset(index = 3, color = "#FFFFFF", materialType = "PLA"),
+        )
+        val overrides = (0 until 7).associate { i -> i to (null to "PETG") }
+        val mapping = listOf(0, 1, 2, 3, 0, 1, 2)  // 7 → 4 collapse
+
+        val types = resolveFilamentTypesForHeaderPatch(
+            canonical = canonical,
+            overrides = overrides,
+            colorMapping = mapping,
+            presets = presets,
+            filamentLibrary = emptyList(),
+            padTo = 7,
+        )
+
+        assertEquals(
+            "All 7 header positions must read PETG because the user overrode " +
+                "every canonical filament to PETG. Padding positions 4-6 must " +
+                "inherit the override, not fall back to PLA.",
+            List(7) { "PETG" },
+            types,
+        )
+    }
+
     // --- B105: resolveNonCanonicalHeaderPatchTypes ---
 
     @Test
@@ -278,6 +371,47 @@ class FilamentTypeHeaderPatchTest {
         val f = gcode("; nozzle_temperature = 220")
         assertFalse(fixNozzleTemperatureHeader(f.absolutePath, emptyList()))
         assertEquals("; nozzle_temperature = 220\n", f.readText())
+    }
+
+    @Test
+    fun `Jon-bug sibling nozzle_temperature padding inherits user override material temp`() {
+        // Companion to the Jon-bug filament_type regression: when canonical.size >
+        // physical slots, nozzle_temperature padding must match the same
+        // canonical-resolved value as filament_type. B110 contract says
+        // filament_type[i] and nozzle_temperature[i] always agree on the material.
+        val canonical = CanonicalFilamentList(
+            filaments = (0 until 5).map { i ->
+                FilamentEntry(i, "#FF0000", "PLA", FilamentSource.FILE_COLOUR)
+            }
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FF0000", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#00FF00", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#0000FF", materialType = "PLA"),
+            ExtruderPreset(index = 3, color = "#FFFFFF", materialType = "PLA"),
+        )
+        val overrides = (0 until 5).associate { i -> i to (null to "PETG") }
+        val mapping = listOf(0, 1, 2, 3, 0)
+
+        val temps = resolveNozzleTempsForHeaderPatch(
+            canonical = canonical,
+            overrides = overrides,
+            colorMapping = mapping,
+            presets = presets,
+            filamentLibrary = emptyList(),
+            padTo = 5,
+        )
+
+        // PETG default temp is 235. All 5 positions, including the canonical-
+        // overflow padding at position 4, must be 235 — not the slot's PLA-220
+        // default that the pre-fix code left there.
+        assertEquals(
+            "All 5 nozzle_temperature header positions must be 235 (PETG) — the " +
+                "canonical-overflow padding must inherit the user's PETG override " +
+                "temp, not fall back to the slot preset's PLA default.",
+            listOf(235, 235, 235, 235, 235),
+            temps,
+        )
     }
 
     @Test

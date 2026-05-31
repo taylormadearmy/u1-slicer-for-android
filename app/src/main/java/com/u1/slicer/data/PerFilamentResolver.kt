@@ -85,10 +85,19 @@ internal fun resolvePerFilamentTypeAndTemp(
             fileMaterial != null &&
             (slotUsage[slot] ?: 0) == 1
 
+        // DC15 regression guard (Discord 1510408385571586212, 2026-05-30): when a
+        // slot preset's materialType is blank ("" from a corrupted/legacy
+        // ExtruderPreset JSON parse, or a user that cleared the field), the
+        // fallback chain previously bottomed out at the blank string — the
+        // Prepare row rendered as "none". Treating blank-as-null lets the
+        // chain fall through to the file-declared material (if any) and
+        // finally to the "PLA" guarantee, so the row always shows a real
+        // material name.
+        val slotMaterial = slotPreset?.materialType?.takeIf { it.isNotBlank() }
         val material = when {
             overrideMaterial != null -> overrideMaterial
             fileMaterialWins -> fileMaterial!!
-            else -> slotPreset?.materialType ?: fileMaterial ?: "PLA"
+            else -> slotMaterial ?: fileMaterial ?: "PLA"
         }
         types.add(material)
 

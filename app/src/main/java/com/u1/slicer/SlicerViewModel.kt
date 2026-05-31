@@ -7915,6 +7915,19 @@ internal fun resolveFilamentTypesForHeaderPatch(
                 seen.add(physicalSlot)
             }
         }
+        // Jon's bug (Discord 1509878155790258287, 2026-05-29): when canonical.size >
+        // maxPhysicalSlot+1, positions [maxPhysicalSlot+1, physicalSize) are
+        // canonical-overflow padding — the file has more declared filaments than
+        // physical slots they map to (e.g. 5-canonical-on-4-physical when two
+        // canonical share a colour). The printer's reprint-from-storage UI walks
+        // the FULL filament_type array and surfaces a picker per entry; without
+        // this fix those padding positions would stay at slotPreset?.materialType
+        // ?: "PLA", leaking PLA when the user explicitly overrode every filament
+        // to PETG. Inherit the user-resolved material for the matching canonical
+        // index so every printer-visible row reflects the user's intent.
+        for (i in (maxPhysicalSlot + 1) until physicalSize) {
+            if (i < resolved.size) result[i] = resolved[i]
+        }
         return result
     }
 
@@ -8073,6 +8086,15 @@ internal fun resolveNozzleTempsForHeaderPatch(
                 result[physicalSlot] = resolved[canonicalIdx]
                 seen.add(physicalSlot)
             }
+        }
+        // Jon's bug sibling: canonical-overflow padding positions in
+        // nozzle_temperature must match the resolved temp at the matching
+        // canonical idx, not a slot-preset default. The B110 contract says
+        // filament_type and nozzle_temperature header arrays must agree on
+        // every position; without this, padding leaks slot defaults that
+        // don't match the user's overridden material.
+        for (i in (maxPhysicalSlot + 1) until physicalSize) {
+            if (i < resolved.size) result[i] = resolved[i]
         }
         return result
     }

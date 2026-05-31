@@ -1,6 +1,7 @@
 package com.u1.slicer.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -384,5 +385,83 @@ class PerFilamentResolverTest {
         // Override still hits its own index even when no mapping exists.
         assertEquals(listOf("PLA", "PLA", "PETG", "PLA", "PLA", "PLA", "PLA"), types)
         assertEquals(listOf(220, 220, 235, 220, 220, 220, 220), temps)
+    }
+
+    @Test
+    fun dc15_threeColourDeclaredFile_allFilamentsShowFileMaterial() {
+        // DC15 regression guard (Discord 1510408385571586212, 2026-05-30): a 3-colour
+        // 3MF that declares per-filament materials must show ALL THREE file-declared
+        // materials on the Prepare row — not just the first one with the others
+        // showing "none". B128's declared-context+injective-mapping guard should
+        // honour all three.
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PETG", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", "PLA", FilamentSource.FILE_COLOUR),
+                FilamentEntry(2, "#0000FF", "TPU", FilamentSource.FILE_COLOUR),
+            )
+        )
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 2, color = "#FFFFFF", materialType = "PLA"),
+        )
+        val (types, temps) = resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1, 2),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+        // File-declared materials must all appear — no "PLA" leak from slot
+        // presets to any of the three rows.
+        assertEquals(
+            "DC15: all three declared materials must surface on Prepare",
+            listOf("PETG", "PLA", "TPU"),
+            types,
+        )
+        // Temps follow the resolved material: PETG=235, PLA=220, TPU=225.
+        // For PLA (idx 1), the slot preset material matches → preset temp used.
+        assertEquals(listOf(235, 220, 225), temps)
+    }
+
+    @Test
+    fun dc15_blankSlotMaterialDoesNotLeakAsNoneLabel() {
+        // DC15 regression guard sibling: a corrupted/legacy ExtruderPreset JSON
+        // that parsed `materialType` as "" must NOT show "" on Prepare. The
+        // resolver must treat blank as null and fall through to the file's
+        // declared material or "PLA" guarantee.
+        val canonical = CanonicalFilamentList(
+            filaments = listOf(
+                FilamentEntry(0, "#FF0000", "PETG", FilamentSource.FILE_COLOUR),
+                FilamentEntry(1, "#00FF00", null,    FilamentSource.FILE_COLOUR),
+                FilamentEntry(2, "#0000FF", null,    FilamentSource.FILE_COLOUR),
+            )
+        )
+        // Filaments 2 and 3 have null material; slot presets at those indices
+        // have BLANK materialType (the corrupted-JSON pathology).
+        val presets = listOf(
+            ExtruderPreset(index = 0, color = "#FFFFFF", materialType = "PLA"),
+            ExtruderPreset(index = 1, color = "#FFFFFF", materialType = ""),
+            ExtruderPreset(index = 2, color = "#FFFFFF", materialType = ""),
+        )
+        val (types, _) = resolvePerFilamentTypeAndTemp(
+            canonical = canonical,
+            overrides = emptyMap(),
+            colorMapping = listOf(0, 1, 2),
+            presets = presets,
+            filamentLibrary = emptyList(),
+        )
+        // All three rows must be real material names — no blank or "none" leak.
+        assertEquals(
+            "DC15: blank slot materialType must not render as empty/none — " +
+                "resolver must fall through to file material or PLA.",
+            listOf("PETG", "PLA", "PLA"),
+            types,
+        )
+        assertTrue(
+            "No row may be blank, even with corrupted preset materialType",
+            types.all { it.isNotBlank() },
+        )
     }
 }
