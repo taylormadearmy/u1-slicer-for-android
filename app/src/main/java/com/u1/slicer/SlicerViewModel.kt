@@ -992,7 +992,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     .buildMultiObjectPositions(boxes)
                 native.setObjectPositions(positions)
                 customObjectPositions = positions
+                // B132b: keep the public StateFlow in sync with the private var
+                // so InlineModelPreview's rotation LaunchedEffect sees the new
+                // positions and calls splitMeshByObjects (without this, the
+                // per-object draw/drag/hit-test gate at MainActivity.kt:3356
+                // stays closed because `multiObjectPositions.value` is null).
+                _multiObjectPositions.value = positions
             }
+            // B132b: copies do not apply in multi-object mode (the slice path's
+            // multi-object branch reads customObjectPositions only and ignores
+            // _copyCount). If the user had set copyCount>1 pre-split, that count
+            // would silently no-op post-split — Jon's "extra copies didn't appear
+            // on the plate" report. Reset to 1 so the UI accurately reflects
+            // that copies are now per-piece (i.e. always 1 of each).
+            _copyCount.value = 1
+            _copyBedWarning.value = null
         }
 
         _sliceStale.value = true
@@ -4429,6 +4443,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         "Try reloading and reselecting the plate."
                     )
                     return@launch
+                }
+
+                // B132a: refuse to slice if requested copies don't all fit on the bed.
+                // CopyArrangeCalculator silently caps `copies` to `maxCopies` when the
+                // model's footprint is too wide for a row of N. Without this check,
+                // the user gets a single cookie even though Copies=2 — Jon's
+                // "couldn't make more than one copy on the plate" report.
+                if (mi != null && copies > 1 && custom == null && mi.sizeX > 0f && mi.sizeY > 0f) {
+                    val s = _modelScale.value
+                    val maxFit = CopyArrangeCalculator.maxCopies(
+                        objectSizeX = mi.sizeX * s.x,
+                        objectSizeY = mi.sizeY * s.y,
+                    )
+                    if (maxFit < copies) {
+                        Log.e("SlicerVM", "Copies don't fit on bed: requested=$copies, maxFit=$maxFit, model=${mi.sizeX}×${mi.sizeY}mm")
+                        _state.value = SlicerState.Error(
+                            "Only $maxFit copy of this model fits on the 270×270mm bed " +
+                                "(model footprint ${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm).\n" +
+                                "Either reduce Copies to $maxFit or scale the model down."
+                        )
+                        return@launch
+                    }
                 }
 
                 if (custom != null && hasMultipleDistinctObjectsVar) {
