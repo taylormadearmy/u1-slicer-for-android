@@ -3362,7 +3362,15 @@ fun InlineModelPreview(
                             lib.setModelInstances(loadTimeInstanceOffsets)
                         }
                     }
-                    lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)?.toMeshData()
+                    val previewT0 = System.currentTimeMillis()
+                    val raw = lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+                    val jniMs = System.currentTimeMillis() - previewT0
+                    val meshT0 = System.currentTimeMillis()
+                    val mesh = raw?.toMeshData()
+                    val meshMs = System.currentTimeMillis() - meshT0
+                    val previewMs = System.currentTimeMillis() - previewT0
+                    android.util.Log.i("LoadTiming", "preview total=${previewMs}ms jni=${jniMs}ms toMeshData=${meshMs}ms vertexCount=${mesh?.vertexCount ?: 0} initial=$isInitialFetch")
+                    mesh
                 } catch (_: Throwable) {
                     null
                 }

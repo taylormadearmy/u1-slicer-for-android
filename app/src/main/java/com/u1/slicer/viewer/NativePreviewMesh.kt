@@ -25,6 +25,7 @@ data class NativePreviewMesh(
     var volumeRanges: List<IntRange>? = null
 
     fun toMeshData(): MeshData? {
+        val meshT0 = System.currentTimeMillis()
         val triangleCount = extruderIndices.size
         if (triangleCount == 0 || trianglePositions.size != triangleCount * 9) return null
 
@@ -100,12 +101,16 @@ data class NativePreviewMesh(
         }
 
         buf.position(0)
+        val loopMs = System.currentTimeMillis() - meshT0
+        val logT0 = System.currentTimeMillis()
         Log.i(
             "NativePreviewMesh",
             "toMeshData triangles=$triangleCount " +
                 "bounds=[$minX,$minY,$minZ]-[$maxX,$maxY,$maxZ] " +
                 "indices=${extruderIndices.map { it.toInt() and 0xFF }.groupingBy { it }.eachCount()}"
         )
+        val logMs = System.currentTimeMillis() - logT0
+        Log.i("LoadTiming", "toMeshData breakdown loop=${loopMs}ms log.i=${logMs}ms triangles=$triangleCount")
         return MeshData(
             vertices = buf,
             vertexCount = triangleCount * 3,

@@ -2998,6 +2998,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Phase 1 sub-plan #2b: plateIdx >= 0 routes through loadModelForPlate so the
         // BBS importer filters objects to m_plater_data[plateIdx+1] at ingestion.
         // plateIdx = -1 (the default) preserves the legacy loadModel(path) behaviour.
+        val nativeLoadT0 = System.currentTimeMillis()
         val success = NativeLibrary.previewMutex.withLock {
             if (plateIdx >= 0) {
                 native.loadModelForPlate(file.absolutePath, plateIdx)
@@ -3005,12 +3006,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 native.loadModel(file.absolutePath)
             }
         }
+        val nativeLoadMs = System.currentTimeMillis() - nativeLoadT0
+        Log.i("LoadTiming", "native.loadModel elapsed=${nativeLoadMs}ms plateIdx=$plateIdx file=${file.name} sizeBytes=${file.length()}")
         diagnostics.recordEvent(
             "native_model_load",
             mapOf(
                 "success" to success,
                 "path" to file.absolutePath,
-                "firstModelLoadThisLaunch" to firstModelLoadThisLaunch
+                "firstModelLoadThisLaunch" to firstModelLoadThisLaunch,
+                "elapsedMs" to nativeLoadMs
             )
         )
         if (success) {
@@ -3518,7 +3522,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * merge stage metadata, then embed the active Snapmaker profile.
      */
     private fun prepareImportedModelArtifacts(sourceFile: File, workspaceDir: File): PreparedModelArtifacts {
+        val parseT0 = System.currentTimeMillis()
         val origInfo = ThreeMfParser.parse(sourceFile)
+        val parseMs = System.currentTimeMillis() - parseT0
         recoveryOrigInfo = origInfo
 
         val sourceConfig = if (origInfo.isBambu) {
@@ -3528,9 +3534,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         _sourceConfig.value = sourceConfig
 
+        val sanitizeT0 = System.currentTimeMillis()
         val processed = BambuSanitizer.process(sourceFile, workspaceDir, isBambu = origInfo.isBambu)
+        val sanitizeMs = System.currentTimeMillis() - sanitizeT0
         val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
         val mergedInfo = mergeThreeMfInfo(processedInfo, origInfo)
+        Log.i("LoadTiming", "prepareImportedModelArtifacts parse=${parseMs}ms sanitize=${sanitizeMs}ms file=${sourceFile.name} sizeBytes=${sourceFile.length()}")
 
         _threeMfInfo.value = mergedInfo
         _fileThreeMfInfo = mergedInfo
