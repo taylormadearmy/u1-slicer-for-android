@@ -3039,8 +3039,39 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // survives the B72/B73 reset.
             val naturalOffsets = runCatching { native.getInstanceOffsets() }.getOrNull()
             if (naturalOffsets != null && naturalOffsets.isNotEmpty()) {
-                _loadTimeInstanceOffsets.value = naturalOffsets.copyOf()
-                Log.i("SlicerVM", "B78: snapshotted load-time instance offsets: ${naturalOffsets.toList()}")
+                // B131: for single-instance loads where the BBS importer placed
+                // the model at a non-zero world position (e.g. Ghostface Hueforge
+                // 3MF), the mesh from getPreparePreviewMesh comes in world coords
+                // AND getInstanceOffsets returns the BBS instance reference
+                // point (centroid-ish, NOT the mesh's bottom-left corner).
+                // The renderer's drawModelAt(mesh, x, y) expects (x, y) =
+                // mesh bottom-left → using the BBS reference here shifts the
+                // mesh by (ref - meshMin) off its world position, pushing
+                // Ghostface's Y range from 18..242 to 137..361 (~91mm past
+                // the 270mm bed edge — user perceives "model never shows on
+                // Prepare"). Prefer the mesh world AABB min when it's both
+                // non-negative AND differs meaningfully from the instance
+                // reference. Falls back to naturalOffsets for STL loads (mesh
+                // centered around 0, worldMins negative → reject override)
+                // and for Bambu files where the reference happens to match
+                // the AABB min.
+                val worldMins = runCatching { native.nativeGetObjectWorldAABBMins() }.getOrNull()
+                val singleInstance = naturalOffsets.size == 2
+                val haveWorldMins = worldMins != null && worldMins.size == 2
+                val worldMinsOnBed = haveWorldMins && worldMins!![0] >= 0f && worldMins[1] >= 0f
+                val worldMinsDiffer = haveWorldMins &&
+                    (kotlin.math.abs(worldMins!![0] - naturalOffsets[0]) > 1f ||
+                        kotlin.math.abs(worldMins[1] - naturalOffsets[1]) > 1f)
+                val useWorldMins = singleInstance && worldMinsOnBed && worldMinsDiffer
+                _loadTimeInstanceOffsets.value = if (useWorldMins) {
+                    worldMins!!.copyOf().also {
+                        Log.i("SlicerVM", "B131: using mesh world-AABB-min ${it.toList()} as instance offset " +
+                            "(BBS reference ${naturalOffsets.toList()} differs — see drawModelAt semantics)")
+                    }
+                } else {
+                    naturalOffsets.copyOf()
+                }
+                Log.i("SlicerVM", "B78: snapshotted load-time instance offsets: ${_loadTimeInstanceOffsets.value.toList()}")
             } else {
                 _loadTimeInstanceOffsets.value = floatArrayOf(135f, 135f)
             }

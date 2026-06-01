@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <numeric>
 #include <regex>
 #include <chrono>
 
@@ -504,6 +505,25 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     // degenerate filtering) into per-state temp buffers, then
                     // round-robin interleave (B48) so all paint colours are
                     // proportionally represented even if GL truncates.
+                    //
+                    // B131: apply the global stride to each per-state append.
+                    // Previously stride=1 was hard-coded, so MMU/paint-state
+                    // files bypassed max_triangles entirely. Hueforge-class
+                    // files (e.g. GhostfacePokemoncard.3mf at 3.7M tris with
+                    // paint data on every volume) returned the full triangle
+                    // count instead of capping at 100K — causing slow GL
+                    // upload and "Prepare doesn't show the model" UX (because
+                    // mesh upload + decimation accounted for several seconds
+                    // before any frame could render).
+                    const int MIN_DECIMATION_TRIS = 1000;
+                    const int mmu_total_tris = std::accumulate(
+                        facets_per_type.begin(), facets_per_type.end(), 0,
+                        [](int sum, const indexed_triangle_set& its) {
+                            return sum + static_cast<int>(its.indices.size());
+                        });
+                    const bool mmu_needs_decimation = needs_decimation &&
+                        mmu_total_tris > MIN_DECIMATION_TRIS;
+                    const int mmu_stride = mmu_needs_decimation ? stride : 1;
                     struct StateMesh {
                         std::vector<float> positions;   // 9 floats per tri
                         std::vector<uint8_t> indices;   // 1 per tri
@@ -521,7 +541,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                         // Emit into a temporary PreviewMesh to get degenerate filtering
                         PreviewMesh tmp;
                         int tri_counter = 0;
-                        appendItsPreviewMesh(tmp, its, extruder_index, 1, tri_counter);
+                        appendItsPreviewMesh(tmp, its, extruder_index, mmu_stride, tri_counter);
                         if (!tmp.extruder_indices.empty()) {
                             StateMesh sm;
                             sm.positions = std::move(tmp.triangle_positions);

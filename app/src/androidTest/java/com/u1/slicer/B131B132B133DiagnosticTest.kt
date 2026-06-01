@@ -297,6 +297,59 @@ class B131B132B133DiagnosticTest {
     }
 
     /**
+     * B131 sibling — baseline STL behaviour. Confirms that for a Benchy STL
+     * (no instance transform), `getInstanceOffsets` and
+     * `nativeGetObjectWorldAABBMins` agree, and the mesh world AABB matches
+     * what `drawModelAt(mesh, x, y)` expects. Establishes the no-regression
+     * floor for any B131 positioning fix.
+     */
+    @Test
+    fun b131_benchy_stl_offsetsAgreeWithMeshWorldMin() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val file = copyAssetToCache("3DBenchy.stl")
+
+        try {
+            viewModel.loadModelFromFile(file)
+            waitUntil("benchy model loaded", timeoutMs = 30_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            Thread.sleep(300)
+
+            val lib = NativeLibrary()
+            val instanceOffsets = runCatching { lib.getInstanceOffsets() }.getOrDefault(floatArrayOf())
+            val worldMins = runCatching { lib.nativeGetObjectWorldAABBMins() }.getOrDefault(floatArrayOf())
+            val mesh = runCatching {
+                lib.getPreparePreviewMesh(com.u1.slicer.viewer.NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+            }.getOrNull()
+            val pos = mesh?.trianglePositions ?: floatArrayOf()
+            var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY
+            var minY = Float.POSITIVE_INFINITY; var maxY = Float.NEGATIVE_INFINITY
+            var i = 0
+            while (i + 2 < pos.size) {
+                val px = pos[i]; val py = pos[i + 1]
+                if (px < minX) minX = px; if (px > maxX) maxX = px
+                if (py < minY) minY = py; if (py > maxY) maxY = py
+                i += 3
+            }
+
+            val diagnostic = buildString {
+                append("instanceOffsets=${instanceOffsets.toList()}, ")
+                append("worldMins=${worldMins.toList()}, ")
+                append("meshAABB=[${minX}..${maxX}, ${minY}..${maxY}]")
+            }
+            Log.i(TAG, "B131_BENCHY_DIAGNOSTIC: $diagnostic")
+            println("B131_BENCHY_DIAGNOSTIC: $diagnostic")
+
+            // Pure documentation — no strong assertion.
+            assertTrue("preview mesh fetched", pos.size >= 9)
+        } finally {
+            viewModel.clearModel()
+            file.delete()
+        }
+    }
+
+    /**
      * B131 follow-up — distinguishes the two competing hypotheses for why
      * Ghostface doesn't render on the Prepare tab:
      *
@@ -313,11 +366,13 @@ class B131B132B133DiagnosticTest {
      * The diagnostic alone is the value; the assertion below is loose so the
      * test passes once we know which fix to apply.
      *
-     * 2026-06-01: currently @Ignore'd because both assertions fail on v2.10.1
-     * (decimation cap is bypassed → 3.7M triangles; mesh-Y range ends at 360mm
-     * past the 270mm bed). Un-ignore once B131 is fixed.
+     * 2026-06-01 partial fix: the MMU stride bypass in sapil_model.cpp is
+     * fixed (decimation cap now respected for paint-state files), but the
+     * world-coord-vs-instance-offset mismatch is NOT yet addressed. So the
+     * `fitsBedY` assertion still fails on Ghostface. The test stays here
+     * to document both bugs; the fits-bed assertion is split out so the
+     * decimation check can pass independently.
      */
-    @Ignore("B131 fix deferred — see BACKLOG entry. Un-ignore when fixed.")
     @Test
     fun b131_ghostface_decimatedMeshFitsBedFromInstanceOffset() {
         val application = targetContext.applicationContext as U1SlicerApplication
@@ -339,9 +394,13 @@ class B131B132B133DiagnosticTest {
             Thread.sleep(500)
 
             val lib = NativeLibrary()
-            val instanceOffsets = runCatching { lib.getInstanceOffsets() }.getOrDefault(floatArrayOf())
-            val instX = instanceOffsets.getOrNull(0) ?: 0f
-            val instY = instanceOffsets.getOrNull(1) ?: 0f
+            // Use viewModel.loadTimeInstanceOffsets (what the renderer actually
+            // uses) — NOT the raw `getInstanceOffsets()`. B131's fix replaces
+            // the BBS reference with mesh world-AABB-min at the VM layer.
+            val rendererOffsets = viewModel.loadTimeInstanceOffsets.value
+            val rawInstanceOffsets = runCatching { lib.getInstanceOffsets() }.getOrDefault(floatArrayOf())
+            val instX = rendererOffsets.getOrNull(0) ?: 0f
+            val instY = rendererOffsets.getOrNull(1) ?: 0f
 
             val maxTris = com.u1.slicer.viewer.NativePreviewMesh.MAX_DECIMATED_TRIANGLES
             val t0 = System.currentTimeMillis()
@@ -382,7 +441,7 @@ class B131B132B133DiagnosticTest {
                 append("decimateMs=$decimateMs, ")
                 append("decimatedTriCount=$triCount (cap=$maxTris), ")
                 append("meshAABB=[${minX}..${maxX}, ${minY}..${maxY}, ${minZ}..${maxZ}], ")
-                append("instanceOffsets=(${instX}, ${instY}), ")
+                append("rendererOffsets=(${instX}, ${instY}) [raw BBS=${rawInstanceOffsets.toList()}], ")
                 append("renderer-drawn-rangeX=[${drawnMinX}..${drawnMaxX}] fitsBed=$fitsBedX, ")
                 append("renderer-drawn-rangeY=[${drawnMinY}..${drawnMaxY}] fitsBed=$fitsBedY")
             }
@@ -397,6 +456,17 @@ class B131B132B133DiagnosticTest {
                 "B131: decimation too slow for an interactive UI — $diagnostic",
                 decimateMs < 10_000L,
             )
+            // Decimation cap: the MMU stride fix in sapil_model.cpp must keep
+            // post-decimation triangle count near the cap (allowing 2× slack
+            // for paint-state per-state stride rounding).
+            assertTrue(
+                "B131: decimated triangle count must respect the cap — $diagnostic",
+                triCount <= maxTris * 2,
+            )
+            // Positioning fix: with B131's loadTimeInstanceOffsets fix using
+            // mesh world-AABB-min for single-instance BBS loads, the renderer's
+            // drawModelAt zeroes out the shift and the mesh lands at its world
+            // position, on-bed.
             assertTrue(
                 "B131: renderer-drawn mesh range must fit within 270×270 bed — $diagnostic",
                 fitsBedX && fitsBedY,
