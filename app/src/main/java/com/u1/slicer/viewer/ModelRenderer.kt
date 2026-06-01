@@ -1024,6 +1024,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         ): Pair<MeshData, List<ObjectMeshRange>>? {
             val objectCount = positions.size / 2
             if (objectCount < 2 || mesh.vertexCount == 0) return null
+            // B132c: defensive guard. The caller's gate should already ensure
+            // positions.size/2 == sizes.size/3, but tolerate a mismatch by
+            // returning null rather than ArrayIndexOutOfBoundsException —
+            // the renderer's fallback (drawModel) handles a null splitResult.
+            if (sizes.size < objectCount * 3) return null
             val fpp = MeshData.FLOATS_PER_VERTEX
             val triCount = mesh.vertexCount / 3
 

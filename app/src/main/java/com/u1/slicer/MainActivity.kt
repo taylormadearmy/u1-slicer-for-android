@@ -3380,8 +3380,13 @@ fun InlineModelPreview(
             // In multi-object mode, split the combined world-space mesh into per-object
             // vertex ranges so each object can be drawn independently (enables smooth drag).
             val multiPos = multiObjectPositions
+            // B132c: tighten gate to require exact equality. The previous `>=`
+            // tolerated a multiPos LARGER than perObjectSizes (e.g. an applied
+            // placement for 5 objects while the model + bboxes track 3),
+            // which made splitMeshByObjects index past sizes.length and crash
+            // with ArrayIndexOutOfBoundsException.
             val splitResult = if (perObjectSizes.size / 3 > 1 && multiPos != null
-                && multiPos.size >= (perObjectSizes.size / 3) * 2
+                && multiPos.size == (perObjectSizes.size / 3) * 2
             ) {
                 com.u1.slicer.viewer.ModelRenderer.splitMeshByObjects(newMesh, multiPos, perObjectSizes)
             } else null

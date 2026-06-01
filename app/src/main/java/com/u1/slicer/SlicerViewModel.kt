@@ -3458,6 +3458,29 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Called from inline 3D placement viewer when user drags objects. */
     fun applyPlacementPositions(positions: FloatArray, wipeTowerPos: Pair<Float, Float>) {
+        // B132c: validate positions.size matches the native model's object count
+        // in multi-object mode. Without this, a caller passing a stale-size
+        // positions array (e.g. drag handler retaining a 5-position objPositions
+        // from before a setCopyCount or some Compose remember-cache mismatch)
+        // would corrupt `_multiObjectPositions` and cause the next render's
+        // `splitMeshByObjects` to crash with ArrayIndexOutOfBoundsException
+        // because positions.size/2 and perObjectSizes.size/3 disagree.
+        // Native already logs "positions count N != object count M" and rejects
+        // the call; this guard mirrors that on the Kotlin side so the state
+        // flow doesn't go out of sync with the native model.
+        if (hasMultipleDistinctObjectsVar) {
+            val nativeObjCount = runCatching { native.nativeGetObjectCount() }.getOrDefault(0)
+            val passedCount = positions.size / 2
+            if (passedCount != nativeObjCount) {
+                Log.w(
+                    "SlicerVM",
+                    "applyPlacementPositions: ignoring mismatched positions — " +
+                        "passed=$passedCount, native=$nativeObjCount " +
+                        "(would have corrupted _multiObjectPositions and crashed splitMeshByObjects)",
+                )
+                return
+            }
+        }
         customObjectPositions = positions
         customWipeTowerPos = wipeTowerPos
         // Also update wipe tower config with new position

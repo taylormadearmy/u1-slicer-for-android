@@ -297,6 +297,193 @@ class B131B132B133DiagnosticTest {
     }
 
     /**
+     * B132c regression — Pixel 8a 2026-06-01 crash with the exact stack:
+     *
+     *   ArrayIndexOutOfBoundsException: length=9; index=9
+     *   at ModelRenderer$Companion.splitMeshByObjects(ModelRenderer.kt:1058)
+     *   at MainActivityKt$InlineModelPreview$6.invokeSuspend(MainActivity.kt:3386)
+     *
+     * Trigger: applyPlacementPositions is called with a position array whose
+     * count doesn't match the native model's object count (e.g. 5 positions
+     * for a 3-object split). Without the B132c guard, `_multiObjectPositions`
+     * gets set to the mismatched value, the rotation LaunchedEffect's
+     * splitMeshByObjects call indexes past `perObjectSizes`, and crashes.
+     */
+    @Test
+    fun b132c_applyPlacementPositions_mismatchedCount_doesNotCorruptState() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val file = copyAssetToCache("Oreo+Proj+1.3mf")
+
+        try {
+            viewModel.loadModelFromFile(file)
+            waitUntil("oreo loaded") {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            if (viewModel.showPlateSelector.value) viewModel.selectPlate(1)
+            waitUntil("oreo after plate") {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            Thread.sleep(500)
+
+            // Split one object → 3 native objects, multiObjectPositions = 6 floats
+            val lib = NativeLibrary()
+            var splitOk = false
+            for (i in 0 until lib.nativeGetObjectCount()) {
+                splitOk = viewModel.splitObject(i)
+                if (splitOk) break
+            }
+            Thread.sleep(500)
+            val nativeCount = lib.nativeGetObjectCount()
+            val multiPosBefore = viewModel.multiObjectPositions.value
+            assertEquals("expected 3 native objects after split", 3, nativeCount)
+            assertNotNull(multiPosBefore)
+            assertEquals("multiObjectPositions size = 2× native count", 6, multiPosBefore!!.size)
+
+            // Now simulate the crash trigger: applyPlacementPositions with 5
+            // positions (10 floats) for a 3-object model — the exact bug from
+            // the device log "Custom placement applied: 5 objects" followed by
+            // "setObjectPositions: positions count 5 != object count 3".
+            val mismatched = FloatArray(10) { (it + 1).toFloat() * 10f }  // [10, 20, 30, ... 100]
+            viewModel.applyPlacementPositions(mismatched, Pair(105f, 10f))
+            Thread.sleep(100)
+
+            // The guard must reject the mismatched count and leave the state
+            // pointing at the still-correct 3-object positions, preventing
+            // the next splitMeshByObjects call from crashing.
+            val multiPosAfter = viewModel.multiObjectPositions.value
+            assertEquals(
+                "B132c: applyPlacementPositions must reject mismatched-count " +
+                    "and leave _multiObjectPositions at the 3-object value " +
+                    "(before guard: would become 10 floats and corrupt the renderer)",
+                6, multiPosAfter?.size,
+            )
+
+            // Also call splitMeshByObjects directly with mismatched arrays to
+            // verify the defensive guard inside the function returns null
+            // instead of crashing.
+            val sizes = FloatArray(9) { 50f }   // 3-object sizes
+            val tooManyPositions = FloatArray(10) { 0f }   // 5-object positions
+            val vertBuf = java.nio.ByteBuffer.allocateDirect(
+                30 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX * 4
+            ).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
+            val fakeMesh = com.u1.slicer.viewer.MeshData(
+                vertices = vertBuf,
+                vertexCount = 30,
+                minX = 0f, minY = 0f, minZ = 0f,
+                maxX = 100f, maxY = 100f, maxZ = 100f,
+            )
+            val result = com.u1.slicer.viewer.ModelRenderer.splitMeshByObjects(
+                fakeMesh, tooManyPositions, sizes,
+            )
+            assertNull(
+                "B132c: splitMeshByObjects with positions.size/2=5 > sizes.size/3=3 " +
+                    "must return null instead of ArrayIndexOutOfBoundsException",
+                result,
+            )
+        } finally {
+            viewModel.clearModel()
+            file.delete()
+        }
+    }
+
+    /**
+     * Earlier version: end-to-end Oreo flow doesn't crash. Kept as a smoke
+     * test for the split → setCopyCount path.
+     */
+    @Test
+    fun b132c_oreo_splitThenCopyCount2_doesNotCrash() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val file = copyAssetToCache("Oreo+Proj+1.3mf")
+
+        try {
+            viewModel.loadModelFromFile(file)
+            waitUntil("oreo loaded") {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            if (viewModel.showPlateSelector.value) viewModel.selectPlate(1)
+            waitUntil("oreo after plate") {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            Thread.sleep(500)
+
+            // 1) Split objects (user step 1)
+            val lib = NativeLibrary()
+            val objCountBeforeSplit = lib.nativeGetObjectCount()
+            var splitOk = false
+            for (i in 0 until objCountBeforeSplit) {
+                splitOk = viewModel.splitObject(i)
+                if (splitOk) break
+            }
+            Thread.sleep(500)
+            val objCountAfterSplit = lib.nativeGetObjectCount()
+            val multiPosAfterSplit = viewModel.multiObjectPositions.value
+            val customPosAfterSplit_size = try {
+                viewModel.javaClass.getDeclaredField("customObjectPositions").let {
+                    it.isAccessible = true
+                    (it.get(viewModel) as? FloatArray)?.size
+                }
+            } catch (_: Throwable) { -1 }
+
+            // 2) Now setCopyCount(2) — the user step where it "crashes"
+            val crashed = try {
+                viewModel.setCopyCount(2)
+                Thread.sleep(300)
+                null
+            } catch (t: Throwable) {
+                "${t::class.simpleName}: ${t.message}"
+            }
+            val stateAfterCopy = viewModel.state.value
+            val multiPosAfterCopy = viewModel.multiObjectPositions.value
+            val copyCountAfterCopy = viewModel.copyCount.value
+            val copyBedWarning = viewModel.copyBedWarning.value
+
+            // 3) Try to slice and see if THAT crashes
+            val sliceCrashed = try {
+                viewModel.startSlicing()
+                waitUntil("slice resolved", timeoutMs = 120_000L) {
+                    val st = viewModel.state.value
+                    st is SlicerViewModel.SlicerState.SliceComplete ||
+                        st is SlicerViewModel.SlicerState.Error
+                }
+                null
+            } catch (t: Throwable) {
+                "${t::class.simpleName}: ${t.message}"
+            }
+            val sliceState = viewModel.state.value
+
+            val diagnostic = buildString {
+                append("objCountBeforeSplit=$objCountBeforeSplit, ")
+                append("splitOk=$splitOk, ")
+                append("objCountAfterSplit=$objCountAfterSplit, ")
+                append("multiPosAfterSplit.size=${multiPosAfterSplit?.size ?: -1}, ")
+                append("customPosAfterSplit.size=$customPosAfterSplit_size, ")
+                append("setCopyCountCrash=${crashed ?: "no"}, ")
+                append("stateAfterCopy=${stateAfterCopy::class.simpleName}, ")
+                append("multiPosAfterCopy.size=${multiPosAfterCopy?.size ?: -1}, ")
+                append("copyCountAfterCopy=$copyCountAfterCopy, ")
+                append("copyBedWarning=${copyBedWarning ?: "null"}, ")
+                append("sliceCrash=${sliceCrashed ?: "no"}, ")
+                append("sliceState=${sliceState::class.simpleName}")
+                if (sliceState is SlicerViewModel.SlicerState.Error) {
+                    append(", sliceError=${sliceState.message}")
+                }
+            }
+            Log.i(TAG, "B132C_DIAGNOSTIC: $diagnostic")
+            println("B132C_DIAGNOSTIC: $diagnostic")
+
+            assertNull("B132c: setCopyCount must not throw — $diagnostic", crashed)
+            assertNull("B132c: slice must not throw — $diagnostic", sliceCrashed)
+        } finally {
+            viewModel.clearModel()
+            file.delete()
+        }
+    }
+
+    /**
      * B131 sibling — baseline STL behaviour. Confirms that for a Benchy STL
      * (no instance transform), `getInstanceOffsets` and
      * `nativeGetObjectWorldAABBMins` agree, and the mesh world AABB matches

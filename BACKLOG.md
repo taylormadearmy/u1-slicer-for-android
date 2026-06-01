@@ -17,7 +17,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/165
 - **Source**: Discord, 2026-05-31 (Kevin) — https://discord.com/channels/1086575708903571536/1484249705042153633/1510628426099200120
 
-### B132: Oreo 3MF — Split + extra copies don't appear physically on bed; slice ignores custom placement and reverts to original layout (GitHub #164) — PARTIAL FIX in working tree, residual UNVERIFIED
+### B132: Oreo 3MF — Split + extra copies don't appear physically on bed; slice ignores custom placement and reverts to original layout (GitHub #164) — PARTIAL FIX (v2.10.2 + v2.10.3), residual UNVERIFIED
+- **v2.10.3 follow-up** (B132c — crash fix): user reproduced an `ArrayIndexOutOfBoundsException: length=9; index=9` at `splitMeshByObjects` after split + make-copies on Oreo. Device log showed `applyPlacementPositions: 5 objects` for a 3-object model, with native rejecting via `setObjectPositions: positions count 5 != object count 3`. Kotlin `_multiObjectPositions` was corrupted past the model state, then the rotation `LaunchedEffect` indexed `perObjectSizes` past its length. Three defensive fixes layered:
+  1. `SlicerViewModel.applyPlacementPositions` — validate `positions.size / 2 == nativeGetObjectCount()` before any state mutation; log + return early on mismatch.
+  2. `MainActivity` rotation `LaunchedEffect` gate — tighten `multiPos.size >= (perObjectSizes.size / 3) * 2` to `==` so an over-long positions array no longer enters `splitMeshByObjects`.
+  3. `ModelRenderer.splitMeshByObjects` — return `null` if `sizes.size < objectCount * 3` instead of indexing OOB; the caller's fallback (`drawModel`) handles a null result.
+- **Verified**: `b132c_applyPlacementPositions_mismatchedCount_doesNotCorruptState` PASSES (guard rejects 5-position array for 3-object model). All 7 B131B132B133 diagnostic tests green.
+
 - **Symptom**: On `OreoProj1.3mf` (same file family as B101 / B102), after the v2.10.1 Split-to-Parts gate fix, Jon reports a four-step cascade:
   1. Could not make more than one copy of the Oreo on the plate **because of the initial layout** (parts spread wide).
   2. Used **Split to Parts** to test — registered more than one copy in the UI — but the **extra copies did not appear physically** on the bed.
