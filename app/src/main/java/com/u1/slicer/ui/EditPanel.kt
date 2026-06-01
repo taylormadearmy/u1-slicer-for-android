@@ -136,6 +136,16 @@ private fun ObjectScopedEditSection(
                 modifier = Modifier.weight(1f),
             ) { Text("Split to Objects") }
         }
+        // B132c follow-up (v2.10.4) — per-object Copy. The whole-model Copies
+        // slider is hidden in multi-object mode (see ScaleSection.multiObjectMode);
+        // this is how a user duplicates a single split piece without re-loading
+        // the whole file.
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(
+                onClick = { viewModel.duplicateObject(objIdx) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Copy") }
+        }
         // F66 2026-05-31: "Split to Parts" must appear ALSO when there's a
         // single volume whose mesh has multiple disconnected islands —
         // OrcaSlicer's desktop "Split → To Parts" covers that case explicitly,

@@ -1015,6 +1015,44 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * B132c follow-up (v2.10.4) — deep-copy the object at [objIdx] and place
+     * the duplicate next to the existing layout. Returns true on success.
+     *
+     * Per-part copy UX: lets the user duplicate a single split piece without
+     * re-loading the whole file (which would copy ALL pieces). Used by the
+     * object-scoped Edit panel's "Copy" button.
+     */
+    fun duplicateObject(objIdx: Int): Boolean {
+        val newIdx = native.nativeDuplicateObject(objIdx)
+        if (newIdx < 0) return false
+
+        // Promote to multi-object mode and lay out the new piece via the same
+        // grid-with-existing-anchor logic doAddFile uses for multi-file adds.
+        hasMultipleDistinctObjectsVar = true
+        val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
+        _objectBoundingBoxes.value = boxes
+        if (boxes.size >= 3) {
+            val existing = customObjectPositions
+                ?: com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+            val positions = com.u1.slicer.model.CopyArrangeCalculator
+                .placeAdditionalObject(existing, boxes)
+            native.setObjectPositions(positions)
+            customObjectPositions = positions
+            _multiObjectPositions.value = positions
+        }
+
+        // Copies don't apply in multi-object mode (B132a/B132b); reset so the
+        // bed-wide Copies UI is consistent if the user re-opens the bed-wide
+        // panel.
+        _copyCount.value = 1
+        _copyBedWarning.value = null
+
+        _sliceStale.value = true
+        invalidatePrepareMeshCache()
+        return true
+    }
+
+    /**
      * F66 — split one volume within an object into multiple volumes.
      * Returns the new volume count, or `-1` on failure.
      */
@@ -3453,8 +3491,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             CopyArrangeCalculator.copyBedWarning(effW, effH, _copyCount.value)
         } else null
         customObjectPositions = null // reset custom positions when count changes
+        // B132c sibling: keep _multiObjectPositions in sync with customObjectPositions
+        // so the two state-flow consumers (renderer + slice path) don't drift.
+        // Without this, the public StateFlow retains the prior split layout while
+        // customObjectPositions goes null — a real inconsistency the renderer
+        // currently tolerates (no crash) but could surface as a stale per-object
+        // draw if a downstream consumer keys off only one of the two.
+        _multiObjectPositions.value = null
         _sliceStale.value = true
     }
+
+    @Volatile private var b132cTraceLogged: Boolean = false
 
     /** Called from inline 3D placement viewer when user drags objects. */
     fun applyPlacementPositions(positions: FloatArray, wipeTowerPos: Pair<Float, Float>) {
@@ -3472,11 +3519,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val nativeObjCount = runCatching { native.nativeGetObjectCount() }.getOrDefault(0)
             val passedCount = positions.size / 2
             if (passedCount != nativeObjCount) {
+                // B132c follow-up: log a one-time stack trace so the next
+                // occurrence pinpoints the caller. The defensive guard alone
+                // prevents the crash but doesn't tell us how the wrong-size
+                // array was produced upstream (Compose `remember` cache vs.
+                // stale closure vs. some race). Trace once per process.
+                val trace = if (b132cTraceLogged) "(trace suppressed — already logged this session)"
+                            else { b132cTraceLogged = true; Log.getStackTraceString(Throwable("B132c caller trace")) }
                 Log.w(
                     "SlicerVM",
                     "applyPlacementPositions: ignoring mismatched positions — " +
                         "passed=$passedCount, native=$nativeObjCount " +
-                        "(would have corrupted _multiObjectPositions and crashed splitMeshByObjects)",
+                        "(would have corrupted _multiObjectPositions and crashed splitMeshByObjects)\n" +
+                        trace,
                 )
                 return
             }

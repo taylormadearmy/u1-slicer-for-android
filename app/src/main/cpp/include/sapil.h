@@ -275,6 +275,13 @@ public:
     // Returns the new volume count for the object on success, -1 on failure.
     int splitVolume(int objIdx, int volIdx);
 
+    // B132c follow-up (v2.10.4): deep-copy an existing object via
+    // Model::add_object(*src). The new object is appended at the end of the
+    // model.objects vector. Returns the new object's index on success, or
+    // std::nullopt if objIdx is invalid. Used by per-object "Copy" UX so
+    // the user can duplicate individual split pieces without re-loading.
+    std::optional<int> duplicateObject(int objIdx);
+
     // Run Slic3r::orientation::orient on one object and apply the result to
     // its instances[0] rotation. Returns the new euler [x, y, z] in radians,
     // or std::nullopt on failure (model not loaded, objIdx OOR, orient bailout).

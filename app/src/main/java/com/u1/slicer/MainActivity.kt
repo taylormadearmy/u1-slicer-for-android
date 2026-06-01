@@ -1659,7 +1659,11 @@ fun PrepareScreen(
                             copyBedWarning = copyBedWarning,
                             rotation = modelRotation,
                             onRotationChange = { viewModel.setModelRotation(it) },
-                            loadTimeSize = modelInfo?.let { Triple(it.sizeX, it.sizeY, it.sizeZ) }
+                            loadTimeSize = modelInfo?.let { Triple(it.sizeX, it.sizeY, it.sizeZ) },
+                            // B132c follow-up: hide whole-model Copies in
+                            // multi-object mode — per-object Copy lives in the
+                            // selection Edit panel instead.
+                            multiObjectMode = hasMultipleDistinctObjects,
                         )
                         // Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour models
                         // (STL, single-filament 3MF) get a one-row Filament list,
@@ -4340,7 +4344,13 @@ fun ScaleSection(
     onRotationChange: (SlicerViewModel.ModelRotation) -> Unit = {},
     // F83 (GitHub #136): load-time XYZ size in mm enables the absolute-mm
     // input mode. Null = no model loaded → mm mode is disabled.
-    loadTimeSize: Triple<Float, Float, Float>? = null
+    loadTimeSize: Triple<Float, Float, Float>? = null,
+    // B132c follow-up (v2.10.4): in multi-object mode (post-split or
+    // multi-file add) the global Copies control is meaningless — copies
+    // are a single-model concept and don't multiply individual split
+    // pieces. Hide the slider in this mode; per-object duplication
+    // lives in the selection edit panel instead.
+    multiObjectMode: Boolean = false,
 ) {
     var uniformMode by remember { mutableStateOf(true) }
     var uniformValue by remember(scale) { mutableFloatStateOf(scale.uniform) }
@@ -4368,7 +4378,11 @@ fun ScaleSection(
                     Icon(Icons.Default.OpenWith, null, tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Scale, Copies & Rotation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        if (multiObjectMode) "Scale & Rotation" else "Scale, Copies & Rotation",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                    )
                 }
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -4393,8 +4407,13 @@ fun ScaleSection(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // B132c follow-up: hide the "Copies: N" label in
+                            // multi-object mode — per-object Copy lives in
+                            // the object-scoped Edit panel.
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Copies: $copyCount", style = MaterialTheme.typography.labelMedium)
+                                if (!multiObjectMode) {
+                                    Text("Copies: $copyCount", style = MaterialTheme.typography.labelMedium)
+                                }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 // F83: unit toggle. mm only available with a loaded model.
@@ -4417,20 +4436,22 @@ fun ScaleSection(
                                 Switch(checked = uniformMode, onCheckedChange = { uniformMode = it })
                             }
                         }
-                        Slider(
-                            value = copyCount.toFloat(),
-                            onValueChange = { v -> onSetCopyCount(v.toInt()) },
-                            valueRange = 1f..16f,
-                            steps = 14
-                        )
-                        if (copyBedWarning != null) {
-                            Text(
-                                copyBedWarning,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error
+                        if (!multiObjectMode) {
+                            Slider(
+                                value = copyCount.toFloat(),
+                                onValueChange = { v -> onSetCopyCount(v.toInt()) },
+                                valueRange = 1f..16f,
+                                steps = 14
                             )
+                            if (copyBedWarning != null) {
+                                Text(
+                                    copyBedWarning,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         }
-                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         val focusManager = LocalFocusManager.current
                         // F83: mm-mode references the load-time axis sizes captured at file load.
                         val sizeX = loadTimeSize?.first ?: 0f

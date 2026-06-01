@@ -602,6 +602,28 @@ std::optional<SlicerEngine::SplitResult> SlicerEngine::splitObject(int objIdx) {
     return SplitResult{objIdx, (int)added};
 }
 
+std::optional<int> SlicerEngine::duplicateObject(int objIdx) {
+    if (!f66_objIdxValid(objIdx)) return std::nullopt;
+    Slic3r::Model& model = getGlobalModel();
+    Slic3r::ModelObject* src = model.objects[objIdx];
+    if (src == nullptr) return std::nullopt;
+    // Model::add_object(const ModelObject&) deep-copies the source object
+    // (including all volumes, instances, paint state, per-volume extruder
+    // overrides) and appends it to model.objects. The new instance keeps the
+    // source's instance transform — the Kotlin layer is expected to call
+    // setObjectPositions afterwards to place the duplicate next to the
+    // original.
+    Slic3r::ModelObject* dupe = model.add_object(*src);
+    if (dupe == nullptr) return std::nullopt;
+    const int newIdx = static_cast<int>(model.objects.size() - 1);
+    // Refresh preview-extruder cache + invalidate so the next preview fetch
+    // includes the duplicated object.
+    onSplitObjectReshape(newIdx, 1, static_cast<int>(dupe->volumes.size()));
+    invalidatePreviewMeshCache();
+    SAPIL_LOGI("duplicateObject: cloned object %d → new index %d", objIdx, newIdx);
+    return newIdx;
+}
+
 int SlicerEngine::splitVolume(int objIdx, int volIdx) {
     if (!f66_volIdxValid(objIdx, volIdx)) return -1;
     auto* obj = getGlobalModel().objects[objIdx];

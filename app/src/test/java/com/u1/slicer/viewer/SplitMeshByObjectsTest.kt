@@ -98,4 +98,28 @@ class SplitMeshByObjectsTest {
         // Total triangles preserved
         assertEquals(3, ranges[0].vertexCount / 3 + ranges[1].vertexCount / 3)
     }
+
+    /**
+     * B132c guard — when `sizes` is too short for the implied object count
+     * from `positions`, return null instead of indexing OOB. Mirrors the
+     * defensive check added in v2.10.3 after the Pixel 8a Oreo crash:
+     *
+     *   ArrayIndexOutOfBoundsException: length=9; index=9
+     *   at ModelRenderer$Companion.splitMeshByObjects(ModelRenderer.kt:1058)
+     */
+    @Test
+    fun `returns null when sizes shorter than required by positions count`() {
+        val tri = floatArrayOf(0f,0f,0f, 1f,0f,0f, 0f,1f,0f)
+        val mesh = buildMesh(tri)
+        // 5-object positions (10 floats) but only 3-object sizes (9 floats) —
+        // mirrors the device repro state.
+        val positions = FloatArray(10) { it.toFloat() }
+        val sizes = FloatArray(9) { 50f }
+
+        val result = ModelRenderer.splitMeshByObjects(mesh, positions, sizes)
+        assertNull(
+            "B132c: mismatched positions/sizes must return null instead of crashing",
+            result,
+        )
+    }
 }

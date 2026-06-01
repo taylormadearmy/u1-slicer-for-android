@@ -267,6 +267,13 @@ class NativeLibrary {
      *  new volume count, or -1 on failure. */
     external fun nativeSplitVolume(objIdx: Int, volIdx: Int): Int
 
+    /** B132c follow-up (v2.10.4): deep-copy an existing object at [objIdx].
+     *  Returns the new object's index on success (always `nativeGetObjectCount()-1`),
+     *  or -1 on failure. The duplicate keeps the source's volumes, paint state,
+     *  per-volume extruder overrides, and instance transform — callers should
+     *  call `setObjectPositions` afterwards to place the new object on the bed. */
+    external fun nativeDuplicateObject(objIdx: Int): Int
+
     /** Auto-orient one object so a stable face is on the bed. Returns the new
      *  Euler rotation `[x, y, z]` in radians, or `null` on failure. TBB-parallel
      *  internally — callers wrap this in LongOpService. */

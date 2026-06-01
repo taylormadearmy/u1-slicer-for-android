@@ -338,6 +338,15 @@ Java_com_u1_slicer_NativeLibrary_nativeSplitVolume(JNIEnv*, jobject, jint objIdx
     return g_engine->splitVolume(objIdx, volIdx);
 }
 
+// B132c follow-up (v2.10.4): per-object duplicate. Returns the new object's
+// index on success, or -1 on failure.
+JNIEXPORT jint JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeDuplicateObject(JNIEnv*, jobject, jint objIdx) {
+    if (!g_engine) return -1;
+    auto res = g_engine->duplicateObject(static_cast<int>(objIdx));
+    return res.has_value() ? *res : -1;
+}
+
 JNIEXPORT jdoubleArray JNICALL
 Java_com_u1_slicer_NativeLibrary_nativeAutoOrientObject(JNIEnv* env, jobject, jint objIdx) {
     if (!g_engine) return nullptr;
