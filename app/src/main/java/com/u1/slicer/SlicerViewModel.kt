@@ -891,9 +891,38 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setObjectScale(objIdx: Int, sx: Float, sy: Float, sz: Float) {
-        if (!native.nativeSetObjectScale(objIdx, sx, sy, sz)) return
-        _perObjectPoses.update { it + (objIdx to (it[objIdx] ?: PerObjectPose()).copy(
-            scaleX = sx, scaleY = sy, scaleZ = sz)) }
+        // v2.10.10: when nothing's been split AND the user hasn't added extra
+        // files (i.e. all native objects come from the single source load —
+        // like Oreo's Object 8 + Object 12 within one .3mf), per-object scale
+        // applies to EVERY object on the bed. The user perceives "the model"
+        // as one entity even though it's multiple ModelObjects internally.
+        // Post-split OR multi-file: per-object scope as before.
+        val isSingleSourceUnsplit = _splitObjectOps.value.isEmpty() &&
+            _splitVolumeOps.value.isEmpty() &&
+            additionalModelFiles.isEmpty()
+        val objCount = runCatching { native.nativeGetObjectCount() }.getOrDefault(1)
+        val targets = if (isSingleSourceUnsplit && objCount > 1) (0 until objCount).toList()
+                      else listOf(objIdx)
+        Log.i("ScaleDebug", "setObjectScale objIdx=$objIdx scale=($sx, $sy, $sz) " +
+            "targets=$targets (isSingleSourceUnsplit=$isSingleSourceUnsplit, objCount=$objCount)")
+        val preBoxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
+        Log.i("ScaleDebug", "preBoxes=${preBoxes.toList()}")
+        val updatedPoses = _perObjectPoses.value.toMutableMap()
+        var anyApplied = false
+        for (i in targets) {
+            if (!native.nativeSetObjectScale(i, sx, sy, sz)) {
+                Log.w("ScaleDebug", "nativeSetObjectScale($i) returned false")
+                continue
+            }
+            updatedPoses[i] = (updatedPoses[i] ?: PerObjectPose()).copy(
+                scaleX = sx, scaleY = sy, scaleZ = sz,
+            )
+            anyApplied = true
+        }
+        if (!anyApplied) return
+        val postBoxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
+        Log.i("ScaleDebug", "POST boxes=${postBoxes.toList()}")
+        _perObjectPoses.value = updatedPoses
         _sliceStale.value = true
         refreshObjectGeometryAfterPoseChange()
         invalidatePrepareMeshCache()
@@ -951,22 +980,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * (single-island object — native returned null without mutating).
      */
     fun splitObject(objIdx: Int): Boolean {
-        // v2.10.8: capture source's pre-split world AABB min, then anchor the
-        // post-split pieces' combined-AABB-min back to it. OrcaSlicer's
-        // ModelObject::split (Model.cpp:2053-2069) bakes each volume's local
-        // offset into the new instance and zeroes the new volume offset, so
-        // new pieces' world AABB mins land near origin instead of wherever
-        // the user had the source. Min-based anchor is robust to
-        // getObjectBoundingBoxes returning zero sizes (which was tripping up
-        // the v2.10.7 centre-based shift, making it degenerate to (0, 0)).
         val preSplitMins = runCatching { native.nativeGetObjectWorldAABBMins() }
+            .getOrDefault(floatArrayOf())
+        val preSplitBoxes = runCatching { native.getObjectBoundingBoxes() }
+            .getOrDefault(floatArrayOf())
+        val preSplitOffsets = runCatching { native.getInstanceOffsets() }
             .getOrDefault(floatArrayOf())
         val preMinX = preSplitMins.getOrNull(objIdx * 2)
         val preMinY = preSplitMins.getOrNull(objIdx * 2 + 1)
+        // v2.10.9 debug: log everything we have before split so we can compare
+        // against the post-split state.
+        Log.i("SplitDebug", "PRE-SPLIT objIdx=$objIdx, " +
+            "preSplitMins=${preSplitMins.toList()}, " +
+            "preSplitBoxes=${preSplitBoxes.toList()}, " +
+            "preSplitOffsets=${preSplitOffsets.toList()}, " +
+            "preMin=($preMinX, $preMinY)")
 
         val res = native.nativeSplitObject(objIdx) ?: return false
         val removedIdx = res[0]
         val addedCount = res[1]
+        Log.i("SplitDebug", "AFTER nativeSplitObject: removedIdx=$removedIdx, addedCount=$addedCount, " +
+            "newObjCount=${native.nativeGetObjectCount()}")
         _perObjectPoses.value = remapPerObjectMapOnSplit(_perObjectPoses.value, removedIdx, addedCount)
         _loadTimePoses.value = remapPerObjectMapOnSplit(_loadTimePoses.value, removedIdx, addedCount)
         // Snapshot defaults for the new pieces so Reset works.
@@ -1001,15 +1035,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
             _objectBoundingBoxes.value = boxes
             if (boxes.size >= 3) {
-                // v2.10.8: anchor the new pieces' combined AABB MIN to the
-                // source's pre-split AABB MIN. Pieces keep their relative
-                // arrangement (positions are AABB mins; differences between
-                // pieces are preserved); the whole group lands at the source's
-                // spot, regardless of getObjectBoundingBoxes returning zero
-                // sizes for the post-split pieces (which broke the v2.10.7
-                // centre-based shift).
                 val natural = runCatching { native.nativeGetObjectWorldAABBMins() }
                     .getOrDefault(floatArrayOf())
+                val postSplitOffsets = runCatching { native.getInstanceOffsets() }
+                    .getOrDefault(floatArrayOf())
+                Log.i("SplitDebug", "POST-SPLIT natural worldMins=${natural.toList()}, " +
+                    "boxes=${boxes.toList()}, " +
+                    "instanceOffsets=${postSplitOffsets.toList()}, " +
+                    "newCount=$newCount, expectedNaturalSize=${newCount * 2}")
+
                 val positions = if (natural.size == newCount * 2) {
                     val adjusted = natural.copyOf()
                     if (preMinX != null && preMinY != null &&
@@ -1029,16 +1063,26 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             adjusted[i * 2] = natural[i * 2] + shiftX
                             adjusted[i * 2 + 1] = natural[i * 2 + 1] + shiftY
                         }
-                        Log.i("SlicerVM", "splitObject: shifted new pieces by " +
-                            "(${shiftX}, ${shiftY}) to anchor combined min at " +
-                            "source min (${preMinX}, ${preMinY}); pre-pieces=$addedCount")
+                        Log.i("SplitDebug", "shift=($shiftX, $shiftY) " +
+                            "preMin=($preMinX, $preMinY) postMin=($postMinX, $postMinY); " +
+                            "adjusted positions=${adjusted.toList()}")
+                    } else {
+                        Log.i("SplitDebug", "no shift applied — preMin null OR range OOR " +
+                            "(preMin=($preMinX, $preMinY), removedIdx=$removedIdx, " +
+                            "addedCount=$addedCount, newCount=$newCount)")
                     }
                     adjusted
                 } else {
+                    Log.i("SplitDebug", "natural.size mismatch — falling back to grid layout " +
+                        "(natural.size=${natural.size}, expected=${newCount * 2})")
                     com.u1.slicer.model.CopyArrangeCalculator
                         .buildMultiObjectPositions(boxes)
                 }
-                native.setObjectPositions(positions)
+                val setOk = native.setObjectPositions(positions)
+                Log.i("SplitDebug", "setObjectPositions(${positions.toList()}) → ok=$setOk")
+                val verifyMins = runCatching { native.nativeGetObjectWorldAABBMins() }
+                    .getOrDefault(floatArrayOf())
+                Log.i("SplitDebug", "VERIFY post-setObjectPositions worldMins=${verifyMins.toList()}")
                 customObjectPositions = positions
                 _multiObjectPositions.value = positions
             }

@@ -509,8 +509,16 @@ private fun ScaleAxisRow(
     mmActive: Boolean,
     onScaleChange: (Float) -> Unit,
 ) {
-    val display = if (mmActive) "%.1f mm".format(scale * axisSize)
-                  else "${(scale * 100).roundToInt()} %"
+    // v2.10.9: parity with bed-wide ScaleSection — replaces the read-only Text
+    // display with an editable OutlinedTextField. Edit-on-Done parses % or mm
+    // and applies it; slider drag updates the field live.
+    val formatField: (Float) -> String = { v ->
+        if (mmActive) "%.1f".format(v * axisSize)
+        else "%.0f".format(v * 100f)
+    }
+    var fieldText by remember(scale, mmActive) {
+        mutableStateOf(formatField(scale))
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -522,14 +530,31 @@ private fun ScaleAxisRow(
         }
         Slider(
             value = scale.coerceIn(0.1f, 4f),
-            onValueChange = onScaleChange,
+            onValueChange = {
+                onScaleChange(it)
+                fieldText = formatField(it)
+            },
             valueRange = 0.1f..4f,
             modifier = Modifier.weight(1f),
         )
-        Text(
-            display,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(start = 4.dp),
+        androidx.compose.material3.OutlinedTextField(
+            value = fieldText,
+            onValueChange = { fieldText = it },
+            suffix = { Text(if (mmActive) "mm" else "%") },
+            singleLine = true,
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                imeAction = androidx.compose.ui.text.input.ImeAction.Done,
+            ),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                val parsed = fieldText.toFloatOrNull()
+                if (parsed != null) {
+                    val newScale = if (mmActive && axisSize > 0f) parsed / axisSize
+                                   else parsed / 100f
+                    onScaleChange(newScale.coerceIn(0.1f, 4f))
+                }
+            }),
+            modifier = Modifier.width(96.dp),
         )
     }
 }
