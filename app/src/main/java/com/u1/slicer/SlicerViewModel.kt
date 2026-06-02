@@ -980,27 +980,48 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * (single-island object — native returned null without mutating).
      */
     fun splitObject(objIdx: Int): Boolean {
+        // v2.10.11: anchor to the DRAWN position of the source. The combined
+        // mesh pre-split is drawn at getPlacementPositions() which is the
+        // bed-centred result of CopyArrangeCalculator.calculate(modelInfo,
+        // copyCount=1) — NOT the native world AABB min. For Oreo the gap is
+        // ~(47, 45)mm: native world min (3.04, 4.79) vs drawn min (49.7,
+        // 49.35). Without this, post-split pieces snap from the drawn
+        // position to the native world position and the user sees them
+        // "jump on the plate".
         val preSplitMins = runCatching { native.nativeGetObjectWorldAABBMins() }
             .getOrDefault(floatArrayOf())
-        val preSplitBoxes = runCatching { native.getObjectBoundingBoxes() }
-            .getOrDefault(floatArrayOf())
-        val preSplitOffsets = runCatching { native.getInstanceOffsets() }
-            .getOrDefault(floatArrayOf())
-        val preMinX = preSplitMins.getOrNull(objIdx * 2)
-        val preMinY = preSplitMins.getOrNull(objIdx * 2 + 1)
-        // v2.10.9 debug: log everything we have before split so we can compare
-        // against the post-split state.
-        Log.i("SplitDebug", "PRE-SPLIT objIdx=$objIdx, " +
-            "preSplitMins=${preSplitMins.toList()}, " +
-            "preSplitBoxes=${preSplitBoxes.toList()}, " +
-            "preSplitOffsets=${preSplitOffsets.toList()}, " +
-            "preMin=($preMinX, $preMinY)")
+        val sourceIsSingleCombined = !hasMultipleDistinctObjectsVar &&
+            additionalModelFiles.isEmpty()
+        val drawn = getPlacementPositions()
+        val drawnAnchorX = drawn.getOrNull(0)
+        val drawnAnchorY = drawn.getOrNull(1)
+        // Combined world AABB min across ALL native objects (the mesh union).
+        var preCombMinX = Float.POSITIVE_INFINITY
+        var preCombMinY = Float.POSITIVE_INFINITY
+        var i = 0
+        while (i + 1 < preSplitMins.size) {
+            if (preSplitMins[i] < preCombMinX) preCombMinX = preSplitMins[i]
+            if (preSplitMins[i + 1] < preCombMinY) preCombMinY = preSplitMins[i + 1]
+            i += 2
+        }
+        val combinedShiftX = if (sourceIsSingleCombined && drawnAnchorX != null &&
+            preCombMinX.isFinite()) drawnAnchorX - preCombMinX else 0f
+        val combinedShiftY = if (sourceIsSingleCombined && drawnAnchorY != null &&
+            preCombMinY.isFinite()) drawnAnchorY - preCombMinY else 0f
+        Log.i("SplitDebug", "PRE-SPLIT objIdx=$objIdx sourceIsSingleCombined=$sourceIsSingleCombined " +
+            "preSplitMins=${preSplitMins.toList()} preComb=($preCombMinX, $preCombMinY) " +
+            "drawnAnchor=($drawnAnchorX, $drawnAnchorY) " +
+            "combinedShift=($combinedShiftX, $combinedShiftY)")
 
         val res = native.nativeSplitObject(objIdx) ?: return false
         val removedIdx = res[0]
         val addedCount = res[1]
         Log.i("SplitDebug", "AFTER nativeSplitObject: removedIdx=$removedIdx, addedCount=$addedCount, " +
             "newObjCount=${native.nativeGetObjectCount()}")
+        // Keep the per-object indices for the new pieces' "from source" shift
+        // (legacy behaviour, used when sourceIsSingleCombined is false).
+        val preMinX = preSplitMins.getOrNull(objIdx * 2)
+        val preMinY = preSplitMins.getOrNull(objIdx * 2 + 1)
         _perObjectPoses.value = remapPerObjectMapOnSplit(_perObjectPoses.value, removedIdx, addedCount)
         _loadTimePoses.value = remapPerObjectMapOnSplit(_loadTimePoses.value, removedIdx, addedCount)
         // Snapshot defaults for the new pieces so Reset works.
@@ -1037,39 +1058,43 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             if (boxes.size >= 3) {
                 val natural = runCatching { native.nativeGetObjectWorldAABBMins() }
                     .getOrDefault(floatArrayOf())
-                val postSplitOffsets = runCatching { native.getInstanceOffsets() }
-                    .getOrDefault(floatArrayOf())
                 Log.i("SplitDebug", "POST-SPLIT natural worldMins=${natural.toList()}, " +
-                    "boxes=${boxes.toList()}, " +
-                    "instanceOffsets=${postSplitOffsets.toList()}, " +
-                    "newCount=$newCount, expectedNaturalSize=${newCount * 2}")
+                    "boxes=${boxes.toList()}, newCount=$newCount")
 
                 val positions = if (natural.size == newCount * 2) {
                     val adjusted = natural.copyOf()
-                    if (preMinX != null && preMinY != null &&
+                    if (sourceIsSingleCombined) {
+                        // Apply the (drawnMin - preCombinedMin) shift to ALL
+                        // objects (including the ones we didn't split — e.g.
+                        // Oreo's Object 1 body when user splits Object 0 gear).
+                        // This keeps the WHOLE bed layout looking like it did
+                        // pre-split.
+                        for (k in 0 until newCount) {
+                            adjusted[k * 2] = natural[k * 2] + combinedShiftX
+                            adjusted[k * 2 + 1] = natural[k * 2 + 1] + combinedShiftY
+                        }
+                        Log.i("SplitDebug", "shift-ALL by ($combinedShiftX, $combinedShiftY); " +
+                            "adjusted=${adjusted.toList()}")
+                    } else if (preMinX != null && preMinY != null &&
                         removedIdx + addedCount <= newCount
                     ) {
+                        // Multi-source / previously-split: only shift the new
+                        // pieces so the OTHER objects (multi-file siblings)
+                        // keep their independent positions.
                         var postMinX = Float.POSITIVE_INFINITY
                         var postMinY = Float.POSITIVE_INFINITY
-                        for (i in removedIdx until removedIdx + addedCount) {
-                            val minX = natural[i * 2]
-                            val minY = natural[i * 2 + 1]
-                            if (minX < postMinX) postMinX = minX
-                            if (minY < postMinY) postMinY = minY
+                        for (k in removedIdx until removedIdx + addedCount) {
+                            if (natural[k * 2] < postMinX) postMinX = natural[k * 2]
+                            if (natural[k * 2 + 1] < postMinY) postMinY = natural[k * 2 + 1]
                         }
                         val shiftX = preMinX - postMinX
                         val shiftY = preMinY - postMinY
-                        for (i in removedIdx until removedIdx + addedCount) {
-                            adjusted[i * 2] = natural[i * 2] + shiftX
-                            adjusted[i * 2 + 1] = natural[i * 2 + 1] + shiftY
+                        for (k in removedIdx until removedIdx + addedCount) {
+                            adjusted[k * 2] = natural[k * 2] + shiftX
+                            adjusted[k * 2 + 1] = natural[k * 2 + 1] + shiftY
                         }
-                        Log.i("SplitDebug", "shift=($shiftX, $shiftY) " +
-                            "preMin=($preMinX, $preMinY) postMin=($postMinX, $postMinY); " +
-                            "adjusted positions=${adjusted.toList()}")
-                    } else {
-                        Log.i("SplitDebug", "no shift applied — preMin null OR range OOR " +
-                            "(preMin=($preMinX, $preMinY), removedIdx=$removedIdx, " +
-                            "addedCount=$addedCount, newCount=$newCount)")
+                        Log.i("SplitDebug", "shift-pieces-only by ($shiftX, $shiftY); " +
+                            "adjusted=${adjusted.toList()}")
                     }
                     adjusted
                 } else {
