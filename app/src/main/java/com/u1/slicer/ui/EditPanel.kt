@@ -136,15 +136,46 @@ private fun ObjectScopedEditSection(
                 modifier = Modifier.weight(1f),
             ) { Text("Split to Objects") }
         }
-        // B132c follow-up (v2.10.4) — per-object Copy. The whole-model Copies
-        // slider is hidden in multi-object mode (see ScaleSection.multiObjectMode);
-        // this is how a user duplicates a single split piece without re-loading
-        // the whole file.
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(
-                onClick = { viewModel.duplicateObject(objIdx) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Copy") }
+        // B132c follow-up (v2.10.5) — per-object Copies slider, mirroring the
+        // bed-wide ScaleSection's Copies UX. The slider value is the total
+        // count of THIS part. Increasing the slider calls duplicateObject()
+        // for the additional copies; decreasing is a no-op (the dupes are
+        // separate native objects; user can select + delete them individually
+        // if needed). Slider state is local to the current selection and
+        // resets to 1 when a different object is selected, since we can't
+        // reliably count "existing copies of this part" after subsequent
+        // splits/drags/deletes.
+        var perObjectCopyTarget by remember(objIdx) { mutableIntStateOf(1) }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            ),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    "Copies of this part: $perObjectCopyTarget",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Slider(
+                    value = perObjectCopyTarget.toFloat(),
+                    onValueChange = { v ->
+                        val newTarget = v.toInt().coerceIn(1, 16)
+                        if (newTarget > perObjectCopyTarget) {
+                            repeat(newTarget - perObjectCopyTarget) {
+                                viewModel.duplicateObject(objIdx)
+                            }
+                        }
+                        perObjectCopyTarget = newTarget
+                    },
+                    valueRange = 1f..16f,
+                    steps = 14,
+                )
+            }
         }
         // F66 2026-05-31: "Split to Parts" must appear ALSO when there's a
         // single volume whose mesh has multiple disconnected islands —

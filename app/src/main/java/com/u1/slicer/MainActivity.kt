@@ -1241,6 +1241,11 @@ fun PrepareScreen(
     val hasMultipleDistinctObjects by viewModel.hasMultipleDistinctObjects.collectAsState()
     val modelAddVersion by viewModel.modelAddVersion.collectAsState()
     val multiObjectPositions by viewModel.multiObjectPositions.collectAsState()
+    // B132c follow-up (v2.10.5): the bed-wide Scale/Rotation section is hidden
+    // when an object is selected — the EditPanel takes over with per-object
+    // scale + rotation + Copy. Surfacing both at once misled users into
+    // thinking the bed-wide controls would only affect the selection.
+    val topLevelSelection by viewModel.selection.collectAsState()
     val extruderColors by viewModel.activeExtruderColors.collectAsState()
     val layerToolOnly by viewModel.layerToolOnly.collectAsState()
     val sourceConfig by viewModel.sourceConfig.collectAsState()
@@ -1650,21 +1655,25 @@ fun PrepareScreen(
                         )
                         // fix35: Smart Paint moved to a top-right overlay icon on InlineModelPreview
                         // (the painted-model inline TextButton previously here is gone).
-                        // Scale & copies controls
-                        ScaleSection(
-                            scale = modelScale,
-                            onScaleChange = { viewModel.setModelScale(it) },
-                            copyCount = copyCount,
-                            onSetCopyCount = viewModel::setCopyCount,
-                            copyBedWarning = copyBedWarning,
-                            rotation = modelRotation,
-                            onRotationChange = { viewModel.setModelRotation(it) },
-                            loadTimeSize = modelInfo?.let { Triple(it.sizeX, it.sizeY, it.sizeZ) },
-                            // B132c follow-up: hide whole-model Copies in
-                            // multi-object mode — per-object Copy lives in the
-                            // selection Edit panel instead.
-                            multiObjectMode = hasMultipleDistinctObjects,
-                        )
+                        // Scale & copies controls — hidden when an object is selected
+                        // so the bed-wide controls don't compete with the per-object
+                        // controls in the EditPanel below.
+                        if (topLevelSelection.objectIndex == null) {
+                            ScaleSection(
+                                scale = modelScale,
+                                onScaleChange = { viewModel.setModelScale(it) },
+                                copyCount = copyCount,
+                                onSetCopyCount = viewModel::setCopyCount,
+                                copyBedWarning = copyBedWarning,
+                                rotation = modelRotation,
+                                onRotationChange = { viewModel.setModelRotation(it) },
+                                loadTimeSize = modelInfo?.let { Triple(it.sizeX, it.sizeY, it.sizeZ) },
+                                // B132c follow-up: hide whole-model Copies in
+                                // multi-object mode — per-object Copy lives in the
+                                // selection Edit panel instead.
+                                multiObjectMode = hasMultipleDistinctObjects,
+                            )
+                        }
                         // Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour models
                         // (STL, single-filament 3MF) get a one-row Filament list,
                         // mirroring the multi-colour PrintSetupSection chip strip.
