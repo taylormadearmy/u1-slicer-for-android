@@ -303,13 +303,17 @@ private fun ObjectTransformCard(
                         )
                     }
                     if (selectedTab == 0) {
-                        // v2.10.6 — per-object Copies, matching the bed-wide
-                        // ScaleSection's Scale-tab layout (Copies label + slider
-                        // above the scale controls). Slider value is the total
-                        // count of THIS part. Increasing the slider duplicates
-                        // the object; decreasing is a no-op (use select+delete
-                        // to remove individual copies).
+                        // v2.10.8 — per-object Copies. Slider value tracks the
+                        // user's target while dragging; duplicates are created
+                        // only on release (onValueChangeFinished). The earlier
+                        // v2.10.4/5/6/7 version fired duplicateObject() on
+                        // every onValueChange tick, which raced with the
+                        // rotation LaunchedEffect's getPreparePreviewMesh fetch
+                        // and SIGSEGV'd in the native code (concurrent model
+                        // mutation while the preview was being built).
+                        // Slider state is local to the current selection.
                         var perObjectCopyTarget by remember(objIdx) { mutableIntStateOf(1) }
+                        var perObjectCopyApplied by remember(objIdx) { mutableIntStateOf(1) }
                         Text(
                             "Copies of this part: $perObjectCopyTarget",
                             style = MaterialTheme.typography.labelMedium,
@@ -317,13 +321,24 @@ private fun ObjectTransformCard(
                         Slider(
                             value = perObjectCopyTarget.toFloat(),
                             onValueChange = { v ->
-                                val newTarget = v.toInt().coerceIn(1, 16)
-                                if (newTarget > perObjectCopyTarget) {
-                                    repeat(newTarget - perObjectCopyTarget) {
+                                // Local UI state only — no native side-effects
+                                // during the drag.
+                                perObjectCopyTarget = v.toInt().coerceIn(1, 16)
+                            },
+                            onValueChangeFinished = {
+                                // Commit on release: add (target - applied)
+                                // duplicates. Decreasing is a no-op (select +
+                                // delete to remove individual copies).
+                                if (perObjectCopyTarget > perObjectCopyApplied) {
+                                    repeat(perObjectCopyTarget - perObjectCopyApplied) {
                                         viewModel.duplicateObject(objIdx)
                                     }
+                                    perObjectCopyApplied = perObjectCopyTarget
+                                } else {
+                                    // Snap the slider back if user dragged left
+                                    // (decreasing not supported yet).
+                                    perObjectCopyTarget = perObjectCopyApplied
                                 }
-                                perObjectCopyTarget = newTarget
                             },
                             valueRange = 1f..16f,
                             steps = 14,

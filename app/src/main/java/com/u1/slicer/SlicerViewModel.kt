@@ -951,29 +951,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * (single-island object — native returned null without mutating).
      */
     fun splitObject(objIdx: Int): Boolean {
-        // v2.10.7: capture the source object's pre-split world AABB min so we
-        // can shift the new pieces back to that position after native split.
-        // OrcaSlicer's ModelObject::split (Model.cpp:2053-2069) bakes each
-        // volume's local offset into the new instance and zeroes the new
-        // volume offset — for Oreo Object 12 (built at world (0,0,0) with
-        // volumes at small offsets like (-3.4, 7.8)), the new pieces' world
-        // AABB mins land near origin instead of wherever the user had the
-        // object. Without the post-split shift, pieces "jump to the front
-        // of the plate" on split (user-reported, v2.10.5/6).
+        // v2.10.8: capture source's pre-split world AABB min, then anchor the
+        // post-split pieces' combined-AABB-min back to it. OrcaSlicer's
+        // ModelObject::split (Model.cpp:2053-2069) bakes each volume's local
+        // offset into the new instance and zeroes the new volume offset, so
+        // new pieces' world AABB mins land near origin instead of wherever
+        // the user had the source. Min-based anchor is robust to
+        // getObjectBoundingBoxes returning zero sizes (which was tripping up
+        // the v2.10.7 centre-based shift, making it degenerate to (0, 0)).
         val preSplitMins = runCatching { native.nativeGetObjectWorldAABBMins() }
-            .getOrDefault(floatArrayOf())
-        val preSplitBoxes = runCatching { native.getObjectBoundingBoxes() }
             .getOrDefault(floatArrayOf())
         val preMinX = preSplitMins.getOrNull(objIdx * 2)
         val preMinY = preSplitMins.getOrNull(objIdx * 2 + 1)
-        // Capture the source's combined AABB max so we can preserve the
-        // CENTRE of the original (not just min) — pieces grow with the
-        // bbox after the split shift, but we want them to stay where the
-        // user expects them, centred on the original footprint.
-        val preMaxX = if (preMinX != null && objIdx * 3 < preSplitBoxes.size)
-            preMinX + preSplitBoxes[objIdx * 3] else null
-        val preMaxY = if (preMinY != null && objIdx * 3 + 1 < preSplitBoxes.size)
-            preMinY + preSplitBoxes[objIdx * 3 + 1] else null
 
         val res = native.nativeSplitObject(objIdx) ?: return false
         val removedIdx = res[0]
@@ -1012,54 +1001,37 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
             _objectBoundingBoxes.value = boxes
             if (boxes.size >= 3) {
-                // v2.10.7: shift the new pieces as a group so the COMBINED
-                // post-split AABB lands where the source's AABB was. The
-                // native getWorldAABBMins after split returns positions near
-                // origin (per OrcaSlicer's split semantics — see Model.cpp:
-                // 2053-2069), so without this shift the user perceives
-                // "split moves my pieces to the front of the bed". Pieces
-                // keep their RELATIVE arrangement (relative to each other);
-                // we just translate the group back to the source's spot.
+                // v2.10.8: anchor the new pieces' combined AABB MIN to the
+                // source's pre-split AABB MIN. Pieces keep their relative
+                // arrangement (positions are AABB mins; differences between
+                // pieces are preserved); the whole group lands at the source's
+                // spot, regardless of getObjectBoundingBoxes returning zero
+                // sizes for the post-split pieces (which broke the v2.10.7
+                // centre-based shift).
                 val natural = runCatching { native.nativeGetObjectWorldAABBMins() }
                     .getOrDefault(floatArrayOf())
                 val positions = if (natural.size == newCount * 2) {
                     val adjusted = natural.copyOf()
                     if (preMinX != null && preMinY != null &&
-                        preMaxX != null && preMaxY != null &&
                         removedIdx + addedCount <= newCount
                     ) {
-                        // Combined AABB of new pieces post-split, using
-                        // worldMin + bbox-size for each.
                         var postMinX = Float.POSITIVE_INFINITY
                         var postMinY = Float.POSITIVE_INFINITY
-                        var postMaxX = Float.NEGATIVE_INFINITY
-                        var postMaxY = Float.NEGATIVE_INFINITY
                         for (i in removedIdx until removedIdx + addedCount) {
                             val minX = natural[i * 2]
                             val minY = natural[i * 2 + 1]
-                            val sizeX = boxes.getOrElse(i * 3) { 0f }
-                            val sizeY = boxes.getOrElse(i * 3 + 1) { 0f }
                             if (minX < postMinX) postMinX = minX
                             if (minY < postMinY) postMinY = minY
-                            if (minX + sizeX > postMaxX) postMaxX = minX + sizeX
-                            if (minY + sizeY > postMaxY) postMaxY = minY + sizeY
                         }
-                        // Shift so post-combined-CENTRE matches pre-combined-CENTRE.
-                        // Using centre (not min) handles the case where pieces
-                        // grow outward symmetrically vs only on one side.
-                        val preCx = (preMinX + preMaxX) / 2f
-                        val preCy = (preMinY + preMaxY) / 2f
-                        val postCx = (postMinX + postMaxX) / 2f
-                        val postCy = (postMinY + postMaxY) / 2f
-                        val shiftX = preCx - postCx
-                        val shiftY = preCy - postCy
+                        val shiftX = preMinX - postMinX
+                        val shiftY = preMinY - postMinY
                         for (i in removedIdx until removedIdx + addedCount) {
                             adjusted[i * 2] = natural[i * 2] + shiftX
                             adjusted[i * 2 + 1] = natural[i * 2 + 1] + shiftY
                         }
                         Log.i("SlicerVM", "splitObject: shifted new pieces by " +
-                            "(${shiftX}, ${shiftY}) to preserve source centre " +
-                            "(${preCx}, ${preCy})")
+                            "(${shiftX}, ${shiftY}) to anchor combined min at " +
+                            "source min (${preMinX}, ${preMinY}); pre-pieces=$addedCount")
                     }
                     adjusted
                 } else {
@@ -1068,11 +1040,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 native.setObjectPositions(positions)
                 customObjectPositions = positions
-                // B132b: keep the public StateFlow in sync with the private var
-                // so InlineModelPreview's rotation LaunchedEffect sees the new
-                // positions and calls splitMeshByObjects (without this, the
-                // per-object draw/drag/hit-test gate at MainActivity.kt:3356
-                // stays closed because `multiObjectPositions.value` is null).
                 _multiObjectPositions.value = positions
             }
             // B132b: copies do not apply in multi-object mode (the slice path's
@@ -1098,34 +1065,45 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * re-loading the whole file (which would copy ALL pieces). Used by the
      * object-scoped Edit panel's "Copy" button.
      */
-    fun duplicateObject(objIdx: Int): Boolean {
-        val newIdx = native.nativeDuplicateObject(objIdx)
-        if (newIdx < 0) return false
+    fun duplicateObject(objIdx: Int) {
+        // v2.10.8: run the native model mutation inside previewMutex so we
+        // can't be mid-clone while the rotation LaunchedEffect's
+        // getPreparePreviewMesh is still iterating the model — the
+        // user-reported SIGSEGV in sapil::SlicerEngine::getPreparePreviewMesh
+        // after sliding the per-object Copies slider was caused by that
+        // exact race (multiple rapid duplicates from the slider running
+        // concurrently with a preview fetch). Fire-and-forget; the slider
+        // doesn't wait for the return value.
+        viewModelScope.launch(Dispatchers.IO) {
+            NativeLibrary.previewMutex.withLock {
+                val newIdx = native.nativeDuplicateObject(objIdx)
+                if (newIdx < 0) return@withLock
 
-        // Promote to multi-object mode and lay out the new piece via the same
-        // grid-with-existing-anchor logic doAddFile uses for multi-file adds.
-        hasMultipleDistinctObjectsVar = true
-        val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
-        _objectBoundingBoxes.value = boxes
-        if (boxes.size >= 3) {
-            val existing = customObjectPositions
-                ?: com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(boxes)
-            val positions = com.u1.slicer.model.CopyArrangeCalculator
-                .placeAdditionalObject(existing, boxes)
-            native.setObjectPositions(positions)
-            customObjectPositions = positions
-            _multiObjectPositions.value = positions
+                // Promote to multi-object mode and lay out the new piece via
+                // the same grid-with-existing-anchor logic doAddFile uses for
+                // multi-file adds.
+                hasMultipleDistinctObjectsVar = true
+                val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
+                _objectBoundingBoxes.value = boxes
+                if (boxes.size >= 3) {
+                    val existing = customObjectPositions
+                        ?: com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+                    val positions = com.u1.slicer.model.CopyArrangeCalculator
+                        .placeAdditionalObject(existing, boxes)
+                    native.setObjectPositions(positions)
+                    customObjectPositions = positions
+                    _multiObjectPositions.value = positions
+                }
+
+                // Copies don't apply in multi-object mode (B132a/B132b); reset
+                // so the bed-wide Copies UI is consistent if the user re-opens
+                // the bed-wide panel.
+                _copyCount.value = 1
+                _copyBedWarning.value = null
+                _sliceStale.value = true
+            }
+            invalidatePrepareMeshCache()
         }
-
-        // Copies don't apply in multi-object mode (B132a/B132b); reset so the
-        // bed-wide Copies UI is consistent if the user re-opens the bed-wide
-        // panel.
-        _copyCount.value = 1
-        _copyBedWarning.value = null
-
-        _sliceStale.value = true
-        invalidatePrepareMeshCache()
-        return true
     }
 
     /**
