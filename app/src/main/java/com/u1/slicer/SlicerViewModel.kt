@@ -951,6 +951,30 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * (single-island object — native returned null without mutating).
      */
     fun splitObject(objIdx: Int): Boolean {
+        // v2.10.7: capture the source object's pre-split world AABB min so we
+        // can shift the new pieces back to that position after native split.
+        // OrcaSlicer's ModelObject::split (Model.cpp:2053-2069) bakes each
+        // volume's local offset into the new instance and zeroes the new
+        // volume offset — for Oreo Object 12 (built at world (0,0,0) with
+        // volumes at small offsets like (-3.4, 7.8)), the new pieces' world
+        // AABB mins land near origin instead of wherever the user had the
+        // object. Without the post-split shift, pieces "jump to the front
+        // of the plate" on split (user-reported, v2.10.5/6).
+        val preSplitMins = runCatching { native.nativeGetObjectWorldAABBMins() }
+            .getOrDefault(floatArrayOf())
+        val preSplitBoxes = runCatching { native.getObjectBoundingBoxes() }
+            .getOrDefault(floatArrayOf())
+        val preMinX = preSplitMins.getOrNull(objIdx * 2)
+        val preMinY = preSplitMins.getOrNull(objIdx * 2 + 1)
+        // Capture the source's combined AABB max so we can preserve the
+        // CENTRE of the original (not just min) — pieces grow with the
+        // bbox after the split shift, but we want them to stay where the
+        // user expects them, centred on the original footprint.
+        val preMaxX = if (preMinX != null && objIdx * 3 < preSplitBoxes.size)
+            preMinX + preSplitBoxes[objIdx * 3] else null
+        val preMaxY = if (preMinY != null && objIdx * 3 + 1 < preSplitBoxes.size)
+            preMinY + preSplitBoxes[objIdx * 3 + 1] else null
+
         val res = native.nativeSplitObject(objIdx) ?: return false
         val removedIdx = res[0]
         val addedCount = res[1]
@@ -988,19 +1012,56 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
             _objectBoundingBoxes.value = boxes
             if (boxes.size >= 3) {
-                // v2.10.6: preserve natural post-split world positions ALWAYS.
-                // Matches desktop Orca behaviour: split pieces stay in place
-                // and may overlap (e.g. Oreo gear's two stacked-Z wafers will
-                // visually overlap on the bed — user drags them apart, or
-                // taps Auto-arrange (F92) for an automatic layout). The
-                // previous auto-grid fallback (v2.10.4/5) always moved the
-                // whole piece group to (margin, margin), which was surprising.
-                // Only fall back to the auto-grid if native didn't return a
-                // usable worldMins array.
+                // v2.10.7: shift the new pieces as a group so the COMBINED
+                // post-split AABB lands where the source's AABB was. The
+                // native getWorldAABBMins after split returns positions near
+                // origin (per OrcaSlicer's split semantics — see Model.cpp:
+                // 2053-2069), so without this shift the user perceives
+                // "split moves my pieces to the front of the bed". Pieces
+                // keep their RELATIVE arrangement (relative to each other);
+                // we just translate the group back to the source's spot.
                 val natural = runCatching { native.nativeGetObjectWorldAABBMins() }
                     .getOrDefault(floatArrayOf())
                 val positions = if (natural.size == newCount * 2) {
-                    natural.copyOf()
+                    val adjusted = natural.copyOf()
+                    if (preMinX != null && preMinY != null &&
+                        preMaxX != null && preMaxY != null &&
+                        removedIdx + addedCount <= newCount
+                    ) {
+                        // Combined AABB of new pieces post-split, using
+                        // worldMin + bbox-size for each.
+                        var postMinX = Float.POSITIVE_INFINITY
+                        var postMinY = Float.POSITIVE_INFINITY
+                        var postMaxX = Float.NEGATIVE_INFINITY
+                        var postMaxY = Float.NEGATIVE_INFINITY
+                        for (i in removedIdx until removedIdx + addedCount) {
+                            val minX = natural[i * 2]
+                            val minY = natural[i * 2 + 1]
+                            val sizeX = boxes.getOrElse(i * 3) { 0f }
+                            val sizeY = boxes.getOrElse(i * 3 + 1) { 0f }
+                            if (minX < postMinX) postMinX = minX
+                            if (minY < postMinY) postMinY = minY
+                            if (minX + sizeX > postMaxX) postMaxX = minX + sizeX
+                            if (minY + sizeY > postMaxY) postMaxY = minY + sizeY
+                        }
+                        // Shift so post-combined-CENTRE matches pre-combined-CENTRE.
+                        // Using centre (not min) handles the case where pieces
+                        // grow outward symmetrically vs only on one side.
+                        val preCx = (preMinX + preMaxX) / 2f
+                        val preCy = (preMinY + preMaxY) / 2f
+                        val postCx = (postMinX + postMaxX) / 2f
+                        val postCy = (postMinY + postMaxY) / 2f
+                        val shiftX = preCx - postCx
+                        val shiftY = preCy - postCy
+                        for (i in removedIdx until removedIdx + addedCount) {
+                            adjusted[i * 2] = natural[i * 2] + shiftX
+                            adjusted[i * 2 + 1] = natural[i * 2 + 1] + shiftY
+                        }
+                        Log.i("SlicerVM", "splitObject: shifted new pieces by " +
+                            "(${shiftX}, ${shiftY}) to preserve source centre " +
+                            "(${preCx}, ${preCy})")
+                    }
+                    adjusted
                 } else {
                     com.u1.slicer.model.CopyArrangeCalculator
                         .buildMultiObjectPositions(boxes)
