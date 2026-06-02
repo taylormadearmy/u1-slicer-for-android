@@ -321,6 +321,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
         _duplicateOps.value = emptyList()
+        // v2.10.13: reset the once-per-process B132c trace gate so a fresh
+        // model load can capture the stack again if applyPlacementPositions
+        // ever sees a mismatched count.
+        b132cTraceLogged = false
     }
 
     /**
@@ -910,10 +914,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val objCount = runCatching { native.nativeGetObjectCount() }.getOrDefault(1)
         val targets = if (isSingleSourceUnsplit && objCount > 1) (0 until objCount).toList()
                       else listOf(objIdx)
-        Log.i("ScaleDebug", "setObjectScale objIdx=$objIdx scale=($sx, $sy, $sz) " +
+        Log.d("ScaleDebug", "setObjectScale objIdx=$objIdx scale=($sx, $sy, $sz) " +
             "targets=$targets (isSingleSourceUnsplit=$isSingleSourceUnsplit, objCount=$objCount)")
         val preBoxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
-        Log.i("ScaleDebug", "preBoxes=${preBoxes.toList()}")
+        Log.d("ScaleDebug", "preBoxes=${preBoxes.toList()}")
         val updatedPoses = _perObjectPoses.value.toMutableMap()
         var anyApplied = false
         for (i in targets) {
@@ -928,7 +932,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (!anyApplied) return
         val postBoxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
-        Log.i("ScaleDebug", "POST boxes=${postBoxes.toList()}")
+        Log.d("ScaleDebug", "POST boxes=${postBoxes.toList()}")
         _perObjectPoses.value = updatedPoses
         _sliceStale.value = true
         refreshObjectGeometryAfterPoseChange()
@@ -987,6 +991,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * (single-island object — native returned null without mutating).
      */
     fun splitObject(objIdx: Int): Boolean {
+        // v2.10.13: warn if the user is splitting AFTER having duplicated.
+        // The slice-path replay applies splits BEFORE duplicates so dupes
+        // inherit post-pose transforms, but a duplicate's recorded source
+        // index references the pre-split index space — after replay, a dup
+        // of "object 0" may actually clone one of the new split pieces.
+        // Documenting for future ops-ordering work; not a blocker for the
+        // user's typical flow (split first, then duplicate).
+        if (_duplicateOps.value.isNotEmpty()) {
+            Log.w("SlicerVM", "splitObject after duplicateObject: dup ops " +
+                "(${_duplicateOps.value}) may resolve against post-split " +
+                "index space at slice replay.")
+        }
         // v2.10.11: anchor to the DRAWN position of the source. The combined
         // mesh pre-split is drawn at getPlacementPositions() which is the
         // bed-centred result of CopyArrangeCalculator.calculate(modelInfo,
@@ -1015,7 +1031,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             preCombMinX.isFinite()) drawnAnchorX - preCombMinX else 0f
         val combinedShiftY = if (sourceIsSingleCombined && drawnAnchorY != null &&
             preCombMinY.isFinite()) drawnAnchorY - preCombMinY else 0f
-        Log.i("SplitDebug", "PRE-SPLIT objIdx=$objIdx sourceIsSingleCombined=$sourceIsSingleCombined " +
+        Log.d("SplitDebug", "PRE-SPLIT objIdx=$objIdx sourceIsSingleCombined=$sourceIsSingleCombined " +
             "preSplitMins=${preSplitMins.toList()} preComb=($preCombMinX, $preCombMinY) " +
             "drawnAnchor=($drawnAnchorX, $drawnAnchorY) " +
             "combinedShift=($combinedShiftX, $combinedShiftY)")
@@ -1023,7 +1039,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val res = native.nativeSplitObject(objIdx) ?: return false
         val removedIdx = res[0]
         val addedCount = res[1]
-        Log.i("SplitDebug", "AFTER nativeSplitObject: removedIdx=$removedIdx, addedCount=$addedCount, " +
+        Log.d("SplitDebug", "AFTER nativeSplitObject: removedIdx=$removedIdx, addedCount=$addedCount, " +
             "newObjCount=${native.nativeGetObjectCount()}")
         // Keep the per-object indices for the new pieces' "from source" shift
         // (legacy behaviour, used when sourceIsSingleCombined is false).
@@ -1065,7 +1081,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             if (boxes.size >= 3) {
                 val natural = runCatching { native.nativeGetObjectWorldAABBMins() }
                     .getOrDefault(floatArrayOf())
-                Log.i("SplitDebug", "POST-SPLIT natural worldMins=${natural.toList()}, " +
+                Log.d("SplitDebug", "POST-SPLIT natural worldMins=${natural.toList()}, " +
                     "boxes=${boxes.toList()}, newCount=$newCount")
 
                 val positions = if (natural.size == newCount * 2) {
@@ -1080,7 +1096,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             adjusted[k * 2] = natural[k * 2] + combinedShiftX
                             adjusted[k * 2 + 1] = natural[k * 2 + 1] + combinedShiftY
                         }
-                        Log.i("SplitDebug", "shift-ALL by ($combinedShiftX, $combinedShiftY); " +
+                        Log.d("SplitDebug", "shift-ALL by ($combinedShiftX, $combinedShiftY); " +
                             "adjusted=${adjusted.toList()}")
                     } else if (preMinX != null && preMinY != null &&
                         removedIdx + addedCount <= newCount
@@ -1100,21 +1116,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             adjusted[k * 2] = natural[k * 2] + shiftX
                             adjusted[k * 2 + 1] = natural[k * 2 + 1] + shiftY
                         }
-                        Log.i("SplitDebug", "shift-pieces-only by ($shiftX, $shiftY); " +
+                        Log.d("SplitDebug", "shift-pieces-only by ($shiftX, $shiftY); " +
                             "adjusted=${adjusted.toList()}")
                     }
                     adjusted
                 } else {
-                    Log.i("SplitDebug", "natural.size mismatch — falling back to grid layout " +
+                    Log.d("SplitDebug", "natural.size mismatch — falling back to grid layout " +
                         "(natural.size=${natural.size}, expected=${newCount * 2})")
                     com.u1.slicer.model.CopyArrangeCalculator
                         .buildMultiObjectPositions(boxes)
                 }
                 val setOk = native.setObjectPositions(positions)
-                Log.i("SplitDebug", "setObjectPositions(${positions.toList()}) → ok=$setOk")
+                Log.d("SplitDebug", "setObjectPositions(${positions.toList()}) → ok=$setOk")
                 val verifyMins = runCatching { native.nativeGetObjectWorldAABBMins() }
                     .getOrDefault(floatArrayOf())
-                Log.i("SplitDebug", "VERIFY post-setObjectPositions worldMins=${verifyMins.toList()}")
+                Log.d("SplitDebug", "VERIFY post-setObjectPositions worldMins=${verifyMins.toList()}")
                 customObjectPositions = positions
                 _multiObjectPositions.value = positions
             }

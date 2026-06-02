@@ -17,7 +17,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/165
 - **Source**: Discord, 2026-05-31 (Kevin) — https://discord.com/channels/1086575708903571536/1484249705042153633/1510628426099200120
 
-### B132: Oreo 3MF — Split + extra copies don't appear physically on bed; slice ignores custom placement and reverts to original layout (GitHub #164) — PARTIAL FIX (v2.10.2 + v2.10.3), residual UNVERIFIED
+### B132: Oreo 3MF — Split + extra copies don't appear physically on bed; slice ignores custom placement and reverts to original layout (GitHub #164) — FIXED v2.10.2 → v2.10.12 (user-verified on Pixel 8a 2026-06-02)
 - **v2.10.3 follow-up** (B132c — crash fix): user reproduced an `ArrayIndexOutOfBoundsException: length=9; index=9` at `splitMeshByObjects` after split + make-copies on Oreo. Device log showed `applyPlacementPositions: 5 objects` for a 3-object model, with native rejecting via `setObjectPositions: positions count 5 != object count 3`. Kotlin `_multiObjectPositions` was corrupted past the model state, then the rotation `LaunchedEffect` indexed `perObjectSizes` past its length. Three defensive fixes layered:
   1. `SlicerViewModel.applyPlacementPositions` — validate `positions.size / 2 == nativeGetObjectCount()` before any state mutation; log + return early on mismatch.
   2. `MainActivity` rotation `LaunchedEffect` gate — tighten `multiPos.size >= (perObjectSizes.size / 3) * 2` to `==` so an over-long positions array no longer enters `splitMeshByObjects`.
@@ -42,7 +42,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/164
 - **Source**: Discord, 2026-05-31 (Jon) — https://discord.com/channels/1086575708903571536/1484249705042153633/1510646439699681401
 
-### B131: Ghostface Pokemon card 3MF not visible on Prepare tab — slice/preview work, model can't be moved to clear purge tower (GitHub #161) — FIXED in working tree (native rebuild + Kotlin)
+### B131: Ghostface Pokemon card 3MF not visible on Prepare tab — slice/preview work, model can't be moved to clear purge tower (GitHub #161) — FIXED v2.10.2
 - **Symptom**: Loading `GhostfacePokemoncard.3mf` (8.6 MB) shows the model on the Preview tab and slices successfully, but on the **Prepare tab the model never appears** — only the wipe/purge tower is visible.
 - **Reported by**: Jon (Discord), v2.10.1, 2026-05-31.
 - **Root causes (empirically confirmed `B131B132B133DiagnosticTest`, Pixel 8a 2026-06-01)**:

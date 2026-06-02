@@ -137,11 +137,22 @@ private fun ObjectScopedEditSection(
             )
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Editing this part",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Editing this part",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    // v2.10.13: BETA pill on the whole per-object edit panel.
+                    // Same pattern as the "Add to bed" beta chip in MainActivity.
+                    androidx.compose.material3.Badge(
+                        containerColor = MaterialTheme.colorScheme.secondary,
+                        contentColor = MaterialTheme.colorScheme.onSecondary,
+                    ) {
+                        Text("BETA", fontSize = 7.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
                 Text(
                     name,
                     style = MaterialTheme.typography.titleMedium,

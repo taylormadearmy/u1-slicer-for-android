@@ -663,4 +663,189 @@ class B131B132B133DiagnosticTest {
             file.delete()
         }
     }
+
+    /**
+     * v2.10.13 regression — _duplicateOps tracking: every call to
+     * duplicateObject appends the source index. Slice-path replay reads
+     * this list. Without correct tracking, the v2.10.12 fix degrades.
+     */
+    @Test
+    fun b132c_duplicateObject_appendsToDuplicateOps() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val file = copyAssetToCache("Oreo+Proj+1.3mf")
+
+        try {
+            viewModel.loadModelFromFile(file)
+            waitUntil("oreo plate selector or loaded") {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            if (viewModel.showPlateSelector.value) viewModel.selectPlate(1)
+            waitUntil("oreo loaded") {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            Thread.sleep(500)
+
+            // _duplicateOps is private; access via reflection (same pattern as
+            // the v2.10.4 b132c crash test using customObjectPositions).
+            fun dupOps(): List<Int>? = try {
+                viewModel.javaClass.getDeclaredField("_duplicateOps").let { f ->
+                    f.isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    (f.get(viewModel) as? kotlinx.coroutines.flow.MutableStateFlow<List<Int>>)?.value
+                }
+            } catch (_: Throwable) { null }
+
+            assertEquals("initial _duplicateOps is empty", emptyList<Int>(), dupOps())
+
+            viewModel.duplicateObject(0)
+            Thread.sleep(500)
+            assertEquals("dup #1 appended", listOf(0), dupOps())
+
+            viewModel.duplicateObject(0)
+            Thread.sleep(500)
+            assertEquals("dup #2 appended", listOf(0, 0), dupOps())
+
+            viewModel.clearModel()
+            Thread.sleep(200)
+            assertEquals("clearModel resets _duplicateOps", emptyList<Int>(), dupOps())
+        } finally {
+            viewModel.clearModel()
+            file.delete()
+        }
+    }
+
+    /**
+     * v2.10.13 regression — multi-file F77 must keep per-object scale.
+     * After v2.10.10 added "scale all in pre-split single-source",
+     * `additionalModelFiles` is the gate that keeps multi-file scoped.
+     */
+    @Test
+    fun setObjectScale_multiFileF77_staysPerObject() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val benchy = copyAssetToCache("3DBenchy.stl")
+
+        try {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                viewModel.loadModelFromFile(benchy)
+            }
+            waitUntil("benchy loaded") {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            Thread.sleep(300)
+
+            // Add a second file via F77 path — synthesises hasMultipleDistinctObjects=true
+            // and a non-empty additionalModelFiles.
+            val benchy2 = copyAssetToCache("3DBenchy.stl").let { src ->
+                File(src.parentFile, "3DBenchy2.stl").also { dst -> src.copyTo(dst, overwrite = true) }
+            }
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                viewModel.addModelFromFile(benchy2)
+            }
+            // Wait for the add to complete
+            val deadline = System.currentTimeMillis() + 30_000L
+            while (System.currentTimeMillis() < deadline &&
+                NativeLibrary().nativeGetObjectCount() < 2) Thread.sleep(100)
+            assertEquals("two objects after F77 add", 2, NativeLibrary().nativeGetObjectCount())
+
+            val preBoxes = NativeLibrary().getObjectBoundingBoxes()
+            assertEquals("expected 6 floats (2 objects × 3)", 6, preBoxes.size)
+            val preObj0SizeX = preBoxes[0]
+            val preObj1SizeX = preBoxes[3]
+
+            // Scale object 0 only — multi-file must NOT spread.
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                viewModel.setObjectScale(0, 2.0f, 2.0f, 2.0f)
+            }
+            Thread.sleep(200)
+            val postBoxes = NativeLibrary().getObjectBoundingBoxes()
+            val postObj0SizeX = postBoxes[0]
+            val postObj1SizeX = postBoxes[3]
+
+            assertTrue(
+                "Object 0 must scale (pre=$preObj0SizeX post=$postObj0SizeX)",
+                postObj0SizeX > preObj0SizeX * 1.5f,
+            )
+            assertEquals(
+                "Object 1 must NOT scale in F77 multi-file (pre=$preObj1SizeX post=$postObj1SizeX)",
+                preObj1SizeX, postObj1SizeX, 0.1f,
+            )
+
+            benchy2.delete()
+        } finally {
+            viewModel.clearModel()
+            benchy.delete()
+        }
+    }
+
+    /**
+     * v2.10.13 regression — the full slice replay chain on a compound
+     * scenario: split + duplicate. After re-embed the slice path replays
+     * splits first then duplicates; the final object count + customObject-
+     * Positions size must match.
+     */
+    @Test
+    fun b132c_oreo_splitThenDuplicate_sliceReplayProducesCorrectObjectCount() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val file = copyAssetToCache("Oreo+Proj+1.3mf")
+
+        try {
+            viewModel.loadModelFromFile(file)
+            waitUntil("oreo loaded") {
+                viewModel.showPlateSelector.value ||
+                    viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            if (viewModel.showPlateSelector.value) viewModel.selectPlate(1)
+            waitUntil("oreo loaded after plate") {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            Thread.sleep(500)
+
+            val lib = NativeLibrary()
+            // 1) Split object 0 → 3 objects
+            assertTrue("split must succeed", viewModel.splitObject(0))
+            Thread.sleep(500)
+            val afterSplit = lib.nativeGetObjectCount()
+            assertEquals("3 objects after split", 3, afterSplit)
+
+            // 2) Duplicate object 2 four times → 7 objects
+            repeat(4) {
+                viewModel.duplicateObject(2)
+                Thread.sleep(300)
+            }
+            val afterDup = lib.nativeGetObjectCount()
+            assertEquals("7 objects after 4 dupes", 7, afterDup)
+
+            // 3) Slice — re-embed will reset native to 2 objects, then replay
+            // splits (1) → 3, then replay dupes (4) → 7. customObjectPositions
+            // must match.
+            viewModel.startSlicing()
+            waitUntil("slice complete or error", timeoutMs = 180_000L) {
+                val st = viewModel.state.value
+                st is SlicerViewModel.SlicerState.SliceComplete ||
+                    st is SlicerViewModel.SlicerState.Error
+            }
+            val st = viewModel.state.value
+            assertTrue(
+                "slice must succeed — state was ${st::class.simpleName}" +
+                    (if (st is SlicerViewModel.SlicerState.Error) ": ${st.message}" else ""),
+                st is SlicerViewModel.SlicerState.SliceComplete,
+            )
+            val complete = st as SlicerViewModel.SlicerState.SliceComplete
+            val gcode = File(complete.result.gcodePath).readText()
+            val excludeObjectCount = gcode.lineSequence()
+                .count { it.contains("EXCLUDE_OBJECT_DEFINE") }
+            // 7 instances expected in the G-code (2 split pieces + 1 body + 4 dupes)
+            assertEquals(
+                "G-code must contain 7 EXCLUDE_OBJECT_DEFINE lines — split+dup replay must reproduce the Prepare-side count",
+                7, excludeObjectCount,
+            )
+        } finally {
+            viewModel.clearModel()
+            file.delete()
+        }
+    }
 }
