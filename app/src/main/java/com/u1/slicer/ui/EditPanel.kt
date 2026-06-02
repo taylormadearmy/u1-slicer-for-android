@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -105,24 +106,57 @@ private fun ObjectScopedEditSection(
     val scaleDirty = pose.scaleX != baseline.scaleX ||
         pose.scaleY != baseline.scaleY || pose.scaleZ != baseline.scaleZ
 
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // v2.10.6: wrap the per-object edit section in an outlined Card with a
+    // primary-coloured border so it's visually obvious that THESE controls
+    // act on the selection only — distinct from the bed-wide controls
+    // (which are now hidden when an object is selected). Without this,
+    // users found the per-object panel ambiguous with the bed-wide one.
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.20f)
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            2.dp, MaterialTheme.colorScheme.primary,
+        ),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+    Column(
+        modifier = Modifier.padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "Selected: $name",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.weight(1f).padding(end = 8.dp),
+            Icon(
+                Icons.Default.OpenWith,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
             )
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Editing this part",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
             IconButton(onClick = { viewModel.deselect() }) {
                 Icon(Icons.Default.Close, contentDescription = "Deselect")
             }
         }
 
-        // Per-object Scale + Rotation in the same Card+Tabs shape as the
-        // bed-wide ScaleSection in MainActivity. Two tabs for visual parity;
-        // no Copies tab because copies are a whole-model concept.
+        // Per-object Scale + Copies + Rotation in the same Card+Tabs shape
+        // as the bed-wide ScaleSection in MainActivity. v2.10.6: Copies now
+        // lives inside the Scale tab (matching bed-wide layout) instead of
+        // being a separate Card below.
         ObjectTransformCard(objIdx = objIdx, viewModel = viewModel, pose = pose)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -135,47 +169,6 @@ private fun ObjectScopedEditSection(
                 enabled = isSplittable,
                 modifier = Modifier.weight(1f),
             ) { Text("Split to Objects") }
-        }
-        // B132c follow-up (v2.10.5) — per-object Copies slider, mirroring the
-        // bed-wide ScaleSection's Copies UX. The slider value is the total
-        // count of THIS part. Increasing the slider calls duplicateObject()
-        // for the additional copies; decreasing is a no-op (the dupes are
-        // separate native objects; user can select + delete them individually
-        // if needed). Slider state is local to the current selection and
-        // resets to 1 when a different object is selected, since we can't
-        // reliably count "existing copies of this part" after subsequent
-        // splits/drags/deletes.
-        var perObjectCopyTarget by remember(objIdx) { mutableIntStateOf(1) }
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            ),
-            shape = RoundedCornerShape(16.dp),
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    "Copies of this part: $perObjectCopyTarget",
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                Slider(
-                    value = perObjectCopyTarget.toFloat(),
-                    onValueChange = { v ->
-                        val newTarget = v.toInt().coerceIn(1, 16)
-                        if (newTarget > perObjectCopyTarget) {
-                            repeat(newTarget - perObjectCopyTarget) {
-                                viewModel.duplicateObject(objIdx)
-                            }
-                        }
-                        perObjectCopyTarget = newTarget
-                    },
-                    valueRange = 1f..16f,
-                    steps = 14,
-                )
-            }
         }
         // F66 2026-05-31: "Split to Parts" must appear ALSO when there's a
         // single volume whose mesh has multiple disconnected islands —
@@ -235,6 +228,7 @@ private fun ObjectScopedEditSection(
             )
         }
     }
+    } // close outer Card
 }
 
 /**
@@ -282,7 +276,11 @@ private fun ObjectTransformCard(
                         modifier = Modifier.size(20.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Scale & Rotation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        "Scale, Copies & Rotation",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                    )
                 }
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -305,6 +303,32 @@ private fun ObjectTransformCard(
                         )
                     }
                     if (selectedTab == 0) {
+                        // v2.10.6 — per-object Copies, matching the bed-wide
+                        // ScaleSection's Scale-tab layout (Copies label + slider
+                        // above the scale controls). Slider value is the total
+                        // count of THIS part. Increasing the slider duplicates
+                        // the object; decreasing is a no-op (use select+delete
+                        // to remove individual copies).
+                        var perObjectCopyTarget by remember(objIdx) { mutableIntStateOf(1) }
+                        Text(
+                            "Copies of this part: $perObjectCopyTarget",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Slider(
+                            value = perObjectCopyTarget.toFloat(),
+                            onValueChange = { v ->
+                                val newTarget = v.toInt().coerceIn(1, 16)
+                                if (newTarget > perObjectCopyTarget) {
+                                    repeat(newTarget - perObjectCopyTarget) {
+                                        viewModel.duplicateObject(objIdx)
+                                    }
+                                }
+                                perObjectCopyTarget = newTarget
+                            },
+                            valueRange = 1f..16f,
+                            steps = 14,
+                        )
+                        Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
                         ObjectScaleControl(objIdx = objIdx, viewModel = viewModel)
                     } else {
                         ObjectRotationControl(objIdx = objIdx, viewModel = viewModel, pose = pose)

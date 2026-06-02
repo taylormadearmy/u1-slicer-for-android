@@ -988,22 +988,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
             _objectBoundingBoxes.value = boxes
             if (boxes.size >= 3) {
-                // v2.10.5: prefer keeping the natural post-split world positions
-                // (from `nativeGetObjectWorldAABBMins`) so the user's bed layout
-                // is preserved across the split. Only fall back to the
-                // auto-grid layout if the natural positions would have pieces
-                // overlapping in XY (e.g. the Oreo gear's two stacked-Z wafers
-                // share the same world XY before being separated). Avoids the
-                // user-reported "split moves my pieces" surprise on Oreo.
+                // v2.10.6: preserve natural post-split world positions ALWAYS.
+                // Matches desktop Orca behaviour: split pieces stay in place
+                // and may overlap (e.g. Oreo gear's two stacked-Z wafers will
+                // visually overlap on the bed — user drags them apart, or
+                // taps Auto-arrange (F92) for an automatic layout). The
+                // previous auto-grid fallback (v2.10.4/5) always moved the
+                // whole piece group to (margin, margin), which was surprising.
+                // Only fall back to the auto-grid if native didn't return a
+                // usable worldMins array.
                 val natural = runCatching { native.nativeGetObjectWorldAABBMins() }
                     .getOrDefault(floatArrayOf())
-                val needsGrid = natural.size != newCount * 2 ||
-                    positionsOverlapXY(natural, boxes)
-                val positions = if (needsGrid) {
+                val positions = if (natural.size == newCount * 2) {
+                    natural.copyOf()
+                } else {
                     com.u1.slicer.model.CopyArrangeCalculator
                         .buildMultiObjectPositions(boxes)
-                } else {
-                    natural.copyOf()
                 }
                 native.setObjectPositions(positions)
                 customObjectPositions = positions
@@ -1065,30 +1065,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _sliceStale.value = true
         invalidatePrepareMeshCache()
         return true
-    }
-
-    /**
-     * v2.10.5 splitObject helper — pairwise AABB-overlap check on the
-     * natural post-split world positions. Returns true if any two pieces'
-     * XY footprints overlap, meaning the auto-grid is needed (otherwise the
-     * pieces would render stacked on each other on the bed).
-     */
-    private fun positionsOverlapXY(positions: FloatArray, boxes: FloatArray): Boolean {
-        val n = positions.size / 2
-        for (i in 0 until n) {
-            val ax1 = positions[i * 2]
-            val ay1 = positions[i * 2 + 1]
-            val ax2 = ax1 + boxes[i * 3]
-            val ay2 = ay1 + boxes[i * 3 + 1]
-            for (j in i + 1 until n) {
-                val bx1 = positions[j * 2]
-                val by1 = positions[j * 2 + 1]
-                val bx2 = bx1 + boxes[j * 3]
-                val by2 = by1 + boxes[j * 3 + 1]
-                if (ax1 < bx2 && ax2 > bx1 && ay1 < by2 && ay2 > by1) return true
-            }
-        }
-        return false
     }
 
     /**
