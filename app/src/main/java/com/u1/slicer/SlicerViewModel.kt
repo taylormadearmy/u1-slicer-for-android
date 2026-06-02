@@ -320,6 +320,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perVolumeExtruders.value = emptyMap()
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
+        _duplicateOps.value = emptyList()
     }
 
     /**
@@ -432,6 +433,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     /** F89 replay state — load-time-indexed object indices that were split
      *  this session. Persisted in v3 SessionState and replayed on resume. */
     private val _splitObjectOps = MutableStateFlow<List<Int>>(emptyList())
+    // v2.10.12: track per-object duplicates so the slice path's re-embed
+    // replay can recreate them. Each entry is the source object's index at
+    // the time of duplicate (relative to post-split-replay order). Without
+    // this, the user's duplicates were lost on re-embed and setObjectPositions
+    // failed with a count mismatch ("positions count N != object count M").
+    private val _duplicateOps = MutableStateFlow<List<Int>>(emptyList())
     val splitObjectOps: StateFlow<List<Int>> = _splitObjectOps.asStateFlow()
 
     private val _splitVolumeOps = MutableStateFlow<List<String>>(emptyList())
@@ -1147,6 +1154,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             NativeLibrary.previewMutex.withLock {
                 val newIdx = native.nativeDuplicateObject(objIdx)
                 if (newIdx < 0) return@withLock
+
+                // Record the dup so startSlicing's re-embed replay can
+                // re-create it after splits are replayed (the index space at
+                // replay time matches: splits replayed first, then dupes).
+                _duplicateOps.value = _duplicateOps.value + objIdx
 
                 // Promote to multi-object mode and lay out the new piece via
                 // the same grid-with-existing-anchor logic doAddFile uses for
@@ -2949,6 +2961,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perVolumeExtruders.value = emptyMap()
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
+        _duplicateOps.value = emptyList()
         // Always extract from the full processed multi-plate file so that switching plates
         // (e.g. plate 4 → plate 5) uses the correct source regardless of prior selections.
         // _multiPlateSourceFile is set once on load and never overwritten (B83 fix).
@@ -4644,6 +4657,31 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 native.getObjectBoundingBoxes()
                             }.getOrDefault(_objectBoundingBoxes.value)
                             Log.i("SlicerVM", "F66: replayed $replayedPoses per-object pose(s) after re-embed")
+                        }
+
+                        // Step 5 (v2.10.12): replay per-object duplicates from
+                        // the Copies slider. Runs AFTER pose replay so dupes
+                        // copy the post-pose source state (Model::add_object's
+                        // deep-copy captures the source's instance transform —
+                        // including any user scale/rotation — at duplicate
+                        // time). Without this step, the slice path's
+                        // setObjectPositions(custom) at line ~4670 fails with
+                        // a count mismatch ("positions count N != object
+                        // count M") because customObjectPositions tracks the
+                        // dupes but the native model doesn't.
+                        if (_duplicateOps.value.isNotEmpty()) {
+                            var dupedCount = 0
+                            for (srcIdx in _duplicateOps.value) {
+                                val curCount = native.nativeGetObjectCount()
+                                if (srcIdx in 0 until curCount) {
+                                    if (native.nativeDuplicateObject(srcIdx) >= 0) dupedCount++
+                                }
+                            }
+                            _objectBoundingBoxes.value = runCatching {
+                                native.getObjectBoundingBoxes()
+                            }.getOrDefault(_objectBoundingBoxes.value)
+                            Log.i("SlicerVM", "v2.10.12: replayed $dupedCount of ${_duplicateOps.value.size} " +
+                                "duplicate op(s) after re-embed (objectCount=${native.nativeGetObjectCount()})")
                         }
                     }
                 }
@@ -6399,6 +6437,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perVolumeExtruders.value = emptyMap()
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
+        _duplicateOps.value = emptyList()
         resetToolRemapState()
         // Reset multi-extruder config to single extruder
         _config.value = _config.value.copy(
