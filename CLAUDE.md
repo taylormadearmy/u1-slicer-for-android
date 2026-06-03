@@ -58,8 +58,31 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
      --title "v1.4.11" \
      --notes "Brief description of what changed."
    ```
+7. **Post-release sync** — must happen in the same turn as the release, not deferred:
+   1. **Flip statuses in [`BACKLOG.md`](BACKLOG.md)** for every bug/feature that shipped:
+      - Bugs: `OPEN` / `FIXED v<earlier>` → `FIXED v<earlier>, RELEASED v1.4.11 (released YYYY-MM-DD)`.
+      - Features: `OPEN` → `DONE v1.4.11 (released YYYY-MM-DD)` with a short implementation summary (key files / native APIs / regression tests).
+      - Add a single rollup entry to the `## Closed (recent)` section at the top of that list summarising the cluster of fixes shipped with the release. Keep the older entries intact (they form the changelog).
+      - Leave items still open (partial fixes, known follow-ups) explicitly in their section with the rationale.
+   2. **Close GitHub issues** for everything you just flipped:
+      ```bash
+      gh issue close <N> --comment "Fixed in v1.4.11: <release-url>
+
+      <2–4 line root-cause + key code locations>"
+      ```
+      File any follow-up issues discovered during the release sweep (e.g. a test you had to relax, a known edge case) **before** closing the parent issue, and reference the new issue number in the closing comment.
+   3. **Verify [`CLAUDE.md`](CLAUDE.md) and [`README.md`](README.md) test counts** match the latest sweep — both the inline command comment (`# N instrumented tests`) and the `## Instrumented tests` heading in CLAUDE.md and the "N total tests" line in README.md. Bump them in this commit if they drifted.
+   4. **Commit the doc/backlog churn** as a follow-up commit:
+      ```bash
+      git add BACKLOG.md CLAUDE.md README.md
+      git commit -m "docs: v1.4.11 post-release backlog/docs sync"
+      git push
+      ```
+      Don't bundle this into the version-bump commit — keep release/version-bump and post-release-sync as separate commits so the release-tagged commit stays clean.
 
 > **Rule**: Never reuse or update a published GitHub release. If you need to fix something, bump to a new version.
+
+> **Rule**: A release is not "done" until step 7 is done. The BACKLOG and the GitHub issue tracker are the user's source of truth for what's outstanding — leaving them out of sync turns every future "what's left?" question into archaeology.
 
 ## Security
 
