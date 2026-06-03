@@ -108,6 +108,66 @@ class NativePreparePreviewTest {
         )
     }
 
+    /** Sum of triangle areas in a preview mesh (trianglePositions = 9 floats per tri). */
+    private fun totalTriangleArea(pos: FloatArray): Double {
+        var area = 0.0
+        var i = 0
+        while (i + 9 <= pos.size) {
+            val ux = pos[i + 3] - pos[i];     val uy = pos[i + 4] - pos[i + 1]; val uz = pos[i + 5] - pos[i + 2]
+            val vx = pos[i + 6] - pos[i];     val vy = pos[i + 7] - pos[i + 1]; val vz = pos[i + 8] - pos[i + 2]
+            val cx = uy * vz - uz * vy; val cy = uz * vx - ux * vz; val cz = ux * vy - uy * vx
+            area += 0.5 * Math.sqrt((cx.toDouble() * cx + cy.toDouble() * cy + cz.toDouble() * cz))
+            i += 9
+        }
+        return area
+    }
+
+    /**
+     * Dots-regression guard (root cause: B131 v2.10.2 routed the MMU/paint preview through
+     * stride-skip decimation instead of QEM). Stride-skip keeps only ~1/stride of the
+     * triangles, scattering disconnected facets — the "loads of dots" preview. QEM (the
+     * non-paint path) preserves the surface while capping the count.
+     *
+     * Metric the old tests lacked: SURFACE AREA. A solid (QEM) decimation preserves the
+     * model's total triangle area; a stride-skip decimation keeps only ~1/stride of it.
+     * Triangle COUNT alone can't distinguish the two (both land near the cap), which is
+     * exactly why count/colour/bounds assertions passed while the preview was broken.
+     */
+    @Test
+    fun getPreparePreviewMesh_paintFileDecimationPreservesSurfaceArea() {
+        copyAssetToModelFile("colored_3DBenchy (1).3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        // Undecimated full mesh (huge cap → no decimation) → reference surface area.
+        val full = lib.getPreparePreviewMesh(100_000_000)
+        assertNotNull(full)
+        full!!
+        val fullTris = full.extruderIndices.size
+        assertTrue("colored_3DBenchy must exceed the decimation cap (got $fullTris tris)",
+            fullTris > 100_000)
+        val areaFull = totalTriangleArea(full.trianglePositions)
+        assertTrue("full mesh must have positive surface area", areaFull > 0.0)
+
+        // Reload to invalidate the native preview-mesh cache, then request a capped mesh.
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+        val dec = lib.getPreparePreviewMesh(100_000)
+        assertNotNull(dec)
+        dec!!
+        assertTrue("decimated mesh must respect the cap (got ${dec.extruderIndices.size})",
+            dec.extruderIndices.size <= 100_000)
+        val areaDec = totalTriangleArea(dec.trianglePositions)
+
+        val ratio = areaDec / areaFull
+        // QEM ⇒ ratio ≈ 1.0 (surface preserved). Stride-skip (the bug) ⇒ ratio ≈ 1/stride
+        // (e.g. ~0.14 at stride 7) → a sparse, dotty preview. 0.5 is a safe separator.
+        assertTrue(
+            "Decimated paint preview must preserve >=50% of surface area (solid QEM " +
+                "decimation), got ratio=$ratio (areaDec=$areaDec areaFull=$areaFull). " +
+                "A low ratio means stride-skip scattered the triangles → dotty preview.",
+            ratio >= 0.5
+        )
+    }
+
     @Test
     fun getPreparePreviewMesh_preservesAtLeastFourDistinctExtruderIndices_forSydneyButtonsAsset() {
         copyAssetToModelFile("Button-for-S-trousers.3mf")

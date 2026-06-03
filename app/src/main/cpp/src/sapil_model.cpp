@@ -516,14 +516,6 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     // mesh upload + decimation accounted for several seconds
                     // before any frame could render).
                     const int MIN_DECIMATION_TRIS = 1000;
-                    const int mmu_total_tris = std::accumulate(
-                        facets_per_type.begin(), facets_per_type.end(), 0,
-                        [](int sum, const indexed_triangle_set& its) {
-                            return sum + static_cast<int>(its.indices.size());
-                        });
-                    const bool mmu_needs_decimation = needs_decimation &&
-                        mmu_total_tris > MIN_DECIMATION_TRIS;
-                    const int mmu_stride = mmu_needs_decimation ? stride : 1;
                     struct StateMesh {
                         std::vector<float> positions;   // 9 floats per tri
                         std::vector<uint8_t> indices;   // 1 per tri
@@ -538,10 +530,42 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                         const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
+
+                        // B131 follow-up (dots regression): decimate each paint state with
+                        // QEM — the SOLID edge-collapse used by the non-MMU path below —
+                        // instead of stride-skip. B131 hard-coded stride decimation here to
+                        // cap the triangle count (Hueforge/Ghostface 3.7M tris), but
+                        // stride-skip keeps only ~1/stride of the facets, scattering
+                        // disconnected triangles → the "loads of dots" preview on painted
+                        // files (colored Benchy, H2C Nancy). QEM preserves the surface while
+                        // hitting the same proportional triangle budget. Stride remains the
+                        // fallback only when the 10s QEM wall-clock budget is exhausted.
+                        const int state_tris = static_cast<int>(its.indices.size());
+                        const bool state_needs_dec = needs_decimation && state_tris > MIN_DECIMATION_TRIS;
+                        const bool can_qem = state_needs_dec && !qem_budget_exceeded;
+                        if (can_qem) {
+                            const uint32_t target = static_cast<uint32_t>(
+                                std::max(INT64_C(1),
+                                    static_cast<int64_t>(state_tris) * effective_max / total_tris));
+                            try {
+                                if (its.indices.size() > target)
+                                    Slic3r::its_quadric_edge_collapse(its, target, nullptr,
+                                        [&]() { if (g_preview_cancel.load(std::memory_order_acquire)) throw std::runtime_error("cancelled"); },
+                                        nullptr);
+                            } catch (const std::runtime_error&) {
+                                SAPIL_LOGI("getPreparePreviewMesh: QEM cancelled mid-collapse (MMU)");
+                                return PreviewMesh();
+                            }
+                            if (std::chrono::steady_clock::now() > qem_deadline) {
+                                qem_budget_exceeded = true;
+                                SAPIL_LOGW("getPreparePreviewMesh: QEM time budget exceeded (MMU), switching to stride");
+                            }
+                        }
+                        const int state_stride = (can_qem || !state_needs_dec) ? 1 : stride;
                         // Emit into a temporary PreviewMesh to get degenerate filtering
                         PreviewMesh tmp;
                         int tri_counter = 0;
-                        appendItsPreviewMesh(tmp, its, extruder_index, mmu_stride, tri_counter);
+                        appendItsPreviewMesh(tmp, its, extruder_index, state_stride, tri_counter);
                         if (!tmp.extruder_indices.empty()) {
                             StateMesh sm;
                             sm.positions = std::move(tmp.triangle_positions);
