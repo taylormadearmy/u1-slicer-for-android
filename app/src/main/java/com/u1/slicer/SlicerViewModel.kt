@@ -1304,6 +1304,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val n = boxes.size / 3
             if (n == 0) { _toastEvents.tryEmit("Nothing to arrange"); return }
 
+            // Auto-arrange only applies to genuinely distinct objects (multi-file loads,
+            // split parts, per-part duplicates). A single-file model can report >1 native
+            // object (e.g. multi-volume 3MFs) while hasMultipleDistinctObjectsVar is false;
+            // writing N positions there would make the slice path's setModelInstances(custom)
+            // explode into N×N instances. Require multi-object mode.
+            if (!hasMultipleDistinctObjectsVar) {
+                _toastEvents.tryEmit("Auto-arrange needs multiple objects on the bed")
+                return
+            }
+
             val cfg = _config.value
             val ov = slicingOverrides.value
             // Reserve the wipe-tower footprint whenever the tower will actually print —

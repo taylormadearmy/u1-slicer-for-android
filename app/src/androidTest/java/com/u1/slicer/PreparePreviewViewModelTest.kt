@@ -13,6 +13,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -2351,6 +2352,48 @@ class PreparePreviewViewModelTest {
             viewModel.clearModel()
             first.delete()
             second.delete()
+        }
+    }
+
+    /**
+     * F92 regression (final-review CRITICAL): auto-arrange on a single-FILE multi-object
+     * model must NOT write multi-object placement (which would explode into N×N instances
+     * at slice via setModelInstances). It must no-op with a guard toast instead.
+     */
+    @Test
+    fun autoArrangeAll_singleFileMultiObject_doesNotEnterMultiObjectMode() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val modelFile = copyAssetToCache("Button-for-S-trousers.3mf")
+        val toasts = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val scope = CoroutineScope(Dispatchers.Default)
+        val collectorJob = scope.launch { viewModel.toastEvents.collect { toasts.add(it) } }
+        try {
+            viewModel.loadModelFromFile(modelFile)
+            waitUntil("S-Buttons plate selector visible") { viewModel.showPlateSelector.value }
+            viewModel.selectPlate(1)
+            waitUntil("S-Buttons plate 1 loaded", timeoutMs = 90_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            // Precondition: single-file load is NOT multi-object mode.
+            assertFalse("precondition: single-file load must not be multi-object",
+                viewModel.hasMultipleDistinctObjects.value)
+
+            runBlocking { viewModel.autoArrangeAll() }
+
+            // Guard must keep it out of multi-object placement...
+            assertFalse("auto-arrange must not flip single-file model into multi-object mode",
+                viewModel.hasMultipleDistinctObjects.value)
+            assertNull("auto-arrange must not publish multi-object positions for a single-file model",
+                viewModel.multiObjectPositions.value)
+            // ...and surface the guard toast.
+            waitUntil("guard toast emitted") {
+                toasts.any { it.contains("needs multiple objects") }
+            }
+        } finally {
+            collectorJob.cancel()
+            viewModel.clearModel()
+            modelFile.delete()
         }
     }
 }
