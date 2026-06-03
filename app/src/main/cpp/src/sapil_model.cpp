@@ -515,7 +515,28 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     // upload and "Prepare doesn't show the model" UX (because
                     // mesh upload + decimation accounted for several seconds
                     // before any frame could render).
-                    const int MIN_DECIMATION_TRIS = 1000;
+                    // B131 follow-up (dots / empty-plate regression). Paint states are
+                    // ARBITRARY, frequently non-manifold triangle subsets of the volume, so
+                    // BOTH decimation attempts corrupt them:
+                    //   - stride-skip (B131 v2.10.2) keeps only ~1/stride of the facets →
+                    //     scattered triangles → "loads of dots" / holes (colored Benchy);
+                    //   - QEM edge-collapse explodes/erodes non-manifold patches →
+                    //     ~±30000mm vertices → model off-screen → "empty plate" (H2C Benchy).
+                    // So keep the FULL solid mesh (stride=1) for normal painted files, and
+                    // only stride-skip genuinely enormous Hueforge-class volumes (>2M tris,
+                    // e.g. GhostfacePokemoncard 3.7M) where an uncapped upload would stall the
+                    // UI — there the bounded-but-sparse fallback keeps it on-bed and under the
+                    // B131 triangle cap. A solid colour-preserving decimation for huge paint
+                    // files (QEM the full manifold mesh + re-derive paint) is a tracked
+                    // follow-up; common painted models comfortably fit uncapped.
+                    // Keyed on the GLOBAL model triangle total, not this volume's — a
+                    // Hueforge file (Ghostface 3.7M) spreads its triangles across many
+                    // painted volumes that are each individually small, so a per-volume
+                    // threshold would never trip and the model would upload uncapped.
+                    const int MMU_SOLID_LIMIT = 2000000;
+                    const bool mmu_needs_decimation = needs_decimation &&
+                        total_tris > MMU_SOLID_LIMIT;
+                    const int mmu_stride = mmu_needs_decimation ? stride : 1;
                     struct StateMesh {
                         std::vector<float> positions;   // 9 floats per tri
                         std::vector<uint8_t> indices;   // 1 per tri
@@ -530,42 +551,10 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                         const uint8_t extruder_index = state_idx == 0
                             ? fallback_index
                             : static_cast<uint8_t>(state_idx - 1);
-
-                        // B131 follow-up (dots regression): decimate each paint state with
-                        // QEM — the SOLID edge-collapse used by the non-MMU path below —
-                        // instead of stride-skip. B131 hard-coded stride decimation here to
-                        // cap the triangle count (Hueforge/Ghostface 3.7M tris), but
-                        // stride-skip keeps only ~1/stride of the facets, scattering
-                        // disconnected triangles → the "loads of dots" preview on painted
-                        // files (colored Benchy, H2C Nancy). QEM preserves the surface while
-                        // hitting the same proportional triangle budget. Stride remains the
-                        // fallback only when the 10s QEM wall-clock budget is exhausted.
-                        const int state_tris = static_cast<int>(its.indices.size());
-                        const bool state_needs_dec = needs_decimation && state_tris > MIN_DECIMATION_TRIS;
-                        const bool can_qem = state_needs_dec && !qem_budget_exceeded;
-                        if (can_qem) {
-                            const uint32_t target = static_cast<uint32_t>(
-                                std::max(INT64_C(1),
-                                    static_cast<int64_t>(state_tris) * effective_max / total_tris));
-                            try {
-                                if (its.indices.size() > target)
-                                    Slic3r::its_quadric_edge_collapse(its, target, nullptr,
-                                        [&]() { if (g_preview_cancel.load(std::memory_order_acquire)) throw std::runtime_error("cancelled"); },
-                                        nullptr);
-                            } catch (const std::runtime_error&) {
-                                SAPIL_LOGI("getPreparePreviewMesh: QEM cancelled mid-collapse (MMU)");
-                                return PreviewMesh();
-                            }
-                            if (std::chrono::steady_clock::now() > qem_deadline) {
-                                qem_budget_exceeded = true;
-                                SAPIL_LOGW("getPreparePreviewMesh: QEM time budget exceeded (MMU), switching to stride");
-                            }
-                        }
-                        const int state_stride = (can_qem || !state_needs_dec) ? 1 : stride;
                         // Emit into a temporary PreviewMesh to get degenerate filtering
                         PreviewMesh tmp;
                         int tri_counter = 0;
-                        appendItsPreviewMesh(tmp, its, extruder_index, state_stride, tri_counter);
+                        appendItsPreviewMesh(tmp, its, extruder_index, mmu_stride, tri_counter);
                         if (!tmp.extruder_indices.empty()) {
                             StateMesh sm;
                             sm.positions = std::move(tmp.triangle_positions);

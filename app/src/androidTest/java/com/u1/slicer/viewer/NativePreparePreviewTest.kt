@@ -108,63 +108,76 @@ class NativePreparePreviewTest {
         )
     }
 
-    /** Sum of triangle areas in a preview mesh (trianglePositions = 9 floats per tri). */
-    private fun totalTriangleArea(pos: FloatArray): Double {
-        var area = 0.0
+    /** Axis-aligned span [spanX, spanY, spanZ] of a preview mesh's vertices (mm). */
+    private fun previewSpanXYZ(pos: FloatArray): FloatArray {
+        var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY; var maxY = Float.NEGATIVE_INFINITY
+        var minZ = Float.POSITIVE_INFINITY; var maxZ = Float.NEGATIVE_INFINITY
         var i = 0
-        while (i + 9 <= pos.size) {
-            val ux = pos[i + 3] - pos[i];     val uy = pos[i + 4] - pos[i + 1]; val uz = pos[i + 5] - pos[i + 2]
-            val vx = pos[i + 6] - pos[i];     val vy = pos[i + 7] - pos[i + 1]; val vz = pos[i + 8] - pos[i + 2]
-            val cx = uy * vz - uz * vy; val cy = uz * vx - ux * vz; val cz = ux * vy - uy * vx
-            area += 0.5 * Math.sqrt((cx.toDouble() * cx + cy.toDouble() * cy + cz.toDouble() * cz))
-            i += 9
+        while (i + 2 < pos.size) {
+            val x = pos[i]; val y = pos[i + 1]; val z = pos[i + 2]
+            if (x < minX) minX = x; if (x > maxX) maxX = x
+            if (y < minY) minY = y; if (y > maxY) maxY = y
+            if (z < minZ) minZ = z; if (z > maxZ) maxZ = z
+            i += 3
         }
-        return area
+        return floatArrayOf(maxX - minX, maxY - minY, maxZ - minZ)
     }
 
     /**
-     * Dots-regression guard (root cause: B131 v2.10.2 routed the MMU/paint preview through
-     * stride-skip decimation instead of QEM). Stride-skip keeps only ~1/stride of the
-     * triangles, scattering disconnected facets — the "loads of dots" preview. QEM (the
-     * non-paint path) preserves the surface while capping the count.
+     * Dots-regression guard #1 — colored Benchy "holes/dots".
+     * The MMU/paint preview must render SOLID: the capped mesh's triangle count must stay
+     * close to the full, un-decimated count. B131 (v2.10.2) stride-skipped paint facets
+     * (keep every Nth) → only ~1/stride of the surface → scattered triangles/holes. The
+     * later QEM attempt also dropped the count (QEM erodes non-manifold patches). Both are
+     * caught here: a solid preview keeps essentially all original facets.
      *
-     * Metric the old tests lacked: SURFACE AREA. A solid (QEM) decimation preserves the
-     * model's total triangle area; a stride-skip decimation keeps only ~1/stride of it.
-     * Triangle COUNT alone can't distinguish the two (both land near the cap), which is
-     * exactly why count/colour/bounds assertions passed while the preview was broken.
+     * COUNT is the discriminator the old tests lacked — colour/cap/bounds all passed while
+     * the surface was destroyed.
      */
     @Test
-    fun getPreparePreviewMesh_paintFileDecimationPreservesSurfaceArea() {
+    fun getPreparePreviewMesh_paintPreviewIsSolid_notSubsampled() {
         copyAssetToModelFile("colored_3DBenchy (1).3mf")
         assertTrue(lib.loadModel(modelFile.absolutePath))
-
-        // Undecimated full mesh (huge cap → no decimation) → reference surface area.
         val full = lib.getPreparePreviewMesh(100_000_000)
-        assertNotNull(full)
-        full!!
-        val fullTris = full.extruderIndices.size
-        assertTrue("colored_3DBenchy must exceed the decimation cap (got $fullTris tris)",
-            fullTris > 100_000)
-        val areaFull = totalTriangleArea(full.trianglePositions)
-        assertTrue("full mesh must have positive surface area", areaFull > 0.0)
+        assertNotNull(full); full!!
+        val fullCount = full.extruderIndices.size
+        assertTrue("colored Benchy must exceed the soft cap (got $fullCount)", fullCount > 100_000)
 
         // Reload to invalidate the native preview-mesh cache, then request a capped mesh.
         assertTrue(lib.loadModel(modelFile.absolutePath))
         val dec = lib.getPreparePreviewMesh(100_000)
-        assertNotNull(dec)
-        dec!!
-        assertTrue("decimated mesh must respect the cap (got ${dec.extruderIndices.size})",
-            dec.extruderIndices.size <= 100_000)
-        val areaDec = totalTriangleArea(dec.trianglePositions)
-
-        val ratio = areaDec / areaFull
-        // QEM ⇒ ratio ≈ 1.0 (surface preserved). Stride-skip (the bug) ⇒ ratio ≈ 1/stride
-        // (e.g. ~0.14 at stride 7) → a sparse, dotty preview. 0.5 is a safe separator.
+        assertNotNull(dec); dec!!
+        val ratio = dec.extruderIndices.size.toDouble() / fullCount
         assertTrue(
-            "Decimated paint preview must preserve >=50% of surface area (solid QEM " +
-                "decimation), got ratio=$ratio (areaDec=$areaDec areaFull=$areaFull). " +
-                "A low ratio means stride-skip scattered the triangles → dotty preview.",
-            ratio >= 0.5
+            "Paint preview must be SOLID (capped count ≈ full count), got " +
+                "dec=${dec.extruderIndices.size} full=$fullCount ratio=$ratio. A low ratio " +
+                "means the MMU path subsampled facets → scattered dots/holes.",
+            ratio >= 0.9
+        )
+    }
+
+    /**
+     * Dots-regression guard #2 — H2C Benchy "empty plate".
+     * The MMU/paint preview mesh must have SANE bounds (~model size). A blown-up AABB means
+     * decimation corrupted vertices (QEM edge-collapse on non-manifold per-state patches
+     * exploded vertices to ~±30000mm → model rendered off-screen → empty plate).
+     */
+    @Test
+    fun getPreparePreviewMesh_paintPreviewBoundsAreSane_h2cBenchy() {
+        copyAssetToModelFile("3DBenchy-H2C-Multi-Color.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+        val mesh = lib.getPreparePreviewMesh(100_000)
+        assertNotNull(mesh); mesh!!
+        assertTrue("H2C preview must have triangles", mesh.extruderIndices.isNotEmpty())
+        val span = previewSpanXYZ(mesh.trianglePositions)
+        // Benchy is ~60×31×48mm. A sane mesh is well under 500mm on every axis; the
+        // explosion bug produced ~33000mm spans.
+        assertTrue(
+            "H2C preview mesh bounds must be sane (model ~60×31×48mm), got span=" +
+                "[${span[0]}, ${span[1]}, ${span[2]}]mm — a huge span means decimation " +
+                "corrupted vertices (off-screen → empty plate).",
+            span[0] < 500f && span[1] < 500f && span[2] < 500f
         )
     }
 
