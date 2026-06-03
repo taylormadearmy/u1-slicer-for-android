@@ -817,6 +817,53 @@ class MainActivity : ComponentActivity() {
                         is CanonicalLookup.Present -> {
                             if (canonical != null && plateNarrowed != null) {
                                 val (narrowedList, plateFileIndices) = plateNarrowed
+                                when (pending.action) {
+                                    PendingMappingSend.Action.UploadOnly -> {
+                                        // Internal-memory wrong-nozzle fix (2026-06-03):
+                                        // send-to-hold ships the CANONICAL body and lets the
+                                        // printer's Filament Setup map it once. No in-app slot
+                                        // picker — its picks would double-remap (the body is
+                                        // already physical + the printer maps again → wrong
+                                        // nozzle). See gcode.sendRemapForAction KDoc.
+                                        com.u1.slicer.ui.UploadConfirmationDialog(
+                                            canonicalList = narrowedList,
+                                            plateFileIndices = plateFileIndices,
+                                            modelName = viewModel.modelFileName.value,
+                                            onConfirm = {
+                                                val sourceFile = java.io.File(pending.gcodePath)
+                                                val heldFile = java.io.File(
+                                                    sourceFile.parentFile,
+                                                    "${sourceFile.nameWithoutExtension}.remapped.${sourceFile.extension}"
+                                                )
+                                                pendingMappingSend = null
+                                                navigateTab(Routes.PRINTER)
+                                                sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                                    // Foreground service across the large-file
+                                                    // copy so the freezer can't kill it once
+                                                    // the app is backgrounded.
+                                                    LongOpService.start(toastContext, "Preparing G-code")
+                                                    val physical = try {
+                                                        com.u1.slicer.gcode.applyPrintTimeRemap(
+                                                            source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
+                                                            output = com.u1.slicer.gcode.PhysicalGcodePath.of(heldFile),
+                                                            colorMapping = com.u1.slicer.gcode.sendRemapForAction(
+                                                                uploadOnly = true,
+                                                                physicalMapping = emptyList(),
+                                                            ),
+                                                        )
+                                                    } finally {
+                                                        LongOpService.stop(toastContext)
+                                                    }
+                                                    val modelName = viewModel.modelFileName.value
+                                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                        printerViewModel.sendUploadOnly(physical, modelName)
+                                                    }
+                                                }
+                                            },
+                                            onDismiss = { pendingMappingSend = null },
+                                        )
+                                    }
+                                    PendingMappingSend.Action.PrintAndUpload -> {
                                 // Phase 2.5 final: slices produce canonical
                                 // (file-filament-relative) T-indices. The
                                 // dialog now shows only the plate's
@@ -876,16 +923,11 @@ class MainActivity : ComponentActivity() {
                                             // can't kill it once the user backgrounds
                                             // the app; the upload step starts its own.
                                             LongOpService.start(toastContext, "Preparing G-code")
-                                            // Internal-memory wrong-nozzle fix (2026-06-03):
-                                            // Upload-Only ships the canonical body (empty
-                                            // mapping = verbatim copy) so the printer's
-                                            // Filament Setup maps it once. Map & Print runs
-                                            // verbatim via the API, so it keeps the physical
-                                            // remap. See gcode.sendRemapForAction KDoc.
-                                            val uploadOnly =
-                                                pending.action == PendingMappingSend.Action.UploadOnly
+                                            // Map & Print runs verbatim via the API, so its
+                                            // body must already be in physical-slot space —
+                                            // keep the physical remap. See sendRemapForAction.
                                             val sendMapping = com.u1.slicer.gcode.sendRemapForAction(
-                                                uploadOnly = uploadOnly,
+                                                uploadOnly = false,
                                                 physicalMapping = expanded,
                                             )
                                             val physical = try {
@@ -899,17 +941,14 @@ class MainActivity : ComponentActivity() {
                                             }
                                             val modelName = viewModel.modelFileName.value
                                             withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                when (pending.action) {
-                                                    PendingMappingSend.Action.PrintAndUpload ->
-                                                        printerViewModel.sendAndPrint(physical, modelName)
-                                                    PendingMappingSend.Action.UploadOnly ->
-                                                        printerViewModel.sendUploadOnly(physical, modelName)
-                                                }
+                                                printerViewModel.sendAndPrint(physical, modelName)
                                             }
                                         }
                                     },
                                     onDismiss = { pendingMappingSend = null }
                                 )
+                                    }
+                                }
                             }
                         }
                         is CanonicalLookup.Absent -> {
@@ -2567,7 +2606,7 @@ fun SliceCompleteActionBar(
                     Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        "Map & Upload",
+                        "Upload Only",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         maxLines = 1,

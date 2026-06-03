@@ -455,3 +455,108 @@ internal fun autoSuggestMapping(
 ): List<Int> = canonicalList.filaments.map { entry ->
     findClosestExtruder(entry.color, extruderPresets)?.index ?: 0
 }
+
+/**
+ * Upload-Only confirmation sheet (2026-06-03). The send-to-hold path ships
+ * the CANONICAL G-code body and lets the printer's Filament Setup map it, so
+ * there is no in-app slot picker here — this read-only sheet just confirms
+ * the upload and tells the user the printer will ask for nozzle assignment.
+ *
+ * @param canonicalList The file's canonical filament list (colour + material).
+ * @param plateFileIndices When plate-narrowed, the canonical fileIdx per row
+ *   (for "Filament N" labels matching Prepare); null → positional.
+ * @param modelName Shown as the sheet subtitle.
+ */
+@Composable
+fun UploadConfirmationDialog(
+    canonicalList: CanonicalFilamentList,
+    plateFileIndices: List<Int>? = null,
+    modelName: String? = null,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    "Upload to printer",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (!modelName.isNullOrBlank()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        modelName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(canonicalList.filaments) { idx, entry ->
+                        val displayFileIndex = plateFileIndices?.getOrNull(idx) ?: idx
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(parseHexColor(entry.color))
+                                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Filament ${displayFileIndex + 1}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    entry.materialType ?: "—",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        "When you start this print on the printer, it will ask " +
+                            "you to assign each colour to a nozzle.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(10.dp),
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = onConfirm) { Text("Upload") }
+                }
+            }
+        }
+    }
+}
