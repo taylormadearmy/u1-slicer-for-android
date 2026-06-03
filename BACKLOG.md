@@ -4,6 +4,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B135: CopyArrangeCalculator.placeAdditionalObject can place pieces off-bed when row+below grid is exhausted (GitHub #167) — NEW 2026-06-03
+- **Symptom**: After splitting a multi-volume model and adding multiple per-object duplicates (per-object Copies slider, v2.10.4+), the placement helper places later pieces past the 270mm bed edge in Y when the "right of existing" branch fails and the "below all existing" branch also overflows.
+- **Reproducer**: Oreo (`OreoProj1.3mf`) plate 1 — split object 0, then call `duplicateObject(2)` 4 times. Pieces 6 and 7 land at Y ≈ 274mm. Slicer then errors with `"impossible coordinates"`.
+- **Discovered**: 2026-06-03 v2.10.13 full instrumented sweep — `B131B132B133DiagnosticTest#b132c_oreo_splitThenDuplicate_sliceReplayProducesCorrectObjectCount` failed with 4 dupes; relaxed to 2 dupes to keep the regression guard for v2.10.12's `_duplicateOps` replay logic without depending on the layout fix.
+- **Not a release blocker**: end-user manual flow (the v2.10.12 user-verified repro) doesn't hit this — depends on starting bed layout. The slicer's "impossible coordinates" error is a graceful refusal, not a crash.
+- **Right fix**: F92 Auto-arrange (already in BACKLOG) — add a bed-fit check + auto-arrange fallback in `placeAdditionalObject`, or fall through to grid-from-scratch when neither right nor below fits. Until then, the per-object Copies slider can produce slice errors at high counts on dense layouts.
+- **File**: [CopyArrangeCalculator.kt:375-417](app/src/main/java/com/u1/slicer/model/CopyArrangeCalculator.kt#L375-L417).
+
 ### B133: Chubby Darth Vader MULTI_COL — Filaments 3 & 4 show "NONE" material on load; Split-to-Parts collapses paint state to single colour (GitHub #165) — INVESTIGATED, NOT REPRODUCED PROGRAMMATICALLY
 - **Symptom (NONE materials)**: Load `Chubby_Darth_Vader_MULTI_COL...3mf` (4-filament file). Prepare's Filaments panel shows 4 entries with correct colours (`#000000` / `#FFFFFF` / `#EBD9C4` / `#804000`) but slots 3 + 4 show material type literally **"NONE"** while slots 1 + 2 show PLA. Both NONE rows still show 220°C nozzle temp, so a fallback is being applied silently but the material label never resolves.
 - **Symptom (Split colour loss)**: On the same file, Split-to-Parts strips per-volume paint/colour assignments — the cape (black with white "I AM YOUR FATHER" text), the skin-tone face, and the brown pants all render as a single white filament after split. Filament panel header still reads "(4)" but every split part draws on Filament 1.
