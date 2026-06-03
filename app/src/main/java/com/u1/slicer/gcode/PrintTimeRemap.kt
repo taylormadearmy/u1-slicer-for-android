@@ -167,3 +167,26 @@ fun applyPrintTimeRemap(
     applyPrintTimeRemap(source.absolutePath, output.absolutePath, colorMapping)
     return output
 }
+
+/**
+ * Internal-memory wrong-nozzle fix (2026-06-03) — chooses the [colorMapping]
+ * fed to [applyPrintTimeRemap] based on how the file will be started.
+ *
+ * The physical T-index remap is only correct for a verbatim API print
+ * (Map & Print). When a file is uploaded to hold and later started from the
+ * printer's own internal memory, the printer applies its Filament Setup
+ * (canonical→physical) mapping to the body. If the body is already in
+ * physical-slot space, the two maps compose → double remap → the first
+ * colour prints on the wrong nozzle.
+ *
+ * So for the Upload-Only / send-to-hold path we return an EMPTY mapping
+ * (verbatim copy = canonical body) and let the printer map once via Filament
+ * Setup. Map & Print returns the resolved [physicalMapping] so its body is
+ * print-ready for the verbatim API start.
+ *
+ * @param uploadOnly true for the send-to-hold / Upload-Only action.
+ * @param physicalMapping the resolved canonical-fileIndex → physical-slot
+ *   mapping (used only for Map & Print).
+ */
+fun sendRemapForAction(uploadOnly: Boolean, physicalMapping: List<Int>): List<Int> =
+    if (uploadOnly) emptyList() else physicalMapping

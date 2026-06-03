@@ -876,11 +876,23 @@ class MainActivity : ComponentActivity() {
                                             // can't kill it once the user backgrounds
                                             // the app; the upload step starts its own.
                                             LongOpService.start(toastContext, "Preparing G-code")
+                                            // Internal-memory wrong-nozzle fix (2026-06-03):
+                                            // Upload-Only ships the canonical body (empty
+                                            // mapping = verbatim copy) so the printer's
+                                            // Filament Setup maps it once. Map & Print runs
+                                            // verbatim via the API, so it keeps the physical
+                                            // remap. See gcode.sendRemapForAction KDoc.
+                                            val uploadOnly =
+                                                pending.action == PendingMappingSend.Action.UploadOnly
+                                            val sendMapping = com.u1.slicer.gcode.sendRemapForAction(
+                                                uploadOnly = uploadOnly,
+                                                physicalMapping = expanded,
+                                            )
                                             val physical = try {
                                                 com.u1.slicer.gcode.applyPrintTimeRemap(
                                                     source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
                                                     output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
-                                                    colorMapping = expanded,
+                                                    colorMapping = sendMapping,
                                                 )
                                             } finally {
                                                 LongOpService.stop(toastContext)

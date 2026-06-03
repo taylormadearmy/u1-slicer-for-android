@@ -3,6 +3,7 @@ package com.u1.slicer.gcode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.io.File
 
 /**
  * Phase 2 (2026-04-28) — covers `resolveCanonicalExportMapping`, the
@@ -261,5 +262,57 @@ class CanonicalExportMappingTest {
             selectedExtruder = 0,
         )
         assertEquals(listOf(3, 0, 3), result)  // clamped to 0..3
+    }
+
+    // --- Internal-memory wrong-nozzle fix (2026-06-03) ---
+    // A held file printed from the printer's own internal memory has the
+    // printer's Filament Setup (canonical→physical) mapping applied to it.
+    // If the body was already remapped to physical slots at Send time, the
+    // two maps compose → double remap → first colour on the wrong nozzle
+    // (Discord: brown landed on nozzle 3 instead of 2). So Upload-Only must
+    // ship the CANONICAL body and let the printer map once. Map & Print runs
+    // verbatim via the API, so it keeps the physical remap.
+
+    @Test
+    fun sendRemap_uploadOnly_returnsEmptyMappingForCanonicalBody() {
+        // Empty mapping makes applyPrintTimeRemap emit a verbatim canonical
+        // copy — the body stays in canonical (slicer) tool order.
+        val result = sendRemapForAction(uploadOnly = true, physicalMapping = listOf(1, 2, 3, 0))
+        assertEquals(emptyList<Int>(), result)
+    }
+
+    @Test
+    fun sendRemap_printAndUpload_keepsPhysicalMapping() {
+        // Map & Print body must already be in physical-slot space (the API
+        // start runs it verbatim) — keep the resolved physical mapping.
+        val result = sendRemapForAction(uploadOnly = false, physicalMapping = listOf(1, 2, 3, 0))
+        assertEquals(listOf(1, 2, 3, 0), result)
+    }
+
+    @Test
+    fun uploadOnly_emptyMapping_preservesCanonicalToolIndices() {
+        // End-to-end of the Upload-Only path: a canonical body (first tool
+        // T0) survives verbatim so the printer's own mapping isn't applied
+        // on top of an already-remapped body.
+        val src = File.createTempFile("canonical", ".gcode")
+        val out = File.createTempFile("held", ".gcode")
+        val body = "T0\nG1 X1\nM104 T1 S200\nT1\nSM_PRINT_AUTO_FEED EXTRUDER=0\n"
+        src.writeText(body)
+        val mapping = sendRemapForAction(uploadOnly = true, physicalMapping = listOf(1, 2, 3, 0))
+        applyPrintTimeRemap(src.absolutePath, out.absolutePath, mapping)
+        assertEquals(body, out.readText())
+        src.delete(); out.delete()
+    }
+
+    @Test
+    fun printAndUpload_physicalMapping_rewritesToolIndices() {
+        // Contrast: Map & Print bakes the physical mapping into the body.
+        val src = File.createTempFile("canonical", ".gcode")
+        val out = File.createTempFile("print", ".gcode")
+        src.writeText("T0\nT1\n")
+        val mapping = sendRemapForAction(uploadOnly = false, physicalMapping = listOf(1, 0))
+        applyPrintTimeRemap(src.absolutePath, out.absolutePath, mapping)
+        assertEquals("T1\nT0\n", out.readText())
+        src.delete(); out.delete()
     }
 }
