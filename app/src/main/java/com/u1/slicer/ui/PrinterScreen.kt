@@ -223,6 +223,22 @@ fun PrinterScreen(
 
             // ── Upload / Send status ────────────────────────────────────────
             when (val s = sendingState) {
+                is PrinterViewModel.SendingState.Preparing -> Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
+                        Column {
+                            Text("Preparing G-code\u2026", fontWeight = FontWeight.Medium)
+                            Text("Getting your file ready to send",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        }
+                    }
+                }
                 is PrinterViewModel.SendingState.Uploading -> Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
