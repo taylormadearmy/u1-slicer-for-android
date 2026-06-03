@@ -444,7 +444,11 @@ object CopyArrangeCalculator {
         return positions
     }
 
-    /** Result of [autoArrange]: packed positions + count of objects that could not be placed. */
+    /**
+     * Result of [autoArrange]: packed positions + count of objects that could not be placed.
+     *
+     * Note: not value-comparable (FloatArray equals/hashCode is identity-based) — don't use in equality-sensitive collections.
+     */
     data class ArrangeResult(
         val positions: FloatArray,
         val overflowCount: Int,
@@ -483,7 +487,10 @@ object CopyArrangeCalculator {
         }
 
         val maxEdge = bedSize - margin
-        val maxIters = (bedSize / maxOf(margin, 1f)).toInt() * 3 + 16
+        // Next-fit-decreasing shelf packer: objects are placed left-to-right on the current shelf
+        // and wrap to a new shelf when the row overflows. Earlier shelves are never backfilled —
+        // non-optimal but keeps keep-out skip logic simple and placement fully predictable.
+        val maxIters = (bedSize / maxOf(margin, 1f)).toInt() * 3 + 16 // generous worst-case bound: a few wraps + reserved-skips per object; the guard can never spin
         // Largest-area-first for tighter packing; stable on ties via index.
         val order = (0 until n).sortedWith(
             compareByDescending<Int> { boxes[it * 3] * boxes[it * 3 + 1] }.thenBy { it }
