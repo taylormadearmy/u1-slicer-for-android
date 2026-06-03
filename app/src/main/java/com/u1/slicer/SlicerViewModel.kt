@@ -1279,6 +1279,56 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * F92 — fire-and-forget wrapper around [autoArrangeAll] for the UI (mirrors
+     * [launchAutoOrientAll]; avoids allocating a rememberCoroutineScope in the
+     * Prepare-tab body).
+     */
+    fun launchAutoArrangeAll() {
+        viewModelScope.launch { autoArrangeAll() }
+    }
+
+    /**
+     * F92 — translation-only auto-arrange of every object on the bed. Keeps each
+     * object's rotation/scale; packs footprints clear of each other and of the
+     * pinned wipe tower (the tower is never moved). Delegates the apply to
+     * [applyPlacementPositions], which branches on multi- vs single-object mode and
+     * keeps the native model / state flows in sync.
+     */
+    suspend fun autoArrangeAll() {
+        val ctx = beginLongOp("Auto-arranging")
+        try {
+            val boxes = withContext(Dispatchers.IO) {
+                runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
+            }
+            val n = boxes.size / 3
+            if (n == 0) { _toastEvents.tryEmit("Nothing to arrange"); return }
+
+            val cfg = _config.value
+            val ov = slicingOverrides.value
+            // Pinned tower: pass the current position back unchanged. Reserve its
+            // footprint (margin-inflated) only when a tower is actually active.
+            val towerPos = customWipeTowerPos ?: (cfg.wipeTowerX to cfg.wipeTowerY)
+            val reserved: FloatArray? = customWipeTowerPos?.let { (tx, ty) ->
+                val w = resolveWipeTowerWidth(cfg, ov)
+                val d = resolveWipeTowerDepth(lastModelInfo?.sizeZ ?: 0f, ov)
+                floatArrayOf(tx - 5f, ty - 5f, tx + w + 5f, ty + d + 5f)
+            }
+
+            val incoming = customObjectPositions ?: getPlacementPositions()
+            val result = com.u1.slicer.model.CopyArrangeCalculator.autoArrange(boxes, reserved, incoming)
+
+            applyPlacementPositions(result.positions, towerPos)
+            _sliceStale.value = true
+            invalidatePrepareMeshCache()
+            if (result.overflowCount > 0) {
+                _toastEvents.tryEmit("${result.overflowCount} object(s) didn't fit on the bed")
+            }
+        } finally {
+            endLongOp(ctx)
+        }
+    }
+
     /** F66 — assign a per-volume extruder slot from the Parts panel. */
     fun setVolumeExtruder(objIdx: Int, volIdx: Int, slot: Int) {
         if (!native.nativeSetVolumeExtruder(objIdx, volIdx, slot)) return

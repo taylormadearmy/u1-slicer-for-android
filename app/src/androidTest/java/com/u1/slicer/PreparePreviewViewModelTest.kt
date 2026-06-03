@@ -2311,4 +2311,46 @@ class PreparePreviewViewModelTest {
             modelFile.delete()
         }
     }
+
+    /**
+     * F92: two STLs added to the bed, then autoArrangeAll() packs them so neither
+     * overlaps the other, and both stay within the 270×270mm bed.
+     */
+    @Test
+    fun autoArrangeAll_twoObjects_noOverlapAndOnBed() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val viewModel = SlicerViewModel(application)
+        val first = copyAssetToCache("tetrahedron.stl")
+        val second = copyAssetToCache("tetrahedron.stl")
+        try {
+            viewModel.loadModelFromFile(first)
+            waitUntil("first STL loaded", timeoutMs = 60_000L) {
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
+            }
+            viewModel.addModelFromFile(second)
+            waitUntil("second STL added to bed", timeoutMs = 60_000L) {
+                viewModel.hasMultipleDistinctObjects.value
+            }
+
+            kotlinx.coroutines.runBlocking { viewModel.autoArrangeAll() }
+
+            val pos = viewModel.multiObjectPositions.value
+            assertNotNull("multiObjectPositions must be set after arrange", pos)
+            assertEquals("two objects → 4 floats", 4, pos!!.size)
+            val boxes = viewModel.objectBoundingBoxes.value
+            // Pairwise non-overlap (use each object's own footprint).
+            val ax = pos[0]; val ay = pos[1]; val asx = boxes[0]; val asy = boxes[1]
+            val bx = pos[2]; val by = pos[3]; val bsx = boxes[3]; val bsy = boxes[4]
+            val overlap = ax < bx + bsx && ax + asx > bx && ay < by + bsy && ay + asy > by
+            assertFalse("arranged objects must not overlap", overlap)
+            for (i in 0 until 2) {
+                assertTrue("obj $i on bed X", pos[i * 2] in 0f..270f)
+                assertTrue("obj $i on bed Y", pos[i * 2 + 1] in 0f..270f)
+            }
+        } finally {
+            viewModel.clearModel()
+            first.delete()
+            second.delete()
+        }
+    }
 }
