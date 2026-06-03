@@ -1306,14 +1306,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
             val cfg = _config.value
             val ov = slicingOverrides.value
-            // Pinned tower: pass the current position back unchanged. Reserve its
-            // footprint (margin-inflated) only when a tower is actually active.
+            // Reserve the wipe-tower footprint whenever the tower will actually print —
+            // mirror the slice-time decision (resolvePrimeTower) rather than relying on
+            // customWipeTowerPos being set, which it isn't after a manual prime-tower
+            // toggle. Otherwise the packer could place an object over the printed tower.
+            val slotCount = (_colorMapping.value?.distinct()?.size ?: 1).coerceIn(1, 4)
+            val towerActive = ov.resolvePrimeTower(slotCount, cfg.wipeTowerEnabled)
+            // Tower stays pinned: pass its current position back unchanged.
             val towerPos = customWipeTowerPos ?: (cfg.wipeTowerX to cfg.wipeTowerY)
-            val reserved: FloatArray? = customWipeTowerPos?.let { (tx, ty) ->
+            val reserved: FloatArray? = if (towerActive) {
+                val (tx, ty) = towerPos
                 val w = resolveWipeTowerWidth(cfg, ov)
                 val d = resolveWipeTowerDepth(lastModelInfo?.sizeZ ?: 0f, ov)
                 floatArrayOf(tx - 5f, ty - 5f, tx + w + 5f, ty + d + 5f)
-            }
+            } else null
 
             val incoming = customObjectPositions ?: getPlacementPositions()
             val result = com.u1.slicer.model.CopyArrangeCalculator.autoArrange(boxes, reserved, incoming)
