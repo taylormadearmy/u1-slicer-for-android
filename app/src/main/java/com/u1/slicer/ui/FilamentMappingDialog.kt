@@ -466,12 +466,18 @@ internal fun autoSuggestMapping(
  * @param plateFileIndices When plate-narrowed, the canonical fileIdx per row
  *   (for "Filament N" labels matching Prepare); null → positional.
  * @param modelName Shown as the sheet subtitle.
+ * @param slicedMaterials Resolved per-canonical-fileIndex material the G-code
+ *   was actually sliced with (slot presets / Prepare overrides win over the
+ *   file-declared material). Indexed by canonical fileIndex. When present it is
+ *   shown instead of the file-declared `entry.materialType`, so the sheet
+ *   matches the Per-Extruder slice summary (e.g. PETG, not the file's PLA).
  */
 @Composable
 fun UploadConfirmationDialog(
     canonicalList: CanonicalFilamentList,
     plateFileIndices: List<Int>? = null,
     modelName: String? = null,
+    slicedMaterials: List<String>? = null,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -527,7 +533,12 @@ fun UploadConfirmationDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Text(
-                                    entry.materialType ?: "—",
+                                    // Show what the G-code was sliced with (slot
+                                    // preset / override wins), matching the
+                                    // Per-Extruder summary; fall back to the
+                                    // file-declared material only if unresolved.
+                                    slicedMaterials?.getOrNull(displayFileIndex)
+                                        ?: entry.materialType ?: "—",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )

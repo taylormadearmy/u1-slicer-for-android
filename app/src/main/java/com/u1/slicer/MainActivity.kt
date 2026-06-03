@@ -829,6 +829,10 @@ class MainActivity : ComponentActivity() {
                                             canonicalList = narrowedList,
                                             plateFileIndices = plateFileIndices,
                                             modelName = viewModel.modelFileName.value,
+                                            // Show the sliced-with material (slot preset wins
+                                            // over file-declared), matching the Per-Extruder
+                                            // summary — e.g. PETG, not the file's PLA.
+                                            slicedMaterials = viewModel.sliceTimeMaterials(canonical, currentMapping),
                                             onConfirm = {
                                                 val sourceFile = java.io.File(pending.gcodePath)
                                                 val heldFile = java.io.File(
