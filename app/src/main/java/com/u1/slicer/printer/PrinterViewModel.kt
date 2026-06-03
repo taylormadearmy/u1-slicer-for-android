@@ -312,12 +312,6 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Phase 2 B.1 (2026-04-28) — accepts only [com.u1.slicer.gcode.PhysicalGcodePath].
-     * Callers must apply [com.u1.slicer.gcode.applyPrintTimeRemap] (or
-     * confirm the source is already in physical-slot space) before
-     * reaching this function. The compiler enforces it.
-     */
-    /**
      * F94 — show the "Preparing G-code" banner the instant a send action is confirmed,
      * before any IO begins. sendUploadOnly/sendAndPrint flip it to Uploading; a prep
      * failure flips it to Error via [reportSendError].
@@ -331,6 +325,12 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         _sendingState.value = SendingState.Error(message)
     }
 
+    /**
+     * Phase 2 B.1 (2026-04-28) — accepts only [com.u1.slicer.gcode.PhysicalGcodePath].
+     * Callers must apply [com.u1.slicer.gcode.applyPrintTimeRemap] (or
+     * confirm the source is already in physical-slot space) before
+     * reaching this function. The compiler enforces it.
+     */
     fun sendAndPrint(physical: com.u1.slicer.gcode.PhysicalGcodePath, modelName: String? = null) {
         _sendingState.value = SendingState.Uploading
         viewModelScope.launch(Dispatchers.IO) {
