@@ -1537,6 +1537,7 @@ fun PrepareScreen(
                                 onObjectTapped = { idx -> viewModel.selectObject(idx) },
                                 onEmptyTap = { viewModel.deselect() },
                                 onAutoOrientAll = { viewModel.launchAutoOrientAll() },
+                                onAutoArrangeAll = { viewModel.launchAutoArrangeAll() },
                                 onResetAllRotations = if (f66AnyRotationDirty) {
                                     { viewModel.resetAllRotations() }
                                 } else null,
@@ -3133,6 +3134,7 @@ fun InlineModelPreview(
     // Reset entries should be null when there's nothing to reset; the menu
     // hides them entirely in that case.
     onAutoOrientAll: (() -> Unit)? = null,
+    onAutoArrangeAll: (() -> Unit)? = null,
     onResetAllRotations: (() -> Unit)? = null,
     onResetAllScales: (() -> Unit)? = null,
 ) {
@@ -3701,7 +3703,7 @@ fun InlineModelPreview(
                 // standalone Info icon was removed in favour of this menu so
                 // the overlay stays compact while keeping all actions one tap
                 // away.
-                if (onInfoClick != null || onAutoOrientAll != null
+                if (onInfoClick != null || onAutoOrientAll != null || onAutoArrangeAll != null
                     || onResetAllRotations != null || onResetAllScales != null) {
                     var menuOpen by remember { mutableStateOf(false) }
                     Box {
@@ -3724,6 +3726,12 @@ fun InlineModelPreview(
                                 DropdownMenuItem(
                                     text = { Text("Auto-orient all") },
                                     onClick = { onAutoOrientAll(); menuOpen = false },
+                                )
+                            }
+                            if (onAutoArrangeAll != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Auto-arrange all") },
+                                    onClick = { onAutoArrangeAll(); menuOpen = false },
                                 )
                             }
                             if (onResetAllRotations != null) {
