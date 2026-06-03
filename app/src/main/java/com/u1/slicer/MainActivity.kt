@@ -856,9 +856,11 @@ class MainActivity : ComponentActivity() {
                                                                 physicalMapping = emptyList(),
                                                             ),
                                                         )
+                                                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                                                        throw ce
                                                     } catch (t: Throwable) {
-                                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                            printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message}")
+                                                        withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.Main) {
+                                                            printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message ?: "unknown error"}")
                                                         }
                                                         return@launch
                                                     } finally {
@@ -947,9 +949,11 @@ class MainActivity : ComponentActivity() {
                                                     output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
                                                     colorMapping = sendMapping,
                                                 )
+                                            } catch (ce: kotlinx.coroutines.CancellationException) {
+                                                throw ce
                                             } catch (t: Throwable) {
-                                                withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                    printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message}")
+                                                withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.Main) {
+                                                    printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message ?: "unknown error"}")
                                                 }
                                                 return@launch
                                             } finally {
@@ -996,9 +1000,11 @@ class MainActivity : ComponentActivity() {
                                     viewModel.prepareExportableGcodeWithMapping(
                                         sourceFile, exportedFile, mapping = null
                                     )
+                                } catch (ce: kotlinx.coroutines.CancellationException) {
+                                    throw ce
                                 } catch (t: Throwable) {
-                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                        printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message}")
+                                    withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.Main) {
+                                        printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message ?: "unknown error"}")
                                     }
                                     return@launch
                                 } finally {
