@@ -106,6 +106,8 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     sealed class SendingState {
         object Idle : SendingState()
+        /** File is being prepared (remap/copy) before the upload begins. */
+        object Preparing : SendingState()
         object Uploading : SendingState()
         /** Upload + print queued successfully. */
         object PrintStarted : SendingState()
@@ -315,6 +317,20 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
      * confirm the source is already in physical-slot space) before
      * reaching this function. The compiler enforces it.
      */
+    /**
+     * F94 — show the "Preparing G-code" banner the instant a send action is confirmed,
+     * before any IO begins. sendUploadOnly/sendAndPrint flip it to Uploading; a prep
+     * failure flips it to Error via [reportSendError].
+     */
+    fun beginSendPreparing() {
+        _sendingState.value = SendingState.Preparing
+    }
+
+    /** F94 — surface a send/prep failure on the Printer screen (prevents a stuck banner). */
+    fun reportSendError(message: String) {
+        _sendingState.value = SendingState.Error(message)
+    }
+
     fun sendAndPrint(physical: com.u1.slicer.gcode.PhysicalGcodePath, modelName: String? = null) {
         _sendingState.value = SendingState.Uploading
         viewModelScope.launch(Dispatchers.IO) {
