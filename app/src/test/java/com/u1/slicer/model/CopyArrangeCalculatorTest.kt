@@ -635,4 +635,78 @@ class CopyArrangeCalculatorTest {
         val obj1OverlapY = ty < 85f && tMaxY > 5f
         assertFalse("Tower must not overlap object 1", obj1OverlapX && obj1OverlapY)
     }
+
+    // --- F92: autoArrange ---
+
+    private fun overlaps(ax: Float, ay: Float, asx: Float, asy: Float,
+                         bx: Float, by: Float, bsx: Float, bsy: Float): Boolean =
+        ax < bx + bsx && ax + asx > bx && ay < by + bsy && ay + asy > by
+
+    @Test fun `autoArrange two objects no tower places both on-bed without overlap`() {
+        val boxes = floatArrayOf(60f, 50f, 10f, 60f, 50f, 10f)
+        val incoming = floatArrayOf(0f, 0f, 0f, 0f)
+        val r = CopyArrangeCalculator.autoArrange(boxes, reservedRect = null, incoming = incoming)
+        assertEquals(0, r.overflowCount)
+        assertEquals(4, r.positions.size)
+        for (i in 0 until 2) {
+            assertTrue("obj $i on bed X", r.positions[i * 2] in 0f..270f)
+            assertTrue("obj $i on bed Y", r.positions[i * 2 + 1] in 0f..270f)
+            assertTrue("obj $i fits X", r.positions[i * 2] + 60f <= 270f)
+            assertTrue("obj $i fits Y", r.positions[i * 2 + 1] + 50f <= 270f)
+        }
+        assertFalse("objects must not overlap",
+            overlaps(r.positions[0], r.positions[1], 60f, 50f,
+                     r.positions[2], r.positions[3], 60f, 50f))
+    }
+
+    @Test fun `autoArrange avoids the reserved wipe-tower rect`() {
+        // Tower keep-out at back-center: x 105..165, y 200..260.
+        val reserved = floatArrayOf(105f, 200f, 165f, 260f)
+        val boxes = floatArrayOf(80f, 80f, 10f, 80f, 80f, 10f, 80f, 80f, 10f)
+        val incoming = FloatArray(6)
+        val r = CopyArrangeCalculator.autoArrange(boxes, reserved, incoming)
+        assertEquals(0, r.overflowCount)
+        for (i in 0 until 3) {
+            val x = r.positions[i * 2]; val y = r.positions[i * 2 + 1]
+            assertFalse("obj $i overlaps tower keep-out",
+                overlaps(x, y, 80f, 80f, 105f, 200f, 60f, 60f))
+            assertTrue("obj $i on bed", x in 0f..270f && y in 0f..270f &&
+                x + 80f <= 270f && y + 80f <= 270f)
+        }
+    }
+
+    @Test fun `autoArrange reports overflow and never places off-bed`() {
+        // Six 120x120 objects cannot all fit on a 270mm bed.
+        val boxes = FloatArray(6 * 3) { idx -> if (idx % 3 == 2) 10f else 120f }
+        val incoming = FloatArray(12) { 7f }
+        val r = CopyArrangeCalculator.autoArrange(boxes, reservedRect = null, incoming = incoming)
+        assertTrue("some objects must overflow", r.overflowCount > 0)
+        for (i in 0 until 6) {
+            assertTrue("obj $i X within bed", r.positions[i * 2] in 0f..270f)
+            assertTrue("obj $i Y within bed", r.positions[i * 2 + 1] in 0f..270f)
+        }
+    }
+
+    @Test fun `autoArrange single object centers clear of reserved rect`() {
+        val reserved = floatArrayOf(105f, 200f, 165f, 260f)
+        val boxes = floatArrayOf(40f, 40f, 10f)
+        val r = CopyArrangeCalculator.autoArrange(boxes, reserved, incoming = floatArrayOf(0f, 0f))
+        assertEquals(0, r.overflowCount)
+        assertEquals(2, r.positions.size)
+        assertFalse("single object overlaps tower",
+            overlaps(r.positions[0], r.positions[1], 40f, 40f, 105f, 200f, 60f, 60f))
+        assertTrue("on bed", r.positions[0] in 0f..230f && r.positions[1] in 0f..230f)
+    }
+
+    @Test fun `autoArrange wraps to next shelf when row is full`() {
+        // Four 100x40 objects: only 2 fit per 270mm row -> 2 shelves, none overlap.
+        val boxes = FloatArray(4 * 3) { idx -> when (idx % 3) { 0 -> 100f; 1 -> 40f; else -> 10f } }
+        val r = CopyArrangeCalculator.autoArrange(boxes, reservedRect = null, incoming = FloatArray(8))
+        assertEquals(0, r.overflowCount)
+        for (a in 0 until 4) for (b in a + 1 until 4) {
+            assertFalse("obj $a and $b overlap",
+                overlaps(r.positions[a * 2], r.positions[a * 2 + 1], 100f, 40f,
+                         r.positions[b * 2], r.positions[b * 2 + 1], 100f, 40f))
+        }
+    }
 }

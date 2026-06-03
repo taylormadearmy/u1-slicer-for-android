@@ -443,4 +443,93 @@ object CopyArrangeCalculator {
         }
         return positions
     }
+
+    /** Result of [autoArrange]: packed positions + count of objects that could not be placed. */
+    data class ArrangeResult(
+        val positions: FloatArray,
+        val overflowCount: Int,
+    )
+
+    /**
+     * F92 — translation-only auto-arrange. Shelf-packs N object footprints into the bed
+     * (front-left, wrapping upward), skipping any placement that overlaps [reservedRect]
+     * (the pinned wipe tower, already margin-inflated by the caller) or would fall off the
+     * bed. Objects that cannot be placed on-bed are left at their [incoming] position and
+     * counted in [ArrangeResult.overflowCount] — never placed off-bed (the structural fix
+     * B135 needs).
+     *
+     * @param boxes flat [sX0,sY0,sZ0, ...] from getObjectBoundingBoxes() (already
+     *   post-rotation, so translation-only keeps each object's rotation).
+     * @param reservedRect [minX,minY,maxX,maxY] keep-out, or null when no tower is active.
+     * @param incoming flat [x0,y0,...] current positions, used for overflow fallback.
+     * @param bedSize bed edge length (default 270mm for Snapmaker U1).
+     * @param margin gap between objects and from the bed edge in mm (default 5mm).
+     */
+    fun autoArrange(
+        boxes: FloatArray,
+        reservedRect: FloatArray?,
+        incoming: FloatArray,
+        bedSize: Float = 270f,
+        margin: Float = 5f,
+    ): ArrangeResult {
+        val n = boxes.size / 3
+        if (n == 0) return ArrangeResult(floatArrayOf(), 0)
+
+        val positions = FloatArray(n * 2)
+        // Seed from incoming so overflow objects keep a sane (existing) position.
+        for (i in 0 until n) {
+            positions[i * 2] = incoming.getOrElse(i * 2) { margin }
+            positions[i * 2 + 1] = incoming.getOrElse(i * 2 + 1) { margin }
+        }
+
+        val maxEdge = bedSize - margin
+        val maxIters = (bedSize / maxOf(margin, 1f)).toInt() * 3 + 16
+        // Largest-area-first for tighter packing; stable on ties via index.
+        val order = (0 until n).sortedWith(
+            compareByDescending<Int> { boxes[it * 3] * boxes[it * 3 + 1] }.thenBy { it }
+        )
+
+        var curX = margin
+        var curY = margin
+        var rowMaxY = 0f
+        var overflow = 0
+
+        for (idx in order) {
+            val sx = boxes[idx * 3]
+            val sy = boxes[idx * 3 + 1]
+            // Physically too large to ever fit on the bed.
+            if (sx > bedSize - 2 * margin || sy > bedSize - 2 * margin) { overflow++; continue }
+
+            var placed = false
+            var guard = 0
+            while (guard++ < maxIters) {
+                // Wrap to next shelf if this object overflows the row width.
+                if (curX + sx > maxEdge) {
+                    curX = margin
+                    curY += rowMaxY + margin
+                    rowMaxY = 0f
+                }
+                // Out of vertical space on the bed.
+                if (curY + sy > maxEdge) break
+                val cMaxX = curX + sx
+                val cMaxY = curY + sy
+                if (reservedRect != null &&
+                    curX < reservedRect[2] && cMaxX > reservedRect[0] &&
+                    curY < reservedRect[3] && cMaxY > reservedRect[1]
+                ) {
+                    // Overlaps the keep-out — skip past it on this shelf and retry.
+                    curX = reservedRect[2] + margin
+                    continue
+                }
+                positions[idx * 2] = curX
+                positions[idx * 2 + 1] = curY
+                curX += sx + margin
+                if (sy > rowMaxY) rowMaxY = sy
+                placed = true
+                break
+            }
+            if (!placed) overflow++
+        }
+        return ArrangeResult(positions, overflow)
+    }
 }
