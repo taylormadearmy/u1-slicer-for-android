@@ -135,9 +135,10 @@ class MapAndPrintScopeRegressionTest {
             "MainActivity.kt no longer contains `pendingMappingSend?.let` block."
         }
         // Scan the rest of the file for `sendActionScope.launch(`. The gate
-        // contains exactly two such launches in the current shape (the
-        // CanonicalLookup.Present onConfirm path + the CanonicalLookup.Absent
-        // fallback path); both must use the hoisted scope.
+        // contains three such launches in the current shape (the
+        // CanonicalLookup.Present branch splits into UploadOnly + PrintAndUpload
+        // onConfirm paths, plus the CanonicalLookup.Absent fallback path); all
+        // must use the hoisted scope.
         val afterGate = src.substring(gateIdx)
         val sendActionLaunches = Regex("""sendActionScope\s*\.launch\s*\(""")
             .findAll(afterGate)

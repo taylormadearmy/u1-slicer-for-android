@@ -39,7 +39,7 @@ appId: com.u1.slicer.orca
 # Result summary must show layer count and time estimate
 - assertVisible: "layers"
 - assertVisible: "Est. Time"
-- assertVisible: "Map & Upload"
+- assertVisible: "Upload Only"
 
 # No crash — check no error dialog is visible
 - assertNotVisible: "Error"

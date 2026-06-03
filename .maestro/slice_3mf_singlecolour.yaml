@@ -33,7 +33,7 @@ appId: com.u1.slicer.orca
 
 # Result shown
 - assertVisible: "layers"
-- assertVisible: "Map & Upload"
+- assertVisible: "Upload Only"
 - assertNotVisible: "Error"
 
 

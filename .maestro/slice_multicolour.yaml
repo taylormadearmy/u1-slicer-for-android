@@ -26,7 +26,7 @@ appId: com.u1.slicer.orca
     visible: "Slice Summary"
     timeout: 180000
 
-- assertVisible: "Map & Upload"
+- assertVisible: "Upload Only"
 - assertNotVisible: "Error"
 - assertNotVisible: "failed"
 
