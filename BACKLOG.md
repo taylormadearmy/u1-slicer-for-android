@@ -25,7 +25,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/165
 - **Source**: Discord, 2026-05-31 (Kevin) — https://discord.com/channels/1086575708903571536/1484249705042153633/1510628426099200120
 
-### B132: Oreo 3MF — Split + extra copies don't appear physically on bed; slice ignores custom placement and reverts to original layout (GitHub #164) — FIXED v2.10.2 → v2.10.12 (user-verified on Pixel 8a 2026-06-02)
+### B132: Oreo 3MF — Split + extra copies don't appear physically on bed; slice ignores custom placement and reverts to original layout (GitHub #164) — FIXED v2.10.2 → v2.10.12, RELEASED v2.10.13 (user-verified on Pixel 8a 2026-06-02; release published 2026-06-03)
 - **v2.10.3 follow-up** (B132c — crash fix): user reproduced an `ArrayIndexOutOfBoundsException: length=9; index=9` at `splitMeshByObjects` after split + make-copies on Oreo. Device log showed `applyPlacementPositions: 5 objects` for a 3-object model, with native rejecting via `setObjectPositions: positions count 5 != object count 3`. Kotlin `_multiObjectPositions` was corrupted past the model state, then the rotation `LaunchedEffect` indexed `perObjectSizes` past its length. Three defensive fixes layered:
   1. `SlicerViewModel.applyPlacementPositions` — validate `positions.size / 2 == nativeGetObjectCount()` before any state mutation; log + return early on mismatch.
   2. `MainActivity` rotation `LaunchedEffect` gate — tighten `multiPos.size >= (perObjectSizes.size / 3) * 2` to `==` so an over-long positions array no longer enters `splitMeshByObjects`.
@@ -50,7 +50,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/164
 - **Source**: Discord, 2026-05-31 (Jon) — https://discord.com/channels/1086575708903571536/1484249705042153633/1510646439699681401
 
-### B131: Ghostface Pokemon card 3MF not visible on Prepare tab — slice/preview work, model can't be moved to clear purge tower (GitHub #161) — FIXED v2.10.2
+### B131: Ghostface Pokemon card 3MF not visible on Prepare tab — slice/preview work, model can't be moved to clear purge tower (GitHub #161) — FIXED v2.10.2, RELEASED v2.10.13 (release published 2026-06-03)
 - **Symptom**: Loading `GhostfacePokemoncard.3mf` (8.6 MB) shows the model on the Preview tab and slices successfully, but on the **Prepare tab the model never appears** — only the wipe/purge tower is visible.
 - **Reported by**: Jon (Discord), v2.10.1, 2026-05-31.
 - **Root causes (empirically confirmed `B131B132B133DiagnosticTest`, Pixel 8a 2026-06-01)**:
@@ -686,11 +686,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/166
 - **Source**: Discord, 2026-05-30 — https://discord.com/channels/1086575708903571536/1484249705042153633/1510490527399804938
 
-### F93: Per-part / per-volume copies — clone individual parts, not the whole model (GitHub #163) — OPEN
-- **Request**: Allow cloning an **individual part / volume** within a multi-volume 3MF, not just the entire model. Today, "Copies" multiplies the whole file. The user wants to select a single part and bump its copies count independently.
-- **Motivation**: Example — an Oreo cookie 3MF has two black shells + one cream centre as separate volumes; user wants 2 cream centres alongside the original 2 shells (compare variants / print spares). Today they have to print the whole cookie twice or restructure the file externally.
-- **Reported by**: Jon (Discord), v2.10.1, 2026-05-31.
-- **Design notes**: Builds on per-volume bounding-box / multi-distinct-object infrastructure (`objectBoundingBoxes`, `hasMultipleDistinctObjects`, `splitMeshByObjects` from B124 + F77 + B109). UI options: tap part → contextual "+ copy / − copy" toolbar; or long-press to enter per-part edit mode (also useful for future per-part rotate/scale/hide). Native already supports `instancePositions` per object, so this is mostly a Kotlin model + UI change. Scope alongside future per-part editing since the infrastructure overlaps.
+### F93: Per-part / per-volume copies — clone individual parts, not the whole model (GitHub #163) — DONE v2.10.13 (released 2026-06-03)
+- **Released 2026-06-03** as part of v2.10.13. New `nativeDuplicateObject` C++ API (deep-copies the source `ModelObject` via `Slic3r::Model::add_object`, then `onSplitObjectReshape` to refresh per-object state) bound to Kotlin `NativeLibrary.nativeDuplicateObject(objIdx: Int): Int`. `SlicerViewModel.duplicateObject(objIdx)` wraps it in `viewModelScope.launch + previewMutex.withLock` to serialise against in-flight preview fetches and tracks dupes in `_duplicateOps: MutableStateFlow<List<Int>>` so the slice path can replay them after pose replay (`startSlicing` Step 5). UI: per-object EditPanel Scale tab exposes a 1–16 Copies slider + label that commits on `onValueChangeFinished` (rapid-fire slides without serialisation caused SIGSEGV in early v2.10.x). EditPanel rewrite gates the section behind a tinted Card + BETA pill so the per-part scope is unmistakable.
+- **Original request** (Jon, Discord 2026-05-31, v2.10.1): clone an individual part/volume within a multi-volume 3MF — example Oreo cookie has two black shells + one cream centre; wanted 2 cream centres alongside the originals.
+- **Known follow-up**: high duplicate counts on dense layouts hit B135 — `CopyArrangeCalculator.placeAdditionalObject` row-wrap can place pieces past the 270mm bed edge, slicer rejects gracefully with "impossible coordinates". F92 Auto-arrange is the structural fix.
+- **Tests**: `B131B132B133DiagnosticTest` covers post-split state consistency, `_duplicateOps` tracking, and the Oreo split → duplicate → slice replay chain (2-dupe variant; 4-dupe variant blocked on B135).
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/163
 - **Source**: Discord, 2026-05-31 (Jon) — https://discord.com/channels/1086575708903571536/1484249705042153633/1510649215510909018
 
@@ -963,6 +963,7 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
 
 ## Closed (recent)
 See git log for full history. Most recent fixes:
+- **B131 + B132 + F93**: v2.10.13 Oreo/Ghostface cluster — Ghostface 3MF visible on Prepare (MMU stride bypass in `sapil_model.cpp` + `loadTimeInstanceOffsets` derivation prefers `nativeGetObjectWorldAABBMins`), Oreo Split + per-object Copy cascade (5 sub-fixes: pre-slice copy-cap error, `splitObject` state publish, `applyPlacementPositions` count guard, drawn-min anchoring, `_duplicateOps` slice-time replay), per-object Copy slider in EditPanel (new `nativeDuplicateObject` native API), BETA-pill EditPanel rewrite — RELEASED v2.10.13 (2026-06-03). Issues #161, #164, #163 closed.
 - **F76**: MakerWorld manual cookie paste UI removed — browser-capture path (WebView login) unchanged; `makerWorldCookiesEnabled` DataStore key removed; old backup keys ignored on import — DONE v2.1.0. Issue #108 closed.
 - **F72**: Object skip UI on Printer screen — bed canvas with polygon outlines + text list; `EXCLUDE_OBJECT` sent via `sendGcode`; skipped objects greyed in both views — DONE v2.1.0. Issue #83 closed.
 - **F71**: `exclude_object = true` added to `applyConfigToPrusa()` — `EXCLUDE_OBJECT_DEFINE/START/END` markers now emitted in all sliced G-code; also patched `GCode.cpp` to emit EXCLUDE_OBJECT_DEFINE syntax for Marlin flavor — DONE v2.1.0. Issue #82 closed.
