@@ -841,6 +841,7 @@ class MainActivity : ComponentActivity() {
                                                 )
                                                 pendingMappingSend = null
                                                 navigateTab(Routes.PRINTER)
+                                                printerViewModel.beginSendPreparing()
                                                 sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                                     // Foreground service across the large-file
                                                     // copy so the freezer can't kill it once
@@ -855,6 +856,11 @@ class MainActivity : ComponentActivity() {
                                                                 physicalMapping = emptyList(),
                                                             ),
                                                         )
+                                                    } catch (t: Throwable) {
+                                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                            printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message}")
+                                                        }
+                                                        return@launch
                                                     } finally {
                                                         LongOpService.stop(toastContext)
                                                     }
@@ -921,6 +927,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                         pendingMappingSend = null
                                         navigateTab(Routes.PRINTER)
+                                        printerViewModel.beginSendPreparing()
                                         sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                             // Foreground service across the ~80 s
                                             // remap of a large G-code so the freezer
@@ -940,6 +947,11 @@ class MainActivity : ComponentActivity() {
                                                     output = com.u1.slicer.gcode.PhysicalGcodePath.of(remappedFile),
                                                     colorMapping = sendMapping,
                                                 )
+                                            } catch (t: Throwable) {
+                                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                    printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message}")
+                                                }
+                                                return@launch
                                             } finally {
                                                 LongOpService.stop(toastContext)
                                             }
@@ -970,6 +982,7 @@ class MainActivity : ComponentActivity() {
                             )
                             pendingMappingSend = null
                             navigateTab(Routes.PRINTER)
+                            printerViewModel.beginSendPreparing()
                             sendActionScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                 // Phase 2 B.1 — Absent canonical path
                                 // means legacy/unrecognised file. Treat
@@ -983,6 +996,11 @@ class MainActivity : ComponentActivity() {
                                     viewModel.prepareExportableGcodeWithMapping(
                                         sourceFile, exportedFile, mapping = null
                                     )
+                                } catch (t: Throwable) {
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        printerViewModel.reportSendError("Couldn't prepare G-code: ${t.message}")
+                                    }
+                                    return@launch
                                 } finally {
                                     LongOpService.stop(toastContext)
                                 }
