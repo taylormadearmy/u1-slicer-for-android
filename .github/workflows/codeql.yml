@@ -30,33 +30,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
+      # build-mode: none extracts Kotlin/Java source directly — no Gradle/Android
+      # build required. The previous build-traced setup failed intermittently with
+      # "no source code seen during build": on no-op-build commits (e.g. docs-only)
+      # the Gradle build cache made `assembleDebug` a cache hit, so nothing
+      # recompiled and CodeQL's tracer captured no code (exit 32 at finalize).
+      # Source-only extraction removes that fragility entirely.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-
-      - name: Create debug keystore
-        run: |
-          mkdir -p ~/.android
-          keytool -genkeypair -v -keystore ~/.android/debug.keystore \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass android -keypass android \
-            -dname "CN=Android Debug,O=Android,C=US"
-
-      - name: Build
-        run: ./gradlew assembleDebug --no-daemon
+          build-mode: none
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
