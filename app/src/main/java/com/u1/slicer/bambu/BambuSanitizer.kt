@@ -111,6 +111,10 @@ object BambuSanitizer {
                     var modelSettingsContent: ByteArray? = null
                     // Set to true when multi-plate restructuring was deferred
                     var deferredRestructuring = false
+                    // Set to true when the main 3dmodel.model was too large to buffer and
+                    // took the streaming sanitize path — which skips the in-memory compound
+                    // restructuring block, so attachCompoundComponentIds never runs.
+                    var usedStreamingMainModel = false
                     // Buffer model rels file — only dropped when restructuring inlines meshes
                     var modelRelsContent: ByteArray? = null
 
@@ -215,6 +219,7 @@ object BambuSanitizer {
                                     "using streaming sanitize path"
                             )
                             copyMainModelEntry(srcZip, mainModelEntry!!, destZip)
+                            usedStreamingMainModel = true
                         } else {
                             val mainModelContent = srcZip.getInputStream(mainModelEntry!!).readBytes()
                         // Restructure compound multi-color objects into separate build items.
@@ -362,14 +367,40 @@ object BambuSanitizer {
                         val isCompound = bambuObjectParts.values.any { objectInfo ->
                             objectInfo.parts.any { it.meshObjectId.isNotEmpty() }
                         }
-                        if (isCompound) {
-                            val modelConfig = buildOrcaModelConfig(bambuObjectParts)
-                            writeStored(destZip, "Metadata/model_settings.config", modelConfig.toByteArray())
-                            Log.i(TAG, "Generated model_settings.config (compound):\n$modelConfig")
-                        } else {
-                            val slic3rModelConfig = buildSlic3rModelConfig(bambuObjectParts)
-                            writeStored(destZip, "Metadata/Slic3r_PE_model.config", slic3rModelConfig.toByteArray())
-                            Log.i(TAG, "Generated Slic3r_PE_model.config:\n$slic3rModelConfig")
+                        // When the main 3dmodel.model was streamed (too large to buffer), the
+                        // in-memory compound block was skipped, so attachCompoundComponentIds
+                        // never set meshObjectId and isCompound is false. But the SOURCE
+                        // model_settings.config already uses Bambu's compound <part> format
+                        // whose part ids map 1:1 to component objectids — directly what the
+                        // native BBS reader needs to apply per-part subtype (negative_part /
+                        // modifier_part) and extruder. Preserve it (normalising extruder="0"
+                        // → "1" per B77) instead of buildSlic3rModelConfig, which emits
+                        // firstid/lastid triangle ranges that are meaningless for component
+                        // meshes and silently drop subtype — making negative/modifier volumes
+                        // slice as solid normal parts.
+                        val srcModelSettingsStr = modelSettingsContent?.let { String(it) }
+                        val streamedCompoundSource = usedStreamingMainModel &&
+                            srcModelSettingsStr?.contains("<part ") == true
+                        when {
+                            isCompound -> {
+                                val modelConfig = buildOrcaModelConfig(bambuObjectParts)
+                                writeStored(destZip, "Metadata/model_settings.config", modelConfig.toByteArray())
+                                Log.i(TAG, "Generated model_settings.config (compound):\n$modelConfig")
+                            }
+                            streamedCompoundSource -> {
+                                val normalized = srcModelSettingsStr!!.replace(
+                                    """key="extruder" value="0"""",
+                                    """key="extruder" value="1""""
+                                ).toByteArray()
+                                writeStored(destZip, "Metadata/model_settings.config", normalized)
+                                Log.i(TAG, "Preserved source compound model_settings.config " +
+                                    "(streaming path skipped restructuring, ${normalized.size} bytes)")
+                            }
+                            else -> {
+                                val slic3rModelConfig = buildSlic3rModelConfig(bambuObjectParts)
+                                writeStored(destZip, "Metadata/Slic3r_PE_model.config", slic3rModelConfig.toByteArray())
+                                Log.i(TAG, "Generated Slic3r_PE_model.config:\n$slic3rModelConfig")
+                            }
                         }
                     } else {
                         // No extruder-based rewrite is needed, but the source may carry
@@ -1356,9 +1387,11 @@ $componentRefs    </components>
                         cleaned = cleaned.replace(bambuNsRegex, "")
                         cleaned = cleaned.replace(slic3rpeNsRegex, "")
                         cleaned = cleaned.replace(metadataRegex, "")
-                        if (cleaned.contains("slic3rpe:mmu_segmentation=")) {
-                            cleaned = cleaned.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
-                        }
+                        // Preserve PrusaSlicer SEMM paint: RENAME slic3rpe:mmu_segmentation →
+                        // paint_color (same RLE hex encoding) instead of deleting it. Deleting
+                        // silently dropped all paint on large (streamed) PrusaSlicer component
+                        // meshes — parity with convertMmuSegmentation / embed streamCleanEntry.
+                        cleaned = cleaned.replace("slic3rpe:mmu_segmentation=", "paint_color=")
                         cleaned = cleaned.replace("""type="other"""", """type="model"""")
                         if (cleaned.isNotBlank()) {
                             out.write(cleaned)
@@ -1436,9 +1469,13 @@ $componentRefs    </components>
                         cleaned = cleaned.replace(bambuNsRegex, "")
                         cleaned = cleaned.replace(slic3rpeNsRegex, "")
                         cleaned = cleaned.replace(metadataRegex, "")
-                        if (cleaned.contains("slic3rpe:mmu_segmentation=")) {
-                            cleaned = cleaned.replace(Regex("""\s+slic3rpe:mmu_segmentation="[^"]*""""), "")
-                        }
+                        // Preserve PrusaSlicer SEMM paint: RENAME slic3rpe:mmu_segmentation →
+                        // paint_color (same RLE hex encoding) instead of deleting it. The old
+                        // delete silently dropped all paint on >64MB PrusaSlicer main models,
+                        // flattening them to single-colour — the paint-data analogue of the
+                        // negative-volume streaming bug. Parity with convertMmuSegmentation and
+                        // embed's streamCleanEntry (xmlns:slic3rpe decls still stripped above).
+                        cleaned = cleaned.replace("slic3rpe:mmu_segmentation=", "paint_color=")
                         cleaned = cleaned.replace("""type="other"""", """type="model"""")
                         if (cleaned.contains("""printable="0"""")) return@forEachLine
                         if (cleaned.isNotBlank()) {

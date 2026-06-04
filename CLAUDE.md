@@ -92,7 +92,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 1453 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 402 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 403 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -175,7 +175,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
 
-### Instrumented tests (`app/src/androidTest/`) - 402 tests across 46 classes
+### Instrumented tests (`app/src/androidTest/`) - 403 tests across 47 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/SessionStateRepositoryTest.kt` (4) — F89 DataStore round-trip: write_thenRead_returnsSameSessionState, read_emptyStore_returnsNull, clear_afterWrite_readReturnsNull, write_overwrites_prior
@@ -189,6 +189,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/BambuPipelineIntegrationTest.kt` (41) — Multi-plate, dual/4-colour, sanitization, position-based plate extraction, B23 extruder map after restructure, per-part extruder parsing, B54 modifier volume subtype preservation, B82 per-plate layer-tool chip count (standard + painted flippy all plates), B99 Leo support fixture support/interface PETG regression, B100 layer_height sentinel respects embedded profile (die-single-colour.3mf), B104 single-plate Bambu plate-filter regression (Oreo+Proj+1.3mf), B120 jons-bug.3mf plate 2 detects both PETG+TPU filaments
 - `slicing/SemmSlicingTest.kt` (11) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard, B64 Flarewing Dragon colour permutation remap, B99 support/interface PETG crash guards for colored and H2C Benchy, B122 crash regression for H2C shoe (TPU model + PLA support/interface) at 20% and 30% scale (T1>0 confirmed at 30%)
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
+- `slicing/NegativeVolumePreservationTest.kt` (1) — B137: negative/modifier volumes survive process()+embed() on a >64MB-main-model compound 3MF (streaming sanitize path). Asserts embedded model_settings.config keeps both `subtype="negative_part"` entries (RED=0 pre-fix) so the native BBS importer subtracts them instead of slicing solid
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
 - `slicing/BambuPlateStateRegressionTest.kt` (5) — Tier A regression tests for the 6 PM-reported plate state bugs: Dragon plate 3 / F1 calendar extruder counts (#1/#2), hanging file translate preserved through slice (#3), H2C benchy multi-tool G-code (#5), Buzz cold-load perf gate (#6)
