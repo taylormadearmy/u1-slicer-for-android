@@ -422,10 +422,18 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (mesh.modifierBlockStartTriangle == null) return
         val count = mesh.vertexCount - modelPartVtx
         if (count <= 0) return
+        // B140: negative/modifier volumes are almost always INSIDE the model (joint-clearance
+        // cutters, internal voids). With depth-test on they'd be occluded by the opaque body
+        // (drawn first, depth written) and never appear — which is exactly what made the F95
+        // feature invisible in v2.10.16. Draw the modifier block as a translucent x-ray overlay:
+        // depth-test OFF so it shows THROUGH the solid body (desktop OrcaSlicer/PrusaSlicer
+        // behaviour), depth-write OFF so it never occludes, alpha blended. Restore both after.
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glDepthMask(false)
+        GLES30.glDisable(GLES30.GL_DEPTH_TEST)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLES, modelPartVtx, count)
+        GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthMask(true)
         GLES30.glDisable(GLES30.GL_BLEND)
     }

@@ -221,11 +221,12 @@ data class MeshData(
 
         /**
          * F95: fixed RGBA applied to negative/modifier-volume triangles on the Prepare
-         * preview. Translucent neutral grey-blue (alpha < 1) so the renderer's blended
-         * pass shows the cut/modifier region through the solid body, matching desktop
-         * OrcaSlicer/PrusaSlicer's translucent modifier rendering.
+         * preview. Distinct translucent magenta (alpha < 1) so the renderer's depth-test-off
+         * blended pass shows the cut/modifier region THROUGH the solid body and stands out
+         * against typical filament colours (B140: a subtle grey-blue + depth-test-on made it
+         * invisible). Matches desktop OrcaSlicer/PrusaSlicer's translucent modifier rendering.
          */
-        val MODIFIER_PREVIEW_COLOR = floatArrayOf(0.60f, 0.62f, 0.70f, 0.32f)
+        val MODIFIER_PREVIEW_COLOR = floatArrayOf(0.90f, 0.15f, 0.85f, 0.50f)
 
         /**
          * Picking-array allocation threshold. Above this, [toWorldSpacePickingPositions]

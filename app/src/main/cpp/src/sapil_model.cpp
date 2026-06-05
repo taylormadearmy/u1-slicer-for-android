@@ -657,7 +657,12 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     {
         const size_t model_part_tris = out.extruder_indices.size();
         const uint8_t MODIFIER_PREVIEW_INDEX = 0xFE;
-        const int mod_stride = needs_decimation ? stride : 1;
+        // B140: render modifier/negative volumes at FULL resolution (no stride). The global
+        // model stride (e.g. 12 on a large model) keeps only every Nth triangle, which scatters
+        // the cutter into disconnected "broken" fragments that can't be read as a shape — the
+        // same failure mode as B136's MMU dots. These volumes are small (joint-clearance cutters)
+        // and are a visual aid only, so keep them solid even when the model parts are decimated.
+        const int mod_stride = 1;
         for (const auto* object : g_model.objects) {
             if (object == nullptr || !object->printable) continue;
             if (object->instances.empty()) continue;

@@ -60,6 +60,16 @@ class ModifierBlockRenderTest {
             "modifier pass must restore depth writes",
             body.contains("glDepthMask(true)")
         )
+        // B140: internal negative/modifier volumes are occluded by the opaque body unless the
+        // pass disables depth-testing (x-ray overlay). Without this the F95 feature is invisible.
+        assertTrue(
+            "modifier pass must disable depth-test so internal modifiers show through the body",
+            body.contains("glDisable(GLES30.GL_DEPTH_TEST)")
+        )
+        assertTrue(
+            "modifier pass must re-enable depth-test afterwards",
+            body.contains("glEnable(GLES30.GL_DEPTH_TEST)")
+        )
     }
 
     @Test
