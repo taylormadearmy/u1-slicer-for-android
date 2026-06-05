@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.u1.slicer.data.OverrideMode
+import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.PlateType
 import com.u1.slicer.data.SlicingOverrides
@@ -998,7 +999,7 @@ fun OverrideFloatField(
         value = text,
         onValueChange = {
             text = it
-            it.toFloatOrNull()?.let { f -> onValueChange(f) }
+            it.toFloatLenient()?.let { f -> onValueChange(f) }
         },
         suffix = if (suffix.isNotEmpty()) {{ Text(suffix) }} else null,
         modifier = Modifier.fillMaxWidth(),

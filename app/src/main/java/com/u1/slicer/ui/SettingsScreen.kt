@@ -52,6 +52,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import com.u1.slicer.BMAC_URL
+import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.BuildConfig
 import com.u1.slicer.GITHUB_URL
 import com.u1.slicer.SlicerViewModel
@@ -108,11 +109,11 @@ fun SettingsScreen(
                             it.copy(
                                 nozzleTemp = nozzleTemp.toIntOrNull() ?: it.nozzleTemp,
                                 bedTemp = bedTemp.toIntOrNull() ?: it.bedTemp,
-                                printSpeed = printSpeed.toFloatOrNull() ?: it.printSpeed,
-                                travelSpeed = travelSpeed.toFloatOrNull() ?: it.travelSpeed,
-                                firstLayerSpeed = firstLayerSpeed.toFloatOrNull() ?: it.firstLayerSpeed,
-                                retractLength = retractLength.toFloatOrNull() ?: it.retractLength,
-                                retractSpeed = retractSpeed.toFloatOrNull() ?: it.retractSpeed
+                                printSpeed = printSpeed.toFloatLenient() ?: it.printSpeed,
+                                travelSpeed = travelSpeed.toFloatLenient() ?: it.travelSpeed,
+                                firstLayerSpeed = firstLayerSpeed.toFloatLenient() ?: it.firstLayerSpeed,
+                                retractLength = retractLength.toFloatLenient() ?: it.retractLength,
+                                retractSpeed = retractSpeed.toFloatLenient() ?: it.retractSpeed
                             )
                         }
                         viewModel.saveConfig()

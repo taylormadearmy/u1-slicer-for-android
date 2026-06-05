@@ -27,6 +27,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.u1.slicer.data.FilamentProfile
+import com.u1.slicer.util.toFloatLenient
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -394,24 +395,24 @@ private fun FilamentEditDialog(
                         material = material,
                         nozzleTemp = nozzleTemp.toIntOrNull() ?: 220,
                         bedTemp = bedTemp.toIntOrNull() ?: 55,
-                        retractLength = retractLength.toFloatOrNull() ?: 0.8f,
-                        retractSpeed = retractSpeed.toFloatOrNull() ?: 45f,
+                        retractLength = retractLength.toFloatLenient() ?: 0.8f,
+                        retractSpeed = retractSpeed.toFloatLenient() ?: 45f,
                         nozzleTempInitialLayer = nozzleTempInitial.toIntOrNull(),
                         bedTempInitialLayer = bedTempInitial.toIntOrNull(),
-                        flowRatio = flowRatio.toFloatOrNull(),
-                        maxVolumetricSpeed = maxVolumetricSpeed.toFloatOrNull(),
-                        filamentCost = filamentCost.toFloatOrNull(),
+                        flowRatio = flowRatio.toFloatLenient(),
+                        maxVolumetricSpeed = maxVolumetricSpeed.toFloatLenient(),
+                        filamentCost = filamentCost.toFloatLenient(),
                         fanMinSpeed = fanMinSpeed.toIntOrNull(),
                         fanMaxSpeed = fanMaxSpeed.toIntOrNull(),
                         overhangFanSpeed = overhangFanSpeed.toIntOrNull(),
                         additionalCoolingFanSpeed = additionalCoolingFanSpeed.toIntOrNull(),
-                        slowDownLayerTime = slowDownLayerTime.toFloatOrNull(),
-                        slowDownMinSpeed = slowDownMinSpeed.toFloatOrNull(),
+                        slowDownLayerTime = slowDownLayerTime.toFloatLenient(),
+                        slowDownMinSpeed = slowDownMinSpeed.toFloatLenient(),
                         closeFanFirstLayers = closeFanFirstLayers.toIntOrNull(),
                         fullFanSpeedLayer = fullFanSpeedLayer.toIntOrNull(),
                         enablePressureAdvance = enablePressureAdvance,
-                        pressureAdvance = pressureAdvance.toFloatOrNull(),
-                        filamentMinimalPurgeOnWipeTower = filamentMinimalPurge.toFloatOrNull(),
+                        pressureAdvance = pressureAdvance.toFloatLenient(),
+                        filamentMinimalPurgeOnWipeTower = filamentMinimalPurge.toFloatLenient(),
                         isDefault = filament?.isDefault ?: false,
                     )
                     onSave(profile)

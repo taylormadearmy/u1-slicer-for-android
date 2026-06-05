@@ -45,6 +45,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.core.content.pm.PackageInfoCompat
 import com.u1.slicer.data.ModelInfo
+import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.debug.TestCommandReceiver
@@ -4606,7 +4607,7 @@ fun ScaleSection(
                                         imeAction = ImeAction.Done
                                     ),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val parsed = uniformText.toFloatOrNull()
+                                        val parsed = uniformText.toFloatLenient()
                                         val v = if (mmActive && parsed != null) {
                                             com.u1.slicer.model.ModelScaleConverter
                                                 .mmToScale(parsed, uniformAxisSize) ?: uniformValue
@@ -4657,7 +4658,7 @@ fun ScaleSection(
                                         imeAction = ImeAction.Done
                                     ),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val parsed = xText.toFloatOrNull()
+                                        val parsed = xText.toFloatLenient()
                                         val v = if (mmActive && parsed != null) {
                                             com.u1.slicer.model.ModelScaleConverter
                                                 .mmToScale(parsed, sizeX) ?: scale.x
@@ -4696,7 +4697,7 @@ fun ScaleSection(
                                         imeAction = ImeAction.Done
                                     ),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val parsed = yText.toFloatOrNull()
+                                        val parsed = yText.toFloatLenient()
                                         val v = if (mmActive && parsed != null) {
                                             com.u1.slicer.model.ModelScaleConverter
                                                 .mmToScale(parsed, sizeY) ?: scale.y
@@ -4735,7 +4736,7 @@ fun ScaleSection(
                                         imeAction = ImeAction.Done
                                     ),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val parsed = zText.toFloatOrNull()
+                                        val parsed = zText.toFloatLenient()
                                         val v = if (mmActive && parsed != null) {
                                             com.u1.slicer.model.ModelScaleConverter
                                                 .mmToScale(parsed, sizeZ) ?: scale.z

@@ -46,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.u1.slicer.SlicerViewModel
+import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.data.PerObjectPose
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -558,7 +559,7 @@ private fun ScaleAxisRow(
                 imeAction = androidx.compose.ui.text.input.ImeAction.Done,
             ),
             keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
-                val parsed = fieldText.toFloatOrNull()
+                val parsed = fieldText.toFloatLenient()
                 if (parsed != null) {
                     val newScale = if (mmActive && axisSize > 0f) parsed / axisSize
                                    else parsed / 100f

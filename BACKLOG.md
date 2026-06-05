@@ -4,6 +4,13 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B139: European decimal input (comma) silently ignored in numeric settings fields (GitHub #174) — OPEN 2026-06-05
+- **Symptom**: A European-locale user entering a decimal with a comma (e.g. layer height `0,16` instead of `0.16`) has the value silently dropped — the field shows the text but the setting never changes. Same for other decimal fields (speeds, retraction, flow ratio, max volumetric speed, object scale, prime/brim widths, support spacing).
+- **Reported by**: Kevin, 2026-06-05.
+- **Root cause**: Bidirectional locale mismatch. Display uses locale-dependent `"%.2f".format(value)` (no explicit `Locale` → renders `0,16` for EU), but parse uses locale-**independent** `String.toFloatOrNull()` (only accepts `.`). `"0,16".toFloatOrNull()` returns `null`, and the `it.toFloatOrNull()?.let { … }` guard skips applying the value. Primary site `OverrideFloatField` ([SlicingOverridesUI.kt:996-1002](app/src/main/java/com/u1/slicer/ui/SlicingOverridesUI.kt#L996)).
+- **Affected (user-typed decimal) sites**: `OverrideFloatField` (~12 override floats), `SettingsScreen` speeds + retract (111-115), `FilamentScreen` edit-dialog floats (397/398/401-403/408/409/413/414), `EditPanel` scale (561), `MainActivity` `ScaleSection` uniform/X/Y/Z (4609/4660/4699/4738). NOT affected: integer fields (comma invalid for whole numbers) and machine-format parsers (`extractBambuValue`, G-code, 3MF/XML, JSON, STL — must stay locale-independent).
+- **Fix**: locale-tolerant parse helper accepting `,` or `.` as the decimal separator, applied to every user-typed decimal field; locale-aware display kept (round-trips with the lenient parser). Unit-tested helper + source-grep wiring guards.
+
 ### B137: Negative/modifier volumes sliced as solid objects on large (>64MB main-model) compound 3MFs (GitHub #170) — FIXED v2.10.15, RELEASED v2.10.15 (released 2026-06-05)
 - **Symptom**: A single-file compound Bambu 3MF whose `3D/3dmodel.model` exceeds 64MB and contains `negative_part` (or `modifier_part`) volumes slices the cutters as solid normal objects — e.g. an articulated model fuses because its articulation-joint negative cutters aren't subtracted.
 - **Reported by**: Kevin, 2026-06-04, fixture `2.3mf` (in repo as `app/src/androidTest/assets/negative-volume-articulated.3mf`; 21MB zip / 119MB inflated main model, 1 normal + 2 negative parts).
