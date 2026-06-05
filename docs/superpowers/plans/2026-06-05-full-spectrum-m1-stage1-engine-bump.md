@@ -2,34 +2,72 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Bump the OrcaSlicer submodule from `bd66b99` (2026-05-01) to `v2.3.3`
-(2026-06-01 — first tagged release containing the full-spectrum / mix-filament
-feature, PR #375). Re-apply the Android patch catalog over the new base.
-Rebuild the native `libprusaslicer-jni.so` (Release, 16KB-page-aligned). Verify
-the full existing test suite stays green. **Full-spectrum capability is now
-PRESENT in the engine but NOT exposed** — no new config keys, no UI, no
-overrides. This stage is pure regression: prove the bumped engine slices our
-existing fixtures identically to before.
+**Goal:** Bump the OrcaSlicer submodule from `bd66b99` (2026-05-01) to a new
+commit rebased onto **Snapmaker's `v2.3.3` tag** (2026-06-01 — first tag
+containing the full-spectrum / mix-filament feature, PR #375). Rebuild the
+native `libprusaslicer-jni.so` (Release, 16KB-page-aligned). Verify the full
+existing test suite stays green. **Full-spectrum capability is now PRESENT in
+the engine but NOT exposed** — no new config keys, no UI, no overrides. This
+stage is pure regression: prove the bumped engine slices our existing fixtures
+identically to before.
 
-**Architecture:** Three phases. **Phase A** — submodule bump + patch re-apply
-over the new base, expecting the must-fix B38 inits + 4 build-compat fixes to
-need manual care, with everything else either clean-apply or deferred. **Phase
-B** — make our SAPIL wrapper (`app/src/main/cpp/src/sapil_*.cpp`) compile
-against the changed libslic3r API (this is the dominant cost — 167 commits of
-upstream drift, including #375's changes to `Print`, `Model`, `PrintConfig`,
-`PresetBundle`). **Phase C** — Release build with 16KB-alignment flag, full
-test suite as the regression oracle, spot-check three representative fixtures
-for G-code equivalence, commit.
+**Architecture:** Three phases. **Phase A** — in our orcaslicer fork
+(`github.com/taylormadearmy/OrcaSlicer`), rebase our 8 Android patch commits
+onto `v2.3.3` and push the result. Conflicts expected in files #375 also
+touched (TriangleSelector, PrintApply, GCodeProcessor, PrintObjectSlice).
+**Phase B** — in the parent repo, update the submodule pin to the rebased
+head, then make our SAPIL wrapper (`app/src/main/cpp/src/sapil_*.cpp`) compile
+against the changed libslic3r API. **Phase C** — Release build with 16KB-page
+alignment flag, full test suite as the regression oracle, spot-check three
+representative fixtures for G-code equivalence, commit.
 
 **Tech Stack:** Kotlin 1.9.22 + Compose + JNI C++; CMake 3.22.1 + Ninja
 (NDK 26.1.10909125, Clang 17); pre-built `.so` shipped via Gradle. Submodule:
-`Snapmaker/OrcaSlicer` (`app/src/main/cpp/orcaslicer`). Native source:
+`taylormadearmy/OrcaSlicer` (our fork of `Snapmaker/OrcaSlicer`), at
+`app/src/main/cpp/orcaslicer`. Native source:
 `app/src/main/cpp/src/sapil_*.cpp` (outside submodule).
 
 **Reference docs:**
 - Spec: [`docs/superpowers/specs/2026-05-26-full-spectrum-roadmap.md`](../specs/2026-05-26-full-spectrum-roadmap.md) — read §M1 pre-flight + §7 (status checks) before starting.
-- Engine upgrade procedure: [`ENGINE_UPGRADE_GUIDE.md`](../../../ENGINE_UPGRADE_GUIDE.md) — patch catalog at §"Patch Catalog".
+- Engine upgrade procedure: [`ENGINE_UPGRADE_GUIDE.md`](../../../ENGINE_UPGRADE_GUIDE.md) — caveat: the "Patch Catalog" describes content correctly but the *mechanism* it implies ("patches as uncommitted modifications, applied via `git apply --3way`") is wrong for the current state of our fork. The patches are committed in our fork as a clean linear stack of 8 commits above the v2.2.x upstream base, and the right mechanism is **rebase**.
 - Native rebuild checklist: `CLAUDE.md` §"Native Rebuild" — **MUST follow** the NDK 26 / Release / size + compiler verification steps exactly.
+
+## Key state discovered 2026-06-05 (before this plan revision)
+
+- Orca submodule remote = **our fork** `github.com/taylormadearmy/OrcaSlicer`.
+- Current pin `bd66b99` is 9 commits above the v2.2.x base: 1 docs commit + 8 Android patch commits (clean linear stack, no merges).
+- The 8 patch commits (oldest → newest):
+  1. `a828cd9` — `fix: widen sprintf buf[128] to buf[256]` (GCodeProcessor.cpp, PrintObjectSlice.cpp)
+  2. `010c1bb` — `fix: skip TBB thread pool barrier on Android` (Thread.cpp)
+  3. `cc24c57` — `fix: harden Clipper1 against NaN/Inf coordinates + Android diag` (clipper.cpp, TreeSupport3D.cpp)
+  4. `f11a7bf` — `fix(I2): clamp large-but-finite IntersectPoint q to Clipper hiRange` (clipper.cpp)
+  5. `8ba027e` — `fix: guard Clipper IntersectPoint and Round against ARM64 int64 overflow` (clipper.cpp)
+  6. `727ed76` — `fix: initialise uninitialised PrintObject/FakeWipeTower/Print members` (Print.hpp) — **B38**
+  7. `3256df1` — `fix: fold H2C paint states 5-8 → 1-4 for Snapmaker U1` (PrintApply.cpp, TriangleSelector.cpp)
+  8. `06f5c36` — `fix(triangle-selector): drop H2C fold from multi-state get_facets` (TriangleSelector.cpp)
+  9. `bd66b99` — `docs(triangle-selector): explain single-state get_facets retains H2C fold` (TriangleSelector.cpp comment only)
+- Merge base with upstream `2.3.2` (i.e. the upstream commit immediately below our patch stack) = `706508c`.
+- **`v2.3.3` tag is already fetched in our fork** — no remote setup needed.
+- **No GUI files touched by our patches.** No "heavy diagnostics" exist as separate commits. The original plan's Tasks 5–7 (drop heavy / GUI diag) are unnecessary.
+
+## Conflict expectations
+
+Files where v2.3.3 is likely to conflict with our patches (because PR #375 or
+the 167 commits of drift touched them):
+
+| Our commit | Files | Conflict risk | Why |
+|---|---|---|---|
+| `727ed76` (B38 inits) | Print.hpp | **Low** | M0 already verified `m_origin`/`m_isBBLPrinter` still exist with same names on `main`; FakeWipeTower struct at the same line range. |
+| `3256df1` (H2C fold) | PrintApply.cpp, TriangleSelector.cpp | **High** | PR #375 added `MixedFilament` integration to both. |
+| `06f5c36` (drop H2C fold from multi-state) | TriangleSelector.cpp | **High** | Same. |
+| `bd66b99` (docs note) | TriangleSelector.cpp | **Medium** | Comment-only, but anchored at moved code. |
+| `cc24c57` (Clipper NaN/Inf + tree support) | clipper.cpp, TreeSupport3D.cpp | **Low** | Vendored Clipper rarely changes; tree-support area not in #375. |
+| `f11a7bf`, `8ba027e` (Clipper int64) | clipper.cpp | **Low** | Same. |
+| `010c1bb` (TBB skip) | Thread.cpp | **Low** | Untouched by drift. |
+| `a828cd9` (sprintf widen) | GCodeProcessor.cpp, PrintObjectSlice.cpp | **Medium** | #375 touched both, but at different sites. |
+
+Hard rule: every `#ifdef __ANDROID__` block must remain intact through
+conflict resolution. If a resolution requires unguarded code, stop and ask.
 
 ---
 
@@ -40,424 +78,201 @@ You are running in a worktree at
 on branch `worktree-feature+full-spectrum-m1` (branched from origin/main). The
 roadmap doc lives at `docs/superpowers/specs/2026-05-26-full-spectrum-roadmap.md`.
 
-The orca submodule was initialised in this worktree (via
-`git submodule update --init --recursive app/src/main/cpp/orcaslicer`). The
-submodule HEAD is `bd66b99` *clean* — i.e. without our Android patches, which
-exist as uncommitted modifications in the **original** worktree's submodule at
-`D:\projects\u1-slicer-orca\app\src\main\cpp\orcaslicer\`. You will extract
-them in Task 2.
+The orca submodule is initialised in this worktree at HEAD `bd66b99`, and our
+fork has `v2.3.3` already fetched. **Working directory** for all relative
+paths below is the worktree root.
 
-**Working directory** for all relative paths below is the worktree root:
-`D:\projects\u1-slicer-for-android\.claude\worktrees\feature+full-spectrum-m1`.
+For pushes to our orca fork (`github.com/taylormadearmy/OrcaSlicer`),
+authenticate as `taylormadearmy` per `CLAUDE.local.md`:
+
+```bash
+gh auth switch -u taylormadearmy
+```
+
+Task 1 was already completed manually in the controller session — baseline
+verified: submodule HEAD `bd66b99`, `.so` 20,943,120 bytes / clang-17, 1,479
+unit tests green. Skip Task 1 — it's preserved below for reference only.
 
 ---
 
-## Task 1: Confirm baseline state
+## Task 1: Confirm baseline state ✅ DONE (already verified)
 
-**Files:**
-- Read: `app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so` (committed binary)
-
-- [ ] **Step 1: Confirm submodule HEAD is `bd66b99`**
-
-```bash
-git submodule status app/src/main/cpp/orcaslicer
-```
-
-Expected: ` bd66b99b2d2b69b7d6bb7d14d30cc74c37c6424b app/src/main/cpp/orcaslicer (heads/...)` — note the leading **space** (initialised, clean), not `-` (uninitialised) or `+` (modified).
-
-- [ ] **Step 2: Confirm the committed `.so` is Release-built and clang-17**
-
-```bash
-NDK=D:/Android/Sdk/ndk/26.1.10909125
-LLVMRE="$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-readelf.exe"
-ls -la app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so
-"$LLVMRE" -p .comment app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so | head -3
-```
-
-Expected: file size ~19–21 MB; `.comment` shows `clang version 17.0.2` (per CLAUDE.md). If size is 50 MB+ or compiler is not clang-17, the baseline is already wrong — stop and ask.
-
-- [ ] **Step 3: Confirm the JVM unit-test baseline is green**
-
-```bash
-./gradlew testDebugUnitTest --no-daemon 2>&1 | tail -20
-```
-
-Expected: `BUILD SUCCESSFUL`, all unit tests pass. This is the regression oracle for later tasks. If anything fails on the unchanged code, **stop** and ask — the worktree itself is wrong.
-
-- [ ] **Step 4: Commit nothing**
-
-This task is read-only. No commit.
+Confirmed: submodule HEAD `bd66b99`, committed `.so` is ~20 MB clang-17
+Release, all 1,479 JVM unit tests green. No action required. (Re-run only if
+working tree has changed since.)
 
 ---
 
-## Task 2: Extract current Android patches from the source-of-truth worktree
+## Task 2: Rebase Android patches onto v2.3.3 (in the orca fork)
 
-**Goal:** Capture the ~2,400 lines of `#ifdef __ANDROID__` patches (B38 inits,
-NDK build-compat fixes, diagnostics) that live as uncommitted modifications in
-the original worktree's submodule. Save as a single diff we can reference and
-selectively re-apply.
-
-**Files:**
-- Create: `D:\tmp\full-spectrum-m1\bd66b99-android-patches.diff`
-- Create: `D:\tmp\full-spectrum-m1\bd66b99-android-patches-stat.txt`
-- Read: `D:\projects\u1-slicer-orca\app\src\main\cpp\orcaslicer\` (source worktree's patched submodule)
-
-- [ ] **Step 1: Create the staging dir**
-
-```bash
-mkdir -p /d/tmp/full-spectrum-m1
-```
-
-- [ ] **Step 2: Export the patches as a unified diff**
-
-```bash
-git -C /d/projects/u1-slicer-orca/app/src/main/cpp/orcaslicer diff > /d/tmp/full-spectrum-m1/bd66b99-android-patches.diff
-git -C /d/projects/u1-slicer-orca/app/src/main/cpp/orcaslicer diff --stat > /d/tmp/full-spectrum-m1/bd66b99-android-patches-stat.txt
-wc -l /d/tmp/full-spectrum-m1/bd66b99-android-patches.diff
-cat /d/tmp/full-spectrum-m1/bd66b99-android-patches-stat.txt | tail -30
-```
-
-Expected: ~2,000–2,500 line diff; the `--stat` summary should mention `Print.hpp`, `WipeTower.hpp`, `CutSurface.cpp`, `Brim.cpp`, `clipper.hpp`, `NSVGUtils.cpp`, `GCodeWriter.cpp`, `WipeTower2.cpp`, `Print.cpp`. (Heavy diagnostics — `GCode.cpp`, `ClipperUtils.cpp`, `deps_src/clipper/clipper.cpp` — may also be there but we will drop them.)
-
-- [ ] **Step 3: Cross-check against the patch catalog**
-
-Open `ENGINE_UPGRADE_GUIDE.md` and confirm that every file in the `--stat` summary is mentioned in §"Patch Catalog" under "Critical Bug Fixes", "Build Compatibility Fixes", or "Diagnostics" / "Heavy Diagnostics". If you see a file in the diff that is **not** in the catalog, stop — it's an undocumented patch and needs the user's decision (re-apply or drop) before proceeding.
-
-- [ ] **Step 4: Commit nothing**
-
-This task produces files outside the repo (in `D:\tmp`). No commit.
-
----
-
-## Task 3: Bump the orca submodule to `v2.3.3`
+**Goal:** Produce a new commit on top of `v2.3.3` that contains all 8 (+1
+docs) of our Android patches, resolving conflicts per commit. This replaces
+the original plan's Tasks 2–7 (extract diff, re-apply textually, drop heavy
+diag) with one git-native operation.
 
 **Files:**
-- Modify: `app/src/main/cpp/orcaslicer` (gitlink — the submodule pointer in the parent repo)
-- The submodule's working tree itself will check out the `v2.3.3` tag commit.
+- Modify: 8 commits worth of files in `app/src/main/cpp/orcaslicer/` (the submodule)
+- Output: a new branch `feature/v2.3.3-android-m1` in the orca submodule, head SHA recorded
 
-- [ ] **Step 1: Fetch upstream tags**
+- [ ] **Step 1: Fetch latest from the fork (ensures v2.3.3 + main are current)**
 
 ```bash
 git -C app/src/main/cpp/orcaslicer fetch --tags origin
+git -C app/src/main/cpp/orcaslicer rev-parse v2.3.3
+git -C app/src/main/cpp/orcaslicer rev-parse 706508c
 ```
 
-Expected: no errors. Verify the tag exists:
+Expected: `v2.3.3` resolves to a specific commit SHA; `706508c` resolves (it's the merge base of our patch stack with upstream).
+
+- [ ] **Step 2: Create the rebase branch from v2.3.3**
 
 ```bash
-git -C app/src/main/cpp/orcaslicer tag --list 'v2.3.*'
-```
-
-Expected: list includes `v2.3.0`, `v2.3.1`, `v2.3.3`.
-
-- [ ] **Step 2: Checkout v2.3.3 in the submodule**
-
-```bash
-git -C app/src/main/cpp/orcaslicer checkout v2.3.3
+git -C app/src/main/cpp/orcaslicer checkout -b feature/v2.3.3-android-m1 v2.3.3
 git -C app/src/main/cpp/orcaslicer log --oneline -1
 ```
 
-Expected: HEAD is now the tagged commit for v2.3.3 (one specific commit hash — record it).
+Expected: HEAD shows the v2.3.3 tag commit. Working tree clean.
 
-- [ ] **Step 3: Update nested submodules of orca**
-
-```bash
-git -C app/src/main/cpp/orcaslicer submodule update --init --recursive
-```
-
-Expected: no errors. Some nested submodules may already be initialised from the prior pin; that's fine.
-
-- [ ] **Step 4: Stage the gitlink update**
+- [ ] **Step 3: Run the rebase to replay our 8+1 commits onto v2.3.3**
 
 ```bash
-git -C . status
-git -C . diff app/src/main/cpp/orcaslicer
+cd app/src/main/cpp/orcaslicer
+git rebase --onto feature/v2.3.3-android-m1 706508c bd66b99
+cd ../../../../..
 ```
 
-Expected: `app/src/main/cpp/orcaslicer` shows as modified with the new gitlink SHA.
+This replays each commit from `706508c..bd66b99` (9 commits: 8 patches + 1 docs) onto the tip of `feature/v2.3.3-android-m1`.
+
+Possible outcomes per commit:
+- **Clean apply** → rebase continues automatically.
+- **Conflict** → rebase pauses with merge markers in conflicting files. Resolve, `git add`, then `git rebase --continue`.
+- **Empty commit** → if upstream already incorporated the change, run `git rebase --skip`.
+
+- [ ] **Step 4: Resolve conflicts per commit**
+
+When the rebase pauses, find conflicts:
+
+```bash
+git -C app/src/main/cpp/orcaslicer status
+git -C app/src/main/cpp/orcaslicer diff --name-only --diff-filter=U
+```
+
+For each conflicted file, open in an editor (Edit tool). The conflict markers `<<<<<<<` / `=======` / `>>>>>>>` separate the v2.3.3 version (above `=======`) from our patch (below `=======`). Resolution rules:
+
+1. **Preserve every `#ifdef __ANDROID__ ... #endif` block** from our patch. These are non-negotiable.
+2. **Adopt the v2.3.3 form** of any surrounding non-Android code.
+3. **If the upstream code was refactored** such that our patch site no longer makes sense (e.g. the function was renamed or moved), re-apply our patch's *intent* at the new site rather than copying the old hunk verbatim. The commit message describes the intent.
+4. **If the upstream code already does what our patch did** (e.g. upstream now also initialises `m_origin`), skip our patch with `git rebase --skip` after staging the upstream-as-is form. Note this in the final report.
+
+After resolving:
+
+```bash
+git -C app/src/main/cpp/orcaslicer add <resolved-files>
+git -C app/src/main/cpp/orcaslicer rebase --continue
+```
+
+Iterate until rebase completes (success message: `Successfully rebased and updated refs/heads/feature/v2.3.3-android-m1`).
+
+- [ ] **Step 5: Verify the rebased history**
+
+```bash
+git -C app/src/main/cpp/orcaslicer log --oneline v2.3.3..HEAD
+git -C app/src/main/cpp/orcaslicer log --oneline -1
+```
+
+Expected: 9 commits (or fewer if any were `--skip`ed), starting from a commit on top of v2.3.3. Record the new HEAD SHA — call it `${NEW_PIN}`.
+
+- [ ] **Step 6: Smoke check — every `#ifdef __ANDROID__` block survived**
+
+```bash
+git -C app/src/main/cpp/orcaslicer grep -c '__ANDROID__' -- 'src/libslic3r/**' 'deps_src/clipper/**' | sort
+```
+
+Compare against the bd66b99 baseline:
+
+```bash
+git -C app/src/main/cpp/orcaslicer grep -c '__ANDROID__' bd66b99 -- 'src/libslic3r/**' 'deps_src/clipper/**' | sort
+```
+
+Expected: the counts in the rebased HEAD should match or exceed the bd66b99 counts. Any reduction → an `#ifdef __ANDROID__` block was dropped during conflict resolution → STOP and re-examine.
+
+- [ ] **Step 7: Commit nothing in the parent repo yet**
+
+The parent repo's submodule pointer still says `bd66b99`. Updating it happens in Task 3.
+
+---
+
+## Task 3: Push the rebased branch and update the parent submodule pin
+
+**Files:**
+- Modify: `app/src/main/cpp/orcaslicer` (gitlink pointer in the parent repo)
+
+- [ ] **Step 1: Verify gh auth identity**
+
+```bash
+gh auth status 2>&1 | grep 'Active account'
+```
+
+Expected: shows `taylormadearmy`. If not, switch:
+
+```bash
+gh auth switch -u taylormadearmy
+```
+
+- [ ] **Step 2: Push the rebased branch to the fork**
+
+```bash
+git -C app/src/main/cpp/orcaslicer push -u origin feature/v2.3.3-android-m1
+```
+
+Expected: branch pushed; no errors. Confirm the push:
+
+```bash
+gh api repos/taylormadearmy/OrcaSlicer/branches/feature/v2.3.3-android-m1 --jq '.commit.sha'
+```
+
+Should match the local `${NEW_PIN}`.
+
+- [ ] **Step 3: Stage the parent repo submodule pointer update**
+
+```bash
+git status
+git diff app/src/main/cpp/orcaslicer
+```
+
+Expected: submodule shows as modified (gitlink pointer changed from `bd66b99` to `${NEW_PIN}`).
 
 ```bash
 git add app/src/main/cpp/orcaslicer
 ```
 
-- [ ] **Step 5: Commit the bump (alone — no patches yet)**
+- [ ] **Step 4: Commit the pin bump (alone — no .so rebuild yet)**
 
 ```bash
-git commit -m "chore(native): bump orca submodule to v2.3.3 (no patches re-applied yet)
+git commit -m "chore(native): bump orca submodule to v2.3.3 + Android patches
 
-bd66b99 (2026-05-01) -> v2.3.3 (2026-06-01, first tag with PR #375).
-167 commits of upstream drift. Patches re-applied in follow-up commits.
-Native .so NOT rebuilt yet — APK build will reference the stale .so until
-later in M1 stage 1.
+Rebased 8 Android patch commits onto Snapmaker v2.3.3 (2026-06-01,
+first tag with PR #375 'mix filament'). 167 commits of upstream drift
+absorbed by per-commit rebase conflict resolution.
+
+bd66b99 (v2.2.4-9-...) -> \${NEW_PIN} (v2.3.3-+-...)
+
+New orca branch: feature/v2.3.3-android-m1 (pushed to fork).
+
+Native .so NOT rebuilt yet — APK build will reference the stale .so
+until later in M1 stage 1. Tests will fail until rebuild lands.
 
 Refs: docs/superpowers/specs/2026-05-26-full-spectrum-roadmap.md
 "
 ```
 
-This commit isolates the bump from the patch re-apply so a bisect can pinpoint which step broke a test if something goes wrong.
+(Substitute the actual new SHA for `\${NEW_PIN}`.)
+
+This isolates the pin bump from .so rebuild so a bisect can pinpoint which step broke a test.
 
 ---
 
-## Task 4: Re-apply B38 init patches to `Print.hpp` and `WipeTower.hpp`
-
-**Critical bug fixes — these are MUST-REAPPLY** (verified still needed on
-`main`; uninitialised members would silently corrupt wipe tower moves on
-Android release builds).
-
-**Files:**
-- Modify: `app/src/main/cpp/orcaslicer/src/libslic3r/Print.hpp`
-- Modify: `app/src/main/cpp/orcaslicer/src/libslic3r/GCode/WipeTower.hpp`
-
-- [ ] **Step 1: Locate `m_origin` and `m_isBBLPrinter` in the new `Print.hpp`**
-
-```bash
-grep -nE 'Vec3d\s+m_origin\s*;|bool\s+m_isBBLPrinter\s*;' app/src/main/cpp/orcaslicer/src/libslic3r/Print.hpp
-```
-
-Expected: two matches, on lines roughly in the 1100–1130 range (the line numbers may have drifted slightly from `bd66b99`).
-
-- [ ] **Step 2: Initialise `m_isBBLPrinter`**
-
-Use Edit tool. Match the line containing `bool m_isBBLPrinter;` exactly and change to `bool m_isBBLPrinter = false;`.
-
-- [ ] **Step 3: Initialise `m_origin`**
-
-Match the line containing `Vec3d m_origin;` (note: it may be `Vec3d   m_origin;` with extra spaces — match exactly what's there) and change to `Vec3d m_origin = Vec3d::Zero();`.
-
-- [ ] **Step 4: Locate the `FakeWipeTower` struct**
-
-```bash
-grep -nE 'struct\s+FakeWipeTower' app/src/main/cpp/orcaslicer/src/libslic3r/Print.hpp
-```
-
-Expected: one match near line 630. Open the struct and identify the member variables that must be zero-initialised. Per the patch catalog: `pos`, `width`, `height`, `layer_height`, `depth`, `brim_width`, `rotation_angle`, `cone_angle`, `plate_origin`.
-
-- [ ] **Step 5: Initialise FakeWipeTower members**
-
-For each member, replace the declaration with an initialised form. Numeric scalars → `= 0;` (or `= 0.f;` for `float`/`double` depending on the declared type), `Vec3d` / `Vec2d` members → `= Vec3d::Zero();` / `= Vec2d::Zero();`.
-
-Example (will not match verbatim — check actual types in the file):
-
-```cpp
-struct FakeWipeTower
-{
-    Vec3d  pos             = Vec3d::Zero();
-    float  width           = 0.f;
-    float  height          = 0.f;
-    float  layer_height    = 0.f;
-    float  depth           = 0.f;
-    float  brim_width      = 0.f;
-    float  rotation_angle  = 0.f;
-    float  cone_angle      = 0.f;
-    Vec3d  plate_origin    = Vec3d::Zero();
-    // ... rest unchanged
-};
-```
-
-Cross-reference with the original patched file (`D:\projects\u1-slicer-orca\app\src\main\cpp\orcaslicer\src\libslic3r\Print.hpp`) for the exact initialisation forms — the types may have changed in v2.3.3.
-
-- [ ] **Step 6: Initialise `m_cur_layer_id` in `WipeTower.hpp`**
-
-```bash
-grep -n 'size_t m_cur_layer_id' app/src/main/cpp/orcaslicer/src/libslic3r/GCode/WipeTower.hpp
-```
-
-Expected: one match. Edit to `size_t m_cur_layer_id = 0;`.
-
-- [ ] **Step 7: Verify the changes are syntactically valid**
-
-```bash
-git -C app/src/main/cpp/orcaslicer diff src/libslic3r/Print.hpp src/libslic3r/GCode/WipeTower.hpp
-```
-
-Expected: only the initialiser additions; no other unrelated changes.
-
-- [ ] **Step 8: Commit the B38 inits**
-
-```bash
-git -C . status   # confirm submodule shows as modified (working tree has uncommitted submodule changes)
-```
-
-The parent repo will show the submodule as `+` (modified). We do NOT stage the submodule pin again here — the patches live as uncommitted changes inside the submodule, intentionally (per `ENGINE_UPGRADE_GUIDE.md` and the "Submodule shows dirty after commit — Expected" CLAUDE.md note).
-
-There is nothing to commit in the *parent* repo at this step (the submodule pointer is unchanged from Task 3). The patches are intentionally uncommitted within the submodule — they're our Android-specific overlay.
-
----
-
-## Task 5: Re-apply build-compatibility patches (NDK clang)
-
-These fix compilation errors when building with Android NDK 26 / clang 17.
-None of them collided with #375 per the M1 pre-flight, but v2.3.3 brings 167
-commits of drift on top of `bd66b99`, so some upstream changes may have
-landed in these files. Apply with `git apply --3way` first; fall back to
-manual application per file if --3way rejects.
-
-**Files (all under `app/src/main/cpp/orcaslicer/`):**
-- Modify: `src/libslic3r/CutSurface.cpp`
-- Modify: `src/libslic3r/Brim.cpp`
-- Modify: `src/libslic3r/clipper.hpp`
-- Modify: `src/libslic3r/NSVGUtils.cpp`
-- Modify: various files (STL header additions)
-
-- [ ] **Step 1: Extract just the build-compat hunks from the saved diff**
-
-The saved diff at `/d/tmp/full-spectrum-m1/bd66b99-android-patches.diff` contains all patches. Slice it to just the build-compat files using `git apply --include`:
-
-```bash
-cd app/src/main/cpp/orcaslicer
-git apply --3way \
-  --include='src/libslic3r/CutSurface.cpp' \
-  --include='src/libslic3r/Brim.cpp' \
-  --include='src/libslic3r/clipper.hpp' \
-  --include='src/libslic3r/NSVGUtils.cpp' \
-  /d/tmp/full-spectrum-m1/bd66b99-android-patches.diff 2>&1 | tee /d/tmp/full-spectrum-m1/apply-buildcompat.log
-echo "EXIT=$?"
-cd ../../../../..
-```
-
-Expected: clean apply (EXIT=0) **or** a few `<<<<<<<`/`=======`/`>>>>>>>` 3-way merge markers if upstream changed any of these files.
-
-- [ ] **Step 2: Resolve any conflicts**
-
-If `git apply` reports conflicts:
-
-```bash
-grep -rln '<<<<<<<' app/src/main/cpp/orcaslicer/src/libslic3r/CutSurface.cpp app/src/main/cpp/orcaslicer/src/libslic3r/Brim.cpp app/src/main/cpp/orcaslicer/src/libslic3r/clipper.hpp app/src/main/cpp/orcaslicer/src/libslic3r/NSVGUtils.cpp
-```
-
-For each conflicted file, open it, find the markers, and resolve. The Android-side intent for each file is documented in `ENGINE_UPGRADE_GUIDE.md` §"Build Compatibility Fixes":
-- `CutSurface.cpp` — qualify `ClipperLib::PolyFillType` with `Slic3r::` prefix
-- `Brim.cpp` — qualify `Polygon`/`Point` types with `Slic3r::` prefix
-- `clipper.hpp` — replace `using` declarations with forward declarations
-- `NSVGUtils.cpp` — namespace-qualified function calls
-
-Reference the original patched files in `D:\projects\u1-slicer-orca\app\src\main\cpp\orcaslicer\` for the exact text where context is unclear.
-
-- [ ] **Step 3: Add missing STL headers**
-
-The catalog mentions "Various files: `#include <sstream>`, `<limits>`, `<deque>`, `<dlfcn.h>`". Find which files need them by searching the original diff:
-
-```bash
-grep -B1 '#include <sstream>\|#include <limits>\|#include <deque>\|#include <dlfcn.h>' /d/tmp/full-spectrum-m1/bd66b99-android-patches.diff | grep -E '^\+\+\+ |^@@ '
-```
-
-For each file identified, open the file in the new submodule checkout and add the include at the same logical position (typically near the top with other system includes). If `git apply --3way` already added them, great; if not, edit manually.
-
-- [ ] **Step 4: Verify no merge markers remain**
-
-```bash
-grep -rln '<<<<<<<\|=======\|>>>>>>>' app/src/main/cpp/orcaslicer/src/libslic3r/ 2>&1
-```
-
-Expected: no output.
-
-- [ ] **Step 5: Commit nothing in the parent repo (patches still uncommitted inside the submodule)**
-
----
-
-## Task 6: Re-apply must-keep lightweight diagnostics
-
-Per the patch catalog "Diagnostics (SHOULD re-apply)" — these are
-`#ifdef __ANDROID__` safety nets that emit diagnostics events when something
-goes wrong. They have caught real regressions and are cheap.
-
-**Files:**
-- Modify: `app/src/main/cpp/orcaslicer/src/libslic3r/GCodeWriter.cpp` (coordinate bounds check)
-- Modify: `app/src/main/cpp/orcaslicer/src/libslic3r/GCode/WipeTower2.cpp` (TCR bad-position logging — lightweight portions only)
-- Modify: `app/src/main/cpp/orcaslicer/src/libslic3r/Print.cpp` (first-layer islands logging)
-
-- [ ] **Step 1: Apply the lightweight diagnostic hunks**
-
-```bash
-cd app/src/main/cpp/orcaslicer
-git apply --3way \
-  --include='src/libslic3r/GCodeWriter.cpp' \
-  --include='src/libslic3r/GCode/WipeTower2.cpp' \
-  --include='src/libslic3r/Print.cpp' \
-  /d/tmp/full-spectrum-m1/bd66b99-android-patches.diff 2>&1 | tee /d/tmp/full-spectrum-m1/apply-diag-light.log
-echo "EXIT=$?"
-cd ../../../../..
-```
-
-**Caveat:** the diff for `WipeTower2.cpp` and `Print.cpp` may contain BOTH the lightweight diagnostics AND heavy diagnostics. If `git apply --3way` pulls in the heavy hunks too, we'll back them out in Task 7. For now, accept whatever applies cleanly.
-
-- [ ] **Step 2: Resolve any conflicts**
-
-If `git apply` reports conflicts, find them:
-
-```bash
-grep -rln '<<<<<<<' app/src/main/cpp/orcaslicer/src/libslic3r/GCodeWriter.cpp app/src/main/cpp/orcaslicer/src/libslic3r/GCode/WipeTower2.cpp app/src/main/cpp/orcaslicer/src/libslic3r/Print.cpp
-```
-
-For each conflicted file, open it and resolve the `<<<<<<<` / `=======` / `>>>>>>>` markers manually. The diagnostic intent per `ENGINE_UPGRADE_GUIDE.md` §"Diagnostics":
-- `GCodeWriter.cpp` — coordinate bounds check in `travel_to_xy`/`extrude_to_xy` (>500 mm triggers a native-backtrace event)
-- `WipeTower2.cpp` — `construct_tcr()` bad-position logging, `finish_layer()` and `tool_change()` state logging
-- `Print.cpp` — first-layer islands + convex hull snapshot logging
-
-Hard rule: every diagnostic must remain wrapped in `#ifdef __ANDROID__ ... #endif`. If a conflict resolution requires unguarded code, stop and ask — it's a sign the original patch interleaves with new upstream code in a way that needs the user's call.
-
-- [ ] **Step 3: Verify no merge markers remain**
-
-```bash
-grep -rln '<<<<<<<\|=======\|>>>>>>>' app/src/main/cpp/orcaslicer/src/libslic3r/ 2>&1
-```
-
-Expected: no output.
-
----
-
-## Task 7: Drop heavy / GUI diagnostics
-
-Per the M1 pre-flight analysis: drop the heavy `ClipperUtils.cpp` /
-`deps_src/clipper/clipper.cpp` instrumentation, drop the `GCode.cpp` +564
-heavy diagnostics, drop `Snapmaker_Orca.cpp` +106 heavy diagnostics, and drop
-`slic3r/GUI/PartPlate.cpp` entirely (we don't use the GUI). These can be
-re-added in a future debugging task; they are not needed for the regression
-pass.
-
-**Files:**
-- Verify-unchanged: `app/src/main/cpp/orcaslicer/src/libslic3r/GCode.cpp`
-- Verify-unchanged: `app/src/main/cpp/orcaslicer/src/libslic3r/ClipperUtils.cpp`
-- Verify-unchanged: `app/src/main/cpp/orcaslicer/deps_src/clipper/clipper.cpp`
-- Verify-unchanged: `app/src/main/cpp/orcaslicer/src/Snapmaker_Orca.cpp`
-- Verify-unchanged: `app/src/main/cpp/orcaslicer/src/slic3r/GUI/PartPlate.cpp`
-- Verify-unchanged: `app/src/main/cpp/orcaslicer/src/libslic3r/Brim.cpp` (heavy "topology tracing" portion only — light type-qualification fix from Task 5 stays)
-
-- [ ] **Step 1: Confirm these files are at v2.3.3 upstream state (no patches applied)**
-
-```bash
-for f in src/libslic3r/GCode.cpp src/libslic3r/ClipperUtils.cpp deps_src/clipper/clipper.cpp src/Snapmaker_Orca.cpp src/slic3r/GUI/PartPlate.cpp; do
-  status=$(git -C app/src/main/cpp/orcaslicer diff --stat -- "$f" | tail -1)
-  echo "$f: ${status:-clean (no diff vs v2.3.3)}"
-done
-```
-
-Expected: every file shows `clean (no diff vs v2.3.3)`. If any show modifications, those came from earlier `git apply --3way` runs that swept in heavy hunks — revert just those files:
-
-```bash
-git -C app/src/main/cpp/orcaslicer checkout -- src/libslic3r/GCode.cpp src/libslic3r/ClipperUtils.cpp deps_src/clipper/clipper.cpp src/Snapmaker_Orca.cpp src/slic3r/GUI/PartPlate.cpp
-```
-
-- [ ] **Step 2: For Brim.cpp, keep only the type-qualification fix**
-
-Brim.cpp has both the lightweight type-qualification fix (kept, from Task 5) and a heavy topology tracing block (dropped). After Task 5, inspect:
-
-```bash
-git -C app/src/main/cpp/orcaslicer diff src/libslic3r/Brim.cpp | head -200
-```
-
-If you see large blocks (>10 lines) wrapped in `#ifdef __ANDROID__` that look like trace logging (calls to `g_diag_*`, `slog`, JSON emission), those are the heavy portions — remove them, leaving only the small `Slic3r::Polygon` / `Slic3r::Point` namespace qualifications. The light fix is typically 2–5 lines; anything more is the heavy block.
-
-- [ ] **Step 3: Final sanity check on what's left**
-
-```bash
-git -C app/src/main/cpp/orcaslicer diff --stat
-```
-
-Expected: a short list — `Print.hpp`, `WipeTower.hpp`, `CutSurface.cpp`, `Brim.cpp`, `clipper.hpp`, `NSVGUtils.cpp`, `GCodeWriter.cpp`, `WipeTower2.cpp`, `Print.cpp`, plus possibly a handful of small `#include` additions in other files. Total lines added: ~300–600 (not 2,400 — heavy diagnostics are gone).
-
----
-
-## Task 8: Attempt the first native build (will fail — captures SAPIL API breakage)
+## Task 4: First native build attempt (will fail — captures SAPIL API breakage)
 
 Per the M1 pre-flight: the real cost is SAPIL API-compat against the new
 libslic3r. We expect compile errors. This task is a controlled failure to
@@ -501,6 +316,7 @@ The `-Wl,-z,max-page-size=16384` flag is the **16KB-alignment add** the user req
 - [ ] **Step 2: Run the build (expect failures)**
 
 ```bash
+mkdir -p /d/tmp/full-spectrum-m1
 cd "$BUILD_DIR"
 "$NINJA_BIN" -j1 2>&1 | tee /d/tmp/full-spectrum-m1/build1-errors.log
 echo "EXIT=$?"
@@ -522,11 +338,13 @@ Group by file (`sapil_print.cpp`, `sapil_bambu_*.cpp`, `slicer_wrapper.cpp`, etc
 
 ---
 
-## Task 9: Fix SAPIL wrapper compile errors against new libslic3r API
+## Task 5: Fix SAPIL wrapper compile errors against new libslic3r API
 
 **This is the open-ended task.** We don't know in advance exactly what
 changed in `Print`, `Model`, `PrintConfig`, `PresetBundle`, `Config` between
-`bd66b99` and `v2.3.3` — we'll discover it from the build failures.
+`bd66b99` and `v2.3.3` — we'll discover it from the build failures. PR #375
+introduced `MixedFilament` / `MixedFilamentManager` classes and modified
+many libslic3r files; some signatures our SAPIL code touches likely changed.
 
 **Files:** any of `app/src/main/cpp/src/sapil_*.cpp`, `app/src/main/cpp/src/slicer_wrapper.cpp`, `app/src/main/cpp/include/sapil.h`.
 
@@ -534,15 +352,16 @@ changed in `Print`, `Model`, `PrintConfig`, `PresetBundle`, `Config` between
 
 For each `error:` line in `build1-errors.log`:
 1. Read the surrounding code in our SAPIL file.
-2. Open the corresponding libslic3r header at v2.3.3 (e.g. `app/src/main/cpp/orcaslicer/src/libslic3r/Print.hpp`).
-3. Compare against `D:\projects\u1-slicer-orca\app\src\main\cpp\orcaslicer\src\libslic3r\Print.hpp` (the `bd66b99` patched version) to see how the API moved.
+2. Open the corresponding libslic3r header at the new pin (e.g. `app/src/main/cpp/orcaslicer/src/libslic3r/Print.hpp`).
+3. Reference the equivalent header at `bd66b99` to see how the API moved (`git -C app/src/main/cpp/orcaslicer show bd66b99:src/libslic3r/Print.hpp`).
 4. Update our SAPIL call site to match the new API.
 
-Common patterns to expect (per the libslic3r files #375 touched):
+Common patterns expected (per the libslic3r files #375 touched):
 - `MixedFilament` / `MixedFilamentManager` additions are new — won't cause errors, just new code that doesn't affect us yet.
 - `PresetBundle` may have new mixed-filament accessors; existing accessors should still work.
-- `Print` / `PrintObject` may have renamed members; check member-access sites in our code.
+- `Print` / `PrintObject` may have renamed members.
 - `PrintConfig` adds keys but the access pattern (`config.option<T>("key_name")`) is unchanged.
+- `Model` may have new fields for mixed-filament state; existing accessors should still work.
 
 - [ ] **Step 2: For each fix, write a single-purpose code change**
 
@@ -560,30 +379,40 @@ Iterate until the build succeeds (EXIT=0) or you've run out of progress and need
 
 ---
 
-## Task 10: Strip + verify the built `.so`
+## Task 6: Strip + verify the built `.so`
 
 **Files:**
 - Read: `$BUILD_DIR/libprusaslicer-jni.so` (unstripped, from build)
 - Create: `app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so` (stripped, replaces the committed binary)
 
-- [ ] **Step 1: Strip the binary**
+- [ ] **Step 1: Locate the unstripped .so**
+
+```bash
+find "$BUILD_DIR" -name 'libprusaslicer-jni.so' 2>&1
+```
+
+(The exact subdirectory CMake places it in depends on the project's CMakeLists.txt — it's usually at the BUILD_DIR root, but verify.)
+
+Set `UNSTRIPPED=<path>` for the next step.
+
+- [ ] **Step 2: Strip the binary**
 
 ```bash
 LLVMSTRIP="$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe"
 "$LLVMSTRIP" --strip-unneeded \
-  "$BUILD_DIR/libprusaslicer-jni.so" \
+  "$UNSTRIPPED" \
   -o app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so
 ```
 
-- [ ] **Step 2: Verify size**
+- [ ] **Step 3: Verify size**
 
 ```bash
 ls -la app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so
 ```
 
-Expected: **19–21 MB**. If 50 MB+, build is Debug — go back and re-check `CMAKE_BUILD_TYPE` in `CMakeCache.txt`. Per CLAUDE.md "NEVER ship Debug .so" memory.
+Expected: **19–22 MB** (slightly larger ceiling than before; v2.3.3 adds the FilamentMixer + Local-Z code paths). If 50 MB+, build is Debug — go back and re-check `CMAKE_BUILD_TYPE` in `CMakeCache.txt`. Per CLAUDE.md "NEVER ship Debug .so" memory.
 
-- [ ] **Step 3: Verify compiler is clang 17**
+- [ ] **Step 4: Verify compiler is clang 17**
 
 ```bash
 LLVMRE="$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-readelf.exe"
@@ -592,7 +421,7 @@ LLVMRE="$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-readelf.exe"
 
 Expected: `clang version 17.0.2`.
 
-- [ ] **Step 4: Verify JNI symbol completeness**
+- [ ] **Step 5: Verify JNI symbol completeness**
 
 ```bash
 JNI_COUNT=$("$LLVMRE" -p .dynsym app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so | grep -c 'Java_com_u1_slicer_NativeLibrary')
@@ -603,19 +432,19 @@ echo "external fun in Kotlin: $KOTLIN_COUNT"
 
 Expected: equal. If they differ, the build dropped JNI methods — per CLAUDE.md, that means a worktree-only source file wasn't picked up by CMake (re-check the build glob input).
 
-- [ ] **Step 5: Verify 16KB page alignment**
+- [ ] **Step 6: Verify 16KB page alignment**
 
 ```bash
 "$LLVMRE" -l app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so | grep -E '^\s+LOAD' | head -5
 ```
 
-Expected: the `Align` column shows `0x4000` (= 16384 = 16KB) for every `LOAD` segment. If you see `0x1000` (4KB), the linker flag didn't take effect — go back to Task 8 Step 1 and confirm `-Wl,-z,max-page-size=16384` is in `CMAKE_SHARED_LINKER_FLAGS`.
+Expected: the `Align` column shows `0x4000` (= 16384 = 16KB) for every `LOAD` segment. If you see `0x1000` (4KB), the linker flag didn't take effect — go back to Task 4 Step 1 and confirm `-Wl,-z,max-page-size=16384` is in `CMAKE_SHARED_LINKER_FLAGS`.
 
-- [ ] **Step 6: Commit nothing yet**
+- [ ] **Step 7: Commit nothing yet**
 
 ---
 
-## Task 11: Clean build of the APK + JVM unit-test regression
+## Task 7: Clean build of the APK + JVM unit-test regression
 
 This is the primary regression gate.
 
@@ -634,7 +463,7 @@ Expected: `BUILD SUCCESSFUL`. If Kotlin compile errors appear (we might have bro
 ./gradlew testDebugUnitTest --no-daemon 2>&1 | tail -40
 ```
 
-Expected: **all 1,453 tests pass** (per the count in CLAUDE.md). If any fail, they are the regression surface — investigate root cause per case. Do NOT relax assertions to make tests pass (per CLAUDE.md hard rule).
+Expected: **all 1,479 tests pass** (the baseline established in Task 1). If any fail, they are the regression surface — investigate root cause per case. Do NOT relax assertions to make tests pass (per CLAUDE.md hard rule).
 
 - [ ] **Step 3: Record results**
 
@@ -647,7 +476,7 @@ cat /d/tmp/full-spectrum-m1/unit-test-results.txt
 
 ---
 
-## Task 12: Instrumented-test regression (real device)
+## Task 8: Instrumented-test regression (real device)
 
 **Per CLAUDE.local.md**, default to single device pin to avoid file-lock contention.
 
@@ -683,7 +512,7 @@ For each failure:
 
 ---
 
-## Task 13: G-code equivalence spot-check on representative fixtures
+## Task 9: G-code equivalence spot-check on representative fixtures
 
 A test-suite pass means tested behaviour is preserved; this task validates
 *untested-but-representative* slicing by diffing G-code output before and
@@ -730,68 +559,59 @@ Write a brief summary of each diff to `/d/tmp/full-spectrum-m1/gcode-spotcheck-s
 
 ---
 
-## Task 14: Final commit + push
+## Task 10: Final commit
 
 - [ ] **Step 1: Verify the final state of changes**
 
 ```bash
 git status
-git diff --stat HEAD~1..HEAD   # what Task 3 (submodule bump) added
-git -C app/src/main/cpp/orcaslicer diff --stat   # the patches still uncommitted inside the submodule (expected)
+git log --oneline -3
+git diff --stat HEAD~1..HEAD   # what Task 3 added (submodule pin) — verify Tasks 4-9 left it unchanged
 git diff --stat app/src/main/jniLibs/   # the rebuilt .so
+git diff --stat app/src/main/cpp/src/   # SAPIL wrapper fixes
 ```
 
 Expected:
-- Parent repo working tree: `app/src/main/cpp/orcaslicer` (submodule pointer at v2.3.3), `app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so` (rebuilt), and any SAPIL wrapper fixes in `app/src/main/cpp/src/`.
-- Submodule working tree: ~300–600 lines of uncommitted Android patches (expected; intentionally not committed into the submodule's own repo).
+- The submodule gitlink is still at the rebased commit (committed in Task 3).
+- `app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so` is modified (rebuilt) — uncommitted until this task.
+- `app/src/main/cpp/src/sapil_*.cpp` and/or `slicer_wrapper.cpp` and/or `app/src/main/cpp/include/sapil.h` modified (uncommitted SAPIL fixes from Task 5).
 
 - [ ] **Step 2: Stage and commit**
 
 ```bash
-git add app/src/main/cpp/orcaslicer \
-        app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so \
+git add app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so \
         app/src/main/cpp/src/ \
         app/src/main/cpp/include/
-git commit -m "native: bump orca engine to v2.3.3 + rebuild .so (16KB-aligned, regression-only)
+git commit -m "native: rebuild .so for v2.3.3 (16KB-aligned) + SAPIL API-compat
 
-M1 stage 1 of the full-spectrum roadmap. Bumps OrcaSlicer submodule
-bd66b99 (2026-05-01) -> v2.3.3 (2026-06-01, first tag with PR #375
-'mix filament'). 167 commits of upstream drift.
-
-Patches re-applied (uncommitted in submodule, per repo convention):
-- B38 init fixes: Print.hpp m_origin/m_isBBLPrinter/FakeWipeTower,
-  WipeTower.hpp m_cur_layer_id (verified still required on v2.3.3)
-- NDK build-compat: CutSurface.cpp, Brim.cpp, clipper.hpp, NSVGUtils.cpp,
-  missing STL includes
-- Lightweight diagnostics: GCodeWriter coord bounds, WipeTower2 tcr/state,
-  Print first-layer islands
-
-Dropped (deferred): heavy ClipperUtils / GCode.cpp / clipper.cpp /
-Snapmaker_Orca.cpp diagnostics, slic3r/GUI/PartPlate.cpp (GUI, unused).
+M1 stage 1 final commit. Native libprusaslicer-jni.so rebuilt against
+the v2.3.3-based submodule pin (set in the prior commit). Release,
+16KB-page-aligned (-Wl,-z,max-page-size=16384) for Android 15+ compat.
+Verified ~20 MB, clang 17, JNI symbol count matches NativeLibrary.kt,
+LOAD segments aligned 0x4000.
 
 SAPIL wrapper API-compat fixes in app/src/main/cpp/src/sapil_*.cpp,
-slicer_wrapper.cpp — see git log for individual changes.
-
-Native .so rebuilt Release + 16KB-page-aligned for Android 15+ compat
-(linker flag -Wl,-z,max-page-size=16384). Verified ~20 MB, clang 17,
-JNI symbol count matches NativeLibrary.kt, LOAD segments aligned 0x4000.
+slicer_wrapper.cpp — addresses libslic3r drift between bd66b99 and
+v2.3.3 (167 commits, including PR #375 'mix filament').
 
 **Full-spectrum capability is now present in the engine but NOT exposed.**
-No new config keys wired, no UI, no overrides. Pure regression: all 1,453
-unit tests + 403 instrumented tests pass; G-code spot-check on three
-representative fixtures shows acceptable diffs.
+No new config keys wired, no UI, no overrides. Pure regression: all
+1,479 unit tests + N instrumented tests pass; G-code spot-check on
+three representative fixtures shows acceptable diffs.
 
 Refs:
 - docs/superpowers/specs/2026-05-26-full-spectrum-roadmap.md (M1 stage 1)
 - docs/superpowers/plans/2026-06-05-full-spectrum-m1-stage1-engine-bump.md
-
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 "
 ```
 
+(Substitute the actual instrumented test count for `N`.)
+
 - [ ] **Step 3: Do NOT push yet**
 
-Per repo convention and CLAUDE.md "DO NOT push to the remote repository unless the user explicitly asks." Ask the user before pushing.
+Per repo convention and CLAUDE.md "DO NOT push to the remote repository unless the user explicitly asks." Ask the user before pushing the parent-repo branch.
+
+The orca submodule branch `feature/v2.3.3-android-m1` was already pushed in Task 3 Step 2 — that's expected (the submodule needs to be pushable so the gitlink resolves for anyone else cloning).
 
 ---
 
@@ -804,14 +624,14 @@ These belong to follow-up plans, **not** this stage:
 - **Smart Paint slot-width widening** (per-triangle slot byte from `0..3` to virtual IDs ≥4) — M3a.
 - **Prusa `prusa-fdm-mixer` integration** — M4.
 - **A real U1 mixed-filament print** — M2.
-- **Updating `ENGINE_UPGRADE_GUIDE.md`'s "Current State" section** to reflect the new pin — small follow-up doc commit, not part of this engine bump.
+- **Updating `ENGINE_UPGRADE_GUIDE.md`'s "Current State" section and patch-mechanism description** to reflect that patches are committed on our fork, not uncommitted in worktrees — small follow-up doc commit, not part of this engine bump.
 
 ## Self-review notes
 
-- Spec §M1 ("Engine bump") + §M1 pre-flight + 2026-06-05 status check are all covered by Tasks 1–14.
-- 16KB-alignment note (commit 9e10334) is folded into Task 8 Step 1 (CMake configure) and verified in Task 10 Step 5.
-- Patch catalog must-fix set fully covered (B38 inits in Task 4; build-compat in Task 5; lightweight diagnostics in Task 6).
-- Drop-set fully covered in Task 7.
-- SAPIL API-compat handled as open-ended Tasks 8 + 9 — unavoidable, since we can't enumerate API changes without running the build.
-- Test oracle: existing 1,453 unit + 403 instrumented tests + 3 spot-check fixtures (Tasks 11–13).
+- Spec §M1 ("Engine bump") + §M1 pre-flight + 2026-06-05 status check are all covered by Tasks 1–10.
+- 16KB-alignment note (commit 9e10334) is folded into Task 4 Step 1 (CMake configure) and verified in Task 6 Step 6.
+- All 8 must-fix patch commits are explicitly addressed by Task 2's rebase.
+- The "drop heavy/GUI diagnostics" tasks from the original plan are removed — they were based on a wrong understanding of the patch state (the heavy diagnostics never existed as separate commits in our fork).
+- SAPIL API-compat handled as open-ended Tasks 4 + 5 — unavoidable, since we can't enumerate API changes without running the build.
+- Test oracle: existing 1,479 unit + N instrumented tests + 3 spot-check fixtures (Tasks 7–9).
 - No new tests written this stage — by design (regression-only; new behaviour is gated on M1 stage 2).
