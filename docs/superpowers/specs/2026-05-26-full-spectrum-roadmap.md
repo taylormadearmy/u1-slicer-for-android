@@ -131,8 +131,10 @@ core slicing path:
 (blend quality) — folded into **M2**, not M0. M0 is
 satisfied: the capability exists in the vendor fork and is fully reproducible
 headless via config. The dominant remaining cost is the **submodule jump from
-2.2.4 `f11a7bf` to a post-#375 commit** and re-applying the Android patch set
-(**M1**).
+our current pin to a target Snapmaker commit** and re-applying the Android patch
+set (**M1**). *Note (corrected 2026-06-05): our actual current pin is `bd66b99`
+dated 2026-05-01, ~167 commits behind `v2.3.3` — not "thousands behind 2.2.4"
+as initially assumed. See §7 status checks.*
 
 ### M1 — Engine bump
 Move the `app/src/main/cpp/orcaslicer` submodule to the target Snapmaker commit,
@@ -254,7 +256,58 @@ presets.
 - Keep **GitHub #18** in sync with the re-scope.
 - Cross-link **D1** (engine upgrade process) — M1 exercises it.
 
-## 7. Decision rejected
+## 7. Status checks
+
+### 2026-06-05 — Snapmaker stabilisation in flight; pin baseline corrected
+
+**Snapmaker fork** — significant progress in the 10 days since #375 merged:
+- **`v2.3.3` tagged 2026-06-01** is a stable release that includes #375 (verified
+  via GitHub compare: ahead of #375's merge commit `ac3dafe`). **This is now the
+  recommended M1 target** in place of "post-#375 main SHA" — same feature surface,
+  but tagged and stabilised.
+- **6 follow-up mix-filament fix PRs merged** since #375: #384 (UI), #396 (dialog
+  panel sizing), #401 (3MF persistence + Local-Z + dialog fixes), #405/#408
+  (painted region rebuild after edits), #428 (toolpath routing), plus #449 today
+  (v2.3.3 user-feedback bugfixes: fuzzy skin, infill filament, toolpath routing).
+  The feature has had a real stabilisation cycle in the wild — the "let it settle"
+  caution that gated M3 is largely satisfied.
+- `main` is **3 commits ahead of v2.3.3** (today's #449/#447 fixes). For M1 we can
+  either pin to `v2.3.3` (stable + tag-anchored) or a fresh post-#449 commit to
+  pick up the latest fixes. Default to the tag unless the fixes touch us.
+- One **open** mix-adjacent PR — #420 (`SSWCP.cpp`, GUI only) — does not affect
+  our headless surface.
+
+**Pin baseline correction.** Our actual submodule pin is `bd66b99`
+(2026-05-01, "docs(triangle-selector): explain single-state get_facets retains
+H2C fold") — **only ~167 commits behind `v2.3.3`**, not "thousands behind 2.2.4"
+as the §3/§4 narrative implied. `ENGINE_UPGRADE_GUIDE.md` still says "Snapmaker
+Orca 2.2.4 commit `f11a7bf`" — that's drift; the pin has moved since.
+**Implication: M1 is materially smaller than first sized** — the API drift surface
+is 167 commits, not 2,000+. The patch-collision analysis in §M1 pre-flight still
+holds for the must-fix set (B38 inits remain uninitialised on `main`); the
+bracketed worry about "full 2.2.4→main drift larger than #375 alone" is no longer
+the right frame.
+
+**Prusa `prusa-fdm-mixer`** — repo active but only **filament-library data
+refreshes** (daily HueForge / OpenPrintTag updates, commits #3–#12). No code or
+API changes. **No impact on M4**; we just get fresher palette data when we
+integrate.
+
+**Our app** — three patch releases shipped (v2.10.13 → v2.10.14 → v2.10.15) on
+unrelated work (B131–B137, F92 auto-arrange, F94 send-prep banner, Upload-Only
+UX). Full-spectrum work not started. Branch `chore/bambu-specs` clean. **No
+roadmap content needs updating from app-side changes.**
+
+**Plan deltas:**
+1. M1 target is **`v2.3.3`** (or current `main` HEAD if we want the most recent
+   fixes), not a post-#375 main SHA.
+2. M1 size shrinks — pin is 167 commits behind v2.3.3, not thousands.
+3. M3 "let it settle" timing is largely retired — feature has stabilised in the
+   wild over 10 days with 6 follow-up fixes merged.
+4. `ENGINE_UPGRADE_GUIDE.md` needs a separate doc-drift fix to reflect the
+   current pin (not part of this roadmap).
+
+## 8. Decision rejected
 
 **"Own the full-spectrum logic in our own layer"** (treat the engine as a dumb
 multi-tool toolpath generator and implement colour decomposition ourselves):
