@@ -4,7 +4,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
-### B139: European decimal input (comma) silently ignored in numeric settings fields (GitHub #174) — OPEN 2026-06-05
+### B139: European decimal input (comma) silently ignored in numeric settings fields (GitHub #174) — FIXED on main (unreleased), commit e9baf56, 2026-06-05
 - **Symptom**: A European-locale user entering a decimal with a comma (e.g. layer height `0,16` instead of `0.16`) has the value silently dropped — the field shows the text but the setting never changes. Same for other decimal fields (speeds, retraction, flow ratio, max volumetric speed, object scale, prime/brim widths, support spacing).
 - **Reported by**: Kevin, 2026-06-05.
 - **Root cause**: Bidirectional locale mismatch. Display uses locale-dependent `"%.2f".format(value)` (no explicit `Locale` → renders `0,16` for EU), but parse uses locale-**independent** `String.toFloatOrNull()` (only accepts `.`). `"0,16".toFloatOrNull()` returns `null`, and the `it.toFloatOrNull()?.let { … }` guard skips applying the value. Primary site `OverrideFloatField` ([SlicingOverridesUI.kt:996-1002](app/src/main/java/com/u1/slicer/ui/SlicingOverridesUI.kt#L996)).
