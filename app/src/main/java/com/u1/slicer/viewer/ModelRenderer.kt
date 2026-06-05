@@ -401,6 +401,35 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
     }
 
+    /**
+     * F95: vertex count of the opaque model-part block. Triangles at/after
+     * [MeshData.modifierBlockStartTriangle] are the translucent negative/modifier-volume
+     * trailing block; the opaque pass stops before them. Returns the full count when there's
+     * no modifier block.
+     */
+    private fun modelPartVertexCount(mesh: MeshData): Int =
+        mesh.modifierBlockStartTriangle?.let { (it * 3).coerceIn(0, mesh.vertexCount) }
+            ?: mesh.vertexCount
+
+    /**
+     * F95: second draw pass for the trailing negative/modifier-volume block. Caller must have
+     * already set the shader program, model matrix, colour uniforms, and bound the VAO (the
+     * modifier triangles share the model's coordinate space, so the same matrix positions them
+     * correctly). Drawn with alpha blending and depth-write disabled so the translucent cut/
+     * modifier region shows through the solid body without occluding it (desktop-Orca parity).
+     */
+    private fun drawModifierTail(mesh: MeshData, modelPartVtx: Int) {
+        if (mesh.modifierBlockStartTriangle == null) return
+        val count = mesh.vertexCount - modelPartVtx
+        if (count <= 0) return
+        GLES30.glEnable(GLES30.GL_BLEND)
+        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        GLES30.glDepthMask(false)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, modelPartVtx, count)
+        GLES30.glDepthMask(true)
+        GLES30.glDisable(GLES30.GL_BLEND)
+    }
+
     private fun drawModel(mesh: MeshData, color: FloatArray = modelColorDefault) {
         val shader = modelShader ?: return
         shader.use()
@@ -428,7 +457,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // doesn't leak into this one.
         GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
         GLES30.glBindVertexArray(modelVAO)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
+        val modelPartVtx = modelPartVertexCount(mesh)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, modelPartVtx)
+        drawModifierTail(mesh, modelPartVtx)
         GLES30.glBindVertexArray(0)
     }
 
@@ -459,7 +490,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
 
         GLES30.glBindVertexArray(modelVAO)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
+        val modelPartVtx = modelPartVertexCount(mesh)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, modelPartVtx)
+        drawModifierTail(mesh, modelPartVtx)
         GLES30.glBindVertexArray(0)
     }
 
@@ -560,7 +593,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniform1f(useVertexColorLoc, 0f)
         GLES30.glCullFace(GLES30.GL_FRONT)
         GLES30.glBindVertexArray(modelVAO)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, modelPartVertexCount(mesh))
         GLES30.glBindVertexArray(0)
         GLES30.glCullFace(GLES30.GL_BACK)
         GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
@@ -589,7 +622,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniform1f(useVertexColorLoc, 0f)
         GLES30.glCullFace(GLES30.GL_FRONT)
         GLES30.glBindVertexArray(modelVAO)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, mesh.vertexCount)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, modelPartVertexCount(mesh))
         GLES30.glBindVertexArray(0)
         GLES30.glCullFace(GLES30.GL_BACK)
         GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)

@@ -47,7 +47,10 @@ fun ModelViewerScreen(
                         val native = NativeLibrary()
                         NativeLibrary.previewMutex.withLock {
                             if (native.loadModel(file.absolutePath)) {
-                                native.getPreparePreviewMesh()?.toMeshData()
+                                native.getPreparePreviewMesh()?.apply {
+                                    // F95: tag the trailing modifier/negative block translucent.
+                                    modifierBlockStartTriangle = native.nativeGetPreviewModifierBlockStart()
+                                }?.toMeshData()
                             } else null
                         }
                     }

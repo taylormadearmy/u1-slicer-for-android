@@ -268,6 +268,63 @@ class MeshDataTest {
     }
 
     @Test
+    fun `recolor paints trailing modifier block translucent and leaves normal triangles on palette`() {
+        // F95: negative/modifier volumes are emitted by native as a contiguous trailing
+        // block. recolor must paint triangles at/after modifierBlockStartTriangle with a
+        // fixed translucent colour (so the renderer's blended second pass shows them as
+        // see-through), while model-part triangles before the boundary keep their palette
+        // colour and full opacity. The boundary is explicit — NOT a magic extruder index —
+        // so the "255 clamps to last palette entry" contract below is unaffected.
+        val indices = byteArrayOf(0, 1, 0) // tri2's extruder index is irrelevant once it's in the modifier block
+        val vertexCount = 3 * 3
+        val buf = MeshData.allocateBuffer(3)
+        for (v in 0 until vertexCount) {
+            buf.put(0f); buf.put(0f); buf.put(0f)
+            buf.put(0f); buf.put(0f); buf.put(1f)
+            buf.put(0f); buf.put(0f); buf.put(0f); buf.put(0f)
+        }
+        buf.rewind()
+        val mesh = MeshData(
+            vertices = buf, vertexCount = vertexCount,
+            minX = 0f, minY = 0f, minZ = 0f, maxX = 1f, maxY = 1f, maxZ = 1f,
+            extruderIndices = indices,
+            modifierBlockStartTriangle = 2,
+        )
+        val palette = listOf(
+            floatArrayOf(1f, 0f, 0f, 1f),  // E1 red
+            floatArrayOf(0f, 1f, 0f, 1f)   // E2 green
+        )
+
+        mesh.recolor(palette)
+
+        val b = mesh.vertices
+        // tri 0 → red, opaque (model part)
+        run {
+            val base = 0 * MeshData.FLOATS_PER_VERTEX + 6
+            assertEquals("tri0 R", 1f, b.get(base), 0.001f)
+            assertEquals("tri0 G", 0f, b.get(base + 1), 0.001f)
+            assertEquals("tri0 A opaque", 1f, b.get(base + 3), 0.001f)
+        }
+        // tri 1 → green, opaque (model part)
+        run {
+            val base = 3 * MeshData.FLOATS_PER_VERTEX + 6
+            assertEquals("tri1 R", 0f, b.get(base), 0.001f)
+            assertEquals("tri1 G", 1f, b.get(base + 1), 0.001f)
+            assertEquals("tri1 A opaque", 1f, b.get(base + 3), 0.001f)
+        }
+        // tri 2 → translucent modifier colour on all 3 vertices
+        val expected = MeshData.MODIFIER_PREVIEW_COLOR
+        assertTrue("modifier preview colour must be translucent (alpha < 1)", expected[3] < 1f)
+        for (v in 0 until 3) {
+            val base = (2 * 3 + v) * MeshData.FLOATS_PER_VERTEX + 6
+            assertEquals("mod v$v R", expected[0], b.get(base), 0.001f)
+            assertEquals("mod v$v G", expected[1], b.get(base + 1), 0.001f)
+            assertEquals("mod v$v B", expected[2], b.get(base + 2), 0.001f)
+            assertEquals("mod v$v A", expected[3], b.get(base + 3), 0.001f)
+        }
+    }
+
+    @Test
     fun `toWorldSpacePickingPositions returns empty array for oversize mesh to avoid OOM`() {
         // Chubby_Darth_Vader_MULTI_COLOR.3mf regression (user report 2026-05-31):
         // a painted multi-colour 3MF arrived in Kotlin with ~2.85M triangles

@@ -24,6 +24,13 @@ data class NativePreviewMesh(
     @JvmField
     var volumeRanges: List<IntRange>? = null
 
+    /** F95: index of the first triangle in the trailing negative/modifier-volume block,
+     *  or -1 when the model has no modifier/negative volumes. Set post-construction by
+     *  NativeLibrary.getPreparePreviewMesh from the native modifier-block-start accessor,
+     *  mirroring the [volumeRanges] population pattern. Forwarded to MeshData by toMeshData. */
+    @JvmField
+    var modifierBlockStartTriangle: Int = -1
+
     fun toMeshData(): MeshData? {
         val meshT0 = System.currentTimeMillis()
         val triangleCount = extruderIndices.size
@@ -120,7 +127,8 @@ data class NativePreviewMesh(
             maxX = maxX,
             maxY = maxY,
             maxZ = maxZ,
-            extruderIndices = previewIndices
+            extruderIndices = previewIndices,
+            modifierBlockStartTriangle = modifierBlockStartTriangle.takeIf { it >= 0 }
         )
     }
 

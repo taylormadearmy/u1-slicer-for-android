@@ -13,7 +13,11 @@ data class MeshData(
     val vertexCount: Int,
     val minX: Float, val minY: Float, val minZ: Float,
     val maxX: Float, val maxY: Float, val maxZ: Float,
-    val extruderIndices: ByteArray? = null  // Per-triangle extruder index (unsigned byte)
+    val extruderIndices: ByteArray? = null,  // Per-triangle extruder index (unsigned byte)
+    // F95: index of the first triangle in the trailing negative/modifier-volume block.
+    // Triangles at or after this index are non-model-part volumes that recolor() paints
+    // translucent and the renderer draws in a separate blended pass. null = no modifiers.
+    val modifierBlockStartTriangle: Int? = null
 ) {
     val centerX get() = (minX + maxX) / 2
     val centerY get() = (minY + maxY) / 2
@@ -148,10 +152,16 @@ data class MeshData(
 
         val lastIndex = colorPalette.size - 1
         val buf = vertices
+        // F95: triangles at/after this boundary are negative/modifier volumes — paint them
+        // the fixed translucent colour rather than a palette entry. null → no modifier block.
+        val modStart = modifierBlockStartTriangle ?: indices.size
 
         for (tri in indices.indices) {
-            val extruder = (indices[tri].toInt() and 0xFF).coerceAtMost(lastIndex)
-            val color = colorPalette[extruder]
+            val color = if (tri >= modStart) {
+                MODIFIER_PREVIEW_COLOR
+            } else {
+                colorPalette[(indices[tri].toInt() and 0xFF).coerceAtMost(lastIndex)]
+            }
             val r = color[0]; val g = color[1]; val b = color[2]; val a = color[3]
 
             for (v in 0 until 3) {
@@ -208,6 +218,14 @@ data class MeshData(
     companion object {
         const val FLOATS_PER_VERTEX = 10 // x,y,z, nx,ny,nz, r,g,b,a
         const val BYTES_PER_VERTEX = FLOATS_PER_VERTEX * 4
+
+        /**
+         * F95: fixed RGBA applied to negative/modifier-volume triangles on the Prepare
+         * preview. Translucent neutral grey-blue (alpha < 1) so the renderer's blended
+         * pass shows the cut/modifier region through the solid body, matching desktop
+         * OrcaSlicer/PrusaSlicer's translucent modifier rendering.
+         */
+        val MODIFIER_PREVIEW_COLOR = floatArrayOf(0.60f, 0.62f, 0.70f, 0.32f)
 
         /**
          * Picking-array allocation threshold. Above this, [toWorldSpacePickingPositions]

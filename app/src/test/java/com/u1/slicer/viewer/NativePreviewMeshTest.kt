@@ -67,6 +67,44 @@ class NativePreviewMeshTest {
     }
 
     @Test
+    fun `toMeshData carries modifier block start through to MeshData`() {
+        // F95: native appends negative/modifier-volume triangles as a contiguous trailing
+        // block and reports where it starts. toMeshData must forward that boundary so
+        // recolor() and the renderer can treat the trailing triangles as translucent.
+        val preview = NativePreviewMesh(
+            trianglePositions = FloatArray(3 * 9) { idx ->
+                when (idx % 9) {
+                    0 -> 0f; 1 -> 0f; 2 -> 0f
+                    3 -> 1f; 4 -> 0f; 5 -> 0f
+                    6 -> 0f; 7 -> 1f; else -> 0f
+                }
+            },
+            extruderIndices = byteArrayOf(0, 1, 0)
+        )
+        preview.modifierBlockStartTriangle = 2
+
+        val mesh = preview.toMeshData()
+        assertNotNull(mesh)
+        assertEquals(2, mesh!!.modifierBlockStartTriangle)
+    }
+
+    @Test
+    fun `toMeshData reports null modifier block when none present`() {
+        // Default (no modifier volumes): the sentinel -1 maps to null on MeshData so
+        // recolor() takes the all-model-parts path.
+        val preview = NativePreviewMesh(
+            trianglePositions = floatArrayOf(
+                0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f, 0f
+            ),
+            extruderIndices = byteArrayOf(0)
+        )
+
+        val mesh = preview.toMeshData()
+        assertNotNull(mesh)
+        assertEquals(null, mesh!!.modifierBlockStartTriangle)
+    }
+
+    @Test
     fun `wouldExceedSafePreviewBudget safety net threshold is effectively unreachable`() {
         // After F48 decimation, post-decimate counts stay at MAX_DECIMATED_TRIANGLES (100K),
         // well below any budget threshold. The 50M triangle hard-cap is a last-resort OOM guard.

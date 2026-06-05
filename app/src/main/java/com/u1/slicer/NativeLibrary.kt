@@ -248,6 +248,19 @@ class NativeLibrary {
      */
     external fun nativeGetPreviewVolumeTriangleCounts(): IntArray?
 
+    /**
+     * F95: triangle index at which the trailing negative/modifier-volume block begins in the
+     * most recent getPreparePreviewMesh build, or -1 when the model has no negative/modifier
+     * volumes. Triangles at or after this index are non-model-part helper geometry that the
+     * renderer draws translucent. Returned value is in the same mesh-build order as the
+     * preview's trianglePositions/extruderIndices. Callers set it on
+     * [com.u1.slicer.viewer.NativePreviewMesh.modifierBlockStartTriangle] right after
+     * getPreparePreviewMesh returns, mirroring the volumeRanges population pattern.
+     *
+     * Callers MUST hold [previewMutex].
+     */
+    external fun nativeGetPreviewModifierBlockStart(): Int
+
     // ---- F66: Split + Auto-Orient + per-object pose ----
 
     /** True iff `g_model.objects[objIdx]->parts_count() > 1` — cheap probe used

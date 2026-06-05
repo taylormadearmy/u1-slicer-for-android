@@ -108,6 +108,66 @@ class NativePreparePreviewTest {
         )
     }
 
+    @Test
+    fun getPreparePreviewMesh_emitsTranslucentModifierBlock_forNegativeVolumeFixture() {
+        // F95: negative/modifier volumes are filtered out of the model-part preview passes
+        // (is_model_part()==false) post-B137. They must instead be appended as a contiguous
+        // trailing block so the renderer can draw them translucent. The articulated fixture
+        // (B137's negative-volume-articulated.3mf) carries negative_part joint-clearance
+        // cutters; the preview must surface them after the solid model-part triangles.
+        copyAssetToModelFile("negative-volume-articulated.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh()
+        assertNotNull(preview)
+        preview!!
+
+        val triCount = preview.extruderIndices.size
+        val modStart = lib.nativeGetPreviewModifierBlockStart()
+
+        assertTrue("Preview must contain triangles", triCount > 0)
+        assertTrue(
+            "Modifier block start must be >= 0 when the model has negative volumes (got $modStart)",
+            modStart >= 0
+        )
+        assertTrue(
+            "Modifier block must come after at least one model-part triangle (start=$modStart)",
+            modStart > 0
+        )
+        assertTrue(
+            "Modifier block must contain at least one triangle (start=$modStart, total=$triCount)",
+            modStart < triCount
+        )
+
+        // The trailing block recolors translucent via MeshData; verify the boundary survives
+        // the toMeshData hand-off and recolor paints those triangles with alpha < 1.
+        preview.modifierBlockStartTriangle = modStart
+        val mesh = preview.toMeshData()
+        assertNotNull(mesh)
+        assertEquals(modStart, mesh!!.modifierBlockStartTriangle)
+        // recolor with a simple opaque palette; modifier triangles must end up translucent.
+        mesh.recolor(listOf(floatArrayOf(1f, 0f, 0f, 1f), floatArrayOf(0f, 1f, 0f, 1f)))
+        val modTriBase = (modStart * 3) * MeshData.FLOATS_PER_VERTEX + 6
+        val modAlpha = mesh.vertices.get(modTriBase + 3)
+        assertTrue("First modifier triangle must be translucent (alpha=$modAlpha)", modAlpha < 1f)
+    }
+
+    @Test
+    fun getPreparePreviewMesh_reportsNoModifierBlock_forModelWithoutNegativeVolumes() {
+        // Negative control: a plain dual-colour model has no negative/modifier volumes, so the
+        // accessor must report -1. Guards against the modifier pass falsely tagging model parts.
+        copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh()
+        assertNotNull(preview)
+
+        assertEquals(
+            "Model without negative/modifier volumes must report modifier-block-start = -1",
+            -1, lib.nativeGetPreviewModifierBlockStart()
+        )
+    }
+
     /** Axis-aligned span [spanX, spanY, spanZ] of a preview mesh's vertices (mm). */
     private fun previewSpanXYZ(pos: FloatArray): FloatArray {
         var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY

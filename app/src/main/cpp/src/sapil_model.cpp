@@ -51,6 +51,11 @@ static bool g_preview_mesh_valid = false;
 // Drives AI Paint cascade Branch B (per-volume) by giving Kotlin an explicit triangle→volume
 // attribution map.
 static std::vector<int> g_preview_volume_triangle_counts;
+// F95: triangle index where the trailing negative/modifier-volume block begins in the cached
+// preview mesh, or -1 when the model has none. Set alongside the cached mesh during
+// getPreparePreviewMesh; consumed by nativeGetPreviewModifierBlockStart so the Android renderer
+// can draw [start, end) translucent.
+static int g_preview_modifier_block_start = -1;
 static std::atomic<bool> g_preview_cancel{false};
 
 // Base instance positions captured on first setModelRotation call.
@@ -639,6 +644,45 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
         compactPreviewIndices(out);
     }
 
+    // F95: append negative/modifier-volume triangles as a contiguous trailing block so the
+    // Android renderer can draw them translucent (desktop OrcaSlicer/PrusaSlicer parity).
+    // These volumes are is_model_part()==false and are intentionally excluded from the
+    // model-part passes above (and from total_tris/stride) — they are a Prepare-screen visual
+    // aid only and are never sliced as solid here. Appended AFTER compactPreviewIndices so the
+    // reserved tag isn't remapped, and AFTER the per-volume triangle-count map is built so AI
+    // Paint's volumeRanges (model parts only) stay aligned. The Kotlin side identifies the
+    // block by g_preview_modifier_block_start, not by the tag value, so MeshData.recolor's
+    // out-of-range/255-clamp contract is unaffected.
+    g_preview_modifier_block_start = -1;
+    {
+        const size_t model_part_tris = out.extruder_indices.size();
+        const uint8_t MODIFIER_PREVIEW_INDEX = 0xFE;
+        const int mod_stride = needs_decimation ? stride : 1;
+        for (const auto* object : g_model.objects) {
+            if (object == nullptr || !object->printable) continue;
+            if (object->instances.empty()) continue;
+            for (const auto* instance : object->instances) {
+                if (instance == nullptr || !instance->printable) continue;
+                const Slic3r::Transform3d instance_matrix = instance->get_matrix();
+                for (const auto* volume : object->volumes) {
+                    if (volume == nullptr) continue;
+                    if (!volume->is_negative_volume() && !volume->is_modifier()) continue;
+                    auto its = volume->mesh().its;
+                    if (its.indices.empty()) continue;
+                    its_transform(its, volume->get_matrix(), true);
+                    its_transform(its, instance_matrix, true);
+                    int tri_counter = 0;
+                    appendItsPreviewMesh(out, its, MODIFIER_PREVIEW_INDEX, mod_stride, tri_counter);
+                }
+            }
+        }
+        if (out.extruder_indices.size() > model_part_tris) {
+            g_preview_modifier_block_start = static_cast<int>(model_part_tris);
+            SAPIL_LOGI("getPreparePreviewMesh: appended modifier block start=%zu count=%zu",
+                model_part_tris, out.extruder_indices.size() - model_part_tris);
+        }
+    }
+
     // Cache for instant return on tab switch
     g_cached_preview_mesh = out;
     g_preview_mesh_valid = true;
@@ -665,6 +709,15 @@ Java_com_u1_slicer_NativeLibrary_nativeGetPreviewVolumeTriangleCounts(
     return result;
 }
 
+// F95: triangle index where the trailing negative/modifier-volume block begins in the cached
+// preview mesh, or -1 when none. Set by getPreparePreviewMesh; lets Kotlin tag those triangles
+// translucent (NativePreviewMesh.modifierBlockStartTriangle → MeshData → renderer second pass).
+extern "C" JNIEXPORT jint JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetPreviewModifierBlockStart(
+        JNIEnv*, jobject) {
+    return static_cast<jint>(g_preview_modifier_block_start);
+}
+
 // Accessor for sapil_print.cpp to get the app files directory
 std::string getFilesDir() { return g_files_dir; }
 
@@ -672,6 +725,7 @@ std::string getFilesDir() { return g_files_dir; }
 void invalidatePreviewMeshCache() {
     g_preview_mesh_valid = false;
     g_preview_volume_triangle_counts.clear();
+    g_preview_modifier_block_start = -1;
 }
 
 // F66 — sync the static preview-extruder override cache when the user assigns
