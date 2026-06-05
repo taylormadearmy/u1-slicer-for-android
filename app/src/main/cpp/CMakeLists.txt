@@ -575,6 +575,7 @@ if(SLICER_BACKEND STREQUAL "orca")
         ${LIBSLIC3R_DIR}/ExtrusionEntity.cpp
         ${LIBSLIC3R_DIR}/ExtrusionEntityCollection.cpp
         ${LIBSLIC3R_DIR}/ExtrusionSimulator.cpp
+        ${LIBSLIC3R_DIR}/FilamentHotBedNozzleRules.cpp
 
         # Fill patterns
         ${LIBSLIC3R_DIR}/Fill/Fill.cpp
@@ -654,6 +655,8 @@ if(SLICER_BACKEND STREQUAL "orca")
         ${LIBSLIC3R_DIR}/BlacklistedLibraryCheck.cpp
         ${LIBSLIC3R_DIR}/LocalesUtils.cpp
         ${LIBSLIC3R_DIR}/CutUtils.cpp
+        ${LIBSLIC3R_DIR}/MixedFilament.cpp
+        ${LIBSLIC3R_DIR}/filament_mixer.cpp
         ${LIBSLIC3R_DIR}/Model.cpp
         ${LIBSLIC3R_DIR}/ModelArrange.cpp
         ${LIBSLIC3R_DIR}/MultiMaterialSegmentation.cpp
