@@ -349,6 +349,14 @@ fun FilamentScreen(
                         )
                     }
                 }
+
+                // 2026-06-06 bugfix: the screen's FloatingActionButton floats over the
+                // bottom-right of the LazyColumn and obscured the delete icon on the
+                // last mix-slot row. Add a sentinel spacer so the last visible row
+                // clears the FAB extent (~56dp + 16dp margin).
+                item("mix-slots-fab-spacer") {
+                    Spacer(Modifier.height(88.dp))
+                }
             }
         }
     }

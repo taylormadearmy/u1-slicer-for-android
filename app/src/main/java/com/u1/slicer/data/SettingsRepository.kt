@@ -43,6 +43,7 @@ class SettingsRepository(private val context: Context) {
         val AI_PAINT_API_KEY = stringPreferencesKey("ai_paint_api_key")
         val AI_NAMING_ENABLED = booleanPreferencesKey("ai_naming_enabled")
         val LIBRARY_MIXES = stringPreferencesKey("library_mixes")
+        val PROJECT_MIXES = stringPreferencesKey("project_mixes")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.appDataStore.data.map { prefs ->
@@ -224,6 +225,29 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLibraryMixes(rows: List<MixedFilamentRow>) {
         context.appDataStore.edit { prefs ->
             prefs[Keys.LIBRARY_MIXES] = encodeLibraryMixes(rows)
+        }
+    }
+
+    /**
+     * Project-scoped mix slots. Moved from SessionState to SettingsRepository in
+     * the M3-A bugfix round: the original SessionState-only persistence path
+     * silently dropped saves when no model was loaded (saveProject's
+     * `if (current != null)` guard), so a mix created from the Filaments tab on
+     * cold-start app open did not survive an app kill. SettingsRepository is
+     * always available regardless of model-loaded state.
+     *
+     * Trade-off: project mixes now persist across model swaps instead of
+     * resetting. That's a deliberate UX simplification for v1; the
+     * project-vs-library distinction in the UI is "recently active" vs
+     * "starred for reuse" rather than "per-model" vs "global".
+     */
+    val projectMixesFlow: Flow<List<MixedFilamentRow>> = context.appDataStore.data.map { prefs ->
+        decodeLibraryMixes(prefs[Keys.PROJECT_MIXES] ?: "")
+    }
+
+    suspend fun setProjectMixes(rows: List<MixedFilamentRow>) {
+        context.appDataStore.edit { prefs ->
+            prefs[Keys.PROJECT_MIXES] = encodeLibraryMixes(rows)
         }
     }
 
