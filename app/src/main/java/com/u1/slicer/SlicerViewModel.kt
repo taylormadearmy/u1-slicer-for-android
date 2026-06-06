@@ -7901,6 +7901,13 @@ internal fun buildProfileOverridesImpl(
         result["support_interface_filament"] = supportInterfaceFilament.toString()
     }
 
+    // Stage 2 — full-spectrum: only emit when the caller set a recipe.
+    // Empty (default) lets an embedded 3MF's project_settings.config value survive
+    // — the engine loads mixed_filament_definitions as a project option via PresetBundle.
+    if (cfg.mixedFilamentDefinitions.isNotEmpty()) {
+        result["mixed_filament_definitions"] = cfg.mixedFilamentDefinitions
+    }
+
     return result
 }
 
