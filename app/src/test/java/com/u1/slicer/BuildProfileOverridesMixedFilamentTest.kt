@@ -12,14 +12,14 @@ class BuildProfileOverridesMixedFilamentTest {
     fun `buildProfileOverrides emits mixed_filament_definitions when field is set`() {
         val cfg = SliceConfig(
             extruderCount = 2,
-            mixedFilamentDefinitions = "1,1/2",
+            mixedFilamentDefinitions = "1,2,1,50",
         )
         val overrides = buildProfileOverridesImpl(
             cfg = cfg,
             ov = SlicingOverrides(),
             slotCount = 2,
         )
-        assertEquals("1,1/2", overrides["mixed_filament_definitions"])
+        assertEquals("1,2,1,50", overrides["mixed_filament_definitions"])
     }
 
     @Test
