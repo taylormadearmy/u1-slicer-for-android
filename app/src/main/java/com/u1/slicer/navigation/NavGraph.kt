@@ -61,6 +61,7 @@ fun U1NavGraph(
         }
         composable(Routes.FILAMENTS) {
             val filaments by viewModel.filaments.collectAsState(initial = emptyList())
+            val extruderPresets by viewModel.extruderPresets.collectAsState()
             FilamentScreen(
                 filaments = filaments,
                 onAdd = { viewModel.addFilament(it) },
@@ -72,7 +73,11 @@ fun U1NavGraph(
                 },
                 onSetDefault = { viewModel.setDefaultFilament(it) },
                 onImport = { viewModel.importFilaments(it) },
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                // M3 Phase A: wire the mix-slot manager + presets so the
+                // Filaments screen can render mix rows and open the dialog.
+                mixedFilamentManager = viewModel.mixedFilamentManager,
+                extruderPresets = extruderPresets,
             )
         }
         composable(Routes.JOBS) {

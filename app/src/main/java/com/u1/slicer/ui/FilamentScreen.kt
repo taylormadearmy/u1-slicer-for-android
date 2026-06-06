@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -26,7 +27,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentProfile
+import com.u1.slicer.data.MixedFilamentManager
+import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.util.toFloatLenient
 import org.json.JSONArray
 import org.json.JSONException
@@ -42,12 +46,55 @@ fun FilamentScreen(
     onApply: (FilamentProfile) -> Unit,
     onSetDefault: (FilamentProfile) -> Unit,
     onImport: (List<FilamentProfile>) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    // M3 Phase A: optional Mix-slot affordances. Null when the caller doesn't
+    // need them (e.g. unit-test harness); production passes the manager + the
+    // extruder presets so we can build the physical filament chips inside the
+    // CreateMixSlotDialog.
+    mixedFilamentManager: MixedFilamentManager? = null,
+    extruderPresets: List<ExtruderPreset> = emptyList(),
 ) {
     var showDialog by remember { mutableStateOf(false) }
     var editingFilament by remember { mutableStateOf<FilamentProfile?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+
+    // M3 Phase A: mix-slot dialog state. `editingMix` non-null = Edit mode.
+    var showMixDialog by remember { mutableStateOf(false) }
+    var editingMix by remember { mutableStateOf<MixedFilamentRow?>(null) }
+    val projectMixes by (mixedFilamentManager?.projectMixes?.collectAsState()
+        ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
+    val libraryMixes by (mixedFilamentManager?.libraryMixes?.collectAsState()
+        ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
+
+    if (showMixDialog && mixedFilamentManager != null) {
+        val physicalColours = remember(extruderPresets) {
+            (0..3).map { i ->
+                val hex = extruderPresets.firstOrNull { it.index == i }?.color
+                    ?.takeIf { it.isNotBlank() }
+                    ?: ExtruderPreset.DEFAULT_COLORS[i]
+                parseHexColorOrDefault(hex)
+            }
+        }
+        CreateMixSlotDialog(
+            physicalFilamentColours = physicalColours,
+            physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+            editingRow = editingMix,
+            onConfirm = { a, b, pct, mode ->
+                val edit = editingMix
+                if (edit != null) {
+                    mixedFilamentManager.edit(edit.id, a, b, pct, mode)
+                } else {
+                    mixedFilamentManager.add(a, b, pct, mode)
+                }
+            },
+            onDelete = editingMix?.let { row -> { mixedFilamentManager.delete(row.id) } },
+            onDismiss = {
+                showMixDialog = false
+                editingMix = null
+            },
+        )
+    }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -130,29 +177,29 @@ fun FilamentScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        if (filaments.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "No filament profiles yet",
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Add profiles manually or import a JSON file",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                    )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (filaments.isEmpty()) {
+                item("filaments-empty") {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    ) {
+                        Text(
+                            "No filament profiles yet",
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Add profiles manually or import a JSON file",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        )
+                    }
                 }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            } else {
                 items(filaments, key = { it.id }) { filament ->
                     FilamentCard(
                         filament = filament,
@@ -166,7 +213,221 @@ fun FilamentScreen(
                     )
                 }
             }
+
+            // M3 Phase A: Mix Slots section. Always rendered when the manager is
+            // wired, regardless of whether the library has any single-component
+            // profiles — users can still create mixes from the 4 physical slots.
+            if (mixedFilamentManager != null) {
+                item("mix-slots-header") {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Mix Slots",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+
+                // "+ Mix slot" row — affordance to open the dialog.
+                item("mix-slot-add") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                        shape = RoundedCornerShape(16.dp),
+                        onClick = {
+                            editingMix = null
+                            showMixDialog = true
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Default.Add,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Add Mix slot",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                )
+                                Text(
+                                    "Two-component blend across physical slots",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (projectMixes.isEmpty() && libraryMixes.isEmpty()) {
+                    item("mix-slots-empty") {
+                        Text(
+                            "No mix slots yet — tap Add to create one.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                            modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+                        )
+                    }
+                }
+
+                if (projectMixes.isNotEmpty()) {
+                    item("mix-slots-project-label") {
+                        Text(
+                            "This project",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, top = 4.dp),
+                        )
+                    }
+                    itemsIndexed(projectMixes, key = { _, r -> "p-${r.id}" }) { _, row ->
+                        MixSlotCard(
+                            row = row,
+                            physicalColours = (0..3).map { i ->
+                                val hex = extruderPresets.firstOrNull { it.index == i }?.color
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: ExtruderPreset.DEFAULT_COLORS[i]
+                                parseHexColorOrDefault(hex)
+                            },
+                            inLibrary = row.inLibrary,
+                            onEdit = {
+                                editingMix = row
+                                showMixDialog = true
+                            },
+                            onDelete = { mixedFilamentManager.delete(row.id) },
+                            onToggleLibrary = {
+                                if (row.inLibrary) mixedFilamentManager.demoteFromLibrary(row.id)
+                                else mixedFilamentManager.promoteToLibrary(row.id)
+                            },
+                        )
+                    }
+                }
+
+                // Library-only mixes (rows the user promoted, then either deleted
+                // from project — or that came from an earlier session).
+                val libraryOnly = libraryMixes.filter { lib ->
+                    projectMixes.none { it.id == lib.id }
+                }
+                if (libraryOnly.isNotEmpty()) {
+                    item("mix-slots-library-label") {
+                        Text(
+                            "Library (★)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+                        )
+                    }
+                    itemsIndexed(libraryOnly, key = { _, r -> "l-${r.id}" }) { _, row ->
+                        MixSlotCard(
+                            row = row,
+                            physicalColours = (0..3).map { i ->
+                                val hex = extruderPresets.firstOrNull { it.index == i }?.color
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: ExtruderPreset.DEFAULT_COLORS[i]
+                                parseHexColorOrDefault(hex)
+                            },
+                            inLibrary = true,
+                            onEdit = {
+                                editingMix = row
+                                showMixDialog = true
+                            },
+                            onDelete = { mixedFilamentManager.delete(row.id) },
+                            onToggleLibrary = { mixedFilamentManager.demoteFromLibrary(row.id) },
+                        )
+                    }
+                }
+            }
         }
+    }
+}
+
+/**
+ * One mix-slot row in the Filaments library. Shows the two-tone swatch,
+ * auto-derived label (e.g. "E1+E3 @ 50%"), a star toggle (promote/demote),
+ * Edit and Delete actions.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MixSlotCard(
+    row: MixedFilamentRow,
+    physicalColours: List<Color>,
+    inLibrary: Boolean,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleLibrary: () -> Unit,
+) {
+    val primary = physicalColours.getOrNull(row.componentA - 1) ?: Color.Gray
+    val secondary = physicalColours.getOrNull(row.componentB - 1)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+        onClick = onEdit,
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MixedSlotSwatch(
+                primary = primary,
+                secondary = secondary,
+                size = 40.dp,
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(row.label, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    when (row.distributionMode) {
+                        MixedFilamentRow.MixDistributionMode.LAYER_CYCLE -> "Layer alternation"
+                        MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS -> "Same-layer dots"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            IconButton(onClick = onToggleLibrary) {
+                Icon(
+                    if (inLibrary) Icons.Default.Star else Icons.Default.StarBorder,
+                    contentDescription = if (inLibrary) "Remove from library" else "Promote to library",
+                    tint = if (inLibrary) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete mix slot",
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Parses "#RRGGBB" or "#AARRGGBB" hex strings into a Compose [Color]. Returns
+ * a mid-grey fallback when the input is malformed. Used by the Mix Slot UI
+ * to convert ExtruderPreset.color hex strings to the Color values needed by
+ * CreateMixSlotDialog + MixedSlotSwatch.
+ */
+internal fun parseHexColorOrDefault(hex: String, fallback: Color = Color(0xFF808080)): Color {
+    return try {
+        Color(android.graphics.Color.parseColor(hex))
+    } catch (_: Exception) {
+        fallback
     }
 }
 
