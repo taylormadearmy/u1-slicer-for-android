@@ -69,6 +69,10 @@ data class AiPaintResultState(
     val alternateTree: List<AiRegionNode>? = null,
     val alternateSource: SegmentationSource? = null,
     val alternateTriangleSegments: IntArray? = null,
+
+    /** C4: number of imported colours with no close palette match (ΔE > threshold). Drives the
+     *  "create a mix to improve them" note. 0 when not an import or all matched. */
+    val unmatchedColourCount: Int = 0,
 ) {
     override fun equals(other: Any?): Boolean = this === other
     override fun hashCode(): Int = System.identityHashCode(this)

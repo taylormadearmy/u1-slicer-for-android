@@ -67,3 +67,22 @@ object ColourMatch {
         return palette.minOf { deltaE76(target, it) }
     }
 }
+
+/**
+ * For each target colour, pick the closest existing palette slot and count how many had no
+ * close match (ΔE > [deltaThreshold]). Phase B does NOT create mixes — unmatched colours just
+ * fall back to their closest slot and increment the count for the "create a mix" nudge.
+ * Returns (slotPerTarget, unmatchedCount).
+ */
+fun autoAssignRegions(
+    targets: List<String>,
+    palette: List<String>,
+    deltaThreshold: Double = 25.0,
+): Pair<List<Int>, Int> {
+    var unmatched = 0
+    val slots = targets.map { t ->
+        if (ColourMatch.closestDistance(t, palette) > deltaThreshold) unmatched++
+        ColourMatch.closestSlot(t, palette)
+    }
+    return slots to unmatched
+}

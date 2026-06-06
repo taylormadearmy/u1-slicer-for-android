@@ -409,6 +409,19 @@ fun AiPaintResultScreen(
                         }
                     }
 
+                    // C4 (M3-Phase-B): when an imported coloured model had colours with no close
+                    // palette match, nudge the user toward creating a mix. Phase B does not auto-
+                    // create mixes — it falls each unmatched colour back to its closest slot.
+                    if (result.unmatchedColourCount > 0) {
+                        val n = result.unmatchedColourCount
+                        Text(
+                            "$n ${if (n == 1) "colour" else "colours"} had no close match — create a mix to improve them.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
+                    }
+
                     // Consolidated slot palette row. Tap behaviour depends on the toolbar mode
                     // armed via ViewerToolbar:
                     //   • Select (default) → tap a swatch opens the colour picker for that slot
