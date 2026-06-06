@@ -388,6 +388,27 @@ fun AiPaintResultScreen(
                         )
                     }
 
+                    // C5 (M3-Phase-B): honest print-cost banner when one or more regions are
+                    // assigned to mix slots. No fabricated hour figure — the real time cost
+                    // shows up in the post-slice time estimate.
+                    val mixCount = mixRegionCount(result.leafRegions.map { it.slot }, numPhysical)
+                    if (mixCount > 0) {
+                        val regionWord = if (mixCount == 1) "region uses" else "regions use"
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                "$mixCount $regionWord mix slots — this adds tool changes and print time.",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
+
                     // Consolidated slot palette row. Tap behaviour depends on the toolbar mode
                     // armed via ViewerToolbar:
                     //   • Select (default) → tap a swatch opens the colour picker for that slot

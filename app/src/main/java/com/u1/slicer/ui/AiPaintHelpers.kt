@@ -96,6 +96,10 @@ internal fun findLeafContainingTriangle(
     return match
 }
 
+/** Number of regions assigned to a mix slot (slot id >= numPhysical). Drives the cost banner. */
+internal fun mixRegionCount(slots: List<Int>, numPhysical: Int): Int =
+    slots.count { it >= numPhysical }
+
 /** Translate raw triangle positions onto the U1 bed (270×270 plate origin at corner). The
  *  bounding box is centred at (135, 135) in XY and the lowest Z lands at 0. Output array has
  *  the same length as input. */
