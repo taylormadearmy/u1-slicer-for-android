@@ -202,9 +202,14 @@ fun U1NavGraph(
             // axolotl-sized model (880k tris taking 5-8s to write) doesn't hang the
             // main thread and trigger Android's ANR dialog.
             val finalizeScope = rememberCoroutineScope()
+            val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
+            val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
             AiPaintResultScreen(
                 uiState = uiState,
                 filamentColours = filamentColours,
+                projectMixes = projectMixes,
+                libraryMixes = libraryMixes,
+                numPhysical = slicerConfig.extruderCount.coerceAtLeast(1),
                 onUsePainting = {
                     finalizeScope.launch {
                         val finalPath = aiVm.finalizePainting()

@@ -42,6 +42,9 @@ fun AiPaintResultScreen(
     onCommitSelection: (triangleIds: List<Int>, toSlot: Int) -> Unit = { _, _ -> },
     onSwitchToAlternate: () -> Unit = {},
     onSetSlotColor: (slotIndex: Int, hex: String) -> Unit = { _, _ -> },
+    projectMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
+    libraryMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
+    numPhysical: Int = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
 ) {
     // Which slot the HSV colour picker is open for (or null when closed). Driven by tapping the
     // leading swatch on a RegionRow — applies the new hex to the slot's canonical region so the
@@ -127,14 +130,29 @@ fun AiPaintResultScreen(
                     // currently assigned to each slot. The leaves-grouped approach drifted
                     // because reassignments left some slots with no leaves on them — the
                     // picker would then show grey instead of the real filament colour.
-                    val slotPalette: List<Color> = remember(filamentColours) {
-                        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
+                    // F3 (M3-Phase-B): palette extended beyond the 4 physical slots to include
+                    // one naive-blend entry per active mix (in MixSlotOrdering order).
+                    val activeMixes = remember(projectMixes, libraryMixes, numPhysical) {
+                        com.u1.slicer.data.MixSlotOrdering.activeOrder(projectMixes, libraryMixes, numPhysical)
+                    }
+                    val slotPalette: List<Color> = remember(filamentColours, activeMixes, numPhysical) {
+                        val physical = (0 until numPhysical).map { slot ->
                             val hex = filamentColours.getOrNull(slot) ?: "#888888"
                             Color(
                                 runCatching { android.graphics.Color.parseColor(hex) }
                                     .getOrDefault(android.graphics.Color.GRAY)
                             )
                         }
+                        val mixes = activeMixes.map { row ->
+                            val a = filamentColours.getOrNull(row.componentA - 1) ?: "#888888"
+                            val b = filamentColours.getOrNull(row.componentB - 1) ?: "#888888"
+                            val hex = com.u1.slicer.aipaint.ColourMatch.naiveBlendHex(a, b, row.mixBPercent)
+                            Color(
+                                runCatching { android.graphics.Color.parseColor(hex) }
+                                    .getOrDefault(android.graphics.Color.GRAY)
+                            )
+                        }
+                        physical + mixes
                     }
                     // fix38.1: float-array form of slotPalette for the GL renderer. Used by
                     // AiPaintViewer's recolor path so triangleRegions[t] (a slot byte 0..3)
