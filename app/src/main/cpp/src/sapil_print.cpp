@@ -384,6 +384,30 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         }
     }
 
+    // Flush volumes matrix — NxN where N = effective extruder count.
+    // ToolOrdering::reorder_extruders_for_minimum_flush_volume() calls
+    // get_extruders_order() which indexes into this matrix.  The
+    // FullPrintConfig default is a 1-element vector; with n_ext > 1 that
+    // causes a SIGSEGV.  Initialise to a flat 140mm³ default for every
+    // combination so multi-extruder slices are safe even when the embedded
+    // profile (accessed via profile_keys[]) doesn't provide the matrix
+    // (i.e. non-Snapmaker-profile 3MFs such as PaintedMeshWriter output).
+    // The B48 path and profile_keys[] may later overwrite this with
+    // calibrated values; this floor guarantees a valid matrix is always
+    // present before Print::process() starts.
+    if (n_ext > 1) {
+        auto* fvm = dpc.option<Slic3r::ConfigOptionFloats>("flush_volumes_matrix");
+        if (!fvm || (int)fvm->values.size() < n_ext * n_ext) {
+            dpc.set_key_value("flush_volumes_matrix",
+                new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext * n_ext, 140.0)));
+        }
+        auto* fvv = dpc.option<Slic3r::ConfigOptionFloats>("flush_volumes_vector");
+        if (!fvv || (int)fvv->values.size() < n_ext * 2) {
+            dpc.set_key_value("flush_volumes_vector",
+                new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext * 2, 140.0)));
+        }
+    }
+
     // Extruder offsets — all (0,0) for Snapmaker U1 (firmware handles offsets).
     // MUST be sized to match extruder count; the default is a single entry, and
     // WipeTowerIntegration copies the raw vector then indexes by tool ID — OOB
