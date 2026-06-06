@@ -19,6 +19,8 @@ import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.bambu.ThreeMfPlate
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentProfile
+import com.u1.slicer.data.MixedFilamentManager
+import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
@@ -596,6 +598,38 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // F89: session persistence — debounced save of Prepare-screen ephemeral state.
     private val sessionStateRepository = SessionStateRepository(getApplication())
     private val sessionSaveFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    // M3-A Task 7: caches that bridge async repositories to the synchronous
+    // MixedFilamentManager load callbacks. Seeded in init{}; kept current by
+    // the library-flow collector and the saveProject/saveLibrary callbacks.
+    private val _projectMixesCache = MutableStateFlow<List<MixedFilamentRow>>(emptyList())
+    private val _libraryMixesCache = MutableStateFlow<List<MixedFilamentRow>>(emptyList())
+
+    /** Full-spectrum mix recipe manager — public so the Mix dialog can observe and mutate it. */
+    val mixedFilamentManager: MixedFilamentManager = MixedFilamentManager(
+        loadProject = { _projectMixesCache.value },
+        loadLibrary = { _libraryMixesCache.value },
+        saveProject = { rows ->
+            _projectMixesCache.value = rows
+            viewModelScope.launch {
+                try {
+                    val current = sessionStateRepository.read()
+                    if (current != null) {
+                        sessionStateRepository.write(current.copy(projectMixes = rows))
+                    }
+                    // If no current SessionState (no model loaded yet), project mixes are
+                    // transient and will persist when the next SessionState is written.
+                } catch (_: Exception) { /* persistence errors are non-fatal */ }
+            }
+        },
+        saveLibrary = { rows ->
+            _libraryMixesCache.value = rows
+            viewModelScope.launch {
+                try { settingsRepo.setLibraryMixes(rows) }
+                catch (_: Exception) { /* non-fatal */ }
+            }
+        },
+    )
 
     // F89: toast events surfaced to MainActivity (Toast.makeText). One-shot strings.
     private val _toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -2059,6 +2093,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 prevState = newState
             }
+        }
+
+        // M3-A Task 7: seed mix caches from repositories so MixedFilamentManager
+        // has project/library rows by the time the user opens the Mix dialog.
+        viewModelScope.launch {
+            val saved = try { sessionStateRepository.read() } catch (_: Exception) { null }
+            _projectMixesCache.value = saved?.projectMixes ?: emptyList()
+        }
+        viewModelScope.launch {
+            settingsRepo.libraryMixesFlow.collect { _libraryMixesCache.value = it }
         }
     }
 
@@ -5016,6 +5060,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     presets = extruderPresets.value,
                     filaments = filaments.value,
                 )
+                // M3-A Task 7: inject the full-spectrum mix recipe into the JNI config.
+                // serialize() is cheap (iterates a small in-memory list) and must run here —
+                // immediately before native.slice() — so it captures any row added after
+                // the last config change.
                 val jniSliceConfig = sliceConfig.copy(
                     layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE)
                         sliceConfig.layerHeight else 0.0f,
@@ -5037,6 +5085,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     filamentNozzleTempInitialLayers = filamentArrays.nozzleTempInitialLayers,
                     filamentBedTempInitialLayers = filamentArrays.bedTempInitialLayers,
                     filamentCosts = filamentArrays.costs,
+                    mixedFilamentDefinitions = mixedFilamentManager.serialize(
+                        numPhysicalFilaments = sliceConfig.extruderCount
+                    ),
                 )
                 val result = native.slice(jniSliceConfig)
                 ensureActive()
