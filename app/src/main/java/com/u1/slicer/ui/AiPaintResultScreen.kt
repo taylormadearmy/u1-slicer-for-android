@@ -45,6 +45,8 @@ fun AiPaintResultScreen(
     projectMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     libraryMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     numPhysical: Int = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+    onCreateMix: () -> Unit = {},
+    onEditMix: (com.u1.slicer.data.MixedFilamentRow) -> Unit = {},
 ) {
     // Which slot the HSV colour picker is open for (or null when closed). Driven by tapping the
     // leading swatch on a RegionRow — applies the new hex to the slot's canonical region so the
@@ -278,26 +280,71 @@ fun AiPaintResultScreen(
                             .padding(8.dp),
                     )
 
-                    // fix35.1: floating slot picker overlay shown when a region is currently
-                    // highlighted. Provides the "what now?" action — tap a slot to assign the
-                    // highlighted region; × clears. Solves the user-feedback "Select a region
-                    // on the 3D view — there is no way to change the colour".
+                    // C1a (M3-Phase-B): per-region slot picker with mix slot support.
+                    // Replaces the physical-only HighlightSlotPicker with SectionedSlotPicker
+                    // so the user can assign a region to a physical filament OR a mix slot.
+                    // The library filter mirrors MixSlotOrdering.activeOrder's library predicate
+                    // exactly — mandatory so picker chip ids align with painted slot ids.
                     if (highlightedNode != null) {
-                        HighlightSlotPicker(
-                            label = highlightedNode.region.label,
-                            currentSlot = highlightedNode.region.slot,
-                            slotPalette = slotPalette,
-                            onPickSlot = { slot ->
-                                // fix35.2: don't clear the highlight after reassign — the user
-                                // wants to iterate (tap red, see it, tap blue, see that, etc).
-                                // The X / different-region / empty-tap paths handle clearing.
-                                onSetSegmentSlot(highlightedNode.region.id, slot)
-                            },
-                            onDismiss = { onHighlightComponent(null) },
+                        val pickerLibrary = libraryMixes.filter { lib ->
+                            projectMixes.none { it.id == lib.id } &&
+                                lib.componentA <= numPhysical && lib.componentB <= numPhysical
+                        }
+                        Box(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
-                                .padding(bottom = 12.dp),
-                        )
+                                .padding(bottom = 12.dp)
+                                .clip(MaterialTheme.shapes.large)
+                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.82f))
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                        ) {
+                            Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)) {
+                                // Region label + dismiss row
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column {
+                                        androidx.compose.material3.Text(
+                                            "Move to slot:",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f),
+                                        )
+                                        androidx.compose.material3.Text(
+                                            highlightedNode.region.label,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = androidx.compose.ui.graphics.Color.White,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                    androidx.compose.material3.IconButton(
+                                        onClick = { onHighlightComponent(null) },
+                                        modifier = Modifier.size(32.dp),
+                                    ) {
+                                        androidx.compose.material3.Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Clear selection",
+                                            tint = androidx.compose.ui.graphics.Color.White,
+                                        )
+                                    }
+                                }
+                                SectionedSlotPicker(
+                                    physicalColours = slotPalette.take(numPhysical),
+                                    physicalLabels = (1..numPhysical).map { "E$it" },
+                                    projectMixes = projectMixes,
+                                    libraryMixes = pickerLibrary,
+                                    selectedSlot = highlightedNode.region.slot,
+                                    onSelect = { slot ->
+                                        // fix35.2: don't clear the highlight after reassign —
+                                        // the user wants to iterate quickly across slots.
+                                        onSetSegmentSlot(highlightedNode.region.id, slot)
+                                    },
+                                    onCreateMix = onCreateMix,
+                                    onEditMix = onEditMix,
+                                )
+                            }
+                        }
                     }
                     }  // end Box wrapper for viewer + overlay
 

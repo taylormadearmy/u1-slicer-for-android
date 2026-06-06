@@ -4,8 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -14,6 +16,7 @@ import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.U1SlicerApplication
 import com.u1.slicer.printer.PrinterViewModel
 import com.u1.slicer.ui.AiPaintResultScreen
+import com.u1.slicer.ui.CreateMixSlotDialog
 import com.u1.slicer.ui.FilamentScreen
 import com.u1.slicer.ui.GcodeViewer3DScreen
 import com.u1.slicer.ui.MakerWorldBrowserScreen
@@ -204,6 +207,45 @@ fun U1NavGraph(
             val finalizeScope = rememberCoroutineScope()
             val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
             val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
+
+            // C1a (M3-Phase-B): mix-slot dialog state for per-region SectionedSlotPicker.
+            var createMixOpen by remember { mutableStateOf(false) }
+            var editMixRow by remember { mutableStateOf<com.u1.slicer.data.MixedFilamentRow?>(null) }
+
+            if (createMixOpen || editMixRow != null) {
+                val physicalColours = remember(extruderPresets) {
+                    (0..3).map { i ->
+                        val hex = extruderPresets.firstOrNull { it.index == i }?.color
+                            ?.takeIf { it.isNotBlank() }
+                            ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
+                        androidx.compose.ui.graphics.Color(
+                            runCatching { android.graphics.Color.parseColor(hex) }
+                                .getOrDefault(android.graphics.Color.GRAY)
+                        )
+                    }
+                }
+                CreateMixSlotDialog(
+                    physicalFilamentColours = physicalColours,
+                    physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+                    editingRow = editMixRow,
+                    onConfirm = { a, b, pct, mode ->
+                        val editing = editMixRow
+                        if (editing != null) {
+                            viewModel.mixedFilamentManager.edit(editing.id, a, b, pct, mode)
+                        } else {
+                            viewModel.mixedFilamentManager.add(a, b, pct, mode)
+                        }
+                    },
+                    onDelete = editMixRow?.let { row ->
+                        { viewModel.mixedFilamentManager.delete(row.id) }
+                    },
+                    onDismiss = {
+                        createMixOpen = false
+                        editMixRow = null
+                    },
+                )
+            }
+
             AiPaintResultScreen(
                 uiState = uiState,
                 filamentColours = filamentColours,
@@ -243,6 +285,8 @@ fun U1NavGraph(
                 onCommitSelection = { triIds, toSlot -> aiVm.commitSelection(triIds, toSlot) },
                 onSwitchToAlternate = { aiVm.switchToAlternate() },
                 onSetSlotColor = { slot, hex -> viewModel.setSlotColor(slot, hex) },
+                onCreateMix = { createMixOpen = true },
+                onEditMix = { row -> editMixRow = row },
             )
         }
     }
