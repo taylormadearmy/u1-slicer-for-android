@@ -9,13 +9,28 @@ import java.util.zip.ZipOutputStream
 
 object PaintedMeshWriter {
 
-    // Leaf-triangle paint_color encoding for states 1–4 (extruders 1–4).
-    // Derived from OrcaSlicer TriangleSelector bitstream format (right-to-left nibble read):
-    //   State 1 (≤2, direct): nibble = state<<2 = 4  → "4"
-    //   State 2 (≤2, direct): nibble = state<<2 = 8  → "8"
-    //   State 3 (extended):   nibble1=0xC, nibble2=0 → rightmost hex='C', next='0' → "0C"
-    //   State 4 (extended):   nibble1=0xC, nibble2=1 → rightmost hex='C', next='1' → "1C"
-    private val PAINT_COLOR = arrayOf("4", "8", "0C", "1C")  // index = region 0..3
+    /**
+     * Leaf-triangle paint_color code for a 0-based [slot] (engine paint state = slot + 1).
+     * States 1-2 direct (state<<2); states >=3 use the extended escape: rightmost nibble 0xC,
+     * next nibble = state-3. Single-nibble extended range covers states 3..18 (slots 2..17).
+     *
+     * Derived from OrcaSlicer TriangleSelector bitstream format (right-to-left nibble read):
+     *   State 1 (≤2, direct): nibble = state<<2 = 4  → "4"
+     *   State 2 (≤2, direct): nibble = state<<2 = 8  → "8"
+     *   State 3 (extended):   nibble1=0xC, nibble2=0 → rightmost hex='C', next='0' → "0C"
+     *   State 4 (extended):   nibble1=0xC, nibble2=1 → rightmost hex='C', next='1' → "1C"
+     *   State 5 (extended):   nibble1=0xC, nibble2=2 → "2C"  … up to state 18 → "FC"
+     *
+     * Verified end-to-end by MixSlotPaintRoundTripTest (native re-read of decoded states).
+     */
+    fun encodePaintColor(slot: Int): String {
+        val state = slot.coerceAtLeast(0) + 1
+        return when {
+            state <= 2 -> (state shl 2).toString(16).uppercase()
+            state - 3 <= 0xF -> "${(state - 3).toString(16).uppercase()}C"
+            else -> throw IllegalArgumentException("paint slot $slot exceeds single-nibble range")
+        }
+    }
 
     /**
      * @param printerColours when provided, used verbatim for the painted 3MF's `filament_colour`
@@ -29,7 +44,8 @@ object PaintedMeshWriter {
         regionIds: IntArray,
         regions: List<AiRegion>,
         outputFile: File,
-        printerColours: List<String>? = null
+        printerColours: List<String>? = null,
+        mixDisplayColours: List<String> = emptyList()
     ) {
         ZipOutputStream(outputFile.outputStream().buffered()).use { zip ->
             zip.putNextEntry(ZipEntry("_rels/.rels"))
@@ -55,7 +71,7 @@ object PaintedMeshWriter {
             // project_settings.config ends up with filament_colour size 1 → the
             // native paint segmentation collapses to a single tool.
             zip.putNextEntry(ZipEntry("Metadata/project_settings.config"))
-            zip.write(buildProjectSettings(regions, printerColours).toByteArray())
+            zip.write(buildProjectSettings(regions, printerColours, mixDisplayColours).toByteArray())
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("[Content_Types].xml"))
@@ -135,7 +151,7 @@ object PaintedMeshWriter {
         }
         w.write("\n</vertices>\n<triangles>")
         for (i in 0 until nTri) {
-            val paint = PAINT_COLOR[regionIds[i].coerceIn(0, 3)]
+            val paint = encodePaintColor(regionIds[i])
             w.write("\n  ")
             w.write("""<triangle v1="${triV1[i]}" v2="${triV2[i]}" v3="${triV3[i]}" paint_color="$paint"/>""")
         }
@@ -156,16 +172,25 @@ object PaintedMeshWriter {
      */
     internal fun buildProjectSettings(
         regions: List<AiRegion>,
-        printerColours: List<String>? = null
+        printerColours: List<String>? = null,
+        mixDisplayColours: List<String> = emptyList()
     ): String {
-        val coloursJson = regions.indices.joinToString(", ") { i ->
+        // Physical slot colours: one entry per region (existing behaviour). A mix slot
+        // referenced by a triangle's paint_color resolves to a filament id beyond the
+        // physical count, so the canonical filament_colour list MUST have an entry for
+        // each mix too — otherwise the engine's filament list is short and segmentation
+        // collapses for any triangle painted to a mix slot.
+        val physicalColours = regions.indices.map { i ->
             val printerHex = printerColours?.getOrNull(i)?.let { sanitizeOrNull(it) }
-            val hex = printerHex ?: sanitizeHex(regions[i].effectiveColour)
-            "\"$hex\""
+            printerHex ?: sanitizeHex(regions[i].effectiveColour)
         }
-        val typesJson = regions.joinToString(", ") { "\"PLA\"" }
-        val settingsIdJson = regions.joinToString(", ") { "\"Generic PLA\"" }
-        val n = regions.size
+        val mixColours = mixDisplayColours.map { sanitizeHex(it) }
+        val allColours = physicalColours + mixColours
+
+        val coloursJson = allColours.joinToString(", ") { "\"$it\"" }
+        val typesJson = allColours.joinToString(", ") { "\"PLA\"" }
+        val settingsIdJson = allColours.joinToString(", ") { "\"Generic PLA\"" }
+        val n = allColours.size
         return """{
   "filament_colour": [$coloursJson],
   "filament_type": [$typesJson],

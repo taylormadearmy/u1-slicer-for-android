@@ -182,6 +182,21 @@ fun U1NavGraph(
                         ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
                 }
             }
+            // M3-Phase-B/F2: the painted-3MF writer appends one filament_colour entry per
+            // active mix (in MixSlotOrdering order) so triangles painted to a mix slot resolve
+            // to a real canonical filament instead of collapsing. Naive-blend the two
+            // components' loaded colours for the display swatch. Declared after filamentColours
+            // so the provider lambda can capture it.
+            SideEffect {
+                aiVm.mixDisplayColoursProvider = {
+                    val n = slicerConfig.extruderCount.coerceAtLeast(1)
+                    viewModel.mixedFilamentManager.activeOrder(n).map { row ->
+                        val a = filamentColours.getOrNull(row.componentA - 1) ?: "#888888"
+                        val b = filamentColours.getOrNull(row.componentB - 1) ?: "#888888"
+                        com.u1.slicer.aipaint.ColourMatch.naiveBlendHex(a, b, row.mixBPercent)
+                    }
+                }
+            }
 
             // B114: launch the painted-3MF serialization off the click handler so an
             // axolotl-sized model (880k tris taking 5-8s to write) doesn't hang the

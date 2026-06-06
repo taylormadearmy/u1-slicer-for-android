@@ -41,6 +41,17 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
      */
     var slotCeiling: () -> Int = { TARGET_SLOTS }
 
+    /**
+     * M3-Phase-B/F2: naive-blend display colours for the active mix slots, in the
+     * same MixSlotOrdering order the slot ids use (slot id `numPhysical + k` → the
+     * k-th entry here). Wired from NavGraph alongside [slotCeiling]. The painted-3MF
+     * writer appends these to `filament_colour` so a triangle painted to a mix slot
+     * resolves to a real canonical filament entry instead of collapsing for lack of
+     * a colour. Defaults to empty (no-regression: with zero mixes the writer behaves
+     * exactly as before).
+     */
+    var mixDisplayColoursProvider: () -> List<String> = { emptyList() }
+
     companion object {
         const val TARGET_SLOTS = SegmentationCascade.TARGET_SLOTS
 
@@ -266,6 +277,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     PaintedMeshWriter.write(
                         rawMesh.trianglePositions, slotIdsForFile, slotsView, outFile,
                         printerColours = printerColours,
+                        mixDisplayColours = mixDisplayColoursProvider(),
                     )
                 }
 
@@ -632,6 +644,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
             PaintedMeshWriter.write(
                 exportPositions, regionIds, slotsView, outFile,
                 printerColours = lastPrinterColours,
+                mixDisplayColours = mixDisplayColoursProvider(),
             )
         }
         _uiState.value = AiPaintUiState.Result(state.copy(paintedModelPath = outFile.absolutePath))
