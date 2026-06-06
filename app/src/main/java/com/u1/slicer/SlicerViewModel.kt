@@ -612,14 +612,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         saveProject = { rows ->
             _projectMixesCache.value = rows
             viewModelScope.launch {
-                try {
-                    val current = sessionStateRepository.read()
-                    if (current != null) {
-                        sessionStateRepository.write(current.copy(projectMixes = rows))
-                    }
-                    // If no current SessionState (no model loaded yet), project mixes are
-                    // transient and will persist when the next SessionState is written.
-                } catch (_: Exception) { /* persistence errors are non-fatal */ }
+                // 2026-06-06 bugfix: persist project mixes via SettingsRepository (not
+                // SessionState). The old SessionState path silently dropped saves when
+                // no model was loaded, so a mix created from the Filaments tab on
+                // cold open vanished after an app kill. SettingsRepository is always
+                // available; trade-off is project mixes now survive across model
+                // swaps (acceptable for v1).
+                try { settingsRepo.setProjectMixes(rows) }
+                catch (_: Exception) { /* non-fatal */ }
             }
         },
         saveLibrary = { rows ->
@@ -2095,11 +2095,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // M3-A Task 7: seed mix caches from repositories so MixedFilamentManager
-        // has project/library rows by the time the user opens the Mix dialog.
+        // M3-A Task 7 (bugfixed 2026-06-06): seed mix caches from SettingsRepository
+        // so MixedFilamentManager has project/library rows by the time the user
+        // opens the Mix dialog. Both flows persist across app kill / model swap.
         viewModelScope.launch {
-            val saved = try { sessionStateRepository.read() } catch (_: Exception) { null }
-            _projectMixesCache.value = saved?.projectMixes ?: emptyList()
+            settingsRepo.projectMixesFlow.collect { _projectMixesCache.value = it }
         }
         viewModelScope.launch {
             settingsRepo.libraryMixesFlow.collect { _libraryMixesCache.value = it }
