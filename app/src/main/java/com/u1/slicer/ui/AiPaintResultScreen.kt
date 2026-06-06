@@ -406,6 +406,9 @@ fun AiPaintResultScreen(
                                 else -> editSlotColour = slot
                             }
                         },
+                        numPhysical = numPhysical,
+                        activeMixes = activeMixes,
+                        physicalColours = slotPalette.take(numPhysical),
                     )
 
                     val treeWithCustom = result.tree + listOfNotNull(

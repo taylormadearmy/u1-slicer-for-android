@@ -366,6 +366,12 @@ internal fun ViewerToolbar(
 /**
  * fix41 SlotPaletteRow — "Extruders →" row below the viewer. Always visible. Tap behaviour
  * is mode-aware (driven by the parent via [onTapSlot]).
+ *
+ * C1b (M3-Phase-B): now renders ALL entries in [slotPalette] (physical + mixes). Physical
+ * chips (index < [numPhysical]) render as a plain colour square; mix chips (index ≥ [numPhysical])
+ * render as a [MixedSlotSwatch] with the componentA/B physical colours. Tapping any chip
+ * (including mix) fires [onTapSlot] with that chip's index so [paintActiveRegion] can accept
+ * mix slot ids (≥ numPhysical).
  */
 @Composable
 internal fun SlotPaletteRow(
@@ -375,6 +381,9 @@ internal fun SlotPaletteRow(
     activeSlot: Int,
     hasLassoSelection: Boolean,
     onTapSlot: (Int) -> Unit,
+    numPhysical: Int = slotPalette.size,
+    activeMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
+    physicalColours: List<Color> = slotPalette.take(numPhysical),
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -390,21 +399,48 @@ internal fun SlotPaletteRow(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        slotPalette.take(AiPaintViewModel.TARGET_SLOTS).forEachIndexed { idx, color ->
+        slotPalette.forEachIndexed { idx, color ->
             val isActive = (paintMode || lassoMode) && idx == activeSlot && !hasLassoSelection
-            Box(
-                Modifier
-                    .size(if (isActive) 44.dp else 40.dp)
-                    .background(color, MaterialTheme.shapes.small)
-                    .clickable { onTapSlot(idx) },
-                contentAlignment = Alignment.Center,
-            ) {
-                val tickColor = tickContrastColor(color)
-                when {
-                    isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
-                    !paintMode && !lassoMode ->
-                        Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
-                    else -> {}
+            val chipSize = if (isActive) 44.dp else 40.dp
+            if (idx < numPhysical) {
+                // Physical slot — solid colour square with pen/tick overlay
+                Box(
+                    Modifier
+                        .size(chipSize)
+                        .background(color, MaterialTheme.shapes.small)
+                        .clickable { onTapSlot(idx) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val tickColor = tickContrastColor(color)
+                    when {
+                        isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
+                        !paintMode && !lassoMode ->
+                            Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
+                        else -> {}
+                    }
+                }
+            } else {
+                // Mix slot — two-tone swatch using componentA/componentB physical colours.
+                // The 1-based componentA/B index uses the same `- 1` mapping as SectionedSlotPicker.MixSlotChip.
+                val mixIndex = idx - numPhysical
+                val row = activeMixes.getOrNull(mixIndex)
+                val primary = row?.let { physicalColours.getOrNull(it.componentA - 1) } ?: color
+                val secondary = row?.let { physicalColours.getOrNull(it.componentB - 1) }
+                Box(
+                    Modifier
+                        .size(chipSize)
+                        .clickable { onTapSlot(idx) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MixedSlotSwatch(
+                        primary = primary,
+                        secondary = secondary,
+                        size = chipSize,
+                    )
+                    if (isActive) {
+                        val tickColor = tickContrastColor(primary)
+                        Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
+                    }
                 }
             }
         }
