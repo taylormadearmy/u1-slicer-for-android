@@ -599,11 +599,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val sessionStateRepository = SessionStateRepository(getApplication())
     private val sessionSaveFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
-    // M3-A Task 7: caches that bridge async repositories to the synchronous
-    // MixedFilamentManager load callbacks. Seeded in init{}; kept current by
-    // the library-flow collector and the saveProject/saveLibrary callbacks.
-    private val _projectMixesCache = MutableStateFlow<List<MixedFilamentRow>>(emptyList())
-    private val _libraryMixesCache = MutableStateFlow<List<MixedFilamentRow>>(emptyList())
+    // M3-A Task 7 (bugfixed 2026-06-06 round 2): caches that bridge async
+    // repositories to the synchronous MixedFilamentManager load callbacks.
+    //
+    // CRITICAL — seeded SYNCHRONOUSLY at field-init time via runBlocking +
+    // .first(). The earlier version initialized to emptyList() and relied on
+    // an async init{} collector to populate the cache after first emission;
+    // that race lost data: between manager construction (which called
+    // loadProject() returning emptyList()) and the first collector emission,
+    // user-added mixes were saved on top of an empty state, clobbering the
+    // persisted rows.
+    //
+    // runBlocking on the main thread is acceptable here because (a) DataStore
+    // reads are well under the ANR threshold (typically <50 ms), and (b) this
+    // is a one-time cost paid during ViewModel construction at app startup —
+    // not a per-interaction cost. SettingsRepository is already initialized
+    // (see line 173), so projectMixesFlow/libraryMixesFlow are valid.
+    private val _projectMixesCache = MutableStateFlow(
+        kotlinx.coroutines.runBlocking { settingsRepo.projectMixesFlow.first() }
+    )
+    private val _libraryMixesCache = MutableStateFlow(
+        kotlinx.coroutines.runBlocking { settingsRepo.libraryMixesFlow.first() }
+    )
 
     /** Full-spectrum mix recipe manager — public so the Mix dialog can observe and mutate it. */
     val mixedFilamentManager: MixedFilamentManager = MixedFilamentManager(
@@ -611,20 +628,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         loadLibrary = { _libraryMixesCache.value },
         saveProject = { rows ->
             _projectMixesCache.value = rows
-            viewModelScope.launch {
-                // 2026-06-06 bugfix: persist project mixes via SettingsRepository (not
-                // SessionState). The old SessionState path silently dropped saves when
-                // no model was loaded, so a mix created from the Filaments tab on
-                // cold open vanished after an app kill. SettingsRepository is always
-                // available; trade-off is project mixes now survive across model
-                // swaps (acceptable for v1).
+            // SYNCHRONOUS write — runBlocking ensures DataStore commits before
+            // returning, so a force-kill mid-mutation doesn't lose the write.
+            // Cost is the same DataStore latency (<50 ms) on the calling
+            // thread; trade-off vs. the previous async-launch which could be
+            // cancelled if the user killed the app immediately after creating
+            // a mix.
+            kotlinx.coroutines.runBlocking {
                 try { settingsRepo.setProjectMixes(rows) }
                 catch (_: Exception) { /* non-fatal */ }
             }
         },
         saveLibrary = { rows ->
             _libraryMixesCache.value = rows
-            viewModelScope.launch {
+            kotlinx.coroutines.runBlocking {
                 try { settingsRepo.setLibraryMixes(rows) }
                 catch (_: Exception) { /* non-fatal */ }
             }
