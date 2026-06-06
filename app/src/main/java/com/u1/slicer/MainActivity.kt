@@ -1775,6 +1775,14 @@ fun PrepareScreen(
                                 filamentOverrides = filamentOverrides,
                             )
                         }
+                        // M3 Phase A: Mix slots section — entry point on Prepare for
+                        // creating two-component blends without leaving the screen.
+                        // Same dialog as the Filaments tab; tap-to-edit, long-press
+                        // (or row icons) to delete or promote to library.
+                        PrepareMixSlotsSection(
+                            viewModel = viewModel,
+                            extruderPresets = extruderPresets,
+                        )
                         // fix35: Smart Paint moved to the 3D-viewer overlay (top-right icon).
                         // Single-colour Smart Paint entry previously here is gone.
                         ConfigCard(
@@ -4812,6 +4820,217 @@ fun ScaleSection(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * M3 Phase A: Prepare-screen Mix Slots section. Expandable card that lists
+ * the current project's mix slots (with library promotions) and surfaces an
+ * Add affordance opening the CreateMixSlotDialog. Tap an existing row to
+ * edit, long-press / tap the star to promote/demote to/from the library,
+ * tap the trash icon to delete. AiPaintResultScreen's HighlightSlotPicker
+ * stays as-is — its mix-aware migration is Phase B work.
+ */
+@Composable
+fun PrepareMixSlotsSection(
+    viewModel: SlicerViewModel,
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+) {
+    val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
+    val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
+
+    var expanded by remember { mutableStateOf(false) }
+    var showDialog by remember { mutableStateOf(false) }
+    var editingRow by remember { mutableStateOf<com.u1.slicer.data.MixedFilamentRow?>(null) }
+
+    val physicalColours = remember(extruderPresets) {
+        (0..3).map { i ->
+            val hex = extruderPresets.firstOrNull { it.index == i }?.color
+                ?.takeIf { it.isNotBlank() }
+                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
+            com.u1.slicer.ui.parseHexColorOrDefault(hex)
+        }
+    }
+
+    if (showDialog) {
+        com.u1.slicer.ui.CreateMixSlotDialog(
+            physicalFilamentColours = physicalColours,
+            physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+            editingRow = editingRow,
+            onConfirm = { a, b, pct, mode ->
+                val edit = editingRow
+                if (edit != null) {
+                    viewModel.mixedFilamentManager.edit(edit.id, a, b, pct, mode)
+                } else {
+                    viewModel.mixedFilamentManager.add(a, b, pct, mode)
+                }
+            },
+            onDelete = editingRow?.let { row -> { viewModel.mixedFilamentManager.delete(row.id) } },
+            onDismiss = {
+                showDialog = false
+                editingRow = null
+            },
+        )
+    }
+
+    // Library entries that aren't already shown in the project list — so the
+    // user can see + edit their persistent mixes alongside project ones.
+    val libraryOnly = libraryMixes.filter { lib -> projectMixes.none { it.id == lib.id } }
+    val totalCount = projectMixes.size + libraryOnly.size
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Default.Palette, null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Mix slots ($totalCount)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = {
+                        editingRow = null
+                        showDialog = true
+                    },
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add mix slot")
+                }
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                )
+            }
+            if (expanded) {
+                Spacer(Modifier.height(8.dp))
+                if (totalCount == 0) {
+                    Text(
+                        "No mix slots yet — tap + to create one.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        projectMixes.forEach { row ->
+                            PrepareMixSlotRow(
+                                row = row,
+                                physicalColours = physicalColours,
+                                inLibrary = row.inLibrary,
+                                onEdit = {
+                                    editingRow = row
+                                    showDialog = true
+                                },
+                                onToggleLibrary = {
+                                    if (row.inLibrary)
+                                        viewModel.mixedFilamentManager.demoteFromLibrary(row.id)
+                                    else
+                                        viewModel.mixedFilamentManager.promoteToLibrary(row.id)
+                                },
+                                onDelete = { viewModel.mixedFilamentManager.delete(row.id) },
+                            )
+                        }
+                        if (libraryOnly.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "Library (★)",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            libraryOnly.forEach { row ->
+                                PrepareMixSlotRow(
+                                    row = row,
+                                    physicalColours = physicalColours,
+                                    inLibrary = true,
+                                    onEdit = {
+                                        editingRow = row
+                                        showDialog = true
+                                    },
+                                    onToggleLibrary = {
+                                        viewModel.mixedFilamentManager.demoteFromLibrary(row.id)
+                                    },
+                                    onDelete = { viewModel.mixedFilamentManager.delete(row.id) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrepareMixSlotRow(
+    row: com.u1.slicer.data.MixedFilamentRow,
+    physicalColours: List<Color>,
+    inLibrary: Boolean,
+    onEdit: () -> Unit,
+    onToggleLibrary: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val primary = physicalColours.getOrNull(row.componentA - 1) ?: Color.Gray
+    val secondary = physicalColours.getOrNull(row.componentB - 1)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onEdit() }
+            .background(
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                RoundedCornerShape(8.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        com.u1.slicer.ui.MixedSlotSwatch(
+            primary = primary,
+            secondary = secondary,
+            size = 32.dp,
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(row.label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(
+                when (row.distributionMode) {
+                    com.u1.slicer.data.MixedFilamentRow.MixDistributionMode.LAYER_CYCLE ->
+                        "Layer alternation"
+                    com.u1.slicer.data.MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS ->
+                        "Same-layer dots"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
+        IconButton(onClick = onToggleLibrary, modifier = Modifier.size(36.dp)) {
+            Icon(
+                if (inLibrary) Icons.Default.Star else Icons.Default.StarBorder,
+                contentDescription = if (inLibrary) "Remove from library" else "Promote to library",
+                tint = if (inLibrary) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Delete mix slot",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }
