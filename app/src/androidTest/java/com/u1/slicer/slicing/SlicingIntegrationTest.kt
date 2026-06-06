@@ -1163,6 +1163,53 @@ class SlicingIntegrationTest {
         )
     }
 
+    @Test
+    fun mixedFilament_recipeFromSliceConfig_reachesEngineConfigInGcode() {
+        // Stage 2 end-to-end: a non-empty mixedFilamentDefinitions on SliceConfig
+        // must travel all the way through JNI marshal → applyConfigToPrusa →
+        // engine dpc → G-code header. The engine writes every set config key as
+        // a `; key = value` comment in the G-code prelude, so the recipe string
+        // appearing in the G-code is the proof.
+        //
+        // Recipe format: "a,b,enabled,mix_b_percent" per PR #375's parser.
+        // "1,2,1,50" = component_a=filament 1, component_b=filament 2,
+        //              enabled=1, mix_b_percent=50.
+        // We don't assert on T0/T1 alternation because that requires geometry
+        // assigned to the virtual filament (the recipe creates virtual slot 3
+        // but doesn't redirect any unpainted geometry to use it). That UI work
+        // is M3 territory.
+
+        val recipe = "1,2,1,50"
+
+        // (1) With the recipe set, the G-code must contain it.
+        val cfgWith = DEFAULT_CONFIG.copy(
+            extruderCount = 2,
+            mixedFilamentDefinitions = recipe,
+        )
+        val (okWith, gcodeWith) = sliceAsset("tetrahedron.stl", cfgWith)
+        assertTrue("Slice with mixed-filament recipe must succeed", okWith)
+        assertNotNull("G-code must be produced", gcodeWith)
+        assertTrue(
+            "G-code must contain the mixed_filament_definitions key when SliceConfig sets it. " +
+                "Recipe '$recipe' did not appear in G-code — the wiring is broken.",
+            gcodeWith!!.contains("mixed_filament_definitions") && gcodeWith.contains(recipe),
+        )
+
+        // (2) Without the recipe (default empty string), the key must be absent
+        // — this proves the empty-default path correctly omits the key, letting
+        // an embedded 3MF's project_settings.config value win.
+        val cfgWithout = DEFAULT_CONFIG.copy(extruderCount = 2)
+        val (okWithout, gcodeWithout) = sliceAsset("tetrahedron.stl", cfgWithout)
+        assertTrue("Slice without recipe must succeed", okWithout)
+        assertNotNull("G-code must be produced", gcodeWithout)
+        assertFalse(
+            "G-code must NOT contain a non-empty mixed_filament_definitions value when SliceConfig leaves the field empty. " +
+                "Empty-string default must omit the key so embedded profile values can survive.",
+            gcodeWithout!!.contains("mixed_filament_definitions = $recipe") ||
+                gcodeWithout.contains("mixed_filament_definitions = 1,2,1,50"),
+        )
+    }
+
     // B107: bed temp set by user must not be silently bumped +5 for the first layer.
     // sapil_print.cpp previously hardcoded hot_plate_temp_initial_layer = bedTemp + 5,
     // causing the printer to run at 70°C when the user set 65°C.
