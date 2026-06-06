@@ -33,7 +33,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.aipaint.AiPaintMeshBuilder
 import com.u1.slicer.aipaint.AiPaintResultState
 import com.u1.slicer.aipaint.AiPaintViewModel
-import com.u1.slicer.aipaint.SegmentationCascade
 import com.u1.slicer.viewer.ModelViewerView
 
 /**
@@ -56,8 +55,11 @@ internal fun AiPaintViewer(
     onPaintTriangles: (List<Int>, Int) -> Unit,
     onBrushStrokeStart: () -> Unit,
     onLassoLoop: (List<Int>) -> Unit,
-    /** fix38.1: SLOT-indexed palette (size = TARGET_SLOTS = 4). The renderer applies
-     *  palette[triangleRegions[t]] where triangleRegions[t] stores the slot byte 0..3. */
+    /** fix38.1 / M3-B: SLOT-indexed EXTENDED palette. Entries 0..3 are the physical
+     *  slots (E1-E4); entries 4..(3+nMix) are the active mix-slot blend colours appended
+     *  in MixSlotOrdering order. The renderer applies palette[triangleRegions[t]] where
+     *  triangleRegions[t] stores the slot byte 0..(3+nMix) — physical bytes 0..3 and mix
+     *  bytes >= 4. */
     slotPaletteFloats: List<FloatArray>,
     lassoSelection: Set<Int> = emptySet(),
     highlightedTriangles: Set<Int> = emptySet(),
@@ -254,10 +256,16 @@ internal fun AiPaintViewer(
         fun displayToSubsampled(i: Int): Int = (i / strideForMembership).coerceIn(0, maxSub)
         when {
             highlightedTriangles.isNotEmpty() -> {
-                val slotCount = SegmentationCascade.TARGET_SLOTS
-                val baseSlotColours = (0 until slotCount).map { i ->
-                    regionPalette.getOrNull(i) ?: floatArrayOf(0.55f, 0.55f, 0.55f, 1f)
-                }
+                // I-1: build the base palette over the FULL extended palette (physical
+                // slots 0..3 PLUS one entry per active mix at byte >= 4), mirroring the
+                // non-highlight branch (`AiPaintMeshBuilder.regionPalette(regionPalette)`).
+                // The previous code clamped to TARGET_SLOTS (4) and built only 4 entries,
+                // so during a highlight a mix-slot triangle (byte >= 4) rendered as E4's
+                // colour instead of its blend. Using the full palette and offsetting the
+                // faded copy by the palette size keeps mix bytes pointing at their real
+                // blend (highlighted) or its faded variant (dimmed).
+                val baseSlotColours = AiPaintMeshBuilder.regionPalette(regionPalette)
+                val paletteSize = baseSlotColours.size
                 val fadedSlotColours = baseSlotColours.map { c ->
                     floatArrayOf(
                         c[0] * 0.25f + 0.04f,
@@ -267,9 +275,9 @@ internal fun AiPaintViewer(
                     )
                 }
                 val overlay = ByteArray(displayRegions.size) { i ->
-                    val baseSlot = (displayRegions[i].toInt() and 0xFF).coerceIn(0, slotCount - 1)
+                    val baseSlot = (displayRegions[i].toInt() and 0xFF).coerceIn(0, paletteSize - 1)
                     if (displayToSubsampled(i) in highlightedTriangles) baseSlot.toByte()
-                    else (baseSlot + slotCount).toByte()
+                    else (baseSlot + paletteSize).toByte()
                 }
                 v.updateExtruderIndices(overlay)
                 v.recolorMesh(baseSlotColours + fadedSlotColours)

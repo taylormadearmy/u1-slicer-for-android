@@ -5102,8 +5102,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     filamentNozzleTempInitialLayers = filamentArrays.nozzleTempInitialLayers,
                     filamentBedTempInitialLayers = filamentArrays.bedTempInitialLayers,
                     filamentCosts = filamentArrays.costs,
+                    // C-1 part B: serialize MUST be called with the PHYSICAL filament base
+                    // (TARGET_SLOTS = 4), NOT sliceConfig.extruderCount. The painted bytes
+                    // for a mix are 4 + k (paint state 5 + k), which only line up with the
+                    // recipe's mix virtual id (numPhysical + 1 + k = 5 + k) when numPhysical
+                    // is 4. sliceConfig.extruderCount is effectiveExtruderCount =
+                    // max(extruderCount, supportFilament, supportInterfaceFilament) and can be
+                    // > 4 (supports) or, on a partially-painted model, < 4 — either way it
+                    // would skew the mix component validation / id base. serialize() returns
+                    // "" when no mixes exist, so non-full-spectrum slices are unaffected.
+                    // NOTE: this aligns the Kotlin recipe with the documented slot-id model;
+                    // see the C-1 part-B concern in the branch report re: the native engine
+                    // deriving num_physical from filament_diameter.size() (= 4 + nMix).
                     mixedFilamentDefinitions = mixedFilamentManager.serialize(
-                        numPhysicalFilaments = sliceConfig.extruderCount
+                        numPhysicalFilaments = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
                     ),
                 )
                 val result = native.slice(jniSliceConfig)

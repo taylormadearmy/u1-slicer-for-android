@@ -161,15 +161,20 @@ fun U1NavGraph(
             val container = (navController.context.applicationContext as U1SlicerApplication).container
             val aiVm = container.aiPaintViewModel
             val uiState by aiVm.uiState.collectAsState()
-            // M3-Phase-B/F1: wire dynamic slot ceiling so mix slots (ids ≥ numPhysical)
-            // are accepted by the three paint guards in AiPaintViewModel.
-            // SideEffect runs synchronously each recomposition, keeping the lambda
-            // fresh whenever extruderCount or projectMixes change.
-            val slicerConfig by viewModel.config.collectAsState()
+            // M3-Phase-B/F1: wire the slot ceiling so mix slots (ids ≥ numPhysical)
+            // are accepted by the three paint guards in AiPaintViewModel. SideEffect
+            // runs synchronously each recomposition, keeping the lambda fresh whenever
+            // the active mix set changes.
+            // C-1: the Smart Paint surface is ALWAYS a fixed 4-physical-slot space
+            // (SegmentationCascade.TARGET_SLOTS). Do NOT derive numPhysical from
+            // slicerConfig.extruderCount — a freshly loaded single-colour STL has
+            // extruderCount = 1, which would collapse the picker/palette to 1 chip,
+            // reject E2/E3/E4 reassignment, and place mix virtual ids at 1+k (colliding
+            // with physical slots in the always-4-physical painted file).
+            val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
             SideEffect {
                 aiVm.slotCeiling = {
-                    val n = slicerConfig.extruderCount.coerceAtLeast(1)
-                    n + viewModel.mixedFilamentManager.activeMixCount(n)
+                    numPhysical + viewModel.mixedFilamentManager.activeMixCount(numPhysical)
                 }
             }
             // fix37: build the full 4-slot palette from the user's extruder presets directly.
@@ -192,8 +197,7 @@ fun U1NavGraph(
             // so the provider lambda can capture it.
             SideEffect {
                 aiVm.mixDisplayColoursProvider = {
-                    val n = slicerConfig.extruderCount.coerceAtLeast(1)
-                    viewModel.mixedFilamentManager.activeOrder(n).map { row ->
+                    viewModel.mixedFilamentManager.activeOrder(numPhysical).map { row ->
                         val a = filamentColours.getOrNull(row.componentA - 1) ?: "#888888"
                         val b = filamentColours.getOrNull(row.componentB - 1) ?: "#888888"
                         com.u1.slicer.aipaint.ColourMatch.naiveBlendHex(a, b, row.mixBPercent)
@@ -251,7 +255,7 @@ fun U1NavGraph(
                 filamentColours = filamentColours,
                 projectMixes = projectMixes,
                 libraryMixes = libraryMixes,
-                numPhysical = slicerConfig.extruderCount.coerceAtLeast(1),
+                numPhysical = numPhysical,
                 onUsePainting = {
                     finalizeScope.launch {
                         val finalPath = aiVm.finalizePainting()

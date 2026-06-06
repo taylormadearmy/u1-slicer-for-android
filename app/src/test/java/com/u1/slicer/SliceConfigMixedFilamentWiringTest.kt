@@ -23,10 +23,14 @@ class SliceConfigMixedFilamentWiringTest {
             saveProject = {}, saveLibrary = {},
         )
         mgr.add(1, 2, 50, MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
-        // Simulate what SlicerViewModel does just before slice():
+        // Simulate what SlicerViewModel does just before slice(): C-1 part B — serialize
+        // is called with the fixed PHYSICAL base (TARGET_SLOTS = 4), NOT extruderCount, so
+        // a mix's virtual id lines up with the painted byte (4 + k → engine state 5 + k).
         val cfg = com.u1.slicer.data.SliceConfig(
             extruderCount = 2,
-            mixedFilamentDefinitions = mgr.serialize(numPhysicalFilaments = 2),
+            mixedFilamentDefinitions = mgr.serialize(
+                numPhysicalFilaments = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+            ),
         )
         assertTrue(cfg.mixedFilamentDefinitions.startsWith("1,2,1,1,50,0,g,w,m0,"))
     }
