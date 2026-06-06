@@ -132,6 +132,13 @@ assigns virtual ids in the SAME order (project rows first at `numPhysical+1…`,
 The picker's combined-list order, the manager's serialize order, and the painted byte values
 must be derived from one shared ordering. Tests assert this invariant directly.
 
+**`numPhysical` must mean one thing everywhere.** The painted slot byte, the picker's
+`numPhysical + index`, and the engine's virtual-id base all hinge on `numPhysical`. It must be
+the *same* value Phase A already passes to `MixedFilamentManager.serialize(numPhysical)` at
+`SlicerViewModel ~:5105` (the engine's physical filament count) — not a separately-derived or
+hardcoded `4`. Confirm that convention during F1 and thread the single value through; a mismatch
+silently shifts every virtual id.
+
 ## Components
 
 ### Foundation
@@ -210,7 +217,7 @@ user reassigns / creates mixes as desired → (same accept → slice path as abo
 Red-green TDD per `CLAUDE.md`. New tests:
 
 **JVM unit**
-- `ColourPaletteResolverTest` (C3): empty mixes, mix closer than any physical, library mix
+- `ClosestColourMatcherTest` (C3): empty mixes, mix closer than any physical, library mix
   preferred when closest, ΔE tie-break determinism, hex parsing.
 - `NaiveBlendTest` (F3): two-component RGB blend at ratio endpoints + midpoints.
 - `SlotIdOrderingTest` (invariant): the picker combined-order, `serialize()` virtual-id order,
@@ -225,7 +232,7 @@ Red-green TDD per `CLAUDE.md`. New tests:
 - `MixedSlotSwatch` renders for a region whose slot ≥ numPhysical.
 
 **Instrumented (`app/src/androidTest/`)**
-- `smartPaint_assignMixSlot_paintedF3mfCarriesVirtualId`: load fixture, configure a project
+- `smartPaint_assignMixSlot_painted3mfCarriesVirtualId`: load fixture, configure a project
   mix, assign a region to it, write the 3MF, assert ≥1 triangle's filament id ≥ 4 and that it
   matches the serialize() virtual id.
 - `smartPaint_mixRegion_slicesWithRecipe`: the painted 3MF + recipe slices and the G-code
