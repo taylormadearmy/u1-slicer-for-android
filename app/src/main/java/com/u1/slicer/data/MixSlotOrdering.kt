@@ -29,9 +29,9 @@ object MixSlotOrdering {
         return out
     }
 
-    /** 0-based slot id (= per-triangle paint byte) for the index-th entry of [ordered]. */
-    fun slotIdFor(ordered: List<MixedFilamentRow>, index: Int, numPhysical: Int): Int =
-        numPhysical + index
+    /** 0-based paint-byte / picker-chip id for the index-th active mix: numPhysical + index.
+     *  The first mix slot gets byte value `numPhysical` (physical slots occupy 0..numPhysical-1). */
+    fun slotIdFor(index: Int, numPhysical: Int): Int = numPhysical + index
 
     /** Inverse: the [ordered] index for a slot id, or -1 if it's a physical slot / out of range. */
     fun indexForSlot(slotId: Int, numPhysical: Int, orderedSize: Int): Int {

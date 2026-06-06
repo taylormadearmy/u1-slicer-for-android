@@ -137,8 +137,7 @@ class MixedFilamentManager(
             .joinToString(";") { serializeRow(it) }
 
     /** Number of active mix slots for the current project given [numPhysicalFilaments]. */
-    fun activeMixCount(numPhysicalFilaments: Int): Int =
-        MixSlotOrdering.activeOrder(_projectMixes.value, _libraryMixes.value, numPhysicalFilaments).size
+    fun activeMixCount(numPhysicalFilaments: Int): Int = activeOrder(numPhysicalFilaments).size
 
     /** The active ordering — for the picker and import auto-assign. */
     fun activeOrder(numPhysicalFilaments: Int): List<MixedFilamentRow> =
