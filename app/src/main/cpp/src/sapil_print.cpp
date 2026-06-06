@@ -993,6 +993,30 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // UI lands.
                     "nozzle_temperature",
                     "nozzle_temperature_initial_layer",
+                    // Full-spectrum mixed-filament keys (stage 2; PR #375 in v2.3.3).
+                    // The recipe string + 18 scalar tuning keys. Lets embedded 3MF
+                    // project_settings.config drive mix behavior. Recipe is also
+                    // exposed via SliceConfig.mixed_filament_definitions; the other
+                    // 18 keys are profile-driven only until M3 exposes them.
+                    "mixed_filament_definitions",
+                    "mixed_filament_gradient_mode",
+                    "mixed_filament_height_lower_bound",
+                    "mixed_filament_height_upper_bound",
+                    "mixed_filament_advanced_dithering",
+                    "mixed_filament_component_bias_enabled",
+                    "mixed_filament_surface_indentation",
+                    "mixed_filament_region_collapse",
+                    "mixed_color_layer_height_a",
+                    "mixed_color_layer_height_b",
+                    "mixed_filament_pointillism_pixel_size",
+                    "mixed_filament_pointillism_line_gap",
+                    "dithering_z_step_size",
+                    "dithering_local_z_mode",
+                    "dithering_local_z_whole_objects",
+                    "dithering_local_z_infill",
+                    "dithering_local_z_direct_multicolor",
+                    "dithering_step_painted_zones_only",
+                    "local_z_wipe_tower_purge_lines",
                     nullptr
                 };
                 for (const char** k = profile_keys; *k; ++k) {
