@@ -132,17 +132,17 @@ class MixedFilamentManager(
      * separated by `;`. Empty string when no rows are present (engine treats
      * this as "no mixing").
      */
-    fun serialize(numPhysicalFilaments: Int): String {
-        val rows = mutableListOf<String>()
-        for (r in _projectMixes.value) rows.add(serializeRow(r))
-        for (r in _libraryMixes.value) {
-            if (r.componentA > numPhysicalFilaments || r.componentB > numPhysicalFilaments) continue
-            // Skip library rows already promoted from project (they're in both lists).
-            if (_projectMixes.value.any { it.id == r.id }) continue
-            rows.add(serializeRow(r))
-        }
-        return rows.joinToString(";")
-    }
+    fun serialize(numPhysicalFilaments: Int): String =
+        MixSlotOrdering.activeOrder(_projectMixes.value, _libraryMixes.value, numPhysicalFilaments)
+            .joinToString(";") { serializeRow(it) }
+
+    /** Number of active mix slots for the current project given [numPhysicalFilaments]. */
+    fun activeMixCount(numPhysicalFilaments: Int): Int =
+        MixSlotOrdering.activeOrder(_projectMixes.value, _libraryMixes.value, numPhysicalFilaments).size
+
+    /** The active ordering — for the picker and import auto-assign. */
+    fun activeOrder(numPhysicalFilaments: Int): List<MixedFilamentRow> =
+        MixSlotOrdering.activeOrder(_projectMixes.value, _libraryMixes.value, numPhysicalFilaments)
 
     private fun serializeRow(r: MixedFilamentRow): String {
         val distMode = when (r.distributionMode) {
