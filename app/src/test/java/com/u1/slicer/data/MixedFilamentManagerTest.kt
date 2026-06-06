@@ -94,4 +94,102 @@ class MixedFilamentManagerTest {
         val library = mgr.libraryMixes.first()
         assertEquals(0, library.size)
     }
+
+    @Test
+    fun `serialize emits empty string when no rows`() = runTest {
+        val mgr = newManager()
+        assertEquals("", mgr.serialize(numPhysicalFilaments = 4))
+    }
+
+    @Test
+    fun `serialize emits engine row format for a single project row`() = runTest {
+        val mgr = newManager()
+        val r = mgr.add(componentA = 1, componentB = 2, mixBPercent = 50,
+            distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        val out = mgr.serialize(numPhysicalFilaments = 4)
+        // Engine format (mirrors libslic3r/MixedFilament.cpp::serialize_custom_entries):
+        //   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g,w,m<dist>,z0,xa0,xb0,d0,o0,u<stable_id>
+        assertEquals("1,2,1,1,50,0,g,w,m0,z0,xa0,xb0,d0,o0,u${r.id}", out)
+    }
+
+    @Test
+    fun `serialize concatenates multiple rows with semicolon`() = runTest {
+        val mgr = newManager()
+        val r1 = mgr.add(1, 2, 50, MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        val r2 = mgr.add(2, 3, 33, MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS)
+        val out = mgr.serialize(numPhysicalFilaments = 4)
+        val expected =
+            "1,2,1,1,50,0,g,w,m0,z0,xa0,xb0,d0,o0,u${r1.id}" +
+            ";" +
+            "2,3,1,1,33,0,g,w,m1,z0,xa0,xb0,d0,o0,u${r2.id}"
+        assertEquals(expected, out)
+    }
+
+    @Test
+    fun `serialize layer cycle uses m0 and same layer dots uses m1`() = runTest {
+        val mgr = newManager()
+        val rL = mgr.add(1, 2, 50, MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        val rD = mgr.add(1, 3, 50, MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS)
+        val out = mgr.serialize(numPhysicalFilaments = 4).split(";")
+        assertTrue(out[0].contains(",m0,"))
+        assertFalse(out[0].contains(",m1,"))
+        assertTrue(out[1].contains(",m1,"))
+        assertFalse(out[1].contains(",m0,"))
+    }
+
+    @Test
+    fun `serialize skips library rows whose components exceed numPhysicalFilaments`() = runTest {
+        // Library rows referencing slots beyond the current physical count must be
+        // hidden from the engine — they were created in a richer project and are
+        // unusable here.
+        val mgr = MixedFilamentManager(
+            loadProject = { emptyList() },
+            loadLibrary = {
+                listOf(
+                    MixedFilamentRow(
+                        id = 100L,
+                        componentA = 1,
+                        componentB = 4, // beyond a 2-extruder project
+                        mixBPercent = 50,
+                        distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+                        label = "test",
+                        inLibrary = true,
+                    ),
+                    MixedFilamentRow(
+                        id = 200L,
+                        componentA = 1,
+                        componentB = 2, // fits in a 2-extruder project
+                        mixBPercent = 25,
+                        distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+                        label = "test",
+                        inLibrary = true,
+                    ),
+                )
+            },
+            saveProject = {},
+            saveLibrary = {},
+        )
+        val out = mgr.serialize(numPhysicalFilaments = 2)
+        assertEquals("1,2,1,1,25,0,g,w,m0,z0,xa0,xb0,d0,o0,u200", out)
+    }
+
+    @Test
+    fun `serialize concatenates project rows then library rows`() = runTest {
+        val mgr = MixedFilamentManager(
+            loadProject = { emptyList() },
+            loadLibrary = {
+                listOf(MixedFilamentRow(999L, 1, 4, 25,
+                    MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+                    "lib", true))
+            },
+            saveProject = {},
+            saveLibrary = {},
+        )
+        val r1 = mgr.add(1, 2, 50, MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        val out = mgr.serialize(numPhysicalFilaments = 4)
+        val rows = out.split(";")
+        assertEquals(2, rows.size)
+        assertTrue(rows[0].startsWith("1,2,"))   // project row first
+        assertTrue(rows[1].startsWith("1,4,"))   // library row second
+    }
 }

@@ -120,4 +120,39 @@ class MixedFilamentManager(
         saveProject(_projectMixes.value)
         saveLibrary(_libraryMixes.value)
     }
+
+    /**
+     * Engine recipe string for `mixed_filament_definitions`. Project rows
+     * first, then library rows. Library rows referencing slots beyond
+     * `numPhysicalFilaments` are silently skipped (incompatible with the
+     * current project).
+     *
+     * Format mirrors `libslic3r/MixedFilament.cpp::serialize_custom_entries`:
+     *   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g,w,m<dist>,z0,xa0,xb0,d0,o0,u<id>
+     * separated by `;`. Empty string when no rows are present (engine treats
+     * this as "no mixing").
+     */
+    fun serialize(numPhysicalFilaments: Int): String {
+        val rows = mutableListOf<String>()
+        for (r in _projectMixes.value) rows.add(serializeRow(r))
+        for (r in _libraryMixes.value) {
+            if (r.componentA > numPhysicalFilaments || r.componentB > numPhysicalFilaments) continue
+            // Skip library rows already promoted from project (they're in both lists).
+            if (_projectMixes.value.any { it.id == r.id }) continue
+            rows.add(serializeRow(r))
+        }
+        return rows.joinToString(";")
+    }
+
+    private fun serializeRow(r: MixedFilamentRow): String {
+        val distMode = when (r.distributionMode) {
+            MixedFilamentRow.MixDistributionMode.LAYER_CYCLE -> 0
+            MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS -> 1
+        }
+        // enabled=1, custom=1 for any user-created row.
+        // pointillism_all_filaments=0 (not used in v1).
+        // gradient_component_ids = empty, gradient_component_weights = empty (no gradient in v1).
+        // local_z_max_sublayers=0, surface_offsets=0, deleted=0, origin_auto=0.
+        return "${r.componentA},${r.componentB},1,1,${r.mixBPercent},0,g,w,m$distMode,z0,xa0,xb0,d0,o0,u${r.id}"
+    }
 }
