@@ -155,6 +155,7 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
     config.filament_nozzle_temp_initial_layers = getIntArray("filamentNozzleTempInitialLayers");
     config.filament_bed_temp_initial_layers = getIntArray("filamentBedTempInitialLayers");
     config.filament_costs = getFloatArray("filamentCosts");
+    config.mixed_filament_definitions = getString("mixedFilamentDefinitions");
 
     env->DeleteLocalRef(cls);
     return config;

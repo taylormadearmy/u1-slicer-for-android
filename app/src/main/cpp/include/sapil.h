@@ -121,6 +121,9 @@ struct SliceConfig {
     std::vector<int>   filament_nozzle_temp_initial_layers;
     std::vector<int>   filament_bed_temp_initial_layers;
     std::vector<float> filament_costs;
+
+    // Full-spectrum mixed-filament recipe (stage 2; serialized MixedFilamentManager output)
+    std::string mixed_filament_definitions = "";
 };
 
 // ---- Model Info ----
