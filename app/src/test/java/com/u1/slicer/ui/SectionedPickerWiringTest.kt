@@ -13,8 +13,8 @@ class SectionedPickerWiringTest {
             src.contains("SectionedSlotPicker("))
     }
     @Test fun filtersLibraryToMatchActiveOrder() {
-        // the invariant filter must be present (id-not-in-project + extruder bound)
-        assertTrue(src.contains("componentA <= numPhysical") || src.contains("componentA <= numPhysical"))
-        assertTrue(src.contains("none { it.id =="))
+        assertTrue("library filter must bound componentA", src.contains("componentA <= numPhysical"))
+        assertTrue("library filter must bound componentB", src.contains("componentB <= numPhysical"))
+        assertTrue("library filter must dedup against project ids", src.contains("none { it.id =="))
     }
 }

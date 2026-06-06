@@ -187,7 +187,7 @@ fun AiPaintResultScreen(
                         findNodeById(withCustom, id)
                     }
 
-                    // Live 3D viewer — wrapped in a Box so the HighlightSlotPicker overlay can
+                    // Live 3D viewer — wrapped in a Box so the SectionedSlotPicker overlay can
                     // float at the bottom of the viewer when a region is selected.
                     Box(
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f),

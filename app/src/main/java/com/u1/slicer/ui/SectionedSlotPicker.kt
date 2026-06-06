@@ -3,6 +3,7 @@ package com.u1.slicer.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -142,6 +143,7 @@ private fun MixSlotChip(
         modifier = Modifier
             .size(40.dp)
             .clip(CircleShape)
+            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape) else Modifier)
             .background(Color.Transparent),
         contentAlignment = Alignment.Center,
     ) {
@@ -156,13 +158,5 @@ private fun MixSlotChip(
                     onLongClick = onLongClick,
                 ),
         )
-        if (selected) {
-            // Selection ring overlay
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .clip(CircleShape),
-            )
-        }
     }
 }
