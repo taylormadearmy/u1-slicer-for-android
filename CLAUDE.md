@@ -302,6 +302,22 @@ For clarity: rebuilding the native library is not something to avoid on principl
 
 The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
 
+> **CRITICAL: Commit orca submodule source changes BEFORE deploying a new `.so`.**
+> In 2026-05 the F71 patch (GCode.cpp EXCLUDE_OBJECT_DEFINE for all gflavors) was
+> applied as uncommitted modifications, the .so was built and committed, but the
+> source change was never committed to the orca fork. When v2.3.3 was rebased, the
+> patch was silently lost — only caught by chance via test regression. **Two
+> protections are in place; both ride on the same submodule-clean invariant:**
+>
+> 1. **`scripts/install-hooks.sh`** — run once per clone. Installs a pre-commit
+>    hook that refuses to commit if `libprusaslicer-jni.so` is staged AND the
+>    orca submodule has uncommitted changes.
+> 2. **`scripts/rebuild-native-so.sh`** — wrapper for the rebuild flow that
+>    refuses to copy the freshly-built .so into `jniLibs/` when the submodule
+>    is dirty. Use this instead of manual `ninja + llvm-strip + cp` whenever
+>    you can (it also runs the size / clang-17 / 16KB-align / JNI-count checks
+>    automatically).
+
 > **CRITICAL: Must use NDK 26 (Clang 17).** NDK 25 (Clang 14) produces different code generation
 > for OrcaSlicer's paint segmentation, causing B62 regression (H2C benchy 436 vs 840 tool changes).
 > Always verify the compiler: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17`.

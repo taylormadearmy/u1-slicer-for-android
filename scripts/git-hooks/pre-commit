@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Pre-commit hook — protects against committing libprusaslicer-jni.so
+# while the orca submodule has uncommitted source modifications.
+#
+# Why: in 2026-05 the F71 "exclude_object" patch was applied as
+# uncommitted modifications in the orca submodule, the .so was built
+# and committed to this repo, but the source change was never committed
+# to the orca fork. When the v2.3.3 engine bump (M1 stage 1) rebased
+# the patch stack, F71's patch wasn't there — silently lost. The
+# regression-only test sweep caught it, but only by chance.
+#
+# This hook makes that bug class impossible: if a commit stages
+# libprusaslicer-jni.so, the orca submodule MUST be clean (i.e. any
+# source changes are committed to the fork) at commit time.
+#
+# Install:  scripts/install-hooks.sh
+# Bypass:   git commit --no-verify  (don't, unless you really mean to)
+
+set -u
+
+# Path to the committed native library
+SO_PATH="app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so"
+SUBMODULE_PATH="app/src/main/cpp/orcaslicer"
+
+# Is the .so staged in this commit?
+if ! git diff --cached --name-only | grep -qFx "$SO_PATH"; then
+  exit 0
+fi
+
+# .so is staged — verify the orca submodule has no uncommitted source mods.
+# (`git -C submodule status --porcelain` is empty when clean; non-empty when
+# there are modified, added, deleted, or untracked tracked files.)
+if [ ! -d "$SUBMODULE_PATH/.git" ] && [ ! -f "$SUBMODULE_PATH/.git" ]; then
+  # Submodule not initialised in this worktree — can't verify. Refuse.
+  echo "PRE-COMMIT REFUSED:" >&2
+  echo "  $SO_PATH is staged but the orca submodule is not initialised in this worktree." >&2
+  echo "  Initialise the submodule and verify it's clean before committing the .so:" >&2
+  echo "    git submodule update --init --recursive $SUBMODULE_PATH" >&2
+  exit 1
+fi
+
+DIRTY=$(git -C "$SUBMODULE_PATH" status --porcelain)
+if [ -n "$DIRTY" ]; then
+  echo "PRE-COMMIT REFUSED:" >&2
+  echo "  $SO_PATH is staged for commit, but the orca submodule has" >&2
+  echo "  uncommitted source modifications:" >&2
+  echo "" >&2
+  echo "$DIRTY" | sed 's/^/    /' >&2
+  echo "" >&2
+  echo "  Commit those source changes to the orca fork FIRST. See ENGINE_UPGRADE_GUIDE.md." >&2
+  echo "  If you really need to commit the .so without committing the submodule changes," >&2
+  echo "  re-run with --no-verify (NOT RECOMMENDED — that's how F71 was lost in 2026-05)." >&2
+  exit 1
+fi
+
+exit 0
