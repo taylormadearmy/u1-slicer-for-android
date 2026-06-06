@@ -38,6 +38,8 @@ data class SessionState(
     val perVolumeExtruders: Map<String, Int> = emptyMap(), // key = "objIdx:volIdx", value = 1-indexed slot
     val splitObjectOperations: List<Int> = emptyList(),    // replay order: load-time-indexed obj indices that were split
     val splitVolumeOperations: List<String> = emptyList(), // replay order: "objIdx:volIdx" entries
+    // ---- M3-A (schema v3) ----
+    val projectMixes: List<MixedFilamentRow> = emptyList(),
 ) {
     data class AdditionalFile(val path: String, val plateIdx: Int)
 
@@ -68,7 +70,8 @@ data class SessionState(
             perObjectPoses == other.perObjectPoses &&
             perVolumeExtruders == other.perVolumeExtruders &&
             splitObjectOperations == other.splitObjectOperations &&
-            splitVolumeOperations == other.splitVolumeOperations
+            splitVolumeOperations == other.splitVolumeOperations &&
+            projectMixes == other.projectMixes
     }
 
     override fun hashCode(): Int {
@@ -94,6 +97,7 @@ data class SessionState(
         result = 31 * result + perVolumeExtruders.hashCode()
         result = 31 * result + splitObjectOperations.hashCode()
         result = 31 * result + splitVolumeOperations.hashCode()
+        result = 31 * result + projectMixes.hashCode()
         return result
     }
 
@@ -176,6 +180,20 @@ data class SessionState(
                 state.splitVolumeOperations.forEach { arr.put(it) }
                 obj.put("splitVolumeOperations", arr)
             }
+            // ---- M3-A: project mixes ----
+            val mixesArray = JSONArray()
+            for (m in state.projectMixes) {
+                mixesArray.put(JSONObject().apply {
+                    put("id", m.id)
+                    put("componentA", m.componentA)
+                    put("componentB", m.componentB)
+                    put("mixBPercent", m.mixBPercent)
+                    put("distributionMode", m.distributionMode.name)
+                    put("label", m.label)
+                    put("inLibrary", m.inLibrary)
+                })
+            }
+            obj.put("projectMixes", mixesArray)
             return obj.toString()
         }
 
@@ -245,6 +263,23 @@ data class SessionState(
                     val arr = obj.getJSONArray("splitVolumeOperations")
                     (0 until arr.length()).map { arr.getString(it) }
                 } else emptyList()
+                // ---- M3-A: project mixes ----
+                val mixesArray = obj.optJSONArray("projectMixes")
+                val projectMixes: List<MixedFilamentRow> = if (mixesArray == null) emptyList() else
+                    (0 until mixesArray.length()).map { i ->
+                        val o = mixesArray.getJSONObject(i)
+                        MixedFilamentRow(
+                            id = o.getLong("id"),
+                            componentA = o.getInt("componentA"),
+                            componentB = o.getInt("componentB"),
+                            mixBPercent = o.getInt("mixBPercent"),
+                            distributionMode = MixedFilamentRow.MixDistributionMode.valueOf(
+                                o.getString("distributionMode")
+                            ),
+                            label = o.getString("label"),
+                            inLibrary = o.getBoolean("inLibrary"),
+                        )
+                    }
 
                 SessionState(
                     modelName = modelName,
@@ -269,6 +304,7 @@ data class SessionState(
                     perVolumeExtruders = perVolumeExtruders,
                     splitObjectOperations = splitObjectOperations,
                     splitVolumeOperations = splitVolumeOperations,
+                    projectMixes = projectMixes,
                 )
             } catch (e: JSONException) {
                 null
