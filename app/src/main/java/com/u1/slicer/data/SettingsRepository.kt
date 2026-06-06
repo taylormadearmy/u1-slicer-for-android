@@ -42,6 +42,7 @@ class SettingsRepository(private val context: Context) {
         val AI_PAINT_PROVIDER = stringPreferencesKey("ai_paint_provider")
         val AI_PAINT_API_KEY = stringPreferencesKey("ai_paint_api_key")
         val AI_NAMING_ENABLED = booleanPreferencesKey("ai_naming_enabled")
+        val LIBRARY_MIXES = stringPreferencesKey("library_mixes")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.appDataStore.data.map { prefs ->
@@ -213,6 +214,57 @@ class SettingsRepository(private val context: Context) {
         context.appDataStore.edit { prefs ->
             prefs[Keys.AI_PAINT_PROVIDER] = provider
             prefs[stringPreferencesKey("ai_paint_key_$provider")] = apiKey
+        }
+    }
+
+    val libraryMixesFlow: Flow<List<MixedFilamentRow>> = context.appDataStore.data.map { prefs ->
+        decodeLibraryMixes(prefs[Keys.LIBRARY_MIXES] ?: "")
+    }
+
+    suspend fun setLibraryMixes(rows: List<MixedFilamentRow>) {
+        context.appDataStore.edit { prefs ->
+            prefs[Keys.LIBRARY_MIXES] = encodeLibraryMixes(rows)
+        }
+    }
+
+    companion object {
+
+        internal fun encodeLibraryMixes(rows: List<MixedFilamentRow>): String {
+            if (rows.isEmpty()) return ""
+            val arr = org.json.JSONArray()
+            for (r in rows) {
+                arr.put(org.json.JSONObject().apply {
+                    put("id", r.id)
+                    put("componentA", r.componentA)
+                    put("componentB", r.componentB)
+                    put("mixBPercent", r.mixBPercent)
+                    put("distributionMode", r.distributionMode.name)
+                    put("label", r.label)
+                    put("inLibrary", r.inLibrary)
+                })
+            }
+            return arr.toString()
+        }
+
+        internal fun decodeLibraryMixes(encoded: String): List<MixedFilamentRow> {
+            if (encoded.isEmpty()) return emptyList()
+            return try {
+                val arr = org.json.JSONArray(encoded)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    MixedFilamentRow(
+                        id = o.getLong("id"),
+                        componentA = o.getInt("componentA"),
+                        componentB = o.getInt("componentB"),
+                        mixBPercent = o.getInt("mixBPercent"),
+                        distributionMode = MixedFilamentRow.MixDistributionMode.valueOf(o.getString("distributionMode")),
+                        label = o.getString("label"),
+                        inLibrary = o.getBoolean("inLibrary"),
+                    )
+                }
+            } catch (e: org.json.JSONException) {
+                emptyList()
+            }
         }
     }
 
