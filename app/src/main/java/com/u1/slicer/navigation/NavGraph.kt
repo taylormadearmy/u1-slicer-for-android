@@ -164,8 +164,10 @@ fun U1NavGraph(
             // fresh whenever extruderCount or projectMixes change.
             val slicerConfig by viewModel.config.collectAsState()
             SideEffect {
-                val numPhysical = slicerConfig.extruderCount.coerceAtLeast(1)
-                aiVm.slotCeiling = { numPhysical + viewModel.mixedFilamentManager.activeMixCount(numPhysical) }
+                aiVm.slotCeiling = {
+                    val n = slicerConfig.extruderCount.coerceAtLeast(1)
+                    n + viewModel.mixedFilamentManager.activeMixCount(n)
+                }
             }
             // fix37: build the full 4-slot palette from the user's extruder presets directly.
             // viewModel.activeExtruderColors is filtered by `usedSlots` (which slots the loaded
