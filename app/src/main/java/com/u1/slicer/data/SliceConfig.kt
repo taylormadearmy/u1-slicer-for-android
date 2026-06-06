@@ -94,4 +94,7 @@ data class SliceConfig(
     @JvmField var filamentNozzleTempInitialLayers: IntArray = intArrayOf(),
     @JvmField var filamentBedTempInitialLayers: IntArray = intArrayOf(),
     @JvmField var filamentCosts: FloatArray = floatArrayOf(),
+
+    // Full-spectrum mixed-filament recipe (stage 2; serialized MixedFilamentManager output)
+    @JvmField var mixedFilamentDefinitions: String = "",
 )
