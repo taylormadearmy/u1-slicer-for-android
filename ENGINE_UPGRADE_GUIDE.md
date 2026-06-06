@@ -4,41 +4,95 @@ How to update the OrcaSlicer submodule to a newer version (Snapmaker Orca or Ful
 
 ## Current State
 
-- **Submodule**: `app/src/main/cpp/orcaslicer` pinned to Snapmaker Orca 2.2.4 (commit `f11a7bf`)
-- **Our patches**: ~2,400 lines of local modifications on top of the pinned commit (not committed into the submodule's own repo)
-- **Pre-built .so**: `app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so` (committed, ~20MB stripped)
-- **Build config**: CMake disabled in `build.gradle` by default; enabled temporarily for native rebuilds
+- **Submodule**: `app/src/main/cpp/orcaslicer` pinned at a commit on **our fork** `github.com/taylormadearmy/OrcaSlicer.git`. The current pin (main as of 2026-06-06) is `bd66b99b2d` — *upstream Snapmaker Orca 2.2.4 + 8 Android patch commits on top*. The orca submodule's remote is **our fork**, not Snapmaker's directly.
+- **Our patches**: a clean linear stack of commits on top of the upstream Snapmaker base, living in our fork. Inspect via `git -C app/src/main/cpp/orcaslicer log v2.2.4..HEAD`. Each patch has its own commit message and rationale. **Do not assume patches live as uncommitted modifications** — that was the pre-2026-06 mechanism and the v2.3.3 bump (M1 stage 1) discovered it was lossy (commits like F71's GCode.cpp extension got built into a .so but never committed to the fork).
+- **Pre-built .so**: `app/src/main/jniLibs/arm64-v8a/libprusaslicer-jni.so` (committed, ~20MB stripped, Release, 16KB-page-aligned, NDK 26 / Clang 17).
+- **Build config**: gradle's externalNativeBuild is disabled by default — APK builds package the committed `.so` directly. Native rebuilds happen out-of-band via manual CMake.
 
 ## Step-by-Step Upgrade Process
 
-### 1. Save current patches
+The upgrade mechanic is **`git rebase`** in the orca submodule, **not** textual patch re-application. Each Android patch is a real commit on our fork; the rebase replays them onto the new upstream tag with proper 3-way merge conflict resolution.
 
-Before touching the submodule, export all current modifications:
+### 1. Identify the merge base + patch tip
 
-```bash
-cd app/src/main/cpp/orcaslicer
-git diff > ../orcaslicer-android-patches.diff
-```
-
-### 2. Update the submodule
+In the submodule, find the upstream commit immediately below your patch stack (the merge base with upstream) and the tip of your patch stack:
 
 ```bash
-cd app/src/main/cpp/orcaslicer
-git fetch origin
-git checkout <new-commit-or-tag>
-cd ../../../..
+git -C app/src/main/cpp/orcaslicer log --oneline <upstream-tag>..HEAD    # lists your patches above the upstream tag
+git -C app/src/main/cpp/orcaslicer merge-base HEAD origin/<upstream-branch>   # the upstream commit your stack sits on
 ```
 
-### 3. Re-apply patches
+For the current pin, the merge base with upstream `2.3.2` is `706508c` and the patch tip is `bd66b99`. There are 8 patch commits in between (+ 1 docs commit).
 
-Apply the saved diff. Expect merge conflicts in files that changed upstream:
+### 2. Fetch the new upstream tag
 
 ```bash
-cd app/src/main/cpp/orcaslicer
-git apply --3way ../orcaslicer-android-patches.diff
+git -C app/src/main/cpp/orcaslicer fetch --tags origin
+git -C app/src/main/cpp/orcaslicer tag --list 'v2.3.*'   # confirm the new tag exists
 ```
 
-If `--3way` fails on some hunks, apply manually using the patch catalog below.
+Our fork tracks Snapmaker's branches as remote refs — the upstream tags are already available without adding a separate Snapmaker remote.
+
+### 3. Rebase the patch stack onto the new tag
+
+Create a new branch for the rebase target and replay the patches:
+
+```bash
+git -C app/src/main/cpp/orcaslicer checkout -b feature/<new-tag>-android-<task> <new-tag>
+cd app/src/main/cpp/orcaslicer
+git rebase --onto feature/<new-tag>-android-<task> <merge-base> <patch-tip>
+cd -
+```
+
+For example, for the v2.3.3 bump in M1 stage 1:
+
+```bash
+git -C app/src/main/cpp/orcaslicer checkout -b feature/v2.3.3-android-m1 v2.3.3
+cd app/src/main/cpp/orcaslicer
+git rebase --onto feature/v2.3.3-android-m1 706508c bd66b99
+cd -
+```
+
+### 4. Resolve conflicts per commit
+
+The rebase will pause whenever a patch conflicts with upstream changes. For each conflict:
+
+- **Preserve every `#ifdef __ANDROID__ ... #endif` block** from the patch. Non-negotiable.
+- **Adopt the new upstream form** of any surrounding non-Android code.
+- **If upstream refactored the patch site** so the original code no longer applies, re-apply the patch's *intent* at the new equivalent site. Each commit's message describes its intent — read it.
+- **If upstream already does what the patch did**, run `git rebase --skip` and note it.
+
+Resolution commands:
+
+```bash
+git -C app/src/main/cpp/orcaslicer add <resolved-files>
+git -C app/src/main/cpp/orcaslicer rebase --continue
+```
+
+### 5. Smoke-check the rebase
+
+Before pushing, verify every Android guard survived conflict resolution:
+
+```bash
+# Count __ANDROID__ blocks at the old pin vs the rebased HEAD
+git -C app/src/main/cpp/orcaslicer grep -c '__ANDROID__' <old-pin> -- 'src/libslic3r/**' 'deps_src/clipper/**' | sort
+git -C app/src/main/cpp/orcaslicer grep -c '__ANDROID__' HEAD -- 'src/libslic3r/**' 'deps_src/clipper/**' | sort
+```
+
+The new counts must be ≥ old counts. Any drop means a guard was dropped during conflict resolution → re-examine.
+
+### 6. Push the rebased branch
+
+```bash
+git -C app/src/main/cpp/orcaslicer push -u origin feature/<new-tag>-android-<task>
+```
+
+Then update the parent repo's submodule pin in a commit:
+
+```bash
+git add app/src/main/cpp/orcaslicer
+git commit -m "chore(native): bump orca submodule to <new-tag> + Android patches"
+```
 
 ### 4. Rebuild the native library
 
