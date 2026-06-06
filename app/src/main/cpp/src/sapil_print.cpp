@@ -660,6 +660,16 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // EXCLUDE_OBJECT_END G-code markers so firmware can cancel individual objects mid-print.
     // OrcaSlicer defaults to false; enable unconditionally for all U1 prints.
     dpc.set_key_value("exclude_object", new Slic3r::ConfigOptionBool(true));
+
+    // Full-spectrum mixed-filament (stage 2): when the caller passed a
+    // recipe via SliceConfig.mixed_filament_definitions, write it into
+    // the engine's config key. Empty (default) is a no-op — engine
+    // default produces no mixing, and embedded-profile path's value
+    // (allowed via project_settings.config) survives untouched.
+    if (!config.mixed_filament_definitions.empty()) {
+        dpc.set_key_value("mixed_filament_definitions",
+            new Slic3r::ConfigOptionString(config.mixed_filament_definitions));
+    }
 }
 
 SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback progress) {
