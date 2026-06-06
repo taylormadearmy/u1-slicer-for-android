@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import com.u1.slicer.aipaint.AiRegionNode
+import com.u1.slicer.data.MixedFilamentRow
 
 /**
  * Top-level Compose surface for the segmentation tree. Flattens [tree] into a LazyColumn,
@@ -26,6 +27,9 @@ fun AiPaintTree(
     onSelectNode: (nodeId: Int) -> Unit,
     selectedNodeId: Int? = null,
     modifier: Modifier = Modifier,
+    numPhysical: Int = 4,
+    activeMixes: List<MixedFilamentRow> = emptyList(),
+    physicalColours: List<Color> = emptyList(),
 ) {
     val totalLeaves = remember(tree) { tree.sumOf { it.leafCount() } }
     val initialExpand = remember(tree, totalLeaves) {
@@ -56,6 +60,9 @@ fun AiPaintTree(
                 onSelectRow = { onSelectNode(node.region.id) },
                 selected = selectedNodeId == node.region.id,
                 slotPalette = slotPalette,
+                numPhysical = numPhysical,
+                activeMixes = activeMixes,
+                physicalColours = physicalColours,
             )
             HorizontalDivider()
         }

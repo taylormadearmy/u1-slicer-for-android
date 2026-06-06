@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.u1.slicer.aipaint.AiRegionNode
+import com.u1.slicer.data.MixedFilamentRow
 
 /** Returns black or white depending on which has more contrast against [color]. Uses the
  *  WCAG relative-luminance formula. Used for swatch ticks so they're visible on every slot. */
@@ -36,6 +37,9 @@ fun AiPaintTreeRow(
     slotPalette: List<Color>,
     selected: Boolean = false,
     modifier: Modifier = Modifier,
+    numPhysical: Int = 4,
+    activeMixes: List<MixedFilamentRow> = emptyList(),
+    physicalColours: List<Color> = emptyList(),
 ) {
     val rowBg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Row(
@@ -67,6 +71,9 @@ fun AiPaintTreeRow(
         // slot wouldn't visibly change the row's swatch (user complaint: "tapping a region in
         // the list does not seem to change the colour"). Parents with mixed children fall back
         // to dominantSlot for the primary + a diagonal stripe of secondarySlot.
+        // C2 (M3-Phase-B): leaf nodes whose slot >= numPhysical are mix slots — render the
+        // two-tone MixedSlotSwatch using componentA/B of the active mix, matching the pattern
+        // used by SectionedSlotPicker.MixSlotChip. Physical-slot leaves keep the existing path.
         val primarySlot = if (node.isLeaf) node.region.slot else node.dominantSlot()
         val primary = slotPalette.getOrNull(primarySlot)
             ?: remember(node) {
@@ -74,9 +81,25 @@ fun AiPaintTreeRow(
                     .getOrDefault(android.graphics.Color.GRAY)
                 Color(argb)
             }
-        val secondary = if (node.isLeaf) null else node.secondarySlot()?.let { slotPalette.getOrNull(it) }
+        val secondary = when {
+            node.isLeaf && primarySlot >= numPhysical -> {
+                // Mix slot leaf — secondary comes from the mix's componentB physical colour.
+                val mix = activeMixes.getOrNull(primarySlot - numPhysical)
+                mix?.let { physicalColours.getOrNull(it.componentB - 1) }
+            }
+            node.isLeaf -> null
+            else -> node.secondarySlot()?.let { slotPalette.getOrNull(it) }
+        }
+        val swatchPrimary = when {
+            node.isLeaf && primarySlot >= numPhysical -> {
+                // Mix slot leaf — primary comes from the mix's componentA physical colour.
+                val mix = activeMixes.getOrNull(primarySlot - numPhysical)
+                mix?.let { physicalColours.getOrNull(it.componentA - 1) } ?: primary
+            }
+            else -> primary
+        }
         MixedSlotSwatch(
-            primary = primary,
+            primary = swatchPrimary,
             secondary = secondary,
             size = 32.dp,
             modifier = Modifier.clickable { onTapSwatch() },

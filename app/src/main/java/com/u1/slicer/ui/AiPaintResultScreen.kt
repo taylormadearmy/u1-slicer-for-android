@@ -438,6 +438,9 @@ fun AiPaintResultScreen(
                         },
                         selectedNodeId = result.highlightComponentId,
                         modifier = Modifier.weight(1f),
+                        numPhysical = numPhysical,
+                        activeMixes = activeMixes,
+                        physicalColours = slotPalette.take(numPhysical),
                     )
 
                     if (!paintMode) {
