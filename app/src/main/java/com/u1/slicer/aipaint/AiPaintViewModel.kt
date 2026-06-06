@@ -29,6 +29,18 @@ import java.io.File
  */
 class AiPaintViewModel(application: Application) : AndroidViewModel(application) {
 
+    /**
+     * Upper bound (exclusive) for a valid slot id = numPhysical + active mix count.
+     * Defaults to the physical count (TARGET_SLOTS = 4) so callers that don't supply
+     * mixes behave exactly as before (no-regression contract: with zero mixes,
+     * slotCeiling() == TARGET_SLOTS == 4).
+     *
+     * Set by the Smart Paint screen entry point in NavGraph before the screen is shown,
+     * wiring the real { numPhysical + mixedFilamentManager.activeMixCount(numPhysical) }
+     * lambda from SlicerViewModel.
+     */
+    var slotCeiling: () -> Int = { TARGET_SLOTS }
+
     companion object {
         const val TARGET_SLOTS = SegmentationCascade.TARGET_SLOTS
 
@@ -483,7 +495,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         if (triangleIndices.isEmpty()) return
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         val state = current.state
-        if (toSlot !in 0 until TARGET_SLOTS) return
+        if (toSlot !in 0 until slotCeiling()) return
         val newTriRegions = state.triangleRegions.copyOf()
         val slot = toSlot.toByte()
         for (t in triangleIndices) if (t in newTriRegions.indices) newTriRegions[t] = slot
@@ -506,7 +518,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     fun setSegmentSlot(segmentId: Int, newSlot: Int) {
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         val state = current.state
-        if (newSlot !in 0 until TARGET_SLOTS) return
+        if (newSlot !in 0 until slotCeiling()) return
         pushUndo(state.triangleRegions)
         val newTriRegions = state.triangleRegions.copyOf()
         val newTree = state.tree.map { root -> reassignSlot(root, segmentId, newSlot, newTriRegions) }
@@ -524,7 +536,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
         if (pathIds.isEmpty()) return
         val current = _uiState.value as? AiPaintUiState.Result ?: return
         val state = current.state
-        if (newSlot !in 0 until TARGET_SLOTS) return
+        if (newSlot !in 0 until slotCeiling()) return
         pushUndo(state.triangleRegions)
         val newTriRegions = state.triangleRegions.copyOf()
         val newTree = state.tree.map { root -> reassignSubtree(root, pathIds, newSlot, newTriRegions) }

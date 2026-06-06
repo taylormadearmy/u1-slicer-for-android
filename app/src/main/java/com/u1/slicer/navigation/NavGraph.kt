@@ -1,6 +1,7 @@
 package com.u1.slicer.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -157,6 +158,15 @@ fun U1NavGraph(
             val container = (navController.context.applicationContext as U1SlicerApplication).container
             val aiVm = container.aiPaintViewModel
             val uiState by aiVm.uiState.collectAsState()
+            // M3-Phase-B/F1: wire dynamic slot ceiling so mix slots (ids ≥ numPhysical)
+            // are accepted by the three paint guards in AiPaintViewModel.
+            // SideEffect runs synchronously each recomposition, keeping the lambda
+            // fresh whenever extruderCount or projectMixes change.
+            val slicerConfig by viewModel.config.collectAsState()
+            SideEffect {
+                val numPhysical = slicerConfig.extruderCount.coerceAtLeast(1)
+                aiVm.slotCeiling = { numPhysical + viewModel.mixedFilamentManager.activeMixCount(numPhysical) }
+            }
             // fix37: build the full 4-slot palette from the user's extruder presets directly.
             // viewModel.activeExtruderColors is filtered by `usedSlots` (which slots the loaded
             // model actually uses) so on a single-colour plate it leaves the other 3 slots
