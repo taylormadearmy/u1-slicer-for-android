@@ -644,7 +644,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
         compactPreviewIndices(out);
     }
 
-    // F95: append negative/modifier-volume triangles as a contiguous trailing block so the
+    // F95: append negative-volume triangles as a contiguous trailing block so the
     // Android renderer can draw them translucent (desktop OrcaSlicer/PrusaSlicer parity).
     // These volumes are is_model_part()==false and are intentionally excluded from the
     // model-part passes above (and from total_tris/stride) — they are a Prepare-screen visual
@@ -653,6 +653,21 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     // Paint's volumeRanges (model parts only) stay aligned. The Kotlin side identifies the
     // block by g_preview_modifier_block_start, not by the tag value, so MeshData.recolor's
     // out-of-range/255-clamp contract is unaffected.
+    //
+    // modifier-preview-fix (B141): scope the trailing block to NEGATIVE_VOLUME only.
+    // The original F95 also included PARAMETER_MODIFIER, which broke B137's
+    // auxFan_modifierVolume_preservedAsModifierPart test — the aux-fan-cover-hex 3MF
+    // ships a 12-triangle Generic-Cube settings modifier (subtype="modifier_part") that
+    // does not need a visual overlay (it carries print-setting overrides, not geometry
+    // the user needs to see). F95's actual target is negative_part joint-clearance
+    // cutters (see negative-volume-articulated.3mf fixture + the F95 commit copy
+    // calling out "joint-clearance cutters"); the F95 test
+    // getPreparePreviewMesh_emitsTranslucentModifierBlock_forNegativeVolumeFixture
+    // uses only negative_part volumes and still passes with this scope. Restricting
+    // the overlay to negatives matches desktop OrcaSlicer's behaviour (modifiers are
+    // listed in the object tree but never get a translucent overlay) and restores the
+    // pre-F95 contract that PARAMETER_MODIFIER volumes are entirely excluded from the
+    // preview triangle stream.
     g_preview_modifier_block_start = -1;
     {
         const size_t model_part_tris = out.extruder_indices.size();
@@ -671,7 +686,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                 const Slic3r::Transform3d instance_matrix = instance->get_matrix();
                 for (const auto* volume : object->volumes) {
                     if (volume == nullptr) continue;
-                    if (!volume->is_negative_volume() && !volume->is_modifier()) continue;
+                    if (!volume->is_negative_volume()) continue;
                     auto its = volume->mesh().its;
                     if (its.indices.empty()) continue;
                     its_transform(its, volume->get_matrix(), true);
