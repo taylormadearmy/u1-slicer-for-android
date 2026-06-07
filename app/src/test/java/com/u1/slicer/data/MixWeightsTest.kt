@@ -14,6 +14,7 @@ class MixWeightsTest {
         assertEquals(100, MixWeights.normalize(listOf(1, 1, 1)).sum())
         assertEquals(100, MixWeights.normalize(listOf(60, 30, 10)).sum())
         assertEquals(true, MixWeights.normalize(listOf(99, 1, 1)).all { it >= 1 })
+        assertEquals(listOf(34, 33, 33), MixWeights.normalize(listOf(1, 1, 1)))
     }
 
     @Test fun rebalanceAfterType_lockedValueExactOthersScaleToFill() {
@@ -21,6 +22,7 @@ class MixWeightsTest {
         assertEquals(60, out[0])
         assertEquals(100, out.sum())
         assertEquals(true, out.all { it >= 1 })
+        assertEquals(listOf(60, 20, 20), out)
     }
 
     @Test fun rebalanceAfterType_clampsAndLeavesMinOneForOthers() {
@@ -43,12 +45,36 @@ class MixWeightsTest {
         assertEquals(3, out.size)
         assertEquals(100, out.sum())
         assertEquals(true, out.all { it >= 1 })
+        assertEquals(listOf(34, 33, 33), out)
     }
 
     @Test fun remove_dropsIndexAndRenormalizes() {
         val out = MixWeights.remove(listOf(60, 30, 10), index = 2)
         assertEquals(2, out.size)
         assertEquals(100, out.sum())
+        val out0 = MixWeights.remove(listOf(60, 30, 10), 0)
+        assertEquals(2, out0.size)
+        assertEquals(100, out0.sum())
+    }
+
+    @Test fun even_singleComponentIsHundred() {
+        assertEquals(listOf(100), MixWeights.even(1))
+    }
+
+    @Test fun rebalanceAfterDrag_clampsAtBoundaries() {
+        val base = listOf(30, 40, 30)
+        val low = MixWeights.rebalanceAfterDrag(base, leftIndex = 0, leftValue = 1)
+        assertEquals(1, low[0])
+        assertEquals(69, low[1])
+        assertEquals(100, low.sum())
+        val high = MixWeights.rebalanceAfterDrag(base, leftIndex = 0, leftValue = 100)
+        assertEquals(69, high[0])
+        assertEquals(1, high[1])
+        assertEquals(100, high.sum())
+    }
+
+    @Test fun even_alwaysSumsHundred_forTwoToFour() {
+        (2..4).forEach { assertEquals(100, MixWeights.even(it).sum()) }
     }
 
     @Test fun encodeIds_compactUnderTenElseSlash() {

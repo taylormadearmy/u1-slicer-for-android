@@ -5,6 +5,9 @@ package com.u1.slicer.data
  * sums to exactly 100 with every element >= 1 (a component is removed, never zeroed).
  * No Android dependencies — fully JVM-unit-testable.
  *
+ * Precondition: [normalize] (and all callers that go through it) requires the input list
+ * to have at most 100 elements. In practice the app uses 2..4 components.
+ *
  * Mirrors the native encoding in `libslic3r/MixedFilament.cpp`:
  *   ids     -> compact "123" when all <= 9, else slash form "1/12/3" (single >9 id -> "/12")
  *   weights -> slash-joined "50/30/20"
@@ -19,9 +22,11 @@ object MixWeights {
         return (0 until n).map { base + if (it < rem) 1 else 0 }
     }
 
-    /** Scale arbitrary positive weights to sum 100 with a floor of 1 per element. */
+    /** Scale arbitrary positive weights to sum 100 with a floor of 1 per element.
+     *  Requires [weights].size <= 100 (the deficit-correction loop assumes it). */
     fun normalize(weights: List<Int>): List<Int> {
         require(weights.isNotEmpty())
+        require(weights.size <= 100) { "normalize supports up to 100 components" }
         val clamped = weights.map { it.coerceAtLeast(1) }
         val total = clamped.sum()
         if (total == 100) return clamped
@@ -41,6 +46,7 @@ object MixWeights {
 
     /** Lock [index] to [value] (clamped so others keep >=1); other elements scale to fill the rest. */
     fun rebalanceAfterType(weights: List<Int>, index: Int, value: Int): List<Int> {
+        require(index in weights.indices) { "index out of range" }
         val n = weights.size
         if (n == 1) return listOf(100)
         val maxForIndex = 100 - (n - 1)
