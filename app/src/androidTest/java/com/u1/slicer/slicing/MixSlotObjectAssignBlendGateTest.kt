@@ -126,6 +126,35 @@ class MixSlotObjectAssignBlendGateTest {
             viewModel.perVolumeExtruders.value.values.any { it == mixSlot1Based },
         )
 
+        // ── 3b. BUG A — the Prepare PREVIEW palette must carry the mix's blend colour ──
+        // The slice (below) bakes the mix into the object extruder and blends correctly, but
+        // pre-fix the 3D Prepare preview rendered the object grey because no palette entry
+        // existed for the mix slot. meshAlignedFilamentColors must now expose the naive-blend
+        // colour at the mesh's compacted index for the assigned object. For a single-object STL
+        // fully assigned to mix slot 5, the only source extruder is 4 (0-based) → compacted mesh
+        // index 0 → palette[0] must be the E1(#FF0000)+E2(#00FF00) 50% blend = #808000.
+        waitUntil("preview palette carries mix blend colour", timeoutMs = 10_000L) {
+            viewModel.meshAlignedFilamentColors.value.isNotEmpty()
+        }
+        val previewPalette = viewModel.meshAlignedFilamentColors.value
+        val slotColors = viewModel.activeExtruderColors.value
+        Log.i("MixObjGate", "meshAlignedFilamentColors=$previewPalette slotColors=$slotColors")
+        assertTrue(
+            "GATE: object-assigned-mix preview palette must be non-empty. Got $previewPalette",
+            previewPalette.isNotEmpty(),
+        )
+        // The mix blends the live E1 + E2 slot colours @ 50%. Compute the expected blend from
+        // whatever the active slot presets actually are so the assertion is preset-independent.
+        val e1 = slotColors.getOrNull(0)?.takeIf { it.isNotBlank() } ?: "#888888"
+        val e2 = slotColors.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "#888888"
+        val expectedBlend = com.u1.slicer.aipaint.ColourMatch.naiveBlendHex(e1, e2, 50).uppercase()
+        Log.i("MixObjGate", "expected mix blend of E1=$e1 E2=$e2 @50% = $expectedBlend")
+        assertTrue(
+            "GATE: preview palette must contain the E1+E2 50% mix blend ($expectedBlend), " +
+                "not just a physical slot colour. Got ${previewPalette.map { it.uppercase() }}",
+            previewPalette.any { it.uppercase() == expectedBlend },
+        )
+
         // ── 4. Slice via the REAL path (startSlicing) ───────────────────────────────
         viewModel.startSlicing()
         waitUntil("object-assign slice complete", timeoutMs = 300_000L) {
@@ -203,5 +232,86 @@ class MixSlotObjectAssignBlendGateTest {
             "GATE: 50% mix must use both components roughly evenly. $diag",
             minComponent.toDouble() >= 0.30 * maxComponent,
         )
+    }
+
+    /**
+     * BUG B — the MODEL-WIDE assignment path (Filaments card Mixes subsection tap →
+     * [SlicerViewModel.setModelFilament]). Same blend GATE as the per-object path above, but
+     * driven through the model-wide API the always-visible Filaments card now uses. Also
+     * confirms a NORMAL (physical) model-wide assignment is unaffected (no high tool, single
+     * tool only).
+     */
+    @Test
+    fun modelAssignedToMixSlot_throughModelWidePath_resolvesToRealBlend() {
+        viewModel.mixedFilamentManager.add(
+            componentA = 1,
+            componentB = 2,
+            mixBPercent = 50,
+            distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+        )
+        assertTrue("STL fixture must be written", stl.length() > 1000)
+        viewModel.loadModelFromFile(stl)
+        waitUntil("STL model loaded or error") {
+            val s = viewModel.state.value
+            s is SlicerViewModel.SlicerState.ModelLoaded || s is SlicerViewModel.SlicerState.Error
+        }
+        assertTrue(
+            "GATE: STL must load to ModelLoaded. State=${viewModel.state.value}",
+            viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded,
+        )
+
+        val numPhysical = SegmentationCascade.TARGET_SLOTS
+        val mixSlot1Based = numPhysical + 0 + 1 // = 5
+
+        // ── Control: a NORMAL physical model-wide assignment must NOT blend ─────────────
+        viewModel.setModelFilament(2) // E2 (physical)
+        assertTrue(
+            "Model filament must aggregate to the assigned physical slot (2). " +
+                "Got ${viewModel.aggregatedModelFilament()}",
+            viewModel.aggregatedModelFilament() == 2,
+        )
+
+        // ── The mix model-wide assignment (the Bug B headline) ──────────────────────────
+        viewModel.setModelFilament(mixSlot1Based)
+        Log.i("MixModelGate", "Model assigned → mix slot $mixSlot1Based; " +
+            "perVolume=${viewModel.perVolumeExtruders.value} agg=${viewModel.aggregatedModelFilament()}")
+        assertTrue(
+            "Model-wide assign must record the mix id (5) on every volume. " +
+                "Got ${viewModel.perVolumeExtruders.value}",
+            viewModel.aggregatedModelFilament() == mixSlot1Based,
+        )
+
+        viewModel.startSlicing()
+        waitUntil("model-wide assign slice complete", timeoutMs = 300_000L) {
+            val s = viewModel.state.value
+            s is SlicerViewModel.SlicerState.SliceComplete || s is SlicerViewModel.SlicerState.Error
+        }
+        val state = viewModel.state.value
+        assertTrue("GATE: slice must complete. State=$state",
+            state is SlicerViewModel.SlicerState.SliceComplete)
+        val gcode = File((state as SlicerViewModel.SlicerState.SliceComplete).result.gcodePath).readText()
+
+        val toolRegex = Regex("""^T(\d+)\b""")
+        val totalToolCounts = IntArray(16)
+        var t0t1Transitions = 0
+        var lastTool = -1
+        for (raw in gcode.lineSequence()) {
+            val tm = toolRegex.find(raw.trim()) ?: continue
+            val t = tm.groupValues[1].toIntOrNull() ?: continue
+            if (t in 0..15) {
+                if ((t == 0 || t == 1) && (lastTool == 0 || lastTool == 1) && t != lastTool) t0t1Transitions++
+                lastTool = t
+                totalToolCounts[t]++
+            }
+        }
+        val toolCountSummary = (0..15).filter { totalToolCounts[it] > 0 }
+            .joinToString(", ") { "T$it=${totalToolCounts[it]}" }
+        val diag = "tool-counts=[$toolCountSummary] T0<->T1=$t0t1Transitions"
+        Log.i("MixModelGate", diag)
+
+        assertTrue("GATE: NO literal high tool (T>=4). $diag", (4..15).none { totalToolCounts[it] > 0 })
+        assertTrue("GATE: mix must use T0 (E1). $diag", totalToolCounts[0] > 0)
+        assertTrue("GATE: mix must use T1 (E2). $diag", totalToolCounts[1] > 0)
+        assertTrue("GATE: LAYER_CYCLE must alternate components. $diag", t0t1Transitions >= 8)
     }
 }

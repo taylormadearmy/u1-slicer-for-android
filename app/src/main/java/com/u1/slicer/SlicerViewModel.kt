@@ -320,6 +320,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perObjectPoses.value = emptyMap()
         _loadTimePoses.value = emptyMap()
         _perVolumeExtruders.value = emptyMap()
+        _meshSourceExtruders0Based.value = emptyList()
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
         _duplicateOps.value = emptyList()
@@ -435,6 +436,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      *  Empty map = honour each volume's file-declared extruder. */
     private val _perVolumeExtruders = MutableStateFlow<Map<String, Int>>(emptyMap())
     val perVolumeExtruders: StateFlow<Map<String, Int>> = _perVolumeExtruders.asStateFlow()
+
+    /**
+     * Bug A (2026-06-07) — sorted-distinct 0-based extruder set across ALL loaded volumes,
+     * snapshotted whenever the user assigns a filament/mix. This mirrors exactly the source
+     * set `compactPreviewIndices` (sapil_model.cpp) sorts over to compact the preview mesh's
+     * per-triangle `extruder_indices` to dense 0..N-1. The object-assign branch of
+     * [meshAlignedFilamentColors] uses it to rebuild a palette in the mesh's compacted index
+     * order so a mix-assigned object (mesh index k) maps to its blend colour.
+     *
+     * Empty until the first assignment; the canonical/file-driven palette paths handle every
+     * other case. Recomputed in [setVolumeExtruder]/[setObjectFilament], cleared on model clear.
+     */
+    private val _meshSourceExtruders0Based = MutableStateFlow<List<Int>>(emptyList())
 
     /** F89 replay state — load-time-indexed object indices that were split
      *  this session. Persisted in v3 SessionState and replayed on resume. */
@@ -1396,10 +1410,35 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * Bug A — refresh [_meshSourceExtruders0Based] from native after an assignment. Enumerates
+     * every object/volume's effective extruder (assigned override or native default), converts
+     * to 0-based, and stores the sorted-distinct set — the exact source set the native
+     * `compactPreviewIndices` collapses the preview mesh's per-triangle indices over. Mirrors
+     * the existing mutex-free native reads in [aggregatedObjectFilament].
+     */
+    private fun refreshMeshSourceExtruders() {
+        val objectCount = native.nativeGetObjectCount()
+        if (objectCount <= 0) { _meshSourceExtruders0Based.value = emptyList(); return }
+        val overrides = _perVolumeExtruders.value
+        val present = sortedSetOf<Int>()
+        for (obj in 0 until objectCount) {
+            val volCount = native.nativeGetVolumeCount(obj)
+            if (volCount <= 0) continue
+            for (vol in 0 until volCount) {
+                val slot1Based = overrides["$obj:$vol"]
+                    ?: native.nativeGetVolumeExtruder(obj, vol).coerceAtLeast(1)
+                present.add((slot1Based - 1).coerceAtLeast(0))
+            }
+        }
+        _meshSourceExtruders0Based.value = present.toList()
+    }
+
     /** F66 — assign a per-volume extruder slot from the Parts panel. */
     fun setVolumeExtruder(objIdx: Int, volIdx: Int, slot: Int) {
         if (!native.nativeSetVolumeExtruder(objIdx, volIdx, slot)) return
         _perVolumeExtruders.update { it + ("$objIdx:$volIdx" to slot) }
+        refreshMeshSourceExtruders()
         _sliceStale.value = true
         // F66 — invalidating the prepare cache bumps _modelAddVersion, which
         // is a key on InlineModelPreview's mesh-fetch LaunchedEffect. Without
@@ -1432,9 +1471,67 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (any) {
             _perVolumeExtruders.update { it + updates }
+            refreshMeshSourceExtruders()
             _sliceStale.value = true
             invalidatePrepareMeshCache()
         }
+    }
+
+    /**
+     * Bug B (2026-06-07) — model-wide filament/mix assignment. Applies [slot] (1-based;
+     * physical 1..numPhysical or a mix id numPhysical+idx+1) to EVERY volume of EVERY loaded
+     * object. This is the model-wide equivalent of [setObjectFilament], routed through the same
+     * proven per-volume-extruder path so a mix id bakes into the object `extruder` metadata
+     * pre-slice (the engine then blends — see MixSlotObjectAssignBlendGateTest) and the Prepare
+     * preview palette picks up the colour (see [meshAlignedFilamentColors]).
+     *
+     * Used by the always-visible Filaments card's Mixes subsection: tapping a mix assigns the
+     * whole model to it. A single object collapses to [setObjectFilament]'s behaviour.
+     */
+    fun setModelFilament(slot: Int) {
+        val objectCount = native.nativeGetObjectCount()
+        if (objectCount <= 0) return
+        val updates = HashMap<String, Int>()
+        var any = false
+        for (obj in 0 until objectCount) {
+            val volumeCount = native.nativeGetVolumeCount(obj)
+            if (volumeCount <= 0) continue
+            for (v in 0 until volumeCount) {
+                if (native.nativeSetVolumeExtruder(obj, v, slot)) {
+                    updates["$obj:$v"] = slot
+                    any = true
+                }
+            }
+        }
+        if (any) {
+            _perVolumeExtruders.update { it + updates }
+            refreshMeshSourceExtruders()
+            _sliceStale.value = true
+            invalidatePrepareMeshCache()
+        }
+    }
+
+    /**
+     * Bug B — the slot every loaded volume currently shares, or `null` when volumes differ
+     * ("mixed"). Drives the model-wide Mixes subsection's "current" highlight. Mirrors
+     * [aggregatedObjectFilament] but spans all objects.
+     */
+    fun aggregatedModelFilament(): Int? {
+        val objectCount = native.nativeGetObjectCount()
+        if (objectCount <= 0) return null
+        val overrides = _perVolumeExtruders.value
+        var common: Int? = null
+        var first = true
+        for (obj in 0 until objectCount) {
+            val volumeCount = native.nativeGetVolumeCount(obj)
+            if (volumeCount <= 0) continue
+            for (v in 0 until volumeCount) {
+                val s = overrides["$obj:$v"] ?: native.nativeGetVolumeExtruder(obj, v).coerceAtLeast(1)
+                if (first) { common = s; first = false }
+                else if (s != common) return null
+            }
+        }
+        return common
     }
 
     /**
@@ -1648,15 +1745,34 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      *
      * This flow produces the naive-blend display colour for each active mix, in
      * `mixedFilamentManager.activeOrder` order — i.e. the colour to append at virtual slot index
-     * `physicalCount + k` (state `physicalCount + 1 + k`). Empty when not full-spectrum.
+     * `physicalCount + k` (state `physicalCount + 1 + k`).
+     *
+     * Two cases produce mix colours (Bug A fix, 2026-06-07):
+     *   1. **Full-spectrum painted FILE** — `fullSpectrumPhysicalCount != null`. The painted
+     *      3MF carries mix paint states; physical base = the file's declared physical count.
+     *   2. **Object-assigned mix** — a normal STL/3MF where the user assigned an object/volume
+     *      to a mix slot via the Prepare dialog (`setObjectFilament`/`setVolumeExtruder`). There
+     *      is NO full-spectrum file marker, but `_perVolumeExtruders` holds a 1-based mix id
+     *      (> numPhysical). Physical base = TARGET_SLOTS (4), matching the slice path's
+     *      `mixPhysicalBase` expansion in `startSlicing`. Without this, the object's mix-id
+     *      extruder had no palette entry and the Prepare preview rendered it grey while the
+     *      slice itself blended correctly.
+     *
+     * Empty when neither case applies.
      */
     private val loadedModelMixColors: StateFlow<List<String>> = combine(
         _threeMfInfo,
         mixedFilamentManager.projectMixes,
         mixedFilamentManager.libraryMixes,
         _activeExtruderColors,
-    ) { mfInfo, _, _, physicalColors ->
-        val physicalCount = mfInfo?.fullSpectrumPhysicalCount ?: return@combine emptyList()
+        _perVolumeExtruders,
+    ) { mfInfo, _, _, physicalColors, perVolume ->
+        val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+        // Case 2: object assigned to a mix (1-based mix id > numPhysical). Mirrors the
+        // slice-path `anyMixAssigned` gate so preview and G-code agree on when a mix is live.
+        val objectAssignedMix = perVolume.values.any { it > numPhysical }
+        val physicalCount = mfInfo?.fullSpectrumPhysicalCount
+            ?: (numPhysical.takeIf { objectAssignedMix } ?: return@combine emptyList())
         // Physical palette source: the active extruder slot colours (the user's loaded
         // filaments) so the mix blends reflect what will actually print. Fall back to the
         // mix's own component lookups against whatever palette is available.
@@ -1749,13 +1865,51 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * / pre-load); the recolor consumer falls back to
      * [resolvedFilamentColors] (slot palette) in that case.
      */
+    @Suppress("UNCHECKED_CAST")
     val meshAlignedFilamentColors: StateFlow<List<String>> = combine(
         _canonicalFilamentList,
         _filamentOverrides,
         _threeMfInfo,
         _layerToolOnly,
         loadedModelMixColors,
-    ) { canonical, overrides, mfInfo, layerTool, mixColors ->
+        _meshSourceExtruders0Based,
+        _activeExtruderColors,
+        _perVolumeExtruders,
+    ) { args ->
+        val canonical = args[0] as com.u1.slicer.data.CanonicalFilamentList?
+        val overrides = args[1] as Map<Int, FilamentOverride>
+        val mfInfo = args[2] as com.u1.slicer.bambu.ThreeMfInfo?
+        val layerTool = args[3] as Boolean
+        val mixColors = args[4] as List<String>
+        val meshSourceExtruders = args[5] as List<Int>
+        val slotColors = args[6] as List<String>
+        val perVolume = args[7] as Map<String, Int>
+
+        // ── Bug A (2026-06-07) — object/part assigned to a mix on a NON-canonical model ──
+        // A plain STL (or any model with no canonical filament list) has no per-file palette,
+        // but the user can still assign an object to a physical slot or a MIX via the Prepare
+        // dialog. The native preview mesh's per-triangle `extruder_indices` are compacted by
+        // `compactPreviewIndices` to dense 0..N-1 in sorted-ascending order of the 0-based
+        // source extruders actually present across all volumes — exactly the set captured in
+        // [_meshSourceExtruders0Based]. We rebuild the palette in that same compacted order:
+        //   physical slot s (0-based) → slotColors[s]
+        //   mix slot (>= numPhysical) → its naive-blend colour from `mixColors`
+        // so the mesh index k resolves to the right colour. Only fires for the non-canonical
+        // path with a live mix assignment — canonical files keep their existing handling below.
+        val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+        val objectAssignedMix = perVolume.values.any { it > numPhysical }
+        if (canonical == null && objectAssignedMix && meshSourceExtruders.isNotEmpty()) {
+            return@combine meshSourceExtruders.map { ext0 ->
+                if (ext0 >= numPhysical) {
+                    // ext0 = mix slot (0-based). mixColors is ordered by activeOrder, so the
+                    // k-th mix sits at slot numPhysical + k → mixColors[ext0 - numPhysical].
+                    mixColors.getOrNull(ext0 - numPhysical) ?: "#888888"
+                } else {
+                    slotColors.getOrNull(ext0)?.takeIf { it.isNotBlank() } ?: "#888888"
+                }
+            }
+        }
+
         val list = canonical ?: return@combine emptyList()
         val fullPalette = if (overrides.isEmpty()) list.filaments.map { it.color }
         else list.filaments.map { entry ->
@@ -3139,6 +3293,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perObjectPoses.value = emptyMap()
         _loadTimePoses.value = emptyMap()
         _perVolumeExtruders.value = emptyMap()
+        _meshSourceExtruders0Based.value = emptyList()
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
         _duplicateOps.value = emptyList()
@@ -6686,6 +6841,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _perObjectPoses.value = emptyMap()
         _loadTimePoses.value = emptyMap()
         _perVolumeExtruders.value = emptyMap()
+        _meshSourceExtruders0Based.value = emptyList()
         _splitObjectOps.value = emptyList()
         _splitVolumeOps.value = emptyList()
         _duplicateOps.value = emptyList()

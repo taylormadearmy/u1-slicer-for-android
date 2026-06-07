@@ -4839,10 +4839,24 @@ fun PrepareMixSlotsSectionContent(
 ) {
     val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
     val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
+    // Bug B — drive the "current" highlight + re-evaluate after each assignment.
+    val perVolumeExtruders by viewModel.perVolumeExtruders.collectAsState()
 
     var expanded by remember { mutableStateOf(false) }
     var showDialog by remember { mutableStateOf(false) }
     var editingRow by remember { mutableStateOf<com.u1.slicer.data.MixedFilamentRow?>(null) }
+
+    // Bug B — 1-based slot id per mix, in the engine's activeOrder (numPhysical + idx + 1).
+    // Tapping a mix row assigns the WHOLE MODEL to that mix via the proven per-volume-extruder
+    // path (setModelFilament) so it bakes pre-slice AND the preview palette picks up the blend.
+    val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+    val mixSlotIds = remember(projectMixes, libraryMixes) {
+        com.u1.slicer.data.MixSlotOrdering.activeOrder(projectMixes, libraryMixes, numPhysical)
+            .mapIndexed { idx, row -> row.id to (numPhysical + idx + 1) }
+            .toMap()
+    }
+    // Recomputed after assignment so the tapped row shows "· current".
+    val currentModelSlot = remember(perVolumeExtruders) { viewModel.aggregatedModelFilament() }
 
     val physicalColours = remember(extruderPresets) {
         (0..3).map { i ->
@@ -4925,10 +4939,13 @@ fun PrepareMixSlotsSectionContent(
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     projectMixes.forEach { row ->
+                        val slotId = mixSlotIds[row.id]
                         PrepareMixSlotRow(
                             row = row,
                             physicalColours = physicalColours,
                             inLibrary = row.inLibrary,
+                            isCurrent = slotId != null && slotId == currentModelSlot,
+                            onAssign = slotId?.let { id -> { viewModel.setModelFilament(id) } },
                             onEdit = {
                                 editingRow = row
                                 showDialog = true
@@ -4950,10 +4967,13 @@ fun PrepareMixSlotsSectionContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         libraryOnly.forEach { row ->
+                            val slotId = mixSlotIds[row.id]
                             PrepareMixSlotRow(
                                 row = row,
                                 physicalColours = physicalColours,
                                 inLibrary = true,
+                                isCurrent = slotId != null && slotId == currentModelSlot,
+                                onAssign = slotId?.let { id -> { viewModel.setModelFilament(id) } },
                                 onEdit = {
                                     editingRow = row
                                     showDialog = true
@@ -4976,6 +4996,10 @@ private fun PrepareMixSlotRow(
     row: com.u1.slicer.data.MixedFilamentRow,
     physicalColours: List<Color>,
     inLibrary: Boolean,
+    isCurrent: Boolean = false,
+    // Bug B — tap assigns the whole model to this mix (set colour). Null when no model is
+    // loaded; the row then falls back to opening the editor on tap (management-only).
+    onAssign: (() -> Unit)? = null,
     onEdit: () -> Unit,
     onToggleLibrary: () -> Unit,
     onDelete: () -> Unit,
@@ -4985,9 +5009,12 @@ private fun PrepareMixSlotRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onEdit() }
+            // Bug B — tap = ASSIGN the model to this mix (set colour). Edit moved to the
+            // pencil icon. Falls back to onEdit when nothing is loaded (no model to assign).
+            .clickable { (onAssign ?: onEdit)() }
             .background(
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                if (isCurrent) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
                 RoundedCornerShape(8.dp),
             )
             .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -5000,7 +5027,11 @@ private fun PrepareMixSlotRow(
         )
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(row.label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(
+                row.label + if (isCurrent) " · current" else "",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+            )
             Text(
                 when (row.distributionMode) {
                     com.u1.slicer.data.MixedFilamentRow.MixDistributionMode.LAYER_CYCLE ->
@@ -5010,6 +5041,15 @@ private fun PrepareMixSlotRow(
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
+        }
+        // Bug B — edit is now a secondary affordance (pencil), since tap assigns.
+        IconButton(onClick = onEdit, modifier = Modifier.size(36.dp)) {
+            Icon(
+                Icons.Default.Edit,
+                contentDescription = "Edit mix slot",
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.size(20.dp),
             )
         }
         IconButton(onClick = onToggleLibrary, modifier = Modifier.size(36.dp)) {
