@@ -23,6 +23,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.u1.slicer.data.CanonicalFilamentList
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentSource
+import com.u1.slicer.data.MixedFilamentRow
 
 /**
  * Phase 2.4 — print-time **Filament mapping** dialog.
@@ -82,6 +83,34 @@ fun FilamentMappingDialog(
      * (legacy behaviour) when null.
      */
     sliceTimeMaterials: List<String>? = null,
+    /**
+     * Issue #3 — mix slots available for assignment. When non-empty the
+     * per-row slot picker shows [FilamentMixChipRow] with both physical chips
+     * and mix chips. Mix slot id = [numPhysical] + index in this list.
+     * Defaults to empty (identical to physical-only behaviour).
+     */
+    mixes: List<MixedFilamentRow> = emptyList(),
+    /**
+     * Number of physical extruder slots; used as the offset for mix slot ids.
+     * Defaults to 4 (U1 hardware).
+     */
+    numPhysical: Int = 4,
+    /**
+     * Colour of each physical slot (E1..E[numPhysical]), as [Color] values for
+     * the chip row. When shorter than [numPhysical] the missing entries fall
+     * back to grey. Defaults to empty (derive grey chips when not supplied).
+     */
+    physicalColours: List<Color> = emptyList(),
+    /**
+     * Called when the user taps the "+" chip to create a new mix. No-op
+     * default is acceptable — selecting existing mixes is the core feature;
+     * creation can be wired by callers that host [CreateMixSlotDialog].
+     */
+    onCreateMix: () -> Unit = {},
+    /**
+     * Called when the user long-presses a mix chip to edit it.
+     */
+    onEditMix: (MixedFilamentRow) -> Unit = {},
     onConfirm: (List<Int>) -> Unit,
     onDismiss: () -> Unit,
     activeNickname: String = "",
@@ -190,7 +219,12 @@ fun FilamentMappingDialog(
                             selectedSlot = mapping.getOrElse(idx) { 0 },
                             onSlotPicked = { slot ->
                                 if (idx < mapping.size) mapping[idx] = slot
-                            }
+                            },
+                            mixes = mixes,
+                            numPhysical = numPhysical,
+                            physicalColours = physicalColours,
+                            onCreateMix = onCreateMix,
+                            onEditMix = onEditMix,
                         )
                     }
                 }
@@ -278,10 +312,23 @@ private fun FilamentMappingRow(
     extruderPresets: List<ExtruderPreset>,
     selectedSlot: Int,
     onSlotPicked: (Int) -> Unit,
+    mixes: List<MixedFilamentRow> = emptyList(),
+    numPhysical: Int = 4,
+    physicalColours: List<Color> = emptyList(),
+    onCreateMix: () -> Unit = {},
+    onEditMix: (MixedFilamentRow) -> Unit = {},
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedPreset = extruderPresets.firstOrNull { it.index == selectedSlot }
-        ?: extruderPresets.firstOrNull()
+    // For the mismatch warning, resolve from the physical presets.
+    // Mix slots (≥ numPhysical) are not yet temperature-resolved; they
+    // inherit from their component slots. For the warning we check only
+    // the physical selection.
+    val selectedPreset = if (selectedSlot < numPhysical) {
+        extruderPresets.firstOrNull { it.index == selectedSlot } ?: extruderPresets.firstOrNull()
+    } else {
+        // Mix slot — no single-preset temperature to compare against; no warning.
+        null
+    }
 
     // Phase 2.8 — material mismatch detection.
     // Reconstructs the effective material the G-code was sliced with, following
@@ -343,56 +390,88 @@ private fun FilamentMappingRow(
             }
         }
 
-        // Slot picker — wider so the "E1 · PLA" label fits without truncation.
-        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-            OutlinedTextField(
-                value = "${selectedPreset?.label ?: "E1"} · ${selectedPreset?.materialType ?: "PLA"}",
-                onValueChange = {},
-                readOnly = true,
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                leadingIcon = {
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .clip(CircleShape)
-                            .background(
-                                selectedPreset?.let { parseHexColor(it.color) } ?: Color.White
-                            )
-                    )
-                },
-                modifier = Modifier.menuAnchor().width(150.dp),
-                textStyle = MaterialTheme.typography.bodySmall,
-                singleLine = true
-            )
-            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                extruderPresets.forEach { preset ->
-                    DropdownMenuItem(
-                        text = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(14.dp)
-                                        .clip(CircleShape)
-                                        .background(parseHexColor(preset.color))
-                                        .border(0.5.dp,
-                                            MaterialTheme.colorScheme.outline, CircleShape)
+        if (mixes.isEmpty()) {
+            // Physical-only mode — keep the compact dropdown (backward compat).
+            ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+                OutlinedTextField(
+                    value = "${selectedPreset?.label ?: "E1"} · ${selectedPreset?.materialType ?: "PLA"}",
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                    leadingIcon = {
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    selectedPreset?.let { parseHexColor(it.color) } ?: Color.White
                                 )
-                                Text(
-                                    "${preset.label} · ${preset.materialType}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                            }
-                        },
-                        onClick = { onSlotPicked(preset.index); expanded = false }
-                    )
+                        )
+                    },
+                    modifier = Modifier.menuAnchor().width(150.dp),
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    singleLine = true
+                )
+                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    extruderPresets.forEach { preset ->
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .clip(CircleShape)
+                                            .background(parseHexColor(preset.color))
+                                            .border(
+                                                0.5.dp,
+                                                MaterialTheme.colorScheme.outline,
+                                                CircleShape
+                                            )
+                                    )
+                                    Text(
+                                        "${preset.label} · ${preset.materialType}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            },
+                            onClick = { onSlotPicked(preset.index); expanded = false }
+                        )
+                    }
                 }
             }
         }
     }
+        // Mix-capable mode — FilamentMixChipRow replaces the dropdown when
+        // mixes are available. Shown below the file-info row so all chips
+        // can be seen without truncation (they scroll horizontally).
+        if (mixes.isNotEmpty()) {
+            // Resolve physical colours: prefer caller-supplied list, then
+            // fall back to extruderPresets colour strings.
+            val resolvedPhysicalColours = if (physicalColours.isNotEmpty()) {
+                physicalColours
+            } else {
+                List(numPhysical) { i ->
+                    extruderPresets.firstOrNull { it.index == i }
+                        ?.color?.takeIf { it.isNotBlank() }
+                        ?.let { runCatching { parseHexColor(it) }.getOrNull() }
+                        ?: Color.Gray
+                }
+            }
+            FilamentMixChipRow(
+                physicalColours = resolvedPhysicalColours,
+                physicalLabels = (1..numPhysical).map { "E$it" },
+                mixes = mixes,
+                selectedSlot = selectedSlot,
+                onSelect = onSlotPicked,
+                onCreateMix = onCreateMix,
+                onEditMix = onEditMix,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         if (mismatch) {
             // Material-mismatch chip — non-blocking advisory.
             Surface(

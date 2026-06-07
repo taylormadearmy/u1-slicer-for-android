@@ -748,6 +748,47 @@ class MainActivity : ComponentActivity() {
                     val overrides by viewModel.filamentOverrides.collectAsState()
                     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
                     val parsedGcodeForDialog by viewModel.parsedGcode.collectAsState()
+                    // Issue #3 — mix slots for FilamentMappingDialog
+                    val mappingDialogMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
+                    val mappingDialogLibraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
+                    val mappingDialogNumPhysical = 4
+                    val mappingDialogActiveMixes = remember(mappingDialogMixes, mappingDialogLibraryMixes) {
+                        com.u1.slicer.data.MixSlotOrdering.activeOrder(
+                            mappingDialogMixes, mappingDialogLibraryMixes, mappingDialogNumPhysical
+                        )
+                    }
+                    val mappingDialogPhysicalColours = remember(extruderPresets) {
+                        (0 until mappingDialogNumPhysical).map { i ->
+                            val hex = extruderPresets.firstOrNull { it.index == i }?.color
+                                ?.takeIf { it.isNotBlank() }
+                                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
+                            com.u1.slicer.ui.parseHexColorOrDefault(hex)
+                        }
+                    }
+                    var showMappingDialogCreateMix by remember { mutableStateOf(false) }
+                    var mappingDialogEditingRow by remember { mutableStateOf<com.u1.slicer.data.MixedFilamentRow?>(null) }
+                    if (showMappingDialogCreateMix) {
+                        com.u1.slicer.ui.CreateMixSlotDialog(
+                            physicalFilamentColours = mappingDialogPhysicalColours,
+                            physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+                            editingRow = mappingDialogEditingRow,
+                            onConfirm = { a, b, pct, mode ->
+                                val edit = mappingDialogEditingRow
+                                if (edit != null) {
+                                    viewModel.mixedFilamentManager.edit(edit.id, a, b, pct, mode)
+                                } else {
+                                    viewModel.mixedFilamentManager.add(a, b, pct, mode)
+                                }
+                            },
+                            onDelete = mappingDialogEditingRow?.let { row ->
+                                { viewModel.mixedFilamentManager.delete(row.id) }
+                            },
+                            onDismiss = {
+                                showMappingDialogCreateMix = false
+                                mappingDialogEditingRow = null
+                            },
+                        )
+                    }
                     val canonical = remember(canonicalState, overrides) {
                         (canonicalState as? CanonicalLookup.Present)?.let { p ->
                             com.u1.slicer.data.applyOverridesToCanonical(
@@ -897,6 +938,15 @@ class MainActivity : ComponentActivity() {
                                     // when applicable) so the "Sliced as X" mismatch check
                                     // matches the slice instead of the slot preset.
                                     sliceTimeMaterials = viewModel.sliceTimeMaterials(canonical, currentMapping),
+                                    // Issue #3: offer mix slots in the per-row chip row.
+                                    mixes = mappingDialogActiveMixes,
+                                    numPhysical = mappingDialogNumPhysical,
+                                    physicalColours = mappingDialogPhysicalColours,
+                                    onCreateMix = { showMappingDialogCreateMix = true },
+                                    onEditMix = { row ->
+                                        mappingDialogEditingRow = row
+                                        showMappingDialogCreateMix = true
+                                    },
                                     activeNickname = activeNickname,
                                     showNicknameInTitle = printerCount > 1,
                                     onConfirm = { plateMapping ->
@@ -921,11 +971,11 @@ class MainActivity : ComponentActivity() {
                                         plateFileIndices.forEachIndexed { posInPlate, fileIdx ->
                                             val slot = plateMapping.getOrNull(posInPlate)
                                             if (slot != null && fileIdx in 0 until expandedSize) {
-                                                // Clamp slot to U1's physical 0..3 range
-                                                // (defends against malformed mapping). The
-                                                // explicit if/else avoids tripping the grep
+                                                // Accept physical slots (0..3) and mix slots
+                                                // (≥ mappingDialogNumPhysical). The explicit
+                                                // if/else avoids tripping the coerceIn grep
                                                 // guard in HardcodedExtruderCapTest.
-                                                expanded[fileIdx] = if (slot in 0..3) slot else 0
+                                                expanded[fileIdx] = if (slot >= 0) slot else 0
                                             }
                                         }
                                         pendingMappingSend = null
