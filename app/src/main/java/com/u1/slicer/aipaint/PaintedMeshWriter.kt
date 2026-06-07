@@ -173,19 +173,40 @@ object PaintedMeshWriter {
     internal fun buildProjectSettings(
         regions: List<AiRegion>,
         printerColours: List<String>? = null,
-        mixDisplayColours: List<String> = emptyList()
+        @Suppress("UNUSED_PARAMETER") mixDisplayColours: List<String> = emptyList()
     ): String {
-        // Physical slot colours: one entry per region (existing behaviour). A mix slot
-        // referenced by a triangle's paint_color resolves to a filament id beyond the
-        // physical count, so the canonical filament_colour list MUST have an entry for
-        // each mix too — otherwise the engine's filament list is short and segmentation
-        // collapses for any triangle painted to a mix slot.
+        // M3-B mix-blend fix (Route K): filament_colour MUST list ONLY the physical
+        // filaments (one per region = 4 on the U1). It must NOT include the mix
+        // display colours.
+        //
+        // WHY (the headline bug this fixes): a "mix slot" is a VIRTUAL filament the
+        // Snapmaker OrcaSlicer fork (PR #375) synthesises from `mixed_filament_definitions`
+        // as a layer-alternating blend of two physical filaments. Virtual filament ids are
+        // `num_physical + 1 …`. A triangle painted to mix slot k carries paint state
+        // `5 + k` (= virtual filament `5 + k` when num_physical == 4).
+        //
+        // The engine derives num_physical from the per-extruder array sizes —
+        // `filament_diameter.size()` (ToolOrdering/PrintApply) and `filament_colour.size()`
+        // (Print::extruders). sapil_print.cpp's B48 padding grows `filament_diameter` up to
+        // `filament_colour.size()`. If we append nMix colours here, filament_colour becomes
+        // `4 + nMix`, num_physical becomes `4 + nMix`, and `mixed_index_from_filament_id`
+        // (MixedFilament.cpp) returns -1 for state `5 + k` because `5 + k <= num_physical`.
+        // The mix is then treated as a physical filament and NEVER BLENDS.
+        //
+        // Keeping filament_colour at exactly the physical count restores num_physical == 4,
+        // so each mix state resolves to its virtual filament and the engine alternates the
+        // two component tools per layer — the real optical blend.
+        //
+        // Preview-colour safety: the post-slice preview is coloured from the parsed G-code,
+        // whose mix region uses the PHYSICAL tools (T0/T1 …) — which index into this 4-entry
+        // canonical palette correctly. The Prepare/highlight preview blends mix colours from
+        // the recipe + palette in Kotlin (AiPaintViewModel), not from this filament_colour
+        // array. So dropping the appended mix colours does NOT regress any preview path.
         val physicalColours = regions.indices.map { i ->
             val printerHex = printerColours?.getOrNull(i)?.let { sanitizeOrNull(it) }
             printerHex ?: sanitizeHex(regions[i].effectiveColour)
         }
-        val mixColours = mixDisplayColours.map { sanitizeHex(it) }
-        val allColours = physicalColours + mixColours
+        val allColours = physicalColours
 
         val coloursJson = allColours.joinToString(", ") { "\"$it\"" }
         val typesJson = allColours.joinToString(", ") { "\"PLA\"" }
