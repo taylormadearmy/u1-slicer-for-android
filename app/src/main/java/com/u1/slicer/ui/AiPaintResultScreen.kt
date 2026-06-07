@@ -177,6 +177,13 @@ fun AiPaintResultScreen(
                             ?.let { it.triangleIds.toHashSet() }
                             ?: emptySet()
                     }
+                    val highlightedNode: com.u1.slicer.aipaint.AiRegionNode? = remember(result.tree, result.highlightComponentId, result.customSelections) {
+                        val id = result.highlightComponentId ?: return@remember null
+                        val withCustom = result.tree + listOfNotNull(
+                            com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
+                        )
+                        findNodeById(withCustom, id)
+                    }
                     // Live 3D viewer.
                     Box(
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f),
@@ -269,6 +276,32 @@ fun AiPaintResultScreen(
                             .padding(8.dp),
                     )
 
+                    // fix35.1: floating slot picker overlay shown when a region is currently
+                    // highlighted (tapped on the model or in the list). Gives the "what now?"
+                    // action — tap a slot/mix to assign the highlighted region, "+" to create a
+                    // mix, × to clear. This is the model-tap selector, visually distinct from the
+                    // inline per-row chips.
+                    if (highlightedNode != null) {
+                        HighlightSlotPicker(
+                            label = highlightedNode.region.label,
+                            currentSlot = highlightedNode.region.slot,
+                            physicalColours = slotPalette.take(numPhysical),
+                            numPhysical = numPhysical,
+                            mixes = activeMixes,
+                            onPickSlot = { slot ->
+                                // Don't clear the highlight after reassign — the user wants to
+                                // iterate (tap red, see it, tap a mix, see that). The ×,
+                                // different-region, and empty-tap paths handle clearing.
+                                onSetSegmentSlot(highlightedNode.region.id, slot)
+                            },
+                            onCreateMix = onCreateMix,
+                            onDismiss = { onHighlightComponent(null) },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 12.dp),
+                        )
+                    }
+
                     }  // end Box wrapper for viewer
 
                     // fix41 panel order: primary view toggle → AI failure chip (if any) →
@@ -345,26 +378,29 @@ fun AiPaintResultScreen(
                         )
                     }
 
-                    // Consolidated slot palette row. Tap behaviour depends on the toolbar mode
+                    // "Extruders →" palette row. Tap behaviour depends on the toolbar mode
                     // armed via ViewerToolbar:
-                    //   • Select (default) → tap a swatch opens the colour picker for that slot
-                    //   • Paint            → tap a swatch sets the active paint slot (tick mark)
-                    //   • Lasso + items    → tap a swatch commits the selection to that slot
-                    //   • Lasso + empty    → tap a swatch sets the active slot for next stroke
-                    FilamentMixChipRow(
+                    //   • Select (default) → physical chip opens the colour editor; mix chip
+                    //                        opens the mix editor.
+                    //   • Paint / Lasso    → tapping a chip sets the active paint slot (tick).
+                    // A trailing "+" creates a new mix.
+                    SlotPaletteRow(
                         physicalColours = slotPalette.take(numPhysical),
-                        physicalLabels = (1..numPhysical).map { "E$it" },
                         mixes = activeMixes,
-                        selectedSlot = paintActiveRegion,
-                        onSelect = { slot ->
+                        numPhysical = numPhysical,
+                        paintMode = paintMode,
+                        lassoMode = lassoMode,
+                        activeSlot = paintActiveRegion,
+                        hasLassoSelection = false,
+                        onTapSlot = { slot ->
                             when {
                                 paintMode || lassoMode -> paintActiveRegion = slot
+                                slot >= numPhysical ->
+                                    activeMixes.getOrNull(slot - numPhysical)?.let { onEditMix(it) }
                                 else -> editSlotColour = slot
                             }
                         },
                         onCreateMix = onCreateMix,
-                        onEditMix = onEditMix,
-                        modifier = androidx.compose.ui.Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     )
 
                     val treeWithCustom = result.tree + listOfNotNull(

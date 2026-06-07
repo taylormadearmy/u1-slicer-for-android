@@ -1,6 +1,7 @@
 package com.u1.slicer.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -44,23 +45,15 @@ fun AiPaintTreeRow(
     onEditMix: (MixedFilamentRow) -> Unit = {},
 ) {
     val rowBg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
-    // Layout: identity line (chevron + swatch + label) on top, the mix-aware chip selector on
-    // its own full-width line below. The chip row is horizontally scrollable and wide
-    // (4 physical + mixes + "+"); placing it as a sibling of the weighted label Column on a
-    // single Row squeezed the title to zero width and hid it (regression from UX Task 2).
-    Column(
+    Row(
         modifier
             .fillMaxWidth()
             .background(rowBg)
             .clickable { onSelectRow() }
-            .padding(start = (12 * depth).dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
-    ) {
-      Row(
-        modifier = Modifier
-            .fillMaxWidth()
+            .padding(start = (12 * depth).dp, end = 12.dp, top = 6.dp, bottom = 6.dp)
             .heightIn(min = 36.dp),
         verticalAlignment = Alignment.CenterVertically,
-      ) {
+    ) {
         // Chevron — only on parents with children.
         if (node.children.isNotEmpty()) {
             Icon(
@@ -82,8 +75,8 @@ fun AiPaintTreeRow(
         // the list does not seem to change the colour"). Parents with mixed children fall back
         // to dominantSlot for the primary + a diagonal stripe of secondarySlot.
         // C2 (M3-Phase-B): leaf nodes whose slot >= numPhysical are mix slots — render the
-        // two-tone MixedSlotSwatch using componentA/B of the active mix, matching the pattern
-        // used by SectionedSlotPicker.MixSlotChip. Physical-slot leaves keep the existing path.
+        // two-tone MixedSlotSwatch using componentA/B of the active mix. Physical-slot leaves
+        // keep the existing path.
         val primarySlot = if (node.isLeaf) node.region.slot else node.dominantSlot()
         val primary = slotPalette.getOrNull(primarySlot)
             ?: remember(node) {
@@ -93,7 +86,6 @@ fun AiPaintTreeRow(
             }
         val secondary = when {
             node.isLeaf && primarySlot >= numPhysical -> {
-                // Mix slot leaf — secondary comes from the mix's componentB physical colour.
                 val mix = activeMixes.getOrNull(primarySlot - numPhysical)
                 mix?.let { physicalColours.getOrNull(it.componentB - 1) }
             }
@@ -102,7 +94,6 @@ fun AiPaintTreeRow(
         }
         val swatchPrimary = when {
             node.isLeaf && primarySlot >= numPhysical -> {
-                // Mix slot leaf — primary comes from the mix's componentA physical colour.
                 val mix = activeMixes.getOrNull(primarySlot - numPhysical)
                 mix?.let { physicalColours.getOrNull(it.componentA - 1) } ?: primary
             }
@@ -124,21 +115,52 @@ fun AiPaintTreeRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-      }
 
-      Spacer(Modifier.height(6.dp))
-
-      // Mix-aware chip selector on its own full-width line, indented to align under the label
-      // (past the chevron/spacer + swatch + gap). Horizontal scroll handles chip overflow.
-      FilamentMixChipRow(
-          physicalColours = physicalColours,
-          physicalLabels = (1..numPhysical).map { "E$it" },
-          mixes = activeMixes,
-          selectedSlot = node.region.slot,
-          onSelect = { slot -> onPickSlot(slot) },
-          onCreateMix = onCreateMix,
-          onEditMix = onEditMix,
-          modifier = Modifier.padding(start = 42.dp),
-      )
+        // Compact inline selector: the physical slot chips, the region's current mix chip (only
+        // when it is assigned to a mix — keeps the row narrow), and a "+" to create a new mix.
+        // The full mix list is offered by the "Move to slot" overlay (tap the region) and the
+        // Extruders row, so the per-row selector stays compact and never squeezes the label.
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+            slotPalette.take(numPhysical).forEachIndexed { slot, color ->
+                val isActive = node.region.slot == slot
+                Box(
+                    Modifier
+                        .size(if (isActive) 24.dp else 20.dp)
+                        .background(color, MaterialTheme.shapes.small)
+                        .clickable { onPickSlot(slot) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (isActive) {
+                        // fix38.3: contrasting tick — black on light slots, white on dark.
+                        Text("✓", color = tickContrastColor(color), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            // Current mix chip (two-tone) only when the region is on a mix slot.
+            if (node.region.slot >= numPhysical) {
+                val mix = activeMixes.getOrNull(node.region.slot - numPhysical)
+                if (mix != null) {
+                    val mPrimary = physicalColours.getOrNull(mix.componentA - 1) ?: Color.Gray
+                    val mSecondary = physicalColours.getOrNull(mix.componentB - 1)
+                    Box(
+                        Modifier.size(24.dp).clickable { onPickSlot(node.region.slot) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MixedSlotSwatch(primary = mPrimary, secondary = mSecondary, size = 24.dp)
+                        Text("✓", color = tickContrastColor(mPrimary), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            // "+" create-mix chip.
+            Box(
+                Modifier
+                    .size(20.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                    .clickable { onCreateMix() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("+", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            }
+        }
     }
 }

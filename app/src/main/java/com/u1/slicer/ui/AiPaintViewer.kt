@@ -1,13 +1,19 @@
 package com.u1.slicer.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -30,6 +36,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.aipaint.AiPaintMeshBuilder
 import com.u1.slicer.aipaint.AiPaintResultState
 import com.u1.slicer.aipaint.AiPaintViewModel
+import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.viewer.ModelViewerView
 
 /**
@@ -364,6 +371,97 @@ internal fun ViewerToolbar(
                     modifier = Modifier.padding(start = 6.dp).widthIn(min = 36.dp)
                 )
             }
+        }
+    }
+}
+
+/**
+ * fix41 SlotPaletteRow — "Extruders →" row below the viewer. Always visible. Tap behaviour
+ * is mode-aware (driven by the parent via [onTapSlot], which receives the slot id):
+ *   • Select (default) → physical chip opens the colour editor; mix chip opens the mix editor.
+ *   • Paint / Lasso    → tapping a chip sets the active paint slot (physical or mix).
+ *
+ * Phase B: after the physical swatches it renders one two-tone swatch per active mix (slot id
+ * = numPhysical + index) and a trailing "+" that creates a new mix. Horizontally scrollable so
+ * any number of mixes fits without squeezing the row.
+ */
+@Composable
+internal fun SlotPaletteRow(
+    physicalColours: List<Color>,
+    mixes: List<MixedFilamentRow>,
+    numPhysical: Int,
+    paintMode: Boolean,
+    lassoMode: Boolean,
+    activeSlot: Int,
+    hasLassoSelection: Boolean,
+    onTapSlot: (Int) -> Unit,
+    onCreateMix: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .horizontalScroll(rememberScrollState()),
+    ) {
+        Text(
+            when {
+                lassoMode && hasLassoSelection -> "Apply to →"
+                paintMode || lassoMode -> "Active →"
+                else -> "Extruders →"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Physical slot swatches.
+        physicalColours.take(numPhysical).forEachIndexed { idx, color ->
+            val isActive = (paintMode || lassoMode) && idx == activeSlot && !hasLassoSelection
+            Box(
+                Modifier
+                    .size(if (isActive) 44.dp else 40.dp)
+                    .background(color, MaterialTheme.shapes.small)
+                    .clickable { onTapSlot(idx) },
+                contentAlignment = Alignment.Center,
+            ) {
+                val tickColor = tickContrastColor(color)
+                when {
+                    isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
+                    !paintMode && !lassoMode ->
+                        Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
+                    else -> {}
+                }
+            }
+        }
+        // Mix swatches (two-tone). Slot id = numPhysical + index.
+        mixes.forEachIndexed { idx, mix ->
+            val slot = numPhysical + idx
+            val isActive = (paintMode || lassoMode) && slot == activeSlot && !hasLassoSelection
+            val primary = physicalColours.getOrNull(mix.componentA - 1) ?: Color.Gray
+            val secondary = physicalColours.getOrNull(mix.componentB - 1)
+            Box(
+                Modifier.size(if (isActive) 44.dp else 40.dp).clickable { onTapSlot(slot) },
+                contentAlignment = Alignment.Center,
+            ) {
+                MixedSlotSwatch(primary = primary, secondary = secondary, size = if (isActive) 44.dp else 40.dp)
+                val tickColor = tickContrastColor(primary)
+                when {
+                    isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
+                    !paintMode && !lassoMode ->
+                        Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
+                    else -> {}
+                }
+            }
+        }
+        // "+" create-mix chip.
+        Box(
+            Modifier
+                .size(40.dp)
+                .border(1.5.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                .clickable { onCreateMix() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("+", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium)
         }
     }
 }
