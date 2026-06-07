@@ -131,6 +131,37 @@ internal fun sliceResultFromJob(job: SliceJob) = SliceResult(
     estimatedFilamentGrams = job.estimatedFilamentGrams
 )
 
+/**
+ * Build the Prepare-preview palette for the non-MMU canonical path, aligned to the native mesh's
+ * source-extruder compaction order. A source extruder that is a MIX slot (1-based id beyond the
+ * physical base) resolves to its naive-blend colour from [mixColors] instead of an out-of-bounds
+ * grey swatch — review finding #1 (2026-06-07): a canonical 3MF with an object assigned to a mix
+ * previously rendered grey in Prepare (the slice still blended correctly).
+ *
+ * The mix base is floored at [fullPalette].size so a 3MF declaring more than [numPhysical]
+ * canonical filaments does not mis-classify physical filament N (>numPhysical) as a mix. The
+ * residual collision when a mix id itself lands at/above that floor is review finding #2, tracked
+ * for the N-way mix work where the slot-id base is generalised.
+ *
+ * @param sourceExtruders 1-based extruder ids actually used, sorted ascending (mesh order).
+ * @param fullPalette     canonical physical filament colours (index 0 = file filament 1).
+ * @param mixColors       active-mix naive-blend colours, in MixSlotOrdering order.
+ * @param numPhysical     physical slot base (TARGET_SLOTS); mix ids start at numPhysical + 1.
+ */
+internal fun buildCanonicalNonMmuPalette(
+    sourceExtruders: List<Int>,
+    fullPalette: List<String>,
+    mixColors: List<String>,
+    numPhysical: Int,
+): List<String> {
+    val mixBase = maxOf(numPhysical, fullPalette.size)
+    return sourceExtruders.map { ext ->
+        val idx0 = ext - 1
+        if (idx0 >= mixBase) mixColors.getOrNull(idx0 - mixBase) ?: "#888888"
+        else fullPalette.getOrNull(idx0).orEmpty()
+    }
+}
+
 class SlicerViewModel(application: Application) : AndroidViewModel(application) {
 
     private data class SliceOutputValidation(
@@ -1967,9 +1998,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             ?.sorted()
             ?: return@combine fullPalette
         if (sourceExtruders.isEmpty()) return@combine fullPalette
-        sourceExtruders.map { ext ->
-            fullPalette.getOrNull(ext - 1).orEmpty()
-        }
+        // Review finding #1: a mix-assigned object on a canonical 3MF previously fell through to
+        // an out-of-bounds grey swatch here; the helper resolves mix ids to their blend colour.
+        buildCanonicalNonMmuPalette(sourceExtruders, fullPalette, mixColors, numPhysical)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Slicing overrides (USE_FILE / ORCA_DEFAULT / OVERRIDE per setting)

@@ -35,6 +35,12 @@ import com.u1.slicer.data.MixedFilamentRow
  * Use [FilamentMixChipRow.physicalSlotId] and [FilamentMixChipRow.mixSlotId] to produce ids
  * consistently across callers.
  *
+ * NOTE (2026-06-07): after the Smart Paint layout restore, the per-surface selectors inline
+ * their own chips, so this composable currently has no caller. It is deliberately retained as
+ * the slot-id-invariant single source of truth (the companion `object` below) and a ready-made
+ * shared mix selector for the upcoming N-way mix work, rather than deleted and re-created. The
+ * companion helpers are covered by FilamentMixChipRowTest.
+ *
  * @param physicalColours  Ordered list of physical filament colours (E1..E4).
  * @param physicalLabels   Optional per-slot labels; falls back to "E1", "E2" … when shorter.
  * @param mixes            Active mix rows to render after the physical chips.
