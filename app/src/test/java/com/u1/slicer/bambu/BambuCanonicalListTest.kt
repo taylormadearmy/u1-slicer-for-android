@@ -353,4 +353,55 @@ class BambuCanonicalListTest {
         assertEquals(5, merged.paintStateMap[6])
         assertEquals(10, merged.paintStateMap[11])
     }
+
+    // ── M3-B full-spectrum marker ────────────────────────────────────────────
+
+    @Test
+    fun `readFullSpectrumPhysicalCount parses the string-form marker`() {
+        val json = """{
+            "filament_colour": ["#FF0000","#00FF00","#0000FF","#FFFF00"],
+            "filament_count": "4",
+            "full_spectrum_physical_count": "4"
+        }"""
+        assertEquals(4, readFullSpectrumPhysicalCount(json))
+    }
+
+    @Test
+    fun `readFullSpectrumPhysicalCount parses the numeric-form marker`() {
+        val json = """{ "filament_colour": ["#FF0000"], "full_spectrum_physical_count": 4 }"""
+        assertEquals(4, readFullSpectrumPhysicalCount(json))
+    }
+
+    @Test
+    fun `readFullSpectrumPhysicalCount returns null when marker absent`() {
+        val json = """{ "filament_colour": ["#FF0000","#00FF00"] }"""
+        assertNull(readFullSpectrumPhysicalCount(json))
+    }
+
+    @Test
+    fun `readFullSpectrumPhysicalCount returns null for zero or malformed`() {
+        assertNull(readFullSpectrumPhysicalCount("""{ "full_spectrum_physical_count": "0" }"""))
+        assertNull(readFullSpectrumPhysicalCount("""{ "full_spectrum_physical_count": "abc" }"""))
+        assertNull(readFullSpectrumPhysicalCount("not json"))
+    }
+
+    @Test
+    fun `mergePaintStates capped at physical count drops virtual mix states`() {
+        // A full-spectrum file: 4 physical filaments, all facets painted to mix slot 4
+        // (engine paint state 5). The loader filters states > physicalCount (4) BEFORE
+        // mergePaintStates, so the canonical list MUST stay at 4 — the virtual mix state
+        // must not add a 5th PAINT_DERIVED filament (which would inflate num_physical and
+        // break the blend).
+        val base = CanonicalFilamentList(
+            filaments = (0..3).map {
+                FilamentEntry(it, "#FF0000", "PLA", FilamentSource.FILE_COLOUR)
+            }
+        )
+        val physicalCap = 4
+        val rawPaintStates = setOf(5) // mix slot 4 → state 5
+        val physicalOnly = rawPaintStates.filterTo(mutableSetOf()) { it <= physicalCap }
+        val merged = mergePaintStates(base, physicalOnly)
+        assertEquals("virtual mix state must not expand the canonical list", 4, merged.size)
+        assertTrue(merged.filaments.all { it.source == FilamentSource.FILE_COLOUR })
+    }
 }

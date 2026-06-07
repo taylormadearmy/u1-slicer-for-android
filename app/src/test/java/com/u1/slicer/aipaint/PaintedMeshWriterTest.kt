@@ -193,4 +193,45 @@ class PaintedMeshWriterTest {
         assertEquals("#808080", colours.getString(2))
         assertEquals("#1A2B3C", colours.getString(3))
     }
+
+    // ── M3-B full-spectrum marker emission ───────────────────────────────────
+
+    @Test
+    fun `painting a mix slot stamps the full_spectrum marker into project_settings`() {
+        // Whole model painted to mix slot 4 (>= numPhysical=4) → marker present, value 4.
+        val out = tmp.newFile("mix.3mf")
+        PaintedMeshWriter.write(
+            positions = fourRegionPositions(),
+            regionIds = intArrayOf(4,4, 4,4, 4,4, 4,4),
+            regions = regions(),
+            outputFile = out,
+            printerColours = listOf("#FF0000","#00FF00","#0000FF","#FFFF00"),
+        )
+        val text = ZipFile(out).use { z ->
+            z.getInputStream(z.getEntry("Metadata/project_settings.config")).bufferedReader().readText()
+        }
+        val json = org.json.JSONObject(text)
+        assertEquals("4", json.getString("full_spectrum_physical_count"))
+        // filament_colour stays at the 4 physical entries — the mix is virtual.
+        assertEquals(4, json.getJSONArray("filament_colour").length())
+    }
+
+    @Test
+    fun `no mix slot painted omits the full_spectrum marker`() {
+        val out = tmp.newFile("plain.3mf")
+        PaintedMeshWriter.write(
+            positions = fourRegionPositions(),
+            regionIds = fourRegionIds(),   // only physical slots 0..3
+            regions = regions(),
+            outputFile = out,
+            printerColours = listOf("#FF0000","#00FF00","#0000FF","#FFFF00"),
+        )
+        val text = ZipFile(out).use { z ->
+            z.getInputStream(z.getEntry("Metadata/project_settings.config")).bufferedReader().readText()
+        }
+        assertFalse(
+            "plain painted export must NOT carry the full-spectrum marker",
+            org.json.JSONObject(text).has("full_spectrum_physical_count"),
+        )
+    }
 }

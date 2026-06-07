@@ -47,6 +47,19 @@ object PaintedMeshWriter {
         printerColours: List<String>? = null,
         mixDisplayColours: List<String> = emptyList()
     ) {
+        // M3-B full-spectrum load-path fix: a "mix slot" is a VIRTUAL filament (paint state
+        // >= numPhysical + 1). When ANY triangle is painted to a mix slot, the painted 3MF
+        // carries paint states beyond the physical filament count. The canonical-list builder
+        // (bambuCanonicalList → mergePaintStates) would otherwise expand `filament_colour` to
+        // cover those high states, inflating the engine's num_physical past the mix's virtual
+        // id and breaking the blend (the whole region collapses to a single tool / renders grey).
+        //
+        // Stamp a deterministic marker (`full_spectrum_physical_count`) into project_settings.config
+        // so the loader caps the canonical/physical filament list at the physical count and treats
+        // the high paint states as virtual mixes, NOT extra physical filaments. The physical count
+        // is the number of slot regions (= SegmentationCascade.TARGET_SLOTS on the U1).
+        val physicalCount = regions.size
+        val usesMixSlot = regionIds.any { it >= physicalCount }
         ZipOutputStream(outputFile.outputStream().buffered()).use { zip ->
             zip.putNextEntry(ZipEntry("_rels/.rels"))
             zip.write(RELS_XML.toByteArray())
@@ -71,7 +84,12 @@ object PaintedMeshWriter {
             // project_settings.config ends up with filament_colour size 1 → the
             // native paint segmentation collapses to a single tool.
             zip.putNextEntry(ZipEntry("Metadata/project_settings.config"))
-            zip.write(buildProjectSettings(regions, printerColours, mixDisplayColours).toByteArray())
+            zip.write(
+                buildProjectSettings(
+                    regions, printerColours, mixDisplayColours,
+                    fullSpectrumPhysicalCount = if (usesMixSlot) physicalCount else null,
+                ).toByteArray()
+            )
             zip.closeEntry()
 
             zip.putNextEntry(ZipEntry("[Content_Types].xml"))
@@ -173,7 +191,8 @@ object PaintedMeshWriter {
     internal fun buildProjectSettings(
         regions: List<AiRegion>,
         printerColours: List<String>? = null,
-        @Suppress("UNUSED_PARAMETER") mixDisplayColours: List<String> = emptyList()
+        @Suppress("UNUSED_PARAMETER") mixDisplayColours: List<String> = emptyList(),
+        fullSpectrumPhysicalCount: Int? = null,
     ): String {
         // M3-B mix-blend fix (Route K): filament_colour MUST list ONLY the physical
         // filaments (one per region = 4 on the U1). It must NOT include the mix
@@ -212,11 +231,19 @@ object PaintedMeshWriter {
         val typesJson = allColours.joinToString(", ") { "\"PLA\"" }
         val settingsIdJson = allColours.joinToString(", ") { "\"Generic PLA\"" }
         val n = allColours.size
+        // Full-spectrum marker: when present, the loader (bambuCanonicalList /
+        // SlicerViewModel.loadModelFromFile) knows paint states beyond this physical
+        // count are VIRTUAL mix filaments and must NOT inflate the canonical /
+        // num_physical filament list. Omitted when no mix slot is painted so ordinary
+        // SEMM/painted exports are unaffected.
+        val markerJson = fullSpectrumPhysicalCount
+            ?.let { ",\n  \"full_spectrum_physical_count\": \"$it\"" }
+            .orEmpty()
         return """{
   "filament_colour": [$coloursJson],
   "filament_type": [$typesJson],
   "filament_settings_id": [$settingsIdJson],
-  "filament_count": "$n"
+  "filament_count": "$n"$markerJson
 }"""
     }
 

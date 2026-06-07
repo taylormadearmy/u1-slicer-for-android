@@ -281,6 +281,18 @@ object ThreeMfParser {
                         }
                     }
                 }
+
+                // M3-B full-spectrum marker — Smart Paint stamps `full_spectrum_physical_count`
+                // into project_settings.config when a mix slot is painted. Read it so the load
+                // path can keep the physical filament count fixed (and treat higher paint states
+                // as virtual mix filaments). Independent of the detectedColors short-circuit above.
+                val fullSpectrumPhysicalCount: Int? = zip.getEntry("Metadata/project_settings.config")
+                    ?.let { projEntry ->
+                        runCatching {
+                            val text = zip.getInputStream(projEntry).bufferedReader().use { it.readText() }
+                            com.u1.slicer.bambu.readFullSpectrumPhysicalCount(text)
+                        }.getOrNull()
+                    }
                 // 3. PrusaSlicer Slic3r_PE.config — semicolon-delimited INI
                 //    Also check Slic3r_PE_model.config for per-object extruder assignments.
                 if (detectedColors.isEmpty()) {
@@ -451,7 +463,8 @@ object ThreeMfParser {
                     objectExtruderMap = extruderAssignments.toMap(),
                     objectPartExtruders = objectPartExtrudersMain.mapValues { it.value.toSet() },
                     compoundPartParents = compoundPartParentsMain.toMap(),
-                    layerToolSegments = layerToolSegments
+                    layerToolSegments = layerToolSegments,
+                    fullSpectrumPhysicalCount = fullSpectrumPhysicalCount
                 )
             }
         } catch (e: Exception) {

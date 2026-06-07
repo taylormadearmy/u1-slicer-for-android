@@ -1638,15 +1638,48 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Empty when no canonical list is available — caller falls back to
      * the legacy 4-slot palette in [normalizeGcodePreviewColors].
      */
+    /**
+     * M3-B full-spectrum preview-colour fix. When the loaded model is full-spectrum
+     * (`ThreeMfInfo.fullSpectrumPhysicalCount != null`), its painted mix regions carry paint
+     * states beyond the physical filament count. Those states are VIRTUAL mix filaments and are
+     * deliberately NOT in the canonical/`filament_colour` list (keeping num_physical correct so
+     * the engine blends them). But the Prepare / G-code preview palettes index
+     * `palette[state - 1]`, so without an entry the mix region renders grey.
+     *
+     * This flow produces the naive-blend display colour for each active mix, in
+     * `mixedFilamentManager.activeOrder` order — i.e. the colour to append at virtual slot index
+     * `physicalCount + k` (state `physicalCount + 1 + k`). Empty when not full-spectrum.
+     */
+    private val loadedModelMixColors: StateFlow<List<String>> = combine(
+        _threeMfInfo,
+        mixedFilamentManager.projectMixes,
+        mixedFilamentManager.libraryMixes,
+        _activeExtruderColors,
+    ) { mfInfo, _, _, physicalColors ->
+        val physicalCount = mfInfo?.fullSpectrumPhysicalCount ?: return@combine emptyList()
+        // Physical palette source: the active extruder slot colours (the user's loaded
+        // filaments) so the mix blends reflect what will actually print. Fall back to the
+        // mix's own component lookups against whatever palette is available.
+        mixedFilamentManager.activeOrder(physicalCount).map { row ->
+            val a = physicalColors.getOrNull(row.componentA - 1)?.takeIf { it.isNotBlank() } ?: "#888888"
+            val b = physicalColors.getOrNull(row.componentB - 1)?.takeIf { it.isNotBlank() } ?: "#888888"
+            com.u1.slicer.aipaint.ColourMatch.naiveBlendHex(a, b, row.mixBPercent)
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val canonicalFilamentColors: StateFlow<List<String>> = combine(
         _canonicalFilamentList,
         _filamentOverrides,
-    ) { canonical, overrides ->
+        loadedModelMixColors,
+    ) { canonical, overrides, mixColors ->
         val list = canonical ?: return@combine emptyList()
-        if (overrides.isEmpty()) list.filaments.map { it.color }
+        val base = if (overrides.isEmpty()) list.filaments.map { it.color }
         else list.filaments.map { entry ->
             overrides[entry.fileIndex]?.color ?: entry.color
         }
+        // Append virtual mix colours so a painted mix region (paint state > physical count)
+        // renders its blend instead of falling off the end of the palette (grey).
+        base + mixColors
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
@@ -1721,7 +1754,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _filamentOverrides,
         _threeMfInfo,
         _layerToolOnly,
-    ) { canonical, overrides, mfInfo, layerTool ->
+        loadedModelMixColors,
+    ) { canonical, overrides, mfInfo, layerTool, mixColors ->
         val list = canonical ?: return@combine emptyList()
         val fullPalette = if (overrides.isEmpty()) list.filaments.map { it.color }
         else list.filaments.map { entry ->
@@ -1749,7 +1783,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         //     to the same compaction order as the mesh.
         val hasPaint = mfInfo?.hasPaintData == true
         if (hasPaint || layerTool) {
-            return@combine fullPalette
+            // M3-B: full-spectrum painted models carry virtual mix paint states beyond the
+            // physical palette. The recolor indexes palette[state-1]; append the mix blend
+            // colours so a mix region renders blended instead of grey (out-of-bounds).
+            return@combine fullPalette + mixColors
         }
 
         // Non-MMU path — derive the source-extruder compaction order.
@@ -3420,7 +3457,42 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // colorMapping=null causes InlineModelPreview to recolor with a single-slot palette.
                 // Check for multi-color from 3MF parsing
                 val mfInfo = _threeMfInfo.value
-                if (mfInfo != null && mfInfo.detectedExtruderCount > 1) {
+                val fullSpectrumPhysical = mfInfo?.fullSpectrumPhysicalCount
+                if (mfInfo != null && fullSpectrumPhysical != null && fullSpectrumPhysical > 1) {
+                    // M3-B full-spectrum load path. The painted 3MF declares exactly
+                    // `fullSpectrumPhysical` physical filaments (4 on the U1) plus virtual mix
+                    // slots encoded as higher paint states. Force the physical count and an
+                    // IDENTITY colour mapping over those physical slots so:
+                    //   - the embed sizes filament_colour/diameter to the physical count
+                    //     (num_physical == 4), letting the engine resolve mix states as virtual
+                    //     blends instead of treating them as extra physical filaments;
+                    //   - no closest-colour remap scrambles the painted state→filament identity
+                    //     (which would happen if two physical slots shared a colour and
+                    //     ensureMultiSlotMapping redistributed them).
+                    val presets = printersRepo.activePrinter.first()?.extruderPresets
+                        ?: com.u1.slicer.data.defaultExtruderPresets()
+                    val slotCount = fullSpectrumPhysical.coerceIn(1, 4)
+                    val identityMapping = (0 until slotCount).toList()
+                    _colorMapping.value = identityMapping
+                    _layerToolOnly.value = false
+                    val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
+                    val estimatedTowerDepth = WipeTowerDepthEstimator.estimateDepth(info.sizeZ)
+                    val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
+                        positions, info.sizeX, info.sizeY,
+                        towerWidth = _config.value.wipeTowerWidth,
+                        towerDepth = estimatedTowerDepth
+                    )
+                    _config.value = _config.value.copy(
+                        extruderCount = slotCount,
+                        wipeTowerEnabled = true,
+                        wipeTowerX = towerPos.first,
+                        wipeTowerY = towerPos.second
+                    )
+                    customWipeTowerPos = towerPos
+                    applyMultiColorAssignments(identityMapping, presets, filaments.value)
+                    Log.i("SlicerVM", "Full-spectrum load: physical=$slotCount identity mapping, " +
+                        "mixes=${mixedFilamentManager.activeOrder(slotCount).size}")
+                } else if (mfInfo != null && mfInfo.detectedExtruderCount > 1) {
                     val layerToolOnly = mfInfo.hasLayerToolChanges &&
                         !mfInfo.hasPaintData &&
                         !mfInfo.hasMultiExtruderAssignments
@@ -7369,7 +7441,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // the preview parser needs for per-part coloring (for example calicube).
             objectExtruderMap = processedInfo.objectExtruderMap.ifEmpty { origInfo.objectExtruderMap },
             layerToolSegments = origInfo.layerToolSegments,
-            hasPaintSupports = origInfo.hasPaintSupports
+            hasPaintSupports = origInfo.hasPaintSupports,
+            // M3-B: carry the full-spectrum marker from the original parse — the sanitized
+            // `processed` file may have its project_settings.config rewritten/stripped.
+            fullSpectrumPhysicalCount = origInfo.fullSpectrumPhysicalCount
         )
 
         /**

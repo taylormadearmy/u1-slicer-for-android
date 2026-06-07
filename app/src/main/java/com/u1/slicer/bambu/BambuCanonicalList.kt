@@ -50,6 +50,13 @@ fun bambuCanonicalList(file: File): CanonicalFilamentList? {
                 .bufferedReader().use { it.readText() }
             val base = buildFromProjectSettings(settingsText) ?: return null
 
+            // M3-B full-spectrum marker: a painted 3MF that uses mix slots stamps
+            // `full_spectrum_physical_count` so the loader knows paint states beyond the
+            // physical count are VIRTUAL mix filaments. Those states must NOT inflate the
+            // canonical (= physical num_physical) filament list — doing so would push the
+            // engine's num_physical past the mix's virtual id and break the blend.
+            val fullSpectrumPhysicalCount = readFullSpectrumPhysicalCount(settingsText)
+
             // Walk every .model entry, decode every paint_color / mmu_segmentation
             // attribute via PaintColorDecoder, aggregate the set of leaf paint
             // states the slicer will see.
@@ -65,7 +72,14 @@ fun bambuCanonicalList(file: File): CanonicalFilamentList? {
                         }
                     }
                 }
-            val withPaint = mergePaintStates(base, paintStates)
+            // Drop virtual-mix paint states (state > physicalCount) so mergePaintStates
+            // keeps the canonical list at exactly the physical filament count.
+            val physicalPaintStates = if (fullSpectrumPhysicalCount != null) {
+                paintStates.filterTo(mutableSetOf()) { it <= fullSpectrumPhysicalCount }
+            } else {
+                paintStates
+            }
+            val withPaint = mergePaintStates(base, physicalPaintStates)
 
             // Read custom_gcode_per_layer.xml if present (Hueforge / layer-tool
             // files). Each `type=1` or `type=2` <layer> entry references a
@@ -107,6 +121,25 @@ fun bambuFileColourList(file: File): CanonicalFilamentList? {
         Log.w(TAG, "Failed to read $PROJECT_SETTINGS_PATH from ${file.name}: ${e.message}")
         null
     }
+}
+
+/**
+ * Reads the M3-B `full_spectrum_physical_count` marker from a project_settings.config
+ * JSON string. Returns the physical filament count when the marker is present and a
+ * positive integer, else `null`. The value is stamped as a string by
+ * [com.u1.slicer.aipaint.PaintedMeshWriter] (Bambu config arrays are stringly-typed),
+ * so we tolerate both string and numeric JSON forms. Visible for unit tests.
+ */
+internal fun readFullSpectrumPhysicalCount(jsonText: String): Int? {
+    val json = try {
+        JSONObject(jsonText.trim())
+    } catch (_: JSONException) {
+        return null
+    }
+    if (!json.has("full_spectrum_physical_count")) return null
+    val n = json.optString("full_spectrum_physical_count", "").trim().toIntOrNull()
+        ?: json.optInt("full_spectrum_physical_count", 0)
+    return n.takeIf { it > 0 }
 }
 
 /** Visible for unit tests — builds the canonical list from a JSON string. */

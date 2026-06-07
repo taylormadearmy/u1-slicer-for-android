@@ -151,7 +151,24 @@ data class ThreeMfInfo(
         level = DeprecationLevel.WARNING
     )
     val compoundPartParents: Map<String, String> = emptyMap(),
-    val layerToolSegments: List<LayerToolSegment>? = null
+    val layerToolSegments: List<LayerToolSegment>? = null,
+    /**
+     * M3-B full-spectrum marker. Non-null when the loaded 3MF was painted with one or more
+     * VIRTUAL mix slots (Smart Paint full-spectrum). The value is the PHYSICAL filament count
+     * (4 on the U1) declared by [com.u1.slicer.aipaint.PaintedMeshWriter] in
+     * `project_settings.config` (`full_spectrum_physical_count`).
+     *
+     * Consumers:
+     *  - `SlicerViewModel.loadModelFromFile` forces `extruderCount = fullSpectrumPhysicalCount`
+     *    and keeps the canonical/physical filament list capped so paint states beyond the
+     *    physical count resolve as virtual mix filaments (the engine blends them) rather than
+     *    inflating num_physical (which collapses the mix to a single tool / grey).
+     *  - The Prepare / G-code preview palettes append each mix's naive-blend colour at the
+     *    virtual slot so a painted mix region renders blended, not grey.
+     *
+     * Null for ordinary STL / Bambu / SEMM files (no mix slots painted).
+     */
+    val fullSpectrumPhysicalCount: Int? = null
 ) {
     /**
      * Phase 2 §4 Step 8 — derived predicate. True when the file declares
