@@ -1,15 +1,12 @@
 package com.u1.slicer.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -366,90 +363,6 @@ internal fun ViewerToolbar(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 6.dp).widthIn(min = 36.dp)
                 )
-            }
-        }
-    }
-}
-
-/**
- * fix41 SlotPaletteRow — "Extruders →" row below the viewer. Always visible. Tap behaviour
- * is mode-aware (driven by the parent via [onTapSlot]).
- *
- * C1b (M3-Phase-B): now renders ALL entries in [slotPalette] (physical + mixes). Physical
- * chips (index < [numPhysical]) render as a plain colour square; mix chips (index ≥ [numPhysical])
- * render as a [MixedSlotSwatch] with the componentA/B physical colours. Tapping any chip
- * (including mix) fires [onTapSlot] with that chip's index so [paintActiveRegion] can accept
- * mix slot ids (≥ numPhysical).
- */
-@Composable
-internal fun SlotPaletteRow(
-    slotPalette: List<Color>,
-    paintMode: Boolean,
-    lassoMode: Boolean,
-    activeSlot: Int,
-    hasLassoSelection: Boolean,
-    onTapSlot: (Int) -> Unit,
-    numPhysical: Int = slotPalette.size,
-    activeMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
-    physicalColours: List<Color> = slotPalette.take(numPhysical),
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-    ) {
-        Text(
-            when {
-                lassoMode && hasLassoSelection -> "Apply to →"
-                paintMode || lassoMode -> "Active →"
-                else -> "Extruders →"
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        slotPalette.forEachIndexed { idx, color ->
-            val isActive = (paintMode || lassoMode) && idx == activeSlot && !hasLassoSelection
-            val chipSize = if (isActive) 44.dp else 40.dp
-            if (idx < numPhysical) {
-                // Physical slot — solid colour square with pen/tick overlay
-                Box(
-                    Modifier
-                        .size(chipSize)
-                        .background(color, MaterialTheme.shapes.small)
-                        .clickable { onTapSlot(idx) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val tickColor = tickContrastColor(color)
-                    when {
-                        isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
-                        !paintMode && !lassoMode ->
-                            Text("✎", color = tickColor, style = MaterialTheme.typography.labelMedium)
-                        else -> {}
-                    }
-                }
-            } else {
-                // Mix slot — two-tone swatch using componentA/componentB physical colours.
-                // The 1-based componentA/B index uses the same `- 1` mapping as SectionedSlotPicker.MixSlotChip.
-                val mixIndex = idx - numPhysical
-                val row = activeMixes.getOrNull(mixIndex)
-                val primary = row?.let { physicalColours.getOrNull(it.componentA - 1) } ?: color
-                val secondary = row?.let { physicalColours.getOrNull(it.componentB - 1) }
-                Box(
-                    Modifier
-                        .size(chipSize)
-                        .clickable { onTapSlot(idx) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MixedSlotSwatch(
-                        primary = primary,
-                        secondary = secondary,
-                        size = chipSize,
-                    )
-                    if (isActive) {
-                        val tickColor = tickContrastColor(primary)
-                        Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
-                    }
-                }
             }
         }
     }
