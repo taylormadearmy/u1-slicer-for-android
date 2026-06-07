@@ -1731,6 +1731,13 @@ fun PrepareScreen(
                             onColorOverride = { idx, color ->
                                 viewModel.setFilamentColorOverride(idx, color)
                             },
+                            // Task 3: Mixes subsection folded into this card.
+                            mixSlotsContent = {
+                                PrepareMixSlotsSectionContent(
+                                    viewModel = viewModel,
+                                    extruderPresets = extruderPresets,
+                                )
+                            },
                         )
                         // fix35: Smart Paint moved to a top-right overlay icon on InlineModelPreview
                         // (the painted-model inline TextButton previously here is gone).
@@ -1753,34 +1760,13 @@ fun PrepareScreen(
                                 multiObjectMode = hasMultipleDistinctObjects,
                             )
                         }
-                        // Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour models
-                        // (STL, single-filament 3MF) get a one-row Filament list,
-                        // mirroring the multi-colour PrintSetupSection chip strip.
-                        // Slot picking happens at Send time via the Filament mapping
-                        // dialog (no slot picker on Prepare).
-                        if (colorMapping == null && state is SlicerViewModel.SlicerState.ModelLoaded) {
-                            val selectedExtruder by viewModel.selectedExtruder.collectAsState()
-                            SingleColorFilamentRow(
-                                resolvedFilamentColors = resolvedFilamentColors,
-                                extruderPresets = extruderPresets,
-                                selectedSlot = selectedExtruder,
-                                onMaterialOverride = { material ->
-                                    viewModel.setFilamentMaterialOverride(0, material)
-                                },
-                                onColorOverride = { color ->
-                                    viewModel.setFilamentColorOverride(0, color)
-                                },
-                                filamentOverrides = filamentOverrides,
-                            )
-                        }
-                        // M3 Phase A: Mix slots section — entry point on Prepare for
-                        // creating two-component blends without leaving the screen.
-                        // Same dialog as the Filaments tab; tap-to-edit, long-press
-                        // (or row icons) to delete or promote to library.
-                        PrepareMixSlotsSection(
-                            viewModel = viewModel,
-                            extruderPresets = extruderPresets,
-                        )
+                        // Phase 2 §4 Step 7 / Task 3 UX consolidation: the single-colour
+                        // Filament card (SingleColorFilamentRow) has been merged into
+                        // PrintSetupSection above — that composable already handles the
+                        // STL/single-filament case by synthesising a fallback from the
+                        // first extruder preset. The separate Mix slots card
+                        // (PrepareMixSlotsSection) is now a "Mixes" subsection inside
+                        // PrintSetupSection so both live in ONE card.
                         // fix35: Smart Paint moved to the 3D-viewer overlay (top-right icon).
                         // Single-colour Smart Paint entry previously here is gone.
                         ConfigCard(
@@ -4188,6 +4174,10 @@ fun PrintSetupSection(
     filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
     onMaterialOverride: (fileIndex: Int, materialType: String?) -> Unit = { _, _ -> },
     onColorOverride: (fileIndex: Int, color: String?) -> Unit = { _, _ -> },
+    // Task 3 UX consolidation: optional "Mixes" subsection rendered inside this
+    // card after the filament rows, so both live in one Card. The caller provides
+    // the content lambda; null = no Mixes subsection (default, safe for previews).
+    mixSlotsContent: (@Composable () -> Unit)? = null,
 ) {
     // Note: onMappingChange / onAutoMap kept in the signature because callers
     // still pass them (they wired the legacy slot-picker path). They're
@@ -4397,6 +4387,30 @@ fun PrintSetupSection(
                     // (Prime-tower toggle removed from the filament list — it's a slicing
                     // setting, not a per-filament one. Toggle lives in the model-info dialog
                     // and Settings → slice overrides, consistent with every other setting.)
+
+                    // Task 3 UX consolidation — Mixes subsection. When the caller
+                    // provides a mix-slots content lambda, render it here with a
+                    // subtle divider so it reads as a subsection of this card rather
+                    // than a separate top-level card.
+                    if (mixSlotsContent != null) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        ) {
+                            Text(
+                                "MIXES",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.8.sp,
+                            )
+                        }
+                        mixSlotsContent()
+                    }
                 }
             }
         }
@@ -4808,15 +4822,19 @@ fun ScaleSection(
 }
 
 /**
- * M3 Phase A: Prepare-screen Mix Slots section. Expandable card that lists
- * the current project's mix slots (with library promotions) and surfaces an
- * Add affordance opening the CreateMixSlotDialog. Tap an existing row to
- * edit, long-press / tap the star to promote/demote to/from the library,
- * tap the trash icon to delete. AiPaintResultScreen's HighlightSlotPicker
- * stays as-is — its mix-aware migration is Phase B work.
+ * M3 Phase A / Task 3 UX consolidation: Mixes subsection content for the
+ * combined Filaments card. Renders the collapsible mix-slot list (project +
+ * library) with an Add affordance, without its own outer Card/surface chrome —
+ * it is always rendered inside PrintSetupSection's card column via the
+ * `mixSlotsContent` slot.
+ *
+ * Renamed from `PrepareMixSlotsSection` (which was a standalone card) to
+ * `PrepareMixSlotsSectionContent` (subsection content only).
+ * AiPaintResultScreen's HighlightSlotPicker stays as-is — its mix-aware
+ * migration is Phase B work.
  */
 @Composable
-fun PrepareMixSlotsSection(
+fun PrepareMixSlotsSectionContent(
     viewModel: SlicerViewModel,
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
 ) {
@@ -4862,93 +4880,90 @@ fun PrepareMixSlotsSection(
     val libraryOnly = libraryMixes.filter { lib -> projectMixes.none { it.id == lib.id } }
     val totalCount = projectMixes.size + libraryOnly.size
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded },
-                verticalAlignment = Alignment.CenterVertically,
+    // No outer Card — rendered as a subsection inside the Filaments card.
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Mix slots ($totalCount)",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                modifier = Modifier.weight(1f),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+            )
+            IconButton(
+                onClick = {
+                    editingRow = null
+                    showDialog = true
+                },
+                modifier = Modifier.size(32.dp),
             ) {
                 Icon(
-                    Icons.Default.Palette, null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Mix slots ($totalCount)",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(
-                    onClick = {
-                        editingRow = null
-                        showDialog = true
-                    },
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Add mix slot")
-                }
-                Icon(
-                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = null,
+                    Icons.Default.Add,
+                    contentDescription = "Add mix slot",
+                    modifier = Modifier.size(18.dp),
                 )
             }
-            if (expanded) {
-                Spacer(Modifier.height(8.dp))
-                if (totalCount == 0) {
-                    Text(
-                        "No mix slots yet — tap + to create one.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        projectMixes.forEach { row ->
+            Icon(
+                if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            )
+        }
+        if (expanded) {
+            Spacer(Modifier.height(6.dp))
+            if (totalCount == 0) {
+                Text(
+                    "No mix slots yet — tap + to create one.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    projectMixes.forEach { row ->
+                        PrepareMixSlotRow(
+                            row = row,
+                            physicalColours = physicalColours,
+                            inLibrary = row.inLibrary,
+                            onEdit = {
+                                editingRow = row
+                                showDialog = true
+                            },
+                            onToggleLibrary = {
+                                if (row.inLibrary)
+                                    viewModel.mixedFilamentManager.demoteFromLibrary(row.id)
+                                else
+                                    viewModel.mixedFilamentManager.promoteToLibrary(row.id)
+                            },
+                            onDelete = { viewModel.mixedFilamentManager.delete(row.id) },
+                        )
+                    }
+                    if (libraryOnly.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Library (★)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        libraryOnly.forEach { row ->
                             PrepareMixSlotRow(
                                 row = row,
                                 physicalColours = physicalColours,
-                                inLibrary = row.inLibrary,
+                                inLibrary = true,
                                 onEdit = {
                                     editingRow = row
                                     showDialog = true
                                 },
                                 onToggleLibrary = {
-                                    if (row.inLibrary)
-                                        viewModel.mixedFilamentManager.demoteFromLibrary(row.id)
-                                    else
-                                        viewModel.mixedFilamentManager.promoteToLibrary(row.id)
+                                    viewModel.mixedFilamentManager.demoteFromLibrary(row.id)
                                 },
                                 onDelete = { viewModel.mixedFilamentManager.delete(row.id) },
                             )
-                        }
-                        if (libraryOnly.isNotEmpty()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "Library (★)",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            libraryOnly.forEach { row ->
-                                PrepareMixSlotRow(
-                                    row = row,
-                                    physicalColours = physicalColours,
-                                    inLibrary = true,
-                                    onEdit = {
-                                        editingRow = row
-                                        showDialog = true
-                                    },
-                                    onToggleLibrary = {
-                                        viewModel.mixedFilamentManager.demoteFromLibrary(row.id)
-                                    },
-                                    onDelete = { viewModel.mixedFilamentManager.delete(row.id) },
-                                )
-                            }
                         }
                     }
                 }
@@ -5018,155 +5033,11 @@ private fun PrepareMixSlotRow(
     }
 }
 
-/**
- * Phase 2 §4 Step 7 (UX brief Q7/Q8) — single-colour filament row for STL
- * and single-filament 3MF on the Prepare screen. Mirrors the multi-colour
- * PrintSetupSection chip pattern but for one filament. Slot mapping is
- * NOT picked here; the Filament mapping dialog at Send time owns slot
- * selection.
- *
- * Replaces the legacy `ExtruderPickerRow` (slot-picker FilterChip row)
- * which was at odds with the Phase 2 vision of slot-pick-at-Send.
- *
- * The row exposes:
- * - Tap-to-edit colour swatch (override the slot's preset colour for
- *   this print)
- * - Tap-to-edit material chip (override the slot's preset material for
- *   this print)
- * - A caption pointing at the Send dialog for slot mapping
- */
-@Composable
-fun SingleColorFilamentRow(
-    resolvedFilamentColors: List<String>,
-    extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
-    selectedSlot: Int,
-    onMaterialOverride: (String?) -> Unit,
-    onColorOverride: (String?) -> Unit,
-    filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride>,
-) {
-    val override = filamentOverrides[0]
-    // Display colour priority: user override → file's resolved → slot's preset.
-    val slotPreset = extruderPresets.firstOrNull { it.index == selectedSlot }
-        ?: extruderPresets.firstOrNull()
-    val effectiveColor = override?.color
-        ?: resolvedFilamentColors.firstOrNull()?.takeIf { it.isNotBlank() }
-        ?: slotPreset?.color
-        ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[0]
-    val materialType = override?.materialType
-        ?: slotPreset?.materialType
-        ?: "PLA"
-    val isColorOverridden = override?.color != null
-    val isMaterialOverridden = override?.materialType != null
-
-    var editingMaterial by remember { mutableStateOf(false) }
-    var editingColor by remember { mutableStateOf(false) }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Default.Palette, null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Filament", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            }
-            Text(
-                "Slot mapping happens when you tap Send →",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                        RoundedCornerShape(8.dp),
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(com.u1.slicer.ui.parseHexColor(effectiveColor))
-                        .border(
-                            if (isColorOverridden) 2.dp else 1.dp,
-                            if (isColorOverridden) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outline,
-                            androidx.compose.foundation.shape.CircleShape,
-                        )
-                        .clickable { editingColor = true },
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Filament 1",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-                Box {
-                    AssistChip(
-                        onClick = { editingMaterial = true },
-                        label = { Text(materialType) },
-                        leadingIcon = if (isMaterialOverridden) {
-                            { Icon(Icons.Default.Edit, null, modifier = Modifier.size(14.dp)) }
-                        } else null,
-                    )
-                    DropdownMenu(
-                        expanded = editingMaterial,
-                        onDismissRequest = { editingMaterial = false },
-                    ) {
-                        listOf("PLA", "PETG", "ABS", "TPU", "PA", "PC").forEach { m ->
-                            DropdownMenuItem(
-                                text = { Text(m) },
-                                onClick = {
-                                    onMaterialOverride(m)
-                                    editingMaterial = false
-                                },
-                            )
-                        }
-                        if (isMaterialOverridden) {
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Reset to default", style = MaterialTheme.typography.labelMedium) },
-                                onClick = {
-                                    onMaterialOverride(null)
-                                    editingMaterial = false
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (editingColor) {
-        val current = override?.color
-            ?: resolvedFilamentColors.firstOrNull()?.takeIf { it.isNotBlank() }
-            ?: slotPreset?.color
-            ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[0]
-        com.u1.slicer.ui.FilamentColorEditDialog(
-            initialHex = current,
-            onSave = { hex -> onColorOverride(hex); editingColor = false },
-            onDismiss = { editingColor = false },
-            onReset = if (override?.color != null) {
-                { onColorOverride(null); editingColor = false }
-            } else null,
-        )
-    }
-}
+// SingleColorFilamentRow removed (Task 3 UX consolidation): it was a duplicate
+// standalone "Filament" card for STL/single-colour files. PrintSetupSection
+// already handles the single-colour case by synthesising a fallback colour row
+// from the first extruder preset when detectedColors is empty, so both STL and
+// 3MF now share one Filaments card.
 
 @Composable
 fun InlineGcodePreview(
