@@ -1717,12 +1717,10 @@ fun PrepareScreen(
                             extruderPresets = extruderPresets,
                             filaments = filaments,
                             filamentMaterials = filamentMaterials,
-                            wipeTowerEnabled = config.wipeTowerEnabled,
                             extruderCount = config.extruderCount,
                             onMappingChange = { newMapping ->
                                 viewModel.applyMultiColorAssignments(newMapping, extruderPresets, filaments)
                             },
-                            onToggleWipeTower = { viewModel.togglePrimeTower() },
                             onAutoMap = {
                                 viewModel.reAutoMapColors(extruderPresets, filaments)
                             },
@@ -4184,10 +4182,8 @@ fun PrintSetupSection(
     // the displayed material + temp so the chip strip matches the slice exactly.
     // Empty for STL / non-canonical files (falls back to slot-preset material).
     filamentMaterials: List<Pair<String, Int>> = emptyList(),
-    wipeTowerEnabled: Boolean,
     extruderCount: Int,
     onMappingChange: (List<Int>) -> Unit,
-    onToggleWipeTower: () -> Unit,
     onAutoMap: (() -> Unit)? = null,
     filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
     onMaterialOverride: (fileIndex: Int, materialType: String?) -> Unit = { _, _ -> },
@@ -4398,22 +4394,9 @@ fun PrintSetupSection(
                         }
                     }
 
-                    // Prime tower toggle — slicing setting, kept on Prepare.
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.FilterNone, null,
-                                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                                modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Prime Tower", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        Switch(checked = wipeTowerEnabled,
-                            onCheckedChange = { onToggleWipeTower() })
-                    }
+                    // (Prime-tower toggle removed from the filament list — it's a slicing
+                    // setting, not a per-filament one. Toggle lives in the model-info dialog
+                    // and Settings → slice overrides, consistent with every other setting.)
                 }
             }
         }
