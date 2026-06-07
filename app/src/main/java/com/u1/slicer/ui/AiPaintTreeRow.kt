@@ -3,7 +3,9 @@ package com.u1.slicer.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowRight
@@ -116,11 +118,15 @@ fun AiPaintTreeRow(
             )
         }
 
-        // Compact inline selector: the physical slot chips, the region's current mix chip (only
-        // when it is assigned to a mix — keeps the row narrow), and a "+" to create a new mix.
-        // The full mix list is offered by the "Move to slot" overlay (tap the region) and the
-        // Extruders row, so the per-row selector stays compact and never squeezes the label.
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        // Inline selector — same chips as the "Extruders →" row and the model-tap overlay, so a
+        // mix created anywhere shows up here too: the physical slot chips, one two-tone chip per
+        // active mix, and a "+" to create a new mix. Bounded with weight(1f) + horizontalScroll
+        // so the chips never squeeze the label to zero width even with many mixes.
+        Row(
+            modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             slotPalette.take(numPhysical).forEachIndexed { slot, color ->
                 val isActive = node.region.slot == slot
                 Box(
@@ -136,17 +142,18 @@ fun AiPaintTreeRow(
                     }
                 }
             }
-            // Current mix chip (two-tone) only when the region is on a mix slot.
-            if (node.region.slot >= numPhysical) {
-                val mix = activeMixes.getOrNull(node.region.slot - numPhysical)
-                if (mix != null) {
-                    val mPrimary = physicalColours.getOrNull(mix.componentA - 1) ?: Color.Gray
-                    val mSecondary = physicalColours.getOrNull(mix.componentB - 1)
-                    Box(
-                        Modifier.size(24.dp).clickable { onPickSlot(node.region.slot) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        MixedSlotSwatch(primary = mPrimary, secondary = mSecondary, size = 24.dp)
+            // One two-tone chip per active mix. Slot id = numPhysical + index. Tapping assigns.
+            activeMixes.forEachIndexed { idx, mix ->
+                val slot = numPhysical + idx
+                val isActive = node.region.slot == slot
+                val mPrimary = physicalColours.getOrNull(mix.componentA - 1) ?: Color.Gray
+                val mSecondary = physicalColours.getOrNull(mix.componentB - 1)
+                Box(
+                    Modifier.size(if (isActive) 24.dp else 20.dp).clickable { onPickSlot(slot) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MixedSlotSwatch(primary = mPrimary, secondary = mSecondary, size = if (isActive) 24.dp else 20.dp)
+                    if (isActive) {
                         Text("✓", color = tickContrastColor(mPrimary), style = MaterialTheme.typography.labelSmall)
                     }
                 }
