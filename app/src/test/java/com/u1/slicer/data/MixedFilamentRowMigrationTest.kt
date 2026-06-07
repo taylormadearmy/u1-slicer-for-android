@@ -40,4 +40,19 @@ class MixedFilamentRowMigrationTest {
         assertEquals(listOf(2, 4), row.components)
         assertEquals(listOf(75, 25), row.weights)
     }
+
+    @Test fun init_rejectsBadComponentCountAndMismatchedWeights() {
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            MixedFilamentRow(1, listOf(1), listOf(100),
+                MixedFilamentRow.MixDistributionMode.LAYER_CYCLE, "x", false)   // 1 component
+        }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            MixedFilamentRow(1, listOf(1, 2, 3, 4, 5), listOf(20, 20, 20, 20, 20),
+                MixedFilamentRow.MixDistributionMode.LAYER_CYCLE, "x", false)   // 5 components
+        }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            MixedFilamentRow(1, listOf(1, 2, 3), listOf(50, 50),
+                MixedFilamentRow.MixDistributionMode.LAYER_CYCLE, "x", false)   // weights size mismatch
+        }
+    }
 }

@@ -18,7 +18,7 @@ package com.u1.slicer.data
 data class MixedFilamentRow(
     val id: Long,
     val components: List<Int>,                    // 2..4 entries, 1-based, distinct
-    val weights: List<Int>,                       // same size; each >= 1; sum == 100
+    val weights: List<Int>,                       // same size as components (>=1 / sum==100 enforced by MixWeights at create/edit time, not here)
     val distributionMode: MixDistributionMode,
     val label: String,
     val inLibrary: Boolean,
