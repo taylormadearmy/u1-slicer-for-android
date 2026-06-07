@@ -5046,10 +5046,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // fallback paths, slot-space presets are the right source.
                 // See docs/superpowers/exploration/2026-04-27-applyConfigToPrusa-cascade-audit.md
                 val sliceConfig = resolvedSliceConfig.let { cfg ->
+                    // Issue #3 — object/part-assigned mix: when any per-volume
+                    // extruder override is a MIX id (1-based slot > numPhysical),
+                    // the object's `extruder` metadata was baked to a virtual
+                    // filament. The engine derives num_physical from the sized
+                    // filament arrays, so the physical base MUST be the full
+                    // TARGET_SLOTS (4) — otherwise the arrays size to the model's
+                    // declared count (e.g. 1 for a plain STL), num_physical
+                    // collapses, and the mix id is mis-treated as a literal
+                    // physical filament (the invalid-T4 failure mode). This
+                    // mirrors the full-spectrum LOAD path (see line ~3461), but
+                    // for the object-assignment path where no painted 3MF marker
+                    // is present.
+                    val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+                    val anyMixAssigned = mixedFilamentManager.activeOrder(numPhysical).isNotEmpty() &&
+                        _perVolumeExtruders.value.values.any { it > numPhysical }
+                    val mixPhysicalBase = if (anyMixAssigned) numPhysical else 0
                     val effectiveExtruderCount = maxOf(
                         cfg.extruderCount,
                         cfg.supportFilament,
                         cfg.supportInterfaceFilament,
+                        mixPhysicalBase,
                     )
                     val slotFilamentTypes = extruderPresets.value
                         .sortedBy { it.index }

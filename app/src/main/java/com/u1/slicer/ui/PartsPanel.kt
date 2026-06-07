@@ -230,6 +230,23 @@ private fun resolveFilamentChip(
     }
 }
 
+/**
+ * Issue #3 — the per-part / whole-object "Assign to filament" dialog, made
+ * mix-aware. After the physical filament rows it lists the active mixes
+ * (two-tone swatch) and a "+ Add mix" affordance that opens
+ * [CreateMixSlotDialog].
+ *
+ * Slot-id contract for [onPick] (1-based, matching
+ * [SlicerViewModel.setVolumeExtruder] / the native `vol->config["extruder"]`):
+ *   - physical filament `n` → slot `n` (1..numPhysical)
+ *   - mix at ordered index `idx` → slot `numPhysical + idx + 1` (5, 6, …)
+ *
+ * Assigning a mix bakes that mix id into the object/volume's `extruder`
+ * metadata PRE-slice; the OrcaSlicer engine then resolves it as a virtual
+ * filament and alternates the two component tools per layer (the proven blend
+ * path — see MixSlotObjectAssignDiagnosticTest). The recipe + physical base
+ * are guaranteed at slice time by [SlicerViewModel.startSlicing].
+ */
 @Composable
 private fun FilamentChooserDialog(
     currentSlot: Int,
@@ -239,6 +256,47 @@ private fun FilamentChooserDialog(
 ) {
     val canonical by viewModel.canonicalFilamentList.collectAsState()
     val rowCount = canonical?.size ?: 4
+    // Mix slot ids are offset by the physical filament base (U1 = 4). Use the
+    // same base the recipe serialization / FilamentMixChipRow use so the id a
+    // part is assigned lines up with the engine's virtual-filament order.
+    val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+
+    val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
+    val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
+    val mixes = remember(projectMixes, libraryMixes) {
+        com.u1.slicer.data.MixSlotOrdering.activeOrder(projectMixes, libraryMixes, numPhysical)
+    }
+
+    val activeColors by viewModel.activeExtruderColors.collectAsState()
+    val resolvedColors by viewModel.resolvedFilamentColors.collectAsState()
+    // Physical chip colours (1-based slot n → colour). Prefer the file's
+    // resolved colours, fall back to the active slot presets.
+    val physicalColours = remember(numPhysical, activeColors, resolvedColors, canonical) {
+        (1..numPhysical).map { slot ->
+            val hex = resolvedColors.getOrNull(slot - 1)?.takeIf { it.isNotBlank() }
+                ?: activeColors.getOrNull(slot - 1) ?: ""
+            parseHexColor(hex)
+        }
+    }
+    val physicalLabels = remember(numPhysical) { (1..numPhysical).map { "E$it" } }
+
+    var creatingMix by remember { mutableStateOf(false) }
+    var editingMix by remember { mutableStateOf<com.u1.slicer.data.MixedFilamentRow?>(null) }
+
+    if (creatingMix) {
+        CreateMixSlotDialog(
+            physicalFilamentColours = physicalColours,
+            physicalFilamentLabels = physicalLabels,
+            editingRow = editingMix,
+            onConfirm = { a, b, pct, mode ->
+                val edit = editingMix
+                if (edit != null) viewModel.mixedFilamentManager.edit(edit.id, a, b, pct, mode)
+                else viewModel.mixedFilamentManager.add(a, b, pct, mode)
+            },
+            onDelete = editingMix?.let { row -> { viewModel.mixedFilamentManager.delete(row.id) } },
+            onDismiss = { creatingMix = false; editingMix = null },
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -291,6 +349,78 @@ private fun FilamentChooserDialog(
                             )
                         }
                     }
+                }
+
+                // ── Mix slots ───────────────────────────────────────────────
+                // 1-based mix slot id = numPhysical + idx + 1 (matches
+                // setVolumeExtruder's native extruder contract). Picking a mix
+                // bakes that id into the object/volume extruder → real blend.
+                mixes.forEachIndexed { idx, mix ->
+                    val mixSlot1Based = numPhysical + idx + 1
+                    val isCurrent = mixSlot1Based == currentSlot
+                    val primary = physicalColours.getOrNull(mix.componentA - 1) ?: Color(0xFF888888)
+                    val secondary = physicalColours.getOrNull(mix.componentB - 1)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (isCurrent) MaterialTheme.colorScheme.secondaryContainer
+                                else MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
+                            )
+                            .clickable { onPick(mixSlot1Based) }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        MixedSlotSwatch(
+                            primary = primary,
+                            secondary = secondary,
+                            size = 24.dp,
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                mix.label.ifBlank { "Mix ${idx + 1}" } +
+                                    if (isCurrent) " · current" else "",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                "Mix E${mix.componentA}+E${mix.componentB} · ${mix.mixBPercent}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            )
+                        }
+                    }
+                }
+
+                // ── + Add mix ───────────────────────────────────────────────
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                        .clickable { editingMix = null; creatingMix = true }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Box(
+                        modifier = Modifier.size(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "+",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        "Add mix",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         },
