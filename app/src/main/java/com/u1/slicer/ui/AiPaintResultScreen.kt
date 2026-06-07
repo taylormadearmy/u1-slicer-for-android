@@ -7,10 +7,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.ui.draw.clip
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -179,16 +177,7 @@ fun AiPaintResultScreen(
                             ?.let { it.triangleIds.toHashSet() }
                             ?: emptySet()
                     }
-                    val highlightedNode: com.u1.slicer.aipaint.AiRegionNode? = remember(result.tree, result.highlightComponentId, result.customSelections) {
-                        val id = result.highlightComponentId ?: return@remember null
-                        val withCustom = result.tree + listOfNotNull(
-                            com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
-                        )
-                        findNodeById(withCustom, id)
-                    }
-
-                    // Live 3D viewer — wrapped in a Box so the SectionedSlotPicker overlay can
-                    // float at the bottom of the viewer when a region is selected.
+                    // Live 3D viewer.
                     Box(
                         modifier = Modifier.fillMaxWidth().fillMaxHeight(0.42f),
                     ) {
@@ -280,73 +269,7 @@ fun AiPaintResultScreen(
                             .padding(8.dp),
                     )
 
-                    // C1a (M3-Phase-B): per-region slot picker with mix slot support.
-                    // Replaces the physical-only HighlightSlotPicker with SectionedSlotPicker
-                    // so the user can assign a region to a physical filament OR a mix slot.
-                    // The library filter mirrors MixSlotOrdering.activeOrder's library predicate
-                    // exactly — mandatory so picker chip ids align with painted slot ids.
-                    if (highlightedNode != null) {
-                        val pickerLibrary = libraryMixes.filter { lib ->
-                            projectMixes.none { it.id == lib.id } &&
-                                lib.componentA <= numPhysical && lib.componentB <= numPhysical
-                        }
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(bottom = 12.dp)
-                                .clip(MaterialTheme.shapes.large)
-                                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.82f))
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                        ) {
-                            Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)) {
-                                // Region label + dismiss row
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column {
-                                        androidx.compose.material3.Text(
-                                            "Move to slot:",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f),
-                                        )
-                                        androidx.compose.material3.Text(
-                                            highlightedNode.region.label,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = androidx.compose.ui.graphics.Color.White,
-                                            maxLines = 1,
-                                        )
-                                    }
-                                    androidx.compose.material3.IconButton(
-                                        onClick = { onHighlightComponent(null) },
-                                        modifier = Modifier.size(32.dp),
-                                    ) {
-                                        androidx.compose.material3.Icon(
-                                            imageVector = Icons.Default.Close,
-                                            contentDescription = "Clear selection",
-                                            tint = androidx.compose.ui.graphics.Color.White,
-                                        )
-                                    }
-                                }
-                                SectionedSlotPicker(
-                                    physicalColours = slotPalette.take(numPhysical),
-                                    physicalLabels = (1..numPhysical).map { "E$it" },
-                                    projectMixes = projectMixes,
-                                    libraryMixes = pickerLibrary,
-                                    selectedSlot = highlightedNode.region.slot,
-                                    onSelect = { slot ->
-                                        // fix35.2: don't clear the highlight after reassign —
-                                        // the user wants to iterate quickly across slots.
-                                        onSetSegmentSlot(highlightedNode.region.id, slot)
-                                    },
-                                    onCreateMix = onCreateMix,
-                                    onEditMix = onEditMix,
-                                )
-                            }
-                        }
-                    }
-                    }  // end Box wrapper for viewer + overlay
+                    }  // end Box wrapper for viewer
 
                     // fix41 panel order: primary view toggle → AI failure chip (if any) →
                     // slot palette row → tree → tip → bottom bar. Manual paint/lasso/brush
@@ -428,21 +351,20 @@ fun AiPaintResultScreen(
                     //   • Paint            → tap a swatch sets the active paint slot (tick mark)
                     //   • Lasso + items    → tap a swatch commits the selection to that slot
                     //   • Lasso + empty    → tap a swatch sets the active slot for next stroke
-                    SlotPaletteRow(
-                        slotPalette = slotPalette,
-                        paintMode = paintMode,
-                        lassoMode = lassoMode,
-                        activeSlot = paintActiveRegion,
-                        hasLassoSelection = false,
-                        onTapSlot = { slot ->
+                    FilamentMixChipRow(
+                        physicalColours = slotPalette.take(numPhysical),
+                        physicalLabels = (1..numPhysical).map { "E$it" },
+                        mixes = activeMixes,
+                        selectedSlot = paintActiveRegion,
+                        onSelect = { slot ->
                             when {
                                 paintMode || lassoMode -> paintActiveRegion = slot
                                 else -> editSlotColour = slot
                             }
                         },
-                        numPhysical = numPhysical,
-                        activeMixes = activeMixes,
-                        physicalColours = slotPalette.take(numPhysical),
+                        onCreateMix = onCreateMix,
+                        onEditMix = onEditMix,
+                        modifier = androidx.compose.ui.Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     )
 
                     val treeWithCustom = result.tree + listOfNotNull(
@@ -454,9 +376,8 @@ fun AiPaintResultScreen(
                         onTapSwatch = { nodeSlot -> editSlotColour = nodeSlot },
                         onPickSlot = { path, slot ->
                             // fix35.2: tapping a slot chip on a row also highlights that row
-                            // (so the model lights up the affected triangles in yellow + the
-                            // overlay picker appears below the viewer). Reassign + highlight is
-                            // one coherent action.
+                            // (so the model lights up the affected triangles in yellow). Reassign
+                            // + highlight is one coherent action.
                             if (path.isNotEmpty()) {
                                 val nodeId = path.last()
                                 onSetSegmentSlot(nodeId, slot)
@@ -475,6 +396,8 @@ fun AiPaintResultScreen(
                         numPhysical = numPhysical,
                         activeMixes = activeMixes,
                         physicalColours = slotPalette.take(numPhysical),
+                        onCreateMix = onCreateMix,
+                        onEditMix = onEditMix,
                     )
 
                     if (!paintMode) {

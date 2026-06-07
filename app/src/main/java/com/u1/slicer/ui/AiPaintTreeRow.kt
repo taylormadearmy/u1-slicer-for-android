@@ -40,6 +40,8 @@ fun AiPaintTreeRow(
     numPhysical: Int = 4,
     activeMixes: List<MixedFilamentRow> = emptyList(),
     physicalColours: List<Color> = emptyList(),
+    onCreateMix: () -> Unit = {},
+    onEditMix: (MixedFilamentRow) -> Unit = {},
 ) {
     val rowBg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Row(
@@ -115,23 +117,14 @@ fun AiPaintTreeRow(
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            slotPalette.forEachIndexed { slot, color ->
-                val isActive = node.region.slot == slot
-                Box(
-                    Modifier
-                        .size(if (isActive) 24.dp else 20.dp)
-                        .background(color, MaterialTheme.shapes.small)
-                        .clickable { onPickSlot(slot) },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (isActive) {
-                        // fix38.3: contrasting tick — black on light slots (white/yellow),
-                        // white on dark. Without this the tick disappears on slot=white.
-                        Text("✓", color = tickContrastColor(color), style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-        }
+        FilamentMixChipRow(
+            physicalColours = physicalColours,
+            physicalLabels = (1..numPhysical).map { "E$it" },
+            mixes = activeMixes,
+            selectedSlot = node.region.slot,
+            onSelect = { slot -> onPickSlot(slot) },
+            onCreateMix = onCreateMix,
+            onEditMix = onEditMix,
+        )
     }
 }

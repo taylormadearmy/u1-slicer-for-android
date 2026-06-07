@@ -30,6 +30,8 @@ fun AiPaintTree(
     numPhysical: Int = 4,
     activeMixes: List<MixedFilamentRow> = emptyList(),
     physicalColours: List<Color> = emptyList(),
+    onCreateMix: () -> Unit = {},
+    onEditMix: (MixedFilamentRow) -> Unit = {},
 ) {
     val totalLeaves = remember(tree) { tree.sumOf { it.leafCount() } }
     val initialExpand = remember(tree, totalLeaves) {
@@ -63,6 +65,8 @@ fun AiPaintTree(
                 numPhysical = numPhysical,
                 activeMixes = activeMixes,
                 physicalColours = physicalColours,
+                onCreateMix = onCreateMix,
+                onEditMix = onEditMix,
             )
             HorizontalDivider()
         }
