@@ -377,6 +377,7 @@ private fun FilamentChooserDialog(
                             primary = primary,
                             secondary = secondary,
                             size = 24.dp,
+                            secondaryFraction = mix.mixBPercent / 100f,
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(

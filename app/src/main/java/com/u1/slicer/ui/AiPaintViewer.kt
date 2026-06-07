@@ -443,7 +443,7 @@ internal fun SlotPaletteRow(
                 Modifier.size(if (isActive) 44.dp else 40.dp).clickable { onTapSlot(slot) },
                 contentAlignment = Alignment.Center,
             ) {
-                MixedSlotSwatch(primary = primary, secondary = secondary, size = if (isActive) 44.dp else 40.dp)
+                MixedSlotSwatch(primary = primary, secondary = secondary, size = if (isActive) 44.dp else 40.dp, secondaryFraction = mix.mixBPercent / 100f)
                 val tickColor = tickContrastColor(primary)
                 when {
                     isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)

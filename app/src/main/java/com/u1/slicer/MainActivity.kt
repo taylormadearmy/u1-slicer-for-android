@@ -5024,6 +5024,7 @@ private fun PrepareMixSlotRow(
             primary = primary,
             secondary = secondary,
             size = 32.dp,
+            secondaryFraction = row.mixBPercent / 100f,
         )
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {

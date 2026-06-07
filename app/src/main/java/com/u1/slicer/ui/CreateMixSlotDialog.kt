@@ -116,6 +116,7 @@ fun CreateMixSlotDialog(
                         primary = physicalFilamentColours.getOrNull(componentA - 1) ?: Color.Gray,
                         secondary = physicalFilamentColours.getOrNull(componentB - 1),
                         size = 56.dp,
+                        secondaryFraction = mixBPercent / 100f,
                     )
                 }
                 // Distribution mode toggle

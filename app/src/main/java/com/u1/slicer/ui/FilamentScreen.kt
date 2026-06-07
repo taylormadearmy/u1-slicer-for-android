@@ -393,6 +393,7 @@ private fun MixSlotCard(
                 primary = primary,
                 secondary = secondary,
                 size = 40.dp,
+                secondaryFraction = row.mixBPercent / 100f,
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {

@@ -101,10 +101,16 @@ fun AiPaintTreeRow(
             }
             else -> primary
         }
+        // For a mix leaf, the leading swatch shows the blend ratio; parents with mixed children
+        // keep the corner-stripe (no single percentage), so leave the fraction null for them.
+        val swatchSecondaryFraction: Float? = if (node.isLeaf && primarySlot >= numPhysical) {
+            activeMixes.getOrNull(primarySlot - numPhysical)?.let { it.mixBPercent / 100f }
+        } else null
         MixedSlotSwatch(
             primary = swatchPrimary,
             secondary = secondary,
             size = 32.dp,
+            secondaryFraction = swatchSecondaryFraction,
             modifier = Modifier.clickable { onTapSwatch() },
         )
         Spacer(Modifier.width(10.dp))
@@ -152,7 +158,7 @@ fun AiPaintTreeRow(
                     Modifier.size(if (isActive) 24.dp else 20.dp).clickable { onPickSlot(slot) },
                     contentAlignment = Alignment.Center,
                 ) {
-                    MixedSlotSwatch(primary = mPrimary, secondary = mSecondary, size = if (isActive) 24.dp else 20.dp)
+                    MixedSlotSwatch(primary = mPrimary, secondary = mSecondary, size = if (isActive) 24.dp else 20.dp, secondaryFraction = mix.mixBPercent / 100f)
                     if (isActive) {
                         Text("✓", color = tickContrastColor(mPrimary), style = MaterialTheme.typography.labelSmall)
                     }

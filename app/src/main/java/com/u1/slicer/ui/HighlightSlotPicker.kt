@@ -98,6 +98,7 @@ fun HighlightSlotPicker(
                     primary = primary,
                     secondary = secondary,
                     size = if (isCurrent) 36.dp else 40.dp,
+                    secondaryFraction = mix.mixBPercent / 100f,
                 )
                 if (isCurrent) {
                     Text("✓", color = tickContrastColor(primary), style = MaterialTheme.typography.titleMedium)

@@ -84,6 +84,7 @@ fun FilamentMixChipRow(
             MixChip(
                 primary = primary,
                 secondary = secondary,
+                secondaryFraction = row.mixBPercent / 100f,
                 selected = selected,
                 onClick = { onSelect(slotId) },
                 onLongClick = { onEditMix(row) },
@@ -139,6 +140,7 @@ private fun PhysicalChip(
 private fun MixChip(
     primary: Color,
     secondary: Color?,
+    secondaryFraction: Float,
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -159,6 +161,7 @@ private fun MixChip(
             primary = primary,
             secondary = secondary,
             size = 40.dp,
+            secondaryFraction = secondaryFraction,
             modifier = Modifier
                 .clip(CircleShape)
                 .combinedClickable(
