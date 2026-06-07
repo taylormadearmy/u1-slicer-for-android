@@ -310,6 +310,11 @@ package com.u1.slicer.data
  * (componentA/componentB/mixBPercent) are DERIVED read-only views for code not yet
  * generalized to N — they are never stored.
  *
+ * TRANSITION: a legacy 2-way secondary constructor and a 3-arg `autoLabel` overload are
+ * retained so existing call sites (MixedFilamentManager, SessionState, SettingsRepository)
+ * keep compiling while they are migrated in Tasks 3 & 5. Both are REMOVED in Task 5 Step 7
+ * once no caller uses them — they must not survive into the merged feature.
+ *
  * Indices are 1-based to match the engine's filament numbering.
  */
 data class MixedFilamentRow(
@@ -324,6 +329,22 @@ data class MixedFilamentRow(
         require(components.size in 2..4) { "a mix has 2..4 components, got ${components.size}" }
         require(weights.size == components.size) { "weights must match components" }
     }
+
+    /**
+     * TRANSITIONAL legacy 2-way constructor — delegates to the list form so existing
+     * `MixedFilamentRow(id=, componentA=, componentB=, mixBPercent=, …)` call sites still
+     * compile during migration. Removed in Task 5 Step 7. Int args disambiguate from the
+     * List<Int> primary constructor.
+     */
+    constructor(
+        id: Long, componentA: Int, componentB: Int, mixBPercent: Int,
+        distributionMode: MixDistributionMode, label: String, inLibrary: Boolean,
+    ) : this(
+        id = id,
+        components = listOf(componentA, componentB),
+        weights = mixBPercent.coerceIn(0, 100).let { listOf(100 - it, it) },
+        distributionMode = distributionMode, label = label, inLibrary = inLibrary,
+    )
 
     val componentA: Int get() = components.getOrElse(0) { 1 }
     val componentB: Int get() = components.getOrElse(1) { componentA }
@@ -341,6 +362,14 @@ data class MixedFilamentRow(
         /** Default label, list form. Example: autoLabel([1,2,3]) -> "E1+E2+E3". */
         fun autoLabel(components: List<Int>): String =
             components.joinToString("+") { "E$it" }
+
+        /**
+         * TRANSITIONAL 3-arg label overload — kept so MixedFilamentManager's existing
+         * `autoLabel(componentA, componentB, mixBPercent)` calls compile during migration.
+         * Removed in Task 5 Step 7. Returns the same list-form label.
+         */
+        fun autoLabel(componentA: Int, componentB: Int, @Suppress("UNUSED_PARAMETER") mixBPercent: Int): String =
+            autoLabel(listOf(componentA, componentB))
 
         /** Build a row from legacy 2-way fields (used by JSON readers for old saves). */
         fun fromLegacy(
@@ -366,30 +395,25 @@ data class MixedFilamentRow(
 }
 ```
 
-- [ ] **Step 4: Fix existing `MixedFilamentRowTest.kt` constructors**
+- [ ] **Step 4: Fix existing `MixedFilamentRowTest.kt` assertions**
 
-Open `app/src/test/java/com/u1/slicer/data/MixedFilamentRowTest.kt`. Any positional `MixedFilamentRow(id, componentA=…, componentB=…, mixBPercent=…, …)` construction must become the list form, e.g.:
+The transitional legacy secondary constructor means existing 2-way `MixedFilamentRow(id=, componentA=, …)` constructions in the test (and elsewhere) STILL COMPILE — do not rewrite them unless you want to. What DOES change is the label format: `autoLabel` now returns the list form `"E1+E3"`, not `"E1+E3 @ 50%"`. Open `app/src/test/java/com/u1/slicer/data/MixedFilamentRowTest.kt` and update any assertion expecting the old `"E1+E3 @ 50%"` format to the new `"E1+E3"` form. Leave constructions as-is.
 
-```kotlin
-// before: MixedFilamentRow(1, 1, 3, 50, LAYER_CYCLE, "E1+E3 @ 50%", false)
-MixedFilamentRow(
-    id = 1, components = listOf(1, 3), weights = listOf(50, 50),
-    distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
-    label = MixedFilamentRow.autoLabel(listOf(1, 3)), inLibrary = false,
-)
+- [ ] **Step 5: Compile the whole module, then run the Row tests**
+
+The data-class change ripples through the module; the transitional ctor + 3-arg autoLabel must keep ALL of it compiling (MixedFilamentManager, SessionState, SettingsRepository, UI). Verify:
+```bash
+cd "D:/projects/u1-slicer-for-android/.claude/worktrees/m4-nway-mixes"
+./gradlew :app:compileDebugKotlin --no-daemon            # whole module must still compile
+./gradlew :app:testDebugUnitTest --tests "com.u1.slicer.data.MixedFilamentRow*" --no-daemon
 ```
-Update any assertion expecting the old `"E1+E3 @ 50%"` label to the new list form `"E1+E3"`.
-
-- [ ] **Step 5: Run both test classes**
-
-Run: `./gradlew :app:testDebugUnitTest --tests "com.u1.slicer.data.MixedFilamentRow*" --no-daemon`
-Expected: PASS.
+Expected: compile SUCCEEDS (no other file edited), Row tests PASS. If compilation fails in Manager/SessionState/SettingsRepository, the transitional ctor/autoLabel overloads are missing or mis-signatured — fix `MixedFilamentRow.kt`, do NOT edit those other files in this task.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add app/src/main/java/com/u1/slicer/data/MixedFilamentRow.kt app/src/test/java/com/u1/slicer/data/MixedFilamentRow*.kt
-git commit -m "feat(M4): MixedFilamentRow becomes N-component (list SSOT + legacy accessors)"
+git commit -m "feat(M4): MixedFilamentRow becomes N-component (list SSOT + transitional 2-way ctor)"
 ```
 
 ---
@@ -736,6 +760,21 @@ Expected: PASS.
 git add app/src/main/java/com/u1/slicer/data/SettingsRepository.kt app/src/main/java/com/u1/slicer/data/SessionState.kt app/src/test/java/com/u1/slicer/data/SettingsBackupTest.kt app/src/test/java/com/u1/slicer/data/SessionStateTest.kt
 git commit -m "feat(M4): persist N-component mixes with legacy 2-way fallback"
 ```
+
+- [ ] **Step 7: Remove the transitional shims from `MixedFilamentRow.kt`**
+
+By now every production caller is migrated: Task 3 moved `MixedFilamentManager` to `addN`/`editN` + list `autoLabel`; Task 5 readers use `fromLegacy`. The transitional legacy secondary constructor and the 3-arg `autoLabel` overload added in Task 2 are no longer needed and must not survive into the merge. Remove both from `MixedFilamentRow.kt` (and the TRANSITION note in its KDoc), then verify nothing still depends on them:
+```bash
+cd "D:/projects/u1-slicer-for-android/.claude/worktrees/m4-nway-mixes"
+./gradlew :app:compileDebugKotlin --no-daemon
+./gradlew :app:testDebugUnitTest --no-daemon
+```
+Expected: compile + full JVM unit suite PASS. If compilation fails, a caller still uses the 2-way constructor/label — migrate that caller to the list form (do not re-add the shim). Commit:
+```bash
+git add app/src/main/java/com/u1/slicer/data/MixedFilamentRow.kt
+git commit -m "refactor(M4): drop transitional 2-way ctor/autoLabel — list API only"
+```
+> NOTE for the controller: run Step 7 only AFTER Tasks 3 and 5 are both complete. If executing strictly in order, defer this step until just before Task 6.
 
 ---
 
