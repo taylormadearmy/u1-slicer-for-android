@@ -44,15 +44,23 @@ fun AiPaintTreeRow(
     onEditMix: (MixedFilamentRow) -> Unit = {},
 ) {
     val rowBg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
-    Row(
+    // Layout: identity line (chevron + swatch + label) on top, the mix-aware chip selector on
+    // its own full-width line below. The chip row is horizontally scrollable and wide
+    // (4 physical + mixes + "+"); placing it as a sibling of the weighted label Column on a
+    // single Row squeezed the title to zero width and hid it (regression from UX Task 2).
+    Column(
         modifier
             .fillMaxWidth()
             .background(rowBg)
             .clickable { onSelectRow() }
-            .padding(start = (12 * depth).dp, end = 12.dp, top = 6.dp, bottom = 6.dp)
+            .padding(start = (12 * depth).dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+    ) {
+      Row(
+        modifier = Modifier
+            .fillMaxWidth()
             .heightIn(min = 36.dp),
         verticalAlignment = Alignment.CenterVertically,
-    ) {
+      ) {
         // Chevron — only on parents with children.
         if (node.children.isNotEmpty()) {
             Icon(
@@ -116,15 +124,21 @@ fun AiPaintTreeRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+      }
 
-        FilamentMixChipRow(
-            physicalColours = physicalColours,
-            physicalLabels = (1..numPhysical).map { "E$it" },
-            mixes = activeMixes,
-            selectedSlot = node.region.slot,
-            onSelect = { slot -> onPickSlot(slot) },
-            onCreateMix = onCreateMix,
-            onEditMix = onEditMix,
-        )
+      Spacer(Modifier.height(6.dp))
+
+      // Mix-aware chip selector on its own full-width line, indented to align under the label
+      // (past the chevron/spacer + swatch + gap). Horizontal scroll handles chip overflow.
+      FilamentMixChipRow(
+          physicalColours = physicalColours,
+          physicalLabels = (1..numPhysical).map { "E$it" },
+          mixes = activeMixes,
+          selectedSlot = node.region.slot,
+          onSelect = { slot -> onPickSlot(slot) },
+          onCreateMix = onCreateMix,
+          onEditMix = onEditMix,
+          modifier = Modifier.padding(start = 42.dp),
+      )
     }
 }
