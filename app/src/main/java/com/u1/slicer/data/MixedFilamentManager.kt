@@ -35,6 +35,24 @@ class MixedFilamentManager(
     private fun nextId(): Long =
         System.currentTimeMillis() * 1_000L + counter.incrementAndGet()
 
+    fun addN(
+        components: List<Int>,
+        weights: List<Int>,
+        distributionMode: MixedFilamentRow.MixDistributionMode,
+    ): MixedFilamentRow {
+        require(components.size in 2..4) { "2..4 components" }
+        require(components.distinct().size == components.size) { "components must be distinct" }
+        val w = MixWeights.normalize(weights)
+        val row = MixedFilamentRow(
+            id = nextId(), components = components, weights = w,
+            distributionMode = distributionMode,
+            label = MixedFilamentRow.autoLabel(components), inLibrary = false,
+        )
+        _projectMixes.value = _projectMixes.value + row
+        saveProject(_projectMixes.value)
+        return row
+    }
+
     fun add(
         componentA: Int,
         componentB: Int,
@@ -43,18 +61,29 @@ class MixedFilamentManager(
     ): MixedFilamentRow {
         require(componentA != componentB) { "componentA must differ from componentB" }
         require(mixBPercent in 0..100) { "mixBPercent must be 0..100" }
-        val row = MixedFilamentRow(
-            id = nextId(),
-            componentA = componentA,
-            componentB = componentB,
-            mixBPercent = mixBPercent,
-            distributionMode = distributionMode,
-            label = MixedFilamentRow.autoLabel(componentA, componentB, mixBPercent),
-            inLibrary = false,
-        )
-        _projectMixes.value = _projectMixes.value + row
+        return addN(listOf(componentA, componentB), listOf(100 - mixBPercent, mixBPercent), distributionMode)
+    }
+
+    fun editN(
+        id: Long,
+        components: List<Int>,
+        weights: List<Int>,
+        distributionMode: MixedFilamentRow.MixDistributionMode,
+        label: String? = null,
+    ) {
+        require(components.size in 2..4) { "2..4 components" }
+        require(components.distinct().size == components.size) { "components must be distinct" }
+        val w = MixWeights.normalize(weights)
+        fun patch(existing: MixedFilamentRow) =
+            if (existing.id != id) existing
+            else existing.copy(
+                components = components, weights = w, distributionMode = distributionMode,
+                label = label ?: MixedFilamentRow.autoLabel(components),
+            )
+        _projectMixes.value = _projectMixes.value.map(::patch)
+        _libraryMixes.value = _libraryMixes.value.map(::patch)
         saveProject(_projectMixes.value)
-        return row
+        saveLibrary(_libraryMixes.value)
     }
 
     fun edit(
@@ -67,31 +96,7 @@ class MixedFilamentManager(
     ) {
         require(componentA != componentB) { "componentA must differ from componentB" }
         require(mixBPercent in 0..100) { "mixBPercent must be 0..100" }
-        _projectMixes.value = _projectMixes.value.map { existing ->
-            if (existing.id != id) existing
-            else existing.copy(
-                componentA = componentA,
-                componentB = componentB,
-                mixBPercent = mixBPercent,
-                distributionMode = distributionMode,
-                label = label
-                    ?: MixedFilamentRow.autoLabel(componentA, componentB, mixBPercent),
-            )
-        }
-        // Library copy (if any) also updates so the user's saved version stays in sync.
-        _libraryMixes.value = _libraryMixes.value.map { existing ->
-            if (existing.id != id) existing
-            else existing.copy(
-                componentA = componentA,
-                componentB = componentB,
-                mixBPercent = mixBPercent,
-                distributionMode = distributionMode,
-                label = label
-                    ?: MixedFilamentRow.autoLabel(componentA, componentB, mixBPercent),
-            )
-        }
-        saveProject(_projectMixes.value)
-        saveLibrary(_libraryMixes.value)
+        editN(id, listOf(componentA, componentB), listOf(100 - mixBPercent, mixBPercent), distributionMode, label)
     }
 
     fun delete(id: Long) {
@@ -148,10 +153,11 @@ class MixedFilamentManager(
             MixedFilamentRow.MixDistributionMode.LAYER_CYCLE -> 0
             MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS -> 1
         }
-        // enabled=1, custom=1 for any user-created row.
-        // pointillism_all_filaments=0 (not used in v1).
-        // gradient_component_ids = empty, gradient_component_weights = empty (no gradient in v1).
-        // local_z_max_sublayers=0, surface_offsets=0, deleted=0, origin_auto=0.
-        return "${r.componentA},${r.componentB},1,1,${r.mixBPercent},0,g,w,m$distMode,z0,xa0,xb0,d0,o0,u${r.id}"
+        val ids = MixWeights.encodeIds(r.components)          // e.g. "123" or "1/12/3"
+        val weights = MixWeights.encodeWeights(r.weights)     // e.g. "50/30/20"
+        // a,b = first two components; mix_b_pct = weight of component B (legacy 2-way fallback fields).
+        // gradient tokens g<ids>,w<weights> drive the N-way engine path when ids.size >= 3.
+        return "${r.componentA},${r.componentB},1,1,${r.mixBPercent},0," +
+            "g$ids,w$weights,m$distMode,z0,xa0,xb0,d0,o0,u${r.id}"
     }
 }

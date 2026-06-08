@@ -40,8 +40,8 @@ class MixedFilamentManagerTest {
         assertEquals(2, project.size)
         assertEquals(r1.id, project[0].id)
         assertEquals(r2.id, project[1].id)
-        assertEquals("E1+E2 @ 50%", project[0].label)
-        assertEquals("E1+E3 @ 33%", project[1].label)
+        assertEquals("E1+E2", project[0].label)
+        assertEquals("E1+E3", project[1].label)
     }
 
     @Test
@@ -108,8 +108,8 @@ class MixedFilamentManagerTest {
             distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
         val out = mgr.serialize(numPhysicalFilaments = 4)
         // Engine format (mirrors libslic3r/MixedFilament.cpp::serialize_custom_entries):
-        //   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g,w,m<dist>,z0,xa0,xb0,d0,o0,u<stable_id>
-        assertEquals("1,2,1,1,50,0,g,w,m0,z0,xa0,xb0,d0,o0,u${r.id}", out)
+        //   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g<ids>,w<weights>,m<dist>,z0,xa0,xb0,d0,o0,u<stable_id>
+        assertEquals("1,2,1,1,50,0,g12,w50/50,m0,z0,xa0,xb0,d0,o0,u${r.id}", out)
     }
 
     @Test
@@ -119,9 +119,9 @@ class MixedFilamentManagerTest {
         val r2 = mgr.add(2, 3, 33, MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS)
         val out = mgr.serialize(numPhysicalFilaments = 4)
         val expected =
-            "1,2,1,1,50,0,g,w,m0,z0,xa0,xb0,d0,o0,u${r1.id}" +
+            "1,2,1,1,50,0,g12,w50/50,m0,z0,xa0,xb0,d0,o0,u${r1.id}" +
             ";" +
-            "2,3,1,1,33,0,g,w,m1,z0,xa0,xb0,d0,o0,u${r2.id}"
+            "2,3,1,1,33,0,g23,w67/33,m1,z0,xa0,xb0,d0,o0,u${r2.id}"
         assertEquals(expected, out)
     }
 
@@ -170,7 +170,7 @@ class MixedFilamentManagerTest {
             saveLibrary = {},
         )
         val out = mgr.serialize(numPhysicalFilaments = 2)
-        assertEquals("1,2,1,1,25,0,g,w,m0,z0,xa0,xb0,d0,o0,u200", out)
+        assertEquals("1,2,1,1,25,0,g12,w75/25,m0,z0,xa0,xb0,d0,o0,u200", out)
     }
 
     @Test
@@ -191,5 +191,28 @@ class MixedFilamentManagerTest {
         assertEquals(2, rows.size)
         assertTrue(rows[0].startsWith("1,2,"))   // project row first
         assertTrue(rows[1].startsWith("1,4,"))   // library row second
+    }
+
+    @Test
+    fun addN_threeComponents_serializesGradientTokens() {
+        val mgr = MixedFilamentManager({ emptyList() }, { emptyList() }, {}, {})
+        mgr.addN(
+            components = listOf(1, 2, 3), weights = listOf(50, 30, 20),
+            distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+        )
+        val recipe = mgr.serialize(numPhysicalFilaments = 4)
+        assert(recipe.contains(",g123,")) { "ids token missing in: $recipe" }
+        assert(recipe.contains(",w50/30/20,")) { "weights token missing in: $recipe" }
+        assert(recipe.startsWith("1,2,1,1,30,")) { "legacy prefix wrong: $recipe" }
+    }
+
+    @Test
+    fun addTwoWay_stillWorksViaOverload() {
+        val mgr = MixedFilamentManager({ emptyList() }, { emptyList() }, {}, {})
+        mgr.add(componentA = 1, componentB = 2, mixBPercent = 50,
+            distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        val recipe = mgr.serialize(4)
+        assert(recipe.contains(",g12,")) { recipe }
+        assert(recipe.contains(",w50/50,")) { recipe }
     }
 }
