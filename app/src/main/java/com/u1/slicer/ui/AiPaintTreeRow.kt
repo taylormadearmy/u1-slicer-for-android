@@ -149,6 +149,9 @@ fun AiPaintTreeRow(
                 }
             }
             // One two-tone chip per active mix. Slot id = numPhysical + index. Tapping assigns.
+            // TODO(M4/#2): no canonical count in scope at this composable; numPhysical is the safe
+            // floor. Callers that have canonicalCount should pass maxOf(numPhysical, canonicalCount)
+            // as numPhysical when the canonical list exceeds TARGET_SLOTS.
             activeMixes.forEachIndexed { idx, mix ->
                 val slot = numPhysical + idx
                 val isActive = node.region.slot == slot

@@ -67,4 +67,10 @@ class MixSelectorAugmentationTest {
             dialog.contains("secondaryFraction = mixBPercent"),
         )
     }
+
+    @Test fun mixSlotId_basedOnMaxOfPhysicalAndCanonical_noCollision() {
+        val base = maxOf(4, 6)   // 6 canonical filaments, 4 physical
+        org.junit.Assert.assertEquals(6, com.u1.slicer.ui.FilamentMixChipRow.mixSlotId(0, base))
+        org.junit.Assert.assertEquals(7, com.u1.slicer.ui.FilamentMixChipRow.mixSlotId(1, base))
+    }
 }

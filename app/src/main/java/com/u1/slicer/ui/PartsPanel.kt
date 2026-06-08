@@ -352,11 +352,16 @@ private fun FilamentChooserDialog(
                 }
 
                 // ── Mix slots ───────────────────────────────────────────────
-                // 1-based mix slot id = numPhysical + idx + 1 (matches
+                // 1-based mix slot id = mixBase + idx + 1 (matches
                 // setVolumeExtruder's native extruder contract). Picking a mix
                 // bakes that id into the object/volume extruder → real blend.
+                // M4/#2: base is max(numPhysical, canonicalCount) so mix ids
+                // cannot collide with canonical filament slots when the 3MF
+                // has more than TARGET_SLOTS (4) canonical filaments.
+                // No-op when canonicalCount <= numPhysical.
+                val mixBase = maxOf(numPhysical, canonical?.size ?: numPhysical)
                 mixes.forEachIndexed { idx, mix ->
-                    val mixSlot1Based = numPhysical + idx + 1
+                    val mixSlot1Based = mixBase + idx + 1
                     val isCurrent = mixSlot1Based == currentSlot
                     val primary = physicalColours.getOrNull(mix.componentA - 1) ?: Color(0xFF888888)
                     val secondary = physicalColours.getOrNull(mix.componentB - 1)

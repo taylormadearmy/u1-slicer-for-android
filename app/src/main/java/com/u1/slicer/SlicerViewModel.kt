@@ -5247,7 +5247,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
                     val anyMixAssigned = mixedFilamentManager.activeOrder(numPhysical).isNotEmpty() &&
                         _perVolumeExtruders.value.values.any { it > numPhysical }
-                    val mixPhysicalBase = if (anyMixAssigned) numPhysical else 0
+                    // M4/#2: use max(numPhysical, canonicalCount) as the mix base so mix slot ids
+                    // (base + idx) cannot collide with canonical filament slots when the 3MF
+                    // declares more than TARGET_SLOTS (4) canonical filaments.
+                    // No-op when canonicalCount <= numPhysical: maxOf returns numPhysical unchanged.
+                    val canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical
+                    val mixPhysicalBase = if (anyMixAssigned) maxOf(numPhysical, canonicalCount) else 0
                     val effectiveExtruderCount = maxOf(
                         cfg.extruderCount,
                         cfg.supportFilament,
