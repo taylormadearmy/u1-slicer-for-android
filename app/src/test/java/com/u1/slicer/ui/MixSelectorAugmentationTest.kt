@@ -60,11 +60,17 @@ class MixSelectorAugmentationTest {
         )
     }
 
-    @Test fun createMixDialogPreviewTracksRatioSlider() {
-        // The live-preview swatch in the create dialog must reflect the ratio slider.
+    @Test fun createMixDialogPreviewIsProportionalNSegmentBar() {
+        // Task 9 replaced the old single ratio-slider + secondaryFraction preview with a
+        // draggable N-segment MixWeightBar.  The dialog must render the bar and size each
+        // segment proportionally via mixSegmentOffsets / rebalanceAfterDrag.
         assertTrue(
-            "CreateMixSlotDialog preview must thread secondaryFraction from mixBPercent",
-            dialog.contains("secondaryFraction = mixBPercent"),
+            "CreateMixSlotDialog must render the proportional N-segment weight bar",
+            dialog.contains("MixWeightBar("),
+        )
+        assertTrue(
+            "the weight bar must size segments proportionally via mixSegmentOffsets or rebalanceAfterDrag",
+            dialog.contains("mixSegmentOffsets") || dialog.contains("rebalanceAfterDrag"),
         )
     }
 
