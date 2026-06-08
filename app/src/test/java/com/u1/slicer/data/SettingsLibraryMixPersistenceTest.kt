@@ -15,12 +15,12 @@ class SettingsLibraryMixPersistenceTest {
     @Test
     fun `encodeLibraryMixes round-trips multiple rows`() {
         val rows = listOf(
-            MixedFilamentRow(
+            MixedFilamentRow.fromLegacy(
                 id = 1L, componentA = 1, componentB = 2, mixBPercent = 50,
                 distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
                 label = "E1+E2 @ 50%", inLibrary = true,
             ),
-            MixedFilamentRow(
+            MixedFilamentRow.fromLegacy(
                 id = 2L, componentA = 2, componentB = 4, mixBPercent = 33,
                 distributionMode = MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS,
                 label = "My Sage", inLibrary = true,

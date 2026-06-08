@@ -31,16 +31,6 @@ class MixedFilamentRowMigrationTest {
         assertEquals("E1+E3", MixedFilamentRow.autoLabel(listOf(1, 3)))
     }
 
-    @Test fun legacySecondaryConstructor_buildsListForm() {
-        val row = MixedFilamentRow(
-            id = 9, componentA = 2, componentB = 4, mixBPercent = 25,
-            distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
-            label = "x", inLibrary = false,
-        )
-        assertEquals(listOf(2, 4), row.components)
-        assertEquals(listOf(75, 25), row.weights)
-    }
-
     @Test fun init_rejectsBadComponentCountAndMismatchedWeights() {
         org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
             MixedFilamentRow(1, listOf(1), listOf(100),

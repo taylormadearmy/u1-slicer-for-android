@@ -6,7 +6,7 @@ import org.junit.Test
 
 class MixSlotOrderingTest {
     private fun row(id: Long, a: Int, b: Int, lib: Boolean) =
-        MixedFilamentRow(id, a, b, 50, LAYER_CYCLE, "E$a+E$b @ 50%", lib)
+        MixedFilamentRow.fromLegacy(id, a, b, 50, LAYER_CYCLE, "E$a+E$b @ 50%", lib)
 
     @Test fun projectFirst_thenLibrary_skippingDupesAndMissingExtruders() {
         val project = listOf(row(1, 1, 2, false), row(2, 1, 3, false))

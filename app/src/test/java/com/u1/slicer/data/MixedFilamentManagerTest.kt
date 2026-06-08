@@ -19,13 +19,13 @@ class MixedFilamentManagerTest {
     )
 
     private fun sampleRow(id: Long, a: Int = 1, b: Int = 2, pct: Int = 50, inLib: Boolean = false) =
-        MixedFilamentRow(
+        MixedFilamentRow.fromLegacy(
             id = id,
             componentA = a,
             componentB = b,
             mixBPercent = pct,
             distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
-            label = MixedFilamentRow.autoLabel(a, b, pct),
+            label = MixedFilamentRow.autoLabel(listOf(a, b)),
             inLibrary = inLib,
         )
 
@@ -146,7 +146,7 @@ class MixedFilamentManagerTest {
             loadProject = { emptyList() },
             loadLibrary = {
                 listOf(
-                    MixedFilamentRow(
+                    MixedFilamentRow.fromLegacy(
                         id = 100L,
                         componentA = 1,
                         componentB = 4, // beyond a 2-extruder project
@@ -155,7 +155,7 @@ class MixedFilamentManagerTest {
                         label = "test",
                         inLibrary = true,
                     ),
-                    MixedFilamentRow(
+                    MixedFilamentRow.fromLegacy(
                         id = 200L,
                         componentA = 1,
                         componentB = 2, // fits in a 2-extruder project
@@ -178,7 +178,7 @@ class MixedFilamentManagerTest {
         val mgr = MixedFilamentManager(
             loadProject = { emptyList() },
             loadLibrary = {
-                listOf(MixedFilamentRow(999L, 1, 4, 25,
+                listOf(MixedFilamentRow.fromLegacy(999L, 1, 4, 25,
                     MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
                     "lib", true))
             },

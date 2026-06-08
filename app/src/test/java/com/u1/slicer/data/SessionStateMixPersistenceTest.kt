@@ -35,10 +35,10 @@ class SessionStateMixPersistenceTest {
         pct: Int = 50,
         dist: MixedFilamentRow.MixDistributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
         inLib: Boolean = false,
-    ) = MixedFilamentRow(
+    ) = MixedFilamentRow.fromLegacy(
         id = id, componentA = a, componentB = b, mixBPercent = pct,
         distributionMode = dist,
-        label = MixedFilamentRow.autoLabel(a, b, pct),
+        label = MixedFilamentRow.autoLabel(listOf(a, b)),
         inLibrary = inLib,
     )
 

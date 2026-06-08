@@ -42,7 +42,7 @@ class MixedFilamentLibraryPersistenceE2ETest {
     @Test
     fun libraryMixes_persistAcrossRepositoryInstantiations() = runBlocking {
         val rows = listOf(
-            MixedFilamentRow(
+            MixedFilamentRow.fromLegacy(
                 id = 1L,
                 componentA = 1,
                 componentB = 3,
