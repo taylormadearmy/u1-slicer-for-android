@@ -32,6 +32,8 @@ class SliceConfigMixedFilamentWiringTest {
                 numPhysicalFilaments = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
             ),
         )
-        assertTrue(cfg.mixedFilamentDefinitions.startsWith("1,2,1,1,50,0,g,w,m0,"))
+        // M4: serializeRow now emits g<ids>,w<weights> gradient tokens (N-way path).
+        // For components=[1,2] weights=[50,50]: encodeIds -> "12", encodeWeights -> "50/50".
+        assertTrue(cfg.mixedFilamentDefinitions.startsWith("1,2,1,1,50,0,g12,w50/50,m0,"))
     }
 }

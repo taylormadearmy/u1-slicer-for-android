@@ -99,4 +99,30 @@ class MixSlotNWayBlendGateTest {
         assertTrue("GATE: uninvolved E4 (T3) must NOT print. $diag", counts[3] == 0)
         assertTrue("GATE: usage should track weights (T0>=T1>=T2). $diag", counts[0] >= counts[1] && counts[1] >= counts[2])
     }
+
+    @Test fun fourComponentMix_blendsAllFourTools() {
+        val positions = box(12f, 12f, 12f)
+        val triCount = positions.size / 9
+        val regionIds = IntArray(triCount) { 4 }
+        val regions = (0..3).map { s -> AiRegion(id = s, label = "Slot ${s+1}", suggestedColour = "#888888", slot = s) }
+        PaintedMeshWriter.write(
+            positions = positions,
+            regionIds = regionIds,
+            regions = regions,
+            outputFile = out3mf,
+            printerColours = listOf("#FF0000", "#00FF00", "#0000FF", "#FFFF00"),
+            mixDisplayColours = listOf("#7F7F40"),
+        )
+        val mgr = MixedFilamentManager({ emptyList() }, { emptyList() }, {}, {})
+        mgr.addN(listOf(1, 2, 3, 4), listOf(40, 30, 20, 10), MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        assertTrue(lib.loadModel(out3mf.absolutePath))
+        val result = lib.slice(makeConfig(mgr.serialize(4))); assertNotNull(result); result!!
+        assertTrue("slice ok: '${result.errorMessage}'", result.success)
+        val gcode = File(result.gcodePath).readText()
+        val counts = IntArray(8)
+        Regex("""^T(\d+)\b""").let { rx -> gcode.lineSequence().forEach { l -> rx.find(l.trim())?.let { val t = it.groupValues[1].toInt(); if (t in 0..7) counts[t]++ } } }
+        val diag = "T0=${counts[0]} T1=${counts[1]} T2=${counts[2]} T3=${counts[3]}"
+        assertTrue("GATE: all four component tools must print. $diag",
+            counts[0] > 0 && counts[1] > 0 && counts[2] > 0 && counts[3] > 0)
+    }
 }
