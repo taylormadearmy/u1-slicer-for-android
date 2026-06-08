@@ -133,7 +133,7 @@ class MixedFilamentManager(
      * current project).
      *
      * Format mirrors `libslic3r/MixedFilament.cpp::serialize_custom_entries`:
-     *   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g,w,m<dist>,z0,xa0,xb0,d0,o0,u<id>
+     *   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g<ids>,w<weights>,m<dist>,z0,xa0,xb0,d0,o0,u<id>
      * separated by `;`. Empty string when no rows are present (engine treats
      * this as "no mixing").
      */

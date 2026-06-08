@@ -207,6 +207,32 @@ class MixedFilamentManagerTest {
     }
 
     @Test
+    fun addN_fourComponents_serializesAllIdsAndWeights() {
+        val mgr = MixedFilamentManager({ emptyList() }, { emptyList() }, {}, {})
+        mgr.addN(
+            components = listOf(1, 2, 3, 4), weights = listOf(40, 30, 20, 10),
+            distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+        )
+        val recipe = mgr.serialize(numPhysicalFilaments = 4)
+        assert(recipe.contains(",g1234,")) { "ids token wrong in: $recipe" }
+        assert(recipe.contains(",w40/30/20/10,")) { "weights token wrong in: $recipe" }
+    }
+
+    @Test
+    fun editN_growsTwoWayToThreeComponents() {
+        val mgr = MixedFilamentManager({ emptyList() }, { emptyList() }, {}, {})
+        val row = mgr.add(componentA = 1, componentB = 2, mixBPercent = 50,
+            distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        mgr.editN(row.id, listOf(1, 2, 3), listOf(50, 30, 20),
+            MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        val updated = mgr.projectMixes.value.first { it.id == row.id }
+        org.junit.Assert.assertEquals(listOf(1, 2, 3), updated.components)
+        org.junit.Assert.assertEquals(listOf(50, 30, 20), updated.weights)
+        val recipe = mgr.serialize(4)
+        assert(recipe.contains(",g123,w50/30/20,")) { recipe }
+    }
+
+    @Test
     fun addTwoWay_stillWorksViaOverload() {
         val mgr = MixedFilamentManager({ emptyList() }, { emptyList() }, {}, {})
         mgr.add(componentA = 1, componentB = 2, mixBPercent = 50,
