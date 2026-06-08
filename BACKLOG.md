@@ -946,10 +946,36 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
   - **% field commit UX** (GitHub issue: TBD at release): in the Create-Mix dialog the per-component % field commits only via soft-keyboard Done/checkmark; tapping outside the field doesn't persist the typed value. Minor UX polish.
   - **>4-canonical-filament edge case** (GitHub issue: TBD at release): the slot-id base fix is correct for the common case (≤4 canonical). For 3MFs declaring >4 canonical filaments, `AiPaintViewer.SlotPaletteRow`, `HighlightSlotPicker`, and the recipe base in `SlicerViewModel.serialize()` still use a hardcoded base of 4, so they can diverge from the assignment base. Rare on a 4-extruder U1; documented limitation.
 
-### M5: Auto-generate mix palette from loaded filaments — OPEN (future, fast-follow after M4) (GitHub issue: TBD at release)
+### M5: Next mix milestone — pick one — OPEN (future, post-M4) (GitHub issue: TBD)
+The following are candidate options for M5. We'll choose which to build next. All are OPEN/future; none are committed.
+
+**AVOID — same-layer pointillism**: `SameLayerPointillisme` and `pointillism_all_filaments` are `#if 0`-disabled / marked deprecated in the Snapmaker Orca engine. Do not re-add in any form (same lesson as the M4 same-layer-dots removal, commit `02bff22`).
+
+#### M5-A: Auto-generate mix palette from loaded filaments (lead candidate)
 - **Goal**: Automatically generate a palette of mix recipes from the filaments currently on the bed — e.g. pairwise 50/50 blends, multiple ratios, or tri-blends — so the user doesn't have to hand-craft each mix.
 - **Open design questions**: which mix set to generate (pairwise, multiple ratios, tri-blends?), default count, avoiding mix-list flooding, how to present/filter the palette.
-- **Intended timing**: design + build right after M4, ship in the same public release as M4.
+- Kotlin+UI only; no engine investigation needed — mix slots already work.
+
+#### M5-B: Surface-offset / apparent-colour bias (VERIFY-FIRST)
+- Per-component XY inset (±~0.35 mm) to tune how dominant a colour looks without changing the mixing ratio; applied to real extrusion paths (`PrintObjectSlice.cpp`). UX = one signed slider per component.
+- **VERIFY-FIRST**: source-trace that the inset path is NOT `#if 0`-disabled, then prove the resulting G-code extrusion changes on-device before building UI.
+
+#### M5-C: Manual pattern — per-layer / per-perimeter colour sequences (VERIFY-FIRST)
+- Explicit token sequences (e.g. `"1212"` or comma-separated per-perimeter groups `"12,121"`) that set the component cadence; native `resolve()` priority #1. UX = validated token field + live preview.
+- **VERIFY-FIRST**: confirm the token/pattern priority path is reachable in our slice config before building UI.
+
+#### M5-D: Advanced (phase-shifted) layer dithering (VERIFY-FIRST)
+- Rotates the layer cadence phase to reduce visible banding; native `use_component_b_advanced_dither`. UX = one "smoother transitions" toggle. Mostly cosmetic.
+- **VERIFY-FIRST**: confirm `m_gradient_mode` and `m_advanced_dithering` engine config flags are reachable and not disabled in our slice path.
+
+#### M5-E: Local-Z sub-layer dithering (VERIFY-FIRST)
+- Splits one nominal layer into thin sub-passes at different Z heights on different extruders for a finer within-layer blend — the real, implemented version of what the removed same-layer-dots aspired to. Higher value, more complex.
+- **VERIFY-FIRST**: confirm the local-Z planner config is reachable in our slice path and produces measurably distinct G-code before trusting.
+
+#### M5-F: Vertical / height colour gradient ("rainbow up the model")
+- A colour that ramps with Z — A→B→C as height increases. **Distinct from M4's N-way mix** (M4 is a uniform fixed-ratio blend, same colour at all heights; this is a height-varying ramp).
+- **Today's workaround**: Smart Paint height/Z-bands already let the user assign different filaments per Z band — usable now without new work.
+- **New native work**: a smooth native vertical-gradient mode would require investigation; Orca's "height-weighted" mode appears to still be fixed-ratio-per-layer, not a full-model ramp — **unverified**. Scope TBD.
 
 ### F14: Full-spectrum / mixed-colour support (GitHub #18)
 - Optically-blended colours via layer alternation across the U1's 4 toolheads
