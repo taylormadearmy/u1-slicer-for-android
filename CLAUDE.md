@@ -92,7 +92,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 1584 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 407 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 420 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -182,7 +182,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixedSlotSwatchTest.kt` (1) — M4 N-segment swatch: `mixSegmentOffsets` cumulative start+fraction offsets for a 3-component weight list
 - `ui/CreateMixSlotDialogLogicTest.kt` (2) — M4 Create/Edit mix dialog state helpers: add-component-then-type-weight keeps sum at 100; remove-component floors at 2
 
-### Instrumented tests (`app/src/androidTest/`) - 407 tests across 48 classes
+### Instrumented tests (`app/src/androidTest/`) - 420 tests across 48 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/SessionStateRepositoryTest.kt` (4) — F89 DataStore round-trip: write_thenRead_returnsSameSessionState, read_emptyStore_returnsNull, clear_afterWrite_readReturnsNull, write_overwrites_prior
