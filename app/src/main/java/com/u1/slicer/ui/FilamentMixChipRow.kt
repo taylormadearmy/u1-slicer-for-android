@@ -85,12 +85,10 @@ fun FilamentMixChipRow(
         mixes.forEachIndexed { idx, row ->
             val slotId = FilamentMixChipRow.mixSlotId(idx, numPhysical)
             val selected = selectedSlot == slotId
-            val primary = physicalColours.getOrNull(row.componentA - 1) ?: Color.Gray
-            val secondary = physicalColours.getOrNull(row.componentB - 1)
+            val colours = row.components.map { physicalColours.getOrNull(it - 1) ?: Color.Gray }
             MixChip(
-                primary = primary,
-                secondary = secondary,
-                secondaryFraction = row.mixBPercent / 100f,
+                colours = colours,
+                weights = row.weights,
                 selected = selected,
                 onClick = { onSelect(slotId) },
                 onLongClick = { onEditMix(row) },
@@ -144,13 +142,13 @@ private fun PhysicalChip(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MixChip(
-    primary: Color,
-    secondary: Color?,
-    secondaryFraction: Float,
+    colours: List<Color>,
+    weights: List<Int>,
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
+    val dominantColour = colours.firstOrNull() ?: Color.Gray
     Box(
         modifier = Modifier
             .size(40.dp)
@@ -164,10 +162,9 @@ private fun MixChip(
         contentAlignment = Alignment.Center,
     ) {
         MixedSlotSwatch(
-            primary = primary,
-            secondary = secondary,
+            colours = colours,
+            weights = weights,
             size = 40.dp,
-            secondaryFraction = secondaryFraction,
             modifier = Modifier
                 .clip(CircleShape)
                 .combinedClickable(
@@ -179,7 +176,7 @@ private fun MixChip(
             Text(
                 text = "✓",
                 style = MaterialTheme.typography.labelMedium,
-                color = tickContrastColor(primary),
+                color = tickContrastColor(dominantColour),
             )
         }
     }
