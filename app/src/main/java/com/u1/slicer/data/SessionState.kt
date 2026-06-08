@@ -185,6 +185,9 @@ data class SessionState(
             for (m in state.projectMixes) {
                 mixesArray.put(JSONObject().apply {
                     put("id", m.id)
+                    put("components", JSONArray(m.components))
+                    put("weights", JSONArray(m.weights))
+                    // legacy 2-way mirror so older builds still read these rows
                     put("componentA", m.componentA)
                     put("componentB", m.componentB)
                     put("mixBPercent", m.mixBPercent)
@@ -268,17 +271,29 @@ data class SessionState(
                 val projectMixes: List<MixedFilamentRow> = if (mixesArray == null) emptyList() else
                     (0 until mixesArray.length()).map { i ->
                         val o = mixesArray.getJSONObject(i)
-                        MixedFilamentRow(
-                            id = o.getLong("id"),
-                            componentA = o.getInt("componentA"),
-                            componentB = o.getInt("componentB"),
-                            mixBPercent = o.getInt("mixBPercent"),
-                            distributionMode = MixedFilamentRow.MixDistributionMode.valueOf(
-                                o.getString("distributionMode")
-                            ),
-                            label = o.getString("label"),
-                            inLibrary = o.getBoolean("inLibrary"),
-                        )
+                        val mode = MixedFilamentRow.MixDistributionMode.valueOf(o.getString("distributionMode"))
+                        val comps = o.optJSONArray("components")
+                        if (comps != null) {
+                            val weightsArr = o.getJSONArray("weights")
+                            MixedFilamentRow(
+                                id = o.getLong("id"),
+                                components = (0 until comps.length()).map { comps.getInt(it) },
+                                weights = (0 until weightsArr.length()).map { weightsArr.getInt(it) },
+                                distributionMode = mode,
+                                label = o.getString("label"),
+                                inLibrary = o.getBoolean("inLibrary"),
+                            )
+                        } else {
+                            MixedFilamentRow.fromLegacy(
+                                id = o.getLong("id"),
+                                componentA = o.getInt("componentA"),
+                                componentB = o.getInt("componentB"),
+                                mixBPercent = o.getInt("mixBPercent"),
+                                distributionMode = mode,
+                                label = o.getString("label"),
+                                inLibrary = o.getBoolean("inLibrary"),
+                            )
+                        }
                     }
 
                 SessionState(

@@ -163,4 +163,24 @@ class SessionStateTest {
         assertNull(parsed.sliceJobId)
         assertEquals(false, parsed.wasSliceComplete)
     }
+
+    @Test
+    fun projectMixes_nway_roundTripThroughSessionState() {
+        val mix = MixedFilamentRow(
+            id = 77L,
+            components = listOf(1, 2, 3),
+            weights = listOf(50, 30, 20),
+            distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+            label = "E1+E2+E3",
+            inLibrary = false,
+        )
+        val src = sampleSession().copy(projectMixes = listOf(mix))
+        val parsed = SessionState.fromJson(SessionState.toJson(src))!!
+        assertEquals(1, parsed.projectMixes.size)
+        assertEquals(listOf(1, 2, 3), parsed.projectMixes[0].components)
+        assertEquals(listOf(50, 30, 20), parsed.projectMixes[0].weights)
+        assertEquals(MixedFilamentRow.MixDistributionMode.LAYER_CYCLE, parsed.projectMixes[0].distributionMode)
+        assertEquals("E1+E2+E3", parsed.projectMixes[0].label)
+        assertEquals(77L, parsed.projectMixes[0].id)
+    }
 }

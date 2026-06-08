@@ -495,4 +495,21 @@ class SettingsBackupTest {
         val obj = JSONObject(json)
         assertFalse("no processProfiles key when no profiles supplied", obj.has("processProfiles"))
     }
+
+    @Test
+    fun libraryMixes_nway_roundTrip() {
+        val row = MixedFilamentRow(99, listOf(1,2,3), listOf(50,30,20),
+            MixedFilamentRow.MixDistributionMode.LAYER_CYCLE, "E1+E2+E3", true)
+        val decoded = SettingsRepository.decodeLibraryMixes(SettingsRepository.encodeLibraryMixes(listOf(row)))
+        org.junit.Assert.assertEquals(listOf(1,2,3), decoded[0].components)
+        org.junit.Assert.assertEquals(listOf(50,30,20), decoded[0].weights)
+    }
+
+    @Test
+    fun libraryMixes_legacyJson_migrates() {
+        val legacy = """[{"id":5,"componentA":1,"componentB":2,"mixBPercent":30,"distributionMode":"LAYER_CYCLE","label":"E1+E2 @ 30%","inLibrary":true}]"""
+        val decoded = SettingsRepository.decodeLibraryMixes(legacy)
+        org.junit.Assert.assertEquals(listOf(1,2), decoded[0].components)
+        org.junit.Assert.assertEquals(listOf(70,30), decoded[0].weights)
+    }
 }

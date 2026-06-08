@@ -259,6 +259,9 @@ class SettingsRepository(private val context: Context) {
             for (r in rows) {
                 arr.put(org.json.JSONObject().apply {
                     put("id", r.id)
+                    put("components", org.json.JSONArray(r.components))
+                    put("weights", org.json.JSONArray(r.weights))
+                    // legacy 2-way mirror so older builds still read these rows
                     put("componentA", r.componentA)
                     put("componentB", r.componentB)
                     put("mixBPercent", r.mixBPercent)
@@ -276,15 +279,29 @@ class SettingsRepository(private val context: Context) {
                 val arr = org.json.JSONArray(encoded)
                 (0 until arr.length()).map { i ->
                     val o = arr.getJSONObject(i)
-                    MixedFilamentRow(
-                        id = o.getLong("id"),
-                        componentA = o.getInt("componentA"),
-                        componentB = o.getInt("componentB"),
-                        mixBPercent = o.getInt("mixBPercent"),
-                        distributionMode = MixedFilamentRow.MixDistributionMode.valueOf(o.getString("distributionMode")),
-                        label = o.getString("label"),
-                        inLibrary = o.getBoolean("inLibrary"),
-                    )
+                    val mode = MixedFilamentRow.MixDistributionMode.valueOf(o.getString("distributionMode"))
+                    val comps = o.optJSONArray("components")
+                    if (comps != null) {
+                        val weightsArr = o.getJSONArray("weights")
+                        MixedFilamentRow(
+                            id = o.getLong("id"),
+                            components = (0 until comps.length()).map { comps.getInt(it) },
+                            weights = (0 until weightsArr.length()).map { weightsArr.getInt(it) },
+                            distributionMode = mode,
+                            label = o.getString("label"),
+                            inLibrary = o.getBoolean("inLibrary"),
+                        )
+                    } else {
+                        MixedFilamentRow.fromLegacy(
+                            id = o.getLong("id"),
+                            componentA = o.getInt("componentA"),
+                            componentB = o.getInt("componentB"),
+                            mixBPercent = o.getInt("mixBPercent"),
+                            distributionMode = mode,
+                            label = o.getString("label"),
+                            inLibrary = o.getBoolean("inLibrary"),
+                        )
+                    }
                 }
             } catch (e: org.json.JSONException) {
                 emptyList()
