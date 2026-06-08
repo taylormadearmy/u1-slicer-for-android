@@ -90,9 +90,11 @@ fun CreateMixSlotDialog(
                             selected = false,
                             onClick = {
                                 val used = components.toSet()
-                                val next = (1..physicalFilamentColours.size)
-                                    .firstOrNull { it !in used || it == slot }
-                                if (next != null) {
+                                val all = (1..physicalFilamentColours.size)
+                                val next = all.firstOrNull { it > slot && it !in used }
+                                    ?: all.firstOrNull { it !in used }
+                                    ?: slot  // nowhere to go (all slots in use)
+                                if (next != slot) {
                                     components = components.toMutableList().also { it[idx] = next }
                                 }
                             },
