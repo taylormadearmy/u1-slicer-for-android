@@ -34,4 +34,10 @@ class ColourMatchTest {
             ColourMatch.naiveBlendHex("#112233", "#445566", 30),
             ColourMatch.naiveBlendHexMulti(listOf("#112233", "#445566"), listOf(70, 30)))
     }
+
+    @Test fun multi_threeColour_differsFromTwoColourBlend() {
+        val twoWay = ColourMatch.naiveBlendHex("#FF0000", "#00FF00", 30)            // ignores blue
+        val threeWay = ColourMatch.naiveBlendHexMulti(listOf("#FF0000", "#00FF00", "#0000FF"), listOf(50, 30, 20))
+        org.junit.Assert.assertNotEquals("3-colour blend must include the 3rd colour", twoWay, threeWay)
+    }
 }

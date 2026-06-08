@@ -198,9 +198,10 @@ fun U1NavGraph(
             SideEffect {
                 aiVm.mixDisplayColoursProvider = {
                     viewModel.mixedFilamentManager.activeOrder(numPhysical).map { row ->
-                        val a = filamentColours.getOrNull(row.componentA - 1) ?: "#888888"
-                        val b = filamentColours.getOrNull(row.componentB - 1) ?: "#888888"
-                        com.u1.slicer.aipaint.ColourMatch.naiveBlendHex(a, b, row.mixBPercent)
+                        com.u1.slicer.aipaint.ColourMatch.naiveBlendHexMulti(
+                            row.components.map { filamentColours.getOrNull(it - 1) ?: "#888888" },
+                            row.weights
+                        )
                     }
                 }
             }

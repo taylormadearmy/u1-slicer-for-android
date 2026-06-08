@@ -138,9 +138,10 @@ fun AiPaintResultScreen(
                             )
                         }
                         val mixes = activeMixes.map { row ->
-                            val a = filamentColours.getOrNull(row.componentA - 1) ?: "#888888"
-                            val b = filamentColours.getOrNull(row.componentB - 1) ?: "#888888"
-                            val hex = com.u1.slicer.aipaint.ColourMatch.naiveBlendHex(a, b, row.mixBPercent)
+                            val hex = com.u1.slicer.aipaint.ColourMatch.naiveBlendHexMulti(
+                                row.components.map { filamentColours.getOrNull(it - 1) ?: "#888888" },
+                                row.weights
+                            )
                             Color(
                                 runCatching { android.graphics.Color.parseColor(hex) }
                                     .getOrDefault(android.graphics.Color.GRAY)
