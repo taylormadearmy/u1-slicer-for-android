@@ -931,7 +931,7 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
   - Roadmap: [`docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md`](docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md)
   - A+B design: [`docs/superpowers/specs/2026-05-24-bambu-ab-design.md`](docs/superpowers/specs/2026-05-24-bambu-ab-design.md)
 
-### M4: N-way colour mixing (2–4 weighted components) — DONE on branch `feature/m4-nway-mixes` (UNRELEASED — ships bundled with prepare-ux branch per project plan) (GitHub issue: TBD at release)
+### M4: N-way colour mixing (2–4 weighted components) — DONE, RELEASED v3.0.0-beta (pre-release, released 2026-06-08); merged to `main` (fast-forward, bundled prepare-ux + M3 phases). Release: https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v3.0.0-beta
 - Mix slots extended from 2 to **2–4 weighted components**, blended by the engine layer-by-layer. Proven by an on-device slice gate: T0/T1/T2 cycle by weight for a 3-colour mix; all four tools for a 4-colour mix. Kotlin+UI only — no native change.
 - **Key files**: `MixWeights.kt` (weight math), `MixedFilamentRow.kt` (N-component row, legacy 2-way fallback), `serializeRow` (`SlicerViewModel.kt`) emits `g<ids>,w<weights>` gradient tokens, `naiveBlendHexMulti` (N-colour preview blend), `MixedSlotSwatch` (N-segment swatch), `CreateMixSlotDialog` + `EditMixSlotDialog` (drag-bar + tap-to-type UI).
 - **Carry-ins resolved**: #2 slot-id collision fixed (`mix base = maxOf(numPhysical, canonicalCount)` in `startSlicing`, `PartsPanel`, `AiPaintTreeRow`); #3 orphan `FilamentMixChipRow` composable deleted; #4/#5 Smart Paint long-press + mix-leaf-swatch-tap wired to open the editor.
