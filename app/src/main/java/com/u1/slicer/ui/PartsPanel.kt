@@ -363,8 +363,6 @@ private fun FilamentChooserDialog(
                 mixes.forEachIndexed { idx, mix ->
                     val mixSlot1Based = mixBase + idx + 1
                     val isCurrent = mixSlot1Based == currentSlot
-                    val primary = physicalColours.getOrNull(mix.componentA - 1) ?: Color(0xFF888888)
-                    val secondary = physicalColours.getOrNull(mix.componentB - 1)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -379,10 +377,9 @@ private fun FilamentChooserDialog(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         MixedSlotSwatch(
-                            primary = primary,
-                            secondary = secondary,
+                            colours = mix.components.map { physicalColours.getOrNull(it - 1) ?: androidx.compose.ui.graphics.Color.Gray },
+                            weights = mix.weights,
                             size = 24.dp,
-                            secondaryFraction = mix.mixBPercent / 100f,
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(

@@ -16,6 +16,36 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+/** (leftOffsetFraction, widthFraction) per segment from integer weights. */
+fun mixSegmentOffsets(weights: List<Int>): List<Pair<Float, Float>> {
+    val total = weights.sum().coerceAtLeast(1).toFloat()
+    var acc = 0f
+    return weights.map { w ->
+        val frac = w / total
+        val pair = acc to frac
+        acc += frac
+        pair
+    }
+}
+
+@Composable
+fun MixedSlotSwatch(
+    colours: List<Color>,         // one per component, in order
+    weights: List<Int>,
+    size: Dp = 36.dp,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier.size(size).clip(MaterialTheme.shapes.small), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.size(size)) {
+            val w = this.size.width; val h = this.size.height
+            mixSegmentOffsets(weights).forEachIndexed { i, (off, frac) ->
+                drawRect(color = colours.getOrElse(i) { Color.Gray },
+                    topLeft = Offset(w * off, 0f), size = Size(w * frac, h))
+            }
+        }
+    }
+}
+
 /**
  * A two-tone swatch.
  *
