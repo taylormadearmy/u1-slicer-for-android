@@ -3,6 +3,8 @@ package com.u1.slicer.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -302,7 +304,14 @@ private fun FilamentChooserDialog(
         onDismissRequest = onDismiss,
         title = { Text("Assign to filament") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // verticalScroll so the mix rows + "+ Add mix" (rendered AFTER the physical
+            // filament rows) stay reachable when the combined list exceeds the dialog's
+            // height — otherwise they're clipped below the fold and look "missing"
+            // (mirrors ModelInfoDialogScrollTest's guard for the same dialog-clipping class).
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
                     if (canonical != null)
                         "Pick which file-declared filament to apply. Slot mapping happens at Send →"
