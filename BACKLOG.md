@@ -931,6 +931,23 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
   - Roadmap: [`docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md`](docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md)
   - A+B design: [`docs/superpowers/specs/2026-05-24-bambu-ab-design.md`](docs/superpowers/specs/2026-05-24-bambu-ab-design.md)
 
+### M4: N-way colour mixing (2–4 weighted components) — DONE on branch `feature/m4-nway-mixes` (UNRELEASED — ships bundled with prepare-ux branch per project plan) (GitHub issue: TBD at release)
+- Mix slots extended from 2 to **2–4 weighted components**, blended by the engine layer-by-layer. Proven by an on-device slice gate: T0/T1/T2 cycle by weight for a 3-colour mix; all four tools for a 4-colour mix. Kotlin+UI only — no native change.
+- **Key files**: `MixWeights.kt` (weight math), `MixedFilamentRow.kt` (N-component row, legacy 2-way fallback), `serializeRow` (`SlicerViewModel.kt`) emits `g<ids>,w<weights>` gradient tokens, `naiveBlendHexMulti` (N-colour preview blend), `MixedSlotSwatch` (N-segment swatch), `CreateMixSlotDialog` + `EditMixSlotDialog` (drag-bar + tap-to-type UI).
+- **Carry-ins resolved**: #2 slot-id collision fixed (`mix base = maxOf(numPhysical, canonicalCount)` in `startSlicing`, `PartsPanel`, `AiPaintTreeRow`); #3 orphan `FilamentMixChipRow` composable deleted; #4/#5 Smart Paint long-press + mix-leaf-swatch-tap wired to open the editor.
+- **JSON persistence**: components/weights round-trip through JSON with legacy 2-way fallback.
+- **Tests**: `slicing/MixSlotNWayBlendGateTest` (2 instrumented — 3-component + 4-component engine gates); `data/MixWeightsTest` (12 unit); `data/MixedFilamentRowMigrationTest` (4 unit); `ui/MixedSlotSwatchTest` (1 unit); `ui/CreateMixSlotDialogLogicTest` (2 unit). Full JVM unit suite: 1584 tests, 0 failures.
+- **Spec**: [`docs/superpowers/specs/2026-06-07-m4-nway-colour-mixing-design.md`](docs/superpowers/specs/2026-06-07-m4-nway-colour-mixing-design.md)
+- **Plan**: [`docs/superpowers/plans/2026-06-07-m4-nway-colour-mixing.md`](docs/superpowers/plans/2026-06-07-m4-nway-colour-mixing.md)
+- **Residual limitations** (documented follow-ups, not blocking release):
+  - **% field commit UX** (GitHub issue: TBD at release): in the Create-Mix dialog the per-component % field commits only via soft-keyboard Done/checkmark; tapping outside the field doesn't persist the typed value. Minor UX polish.
+  - **>4-canonical-filament edge case** (GitHub issue: TBD at release): the slot-id base fix is correct for the common case (≤4 canonical). For 3MFs declaring >4 canonical filaments, `AiPaintViewer.SlotPaletteRow`, `HighlightSlotPicker`, and the recipe base in `SlicerViewModel.serialize()` still use a hardcoded base of 4, so they can diverge from the assignment base. Rare on a 4-extruder U1; documented limitation.
+
+### M5: Auto-generate mix palette from loaded filaments — OPEN (future, fast-follow after M4) (GitHub issue: TBD at release)
+- **Goal**: Automatically generate a palette of mix recipes from the filaments currently on the bed — e.g. pairwise 50/50 blends, multiple ratios, or tri-blends — so the user doesn't have to hand-craft each mix.
+- **Open design questions**: which mix set to generate (pairwise, multiple ratios, tri-blends?), default count, avoiding mix-list flooding, how to present/filter the palette.
+- **Intended timing**: design + build right after M4, ship in the same public release as M4.
+
 ### F14: Full-spectrum / mixed-colour support (GitHub #18)
 - Optically-blended colours via layer alternation across the U1's 4 toolheads
   (e.g. Blue+Yellow→Green). Toolchanger → no purge tower, only XY-offset calibration.

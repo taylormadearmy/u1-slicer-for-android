@@ -91,8 +91,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1479 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 405 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 1584 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 407 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -101,7 +101,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1479 tests across 130 classes
+### Unit tests (`app/src/test/`) - 1584 tests across 134 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -177,8 +177,12 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `NozzleTempDefaultTest.kt` (11+7=18) — nozzleTempDefaultForMaterial per-material defaults + ComputeFreshExtruderTempsTest: preset→temp lookup, filament profile ID priority, usedSlots remap, stale-config regression (v1.5.63)
 - `bambu/BambuSanitizerMetadataPreservationTest.kt` (2) — B77: per-object non-extruder metadata (enable_support, support_type, seam_position, layer_height) preserved through sanitizer no-rewrite branch
 - `bambu/NativePlateStateTest.kt` (7) — Native-first plate state JSON parsing: empty/null guards, single object, multi-object, paint flag detection, default-extruder fallback, buildObjectExtruderMap derivation
+- `data/MixWeightsTest.kt` (12) — M4 N-way mix weight math: `even`, `normalize`, `rebalanceAfterType`, `rebalanceAfterDrag`, `addEven`, `remove`, sum-to-100 invariants, encode helpers
+- `data/MixedFilamentRowMigrationTest.kt` (4) — M4 N-component `MixedFilamentRow`: derived accessors match first two components, `fromLegacy` reconstructs components/weights, `autoLabel` list form, init rejects bad component count and mismatched weights
+- `ui/MixedSlotSwatchTest.kt` (1) — M4 N-segment swatch: `mixSegmentOffsets` cumulative start+fraction offsets for a 3-component weight list
+- `ui/CreateMixSlotDialogLogicTest.kt` (2) — M4 Create/Edit mix dialog state helpers: add-component-then-type-weight keeps sum at 100; remove-component floors at 2
 
-### Instrumented tests (`app/src/androidTest/`) - 405 tests across 47 classes
+### Instrumented tests (`app/src/androidTest/`) - 407 tests across 48 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/SessionStateRepositoryTest.kt` (4) — F89 DataStore round-trip: write_thenRead_returnsSameSessionState, read_emptyStore_returnsNull, clear_afterWrite_readReturnsNull, write_overwrites_prior
@@ -193,6 +197,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/SemmSlicingTest.kt` (11) — SEMM (paint data) slicing pipeline: 2-extruder + 4-extruder assertions, H2C benchy 7-colour G-code tool counts, SEMM tool remap guard, B64 Flarewing Dragon colour permutation remap, B99 support/interface PETG crash guards for colored and H2C Benchy, B122 crash regression for H2C shoe (TPU model + PLA support/interface) at 20% and 30% scale (T1>0 confirmed at 30%)
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/NegativeVolumePreservationTest.kt` (1) — B137: negative/modifier volumes survive process()+embed() on a >64MB-main-model compound 3MF (streaming sanitize path). Asserts embedded model_settings.config keeps both `subtype="negative_part"` entries (RED=0 pre-fix) so the native BBS importer subtracts them instead of slicing solid
+- `slicing/MixSlotNWayBlendGateTest.kt` (2) — M4 N-way engine gate: 3-component mix cycles 3 tools by weight; 4-component mix uses all four tools
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
 - `slicing/BambuPlateStateRegressionTest.kt` (5) — Tier A regression tests for the 6 PM-reported plate state bugs: Dragon plate 3 / F1 calendar extruder counts (#1/#2), hanging file translate preserved through slice (#3), H2C benchy multi-tool G-code (#5), Buzz cold-load perf gate (#6)
