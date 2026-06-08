@@ -4872,12 +4872,12 @@ fun PrepareMixSlotsSectionContent(
             physicalFilamentColours = physicalColours,
             physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
             editingRow = editingRow,
-            onConfirm = { a, b, pct, mode ->
+            onConfirmN = { components, weights, mode ->
                 val edit = editingRow
                 if (edit != null) {
-                    viewModel.mixedFilamentManager.edit(edit.id, a, b, pct, mode)
+                    viewModel.editMixN(edit.id, components, weights, mode)
                 } else {
-                    viewModel.mixedFilamentManager.add(a, b, pct, mode)
+                    viewModel.createMixN(components, weights, mode)
                 }
             },
             onDelete = editingRow?.let { row -> { viewModel.mixedFilamentManager.delete(row.id) } },

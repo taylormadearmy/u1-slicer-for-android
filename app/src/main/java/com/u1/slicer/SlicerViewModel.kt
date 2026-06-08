@@ -693,6 +693,25 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         },
     )
 
+    /** Create an N-component mix slot (2..4 components, weights summing to 100). */
+    fun createMixN(
+        components: List<Int>,
+        weights: List<Int>,
+        mode: MixedFilamentRow.MixDistributionMode,
+    ) {
+        mixedFilamentManager.addN(components, weights, mode)
+    }
+
+    /** Edit an existing N-component mix slot in place. */
+    fun editMixN(
+        id: Long,
+        components: List<Int>,
+        weights: List<Int>,
+        mode: MixedFilamentRow.MixDistributionMode,
+    ) {
+        mixedFilamentManager.editN(id, components, weights, mode)
+    }
+
     // F89: toast events surfaced to MainActivity (Toast.makeText). One-shot strings.
     private val _toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val toastEvents: SharedFlow<String> = _toastEvents

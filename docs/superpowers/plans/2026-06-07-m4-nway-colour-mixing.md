@@ -763,7 +763,7 @@ git commit -m "feat(M4): persist N-component mixes with legacy 2-way fallback"
 
 - [ ] **Step 7: Remove the transitional shims from `MixedFilamentRow.kt`**
 
-By now every production caller is migrated: Task 3 moved `MixedFilamentManager` to `addN`/`editN` + list `autoLabel`; Task 5 readers use `fromLegacy`. The transitional legacy secondary constructor and the 3-arg `autoLabel` overload added in Task 2 are no longer needed and must not survive into the merge. Remove both from `MixedFilamentRow.kt` (and the TRANSITION note in its KDoc), then verify nothing still depends on them:
+By now every production caller is migrated: Task 3 moved `MixedFilamentManager` to `addN`/`editN` + list `autoLabel` (and replaced the `existing.copy(componentA=…)` calls with list-form copies); Task 5 readers use `fromLegacy`. THREE transitional shims added in Task 2 are no longer needed and must not survive into the merge: (1) the legacy 2-way secondary constructor, (2) the 3-arg `autoLabel` overload, and (3) the top-level `fun MixedFilamentRow.copy(componentA, componentB, mixBPercent, …)` extension. Remove all three from `MixedFilamentRow.kt` (and the TRANSITION note in its KDoc), then verify nothing still depends on them:
 ```bash
 cd "D:/projects/u1-slicer-for-android/.claude/worktrees/m4-nway-mixes"
 ./gradlew :app:compileDebugKotlin --no-daemon

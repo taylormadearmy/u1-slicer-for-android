@@ -80,12 +80,12 @@ fun FilamentScreen(
             physicalFilamentColours = physicalColours,
             physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
             editingRow = editingMix,
-            onConfirm = { a, b, pct, mode ->
+            onConfirmN = { components, weights, mode ->
                 val edit = editingMix
                 if (edit != null) {
-                    mixedFilamentManager.edit(edit.id, a, b, pct, mode)
+                    mixedFilamentManager.editN(edit.id, components, weights, mode)
                 } else {
-                    mixedFilamentManager.add(a, b, pct, mode)
+                    mixedFilamentManager.addN(components, weights, mode)
                 }
             },
             onDelete = editingMix?.let { row -> { mixedFilamentManager.delete(row.id) } },
