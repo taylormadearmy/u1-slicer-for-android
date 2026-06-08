@@ -59,9 +59,9 @@ fun CreateMixSlotDialog(
         mutableStateOf(editingRow?.components ?: listOf(1, 2.coerceAtMost(physicalFilamentColours.size)))
     }
     var weights by remember { mutableStateOf(editingRow?.weights ?: MixWeights.even(components.size)) }
-    var distributionMode by remember {
-        mutableStateOf(editingRow?.distributionMode ?: MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
-    }
+    // Only LAYER_CYCLE is functional; an edited legacy row keeps its stored mode (harmless —
+    // the engine treats the dead SameLayerPointillisme as LayerCycle). No UI toggle anymore.
+    val distributionMode = editingRow?.distributionMode ?: MixedFilamentRow.MixDistributionMode.LAYER_CYCLE
     var typingIndex by remember { mutableStateOf(-1) }
     var typingText by remember { mutableStateOf("") }
     val isEditing = editingRow != null
@@ -137,18 +137,13 @@ fun CreateMixSlotDialog(
                         weights = MixWeights.addEven(weights); components = components + next
                     }) { Text("+ Add colour") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DistributionChip(
-                        label = "Layer alternation",
-                        selected = distributionMode == MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
-                        onClick = { distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE },
-                    )
-                    DistributionChip(
-                        label = "Same-layer dots",
-                        selected = distributionMode == MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS,
-                        onClick = { distributionMode = MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS },
-                    )
-                }
+                // NOTE: no distribution-mode toggle. The only functional mode is layer
+                // alternation (LAYER_CYCLE). "Same-layer dots" (SameLayerPointillisme) is NOT
+                // implemented in the Snapmaker Orca engine — its generators are #if 0-disabled
+                // and the engine auto-converts the mode to LayerCycle/Simple before slicing
+                // (PrintApply.cpp: "Deprecated: same-layer pointillism is disabled and will be
+                // removed"). Offering it would be a no-op toggle, so it's omitted. The enum
+                // value is retained only for backward-compatible deserialization of old saves.
             }
         },
         confirmButton = {
@@ -282,19 +277,3 @@ private fun FilamentChip(colour: Color, label: String, selected: Boolean, onClic
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DistributionChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val bg = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent
-    val border = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, border),
-        color = bg,
-    ) {
-        Box(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium)
-        }
-    }
-}

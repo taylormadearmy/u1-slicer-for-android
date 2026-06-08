@@ -74,6 +74,17 @@ class MixSelectorAugmentationTest {
         )
     }
 
+    @Test fun createMixDialog_hasNoNonFunctionalDistributionToggle() {
+        // "Same-layer dots" (SameLayerPointillisme) is #if 0-disabled in the Snapmaker Orca
+        // engine and auto-converted to LayerCycle before slicing, so a mode toggle would be a
+        // no-op. The dialog must NOT offer the DistributionChip toggle (only layer alternation
+        // is functional). Guard on the toggle composable call, not the doc-comment phrase.
+        assertTrue(
+            "CreateMixSlotDialog must not offer the non-functional distribution-mode toggle",
+            !dialog.contains("DistributionChip("),
+        )
+    }
+
     @Test fun smartPaint_mixChip_longPress_opensEditor() {
         assertTrue("AiPaintTreeRow mix chip must wire long-press to onEditMix",
             row.contains("onLongClick") && row.contains("onEditMix"))
