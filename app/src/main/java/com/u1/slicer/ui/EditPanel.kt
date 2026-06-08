@@ -147,12 +147,7 @@ private fun ObjectScopedEditSection(
                     Spacer(Modifier.width(6.dp))
                     // v2.10.13: BETA pill on the whole per-object edit panel.
                     // Same pattern as the "Add to bed" beta chip in MainActivity.
-                    androidx.compose.material3.Badge(
-                        containerColor = MaterialTheme.colorScheme.secondary,
-                        contentColor = MaterialTheme.colorScheme.onSecondary,
-                    ) {
-                        Text("BETA", fontSize = 7.sp, fontWeight = FontWeight.Bold)
-                    }
+                    BetaPill()
                 }
                 Text(
                     name,

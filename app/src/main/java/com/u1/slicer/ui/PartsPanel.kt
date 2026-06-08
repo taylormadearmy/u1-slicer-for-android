@@ -368,6 +368,14 @@ private fun FilamentChooserDialog(
                 // cannot collide with canonical filament slots when the 3MF
                 // has more than TARGET_SLOTS (4) canonical filaments.
                 // No-op when canonicalCount <= numPhysical.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                ) {
+                    Text("Mix slots", style = MaterialTheme.typography.labelMedium)
+                    BetaPill()
+                }
                 val mixBase = maxOf(numPhysical, canonical?.size ?: numPhysical)
                 mixes.forEachIndexed { idx, mix ->
                     val mixSlot1Based = mixBase + idx + 1

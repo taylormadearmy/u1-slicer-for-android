@@ -69,7 +69,13 @@ fun CreateMixSlotDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEditing) "Edit Mix" else "Create Mix") },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (isEditing) "Edit Mix" else "Create Mix")
+                Spacer(Modifier.width(6.dp))
+                BetaPill()
+            }
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 MixWeightBar(

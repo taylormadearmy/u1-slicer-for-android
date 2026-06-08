@@ -1668,12 +1668,7 @@ fun PrepareScreen(
                                 }
                                 BadgedBox(
                                     badge = {
-                                        Badge(
-                                            containerColor = MaterialTheme.colorScheme.secondary,
-                                            contentColor = MaterialTheme.colorScheme.onSecondary
-                                        ) {
-                                            Text("BETA", fontSize = 7.sp, fontWeight = FontWeight.Bold)
-                                        }
+                                        com.u1.slicer.ui.BetaPill()
                                     }
                                 ) {
                                     AssistChip(
@@ -4407,6 +4402,8 @@ fun PrintSetupSection(
                                 fontWeight = FontWeight.SemiBold,
                                 letterSpacing = 0.8.sp,
                             )
+                            Spacer(Modifier.width(6.dp))
+                            com.u1.slicer.ui.BetaPill()
                         }
                         mixSlotsContent()
                     }

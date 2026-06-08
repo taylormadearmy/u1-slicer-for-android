@@ -220,12 +220,18 @@ fun FilamentScreen(
             if (mixedFilamentManager != null) {
                 item("mix-slots-header") {
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Mix Slots",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Mix Slots",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        BetaPill()
+                    }
                 }
 
                 // "+ Mix slot" row — affordance to open the dialog.
