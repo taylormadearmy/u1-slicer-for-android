@@ -377,8 +377,6 @@ private fun MixSlotCard(
     onDelete: () -> Unit,
     onToggleLibrary: () -> Unit,
 ) {
-    val primary = physicalColours.getOrNull(row.componentA - 1) ?: Color.Gray
-    val secondary = physicalColours.getOrNull(row.componentB - 1)
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -390,10 +388,9 @@ private fun MixSlotCard(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             MixedSlotSwatch(
-                primary = primary,
-                secondary = secondary,
+                colours = row.components.map { physicalColours.getOrNull(it - 1) ?: Color.Gray },
+                weights = row.weights,
                 size = 40.dp,
-                secondaryFraction = row.mixBPercent / 100f,
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {

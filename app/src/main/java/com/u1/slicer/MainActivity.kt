@@ -5004,8 +5004,6 @@ private fun PrepareMixSlotRow(
     onToggleLibrary: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val primary = physicalColours.getOrNull(row.componentA - 1) ?: Color.Gray
-    val secondary = physicalColours.getOrNull(row.componentB - 1)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -5021,10 +5019,9 @@ private fun PrepareMixSlotRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         com.u1.slicer.ui.MixedSlotSwatch(
-            primary = primary,
-            secondary = secondary,
+            colours = row.components.map { physicalColours.getOrNull(it - 1) ?: Color.Gray },
+            weights = row.weights,
             size = 32.dp,
-            secondaryFraction = row.mixBPercent / 100f,
         )
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {

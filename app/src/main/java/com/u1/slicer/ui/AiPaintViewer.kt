@@ -433,18 +433,17 @@ internal fun SlotPaletteRow(
                 }
             }
         }
-        // Mix swatches (two-tone). Slot id = numPhysical + index.
+        // Mix swatches (N-segment). Slot id = numPhysical + index.
         mixes.forEachIndexed { idx, mix ->
             val slot = numPhysical + idx
             val isActive = (paintMode || lassoMode) && slot == activeSlot && !hasLassoSelection
-            val primary = physicalColours.getOrNull(mix.componentA - 1) ?: Color.Gray
-            val secondary = physicalColours.getOrNull(mix.componentB - 1)
+            val mixColours = mix.components.map { physicalColours.getOrNull(it - 1) ?: Color.Gray }
             Box(
                 Modifier.size(if (isActive) 44.dp else 40.dp).clickable { onTapSlot(slot) },
                 contentAlignment = Alignment.Center,
             ) {
-                MixedSlotSwatch(primary = primary, secondary = secondary, size = if (isActive) 44.dp else 40.dp, secondaryFraction = mix.mixBPercent / 100f)
-                val tickColor = tickContrastColor(primary)
+                MixedSlotSwatch(colours = mixColours, weights = mix.weights, size = if (isActive) 44.dp else 40.dp)
+                val tickColor = tickContrastColor(mixColours.firstOrNull() ?: Color.Gray)
                 when {
                     isActive -> Text("✓", color = tickColor, style = MaterialTheme.typography.labelLarge)
                     !paintMode && !lassoMode ->

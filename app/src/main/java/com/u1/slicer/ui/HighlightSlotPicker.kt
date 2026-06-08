@@ -83,25 +83,23 @@ fun HighlightSlotPicker(
                 }
             }
         }
-        // Mix swatches (two-tone). Slot id = numPhysical + index.
+        // Mix swatches (N-segment). Slot id = numPhysical + index.
         mixes.forEachIndexed { idx, mix ->
             val slot = numPhysical + idx
             val isCurrent = slot == currentSlot
-            val primary = physicalColours.getOrNull(mix.componentA - 1) ?: Color.Gray
-            val secondary = physicalColours.getOrNull(mix.componentB - 1)
+            val mixColours = mix.components.map { physicalColours.getOrNull(it - 1) ?: Color.Gray }
             Box(
                 Modifier.size(if (isCurrent) 36.dp else 40.dp).clip(MaterialTheme.shapes.small)
                     .clickable(enabled = !isCurrent) { onPickSlot(slot) },
                 contentAlignment = Alignment.Center,
             ) {
                 MixedSlotSwatch(
-                    primary = primary,
-                    secondary = secondary,
+                    colours = mixColours,
+                    weights = mix.weights,
                     size = if (isCurrent) 36.dp else 40.dp,
-                    secondaryFraction = mix.mixBPercent / 100f,
                 )
                 if (isCurrent) {
-                    Text("✓", color = tickContrastColor(primary), style = MaterialTheme.typography.titleMedium)
+                    Text("✓", color = tickContrastColor(mixColours.firstOrNull() ?: Color.Gray), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }

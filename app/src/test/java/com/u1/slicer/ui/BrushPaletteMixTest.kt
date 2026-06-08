@@ -4,12 +4,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Guards that [FilamentMixChipRow] — the replacement for the now-retired SlotPaletteRow —
- * correctly renders mix swatches and does not cap the palette at TARGET_SLOTS.
+ * Guards that the live mix-slot selector in [AiPaintViewer]'s `SlotPaletteRow` correctly
+ * renders N-segment mix swatches and does not cap the palette at TARGET_SLOTS.
  *
- * Task 5 (Prepare UX Consolidation): SlotPaletteRow in AiPaintViewer.kt was retired; these
- * guards were retargeted from AiPaintViewer.kt to FilamentMixChipRow.kt to preserve coverage
- * of the live behaviour.
+ * SlotPaletteRow in AiPaintViewer.kt is the active per-surface slot picker used during
+ * Smart Paint; these guards confirm it handles mixes via MixedSlotSwatch and is not
+ * artificially capped.
  */
 class BrushPaletteMixTest {
     private fun read(p: String) = listOf(
@@ -19,29 +19,29 @@ class BrushPaletteMixTest {
     ).map { java.io.File(it) }.firstOrNull { it.exists() }?.readText()
         ?: error("$p not found")
 
-    // FilamentMixChipRow is the live replacement for the retired SlotPaletteRow
-    private val chipRowSrc = read("FilamentMixChipRow.kt")
+    // SlotPaletteRow in AiPaintViewer.kt is the live selector for Smart Paint brush slots.
+    private val chipRowSrc = read("AiPaintViewer.kt")
 
     @Test fun chipRowRendersMixSwatches() {
-        // FilamentMixChipRow must render MixedSlotSwatch for mix entries.
+        // SlotPaletteRow must render MixedSlotSwatch for mix entries.
         assertTrue(
-            "FilamentMixChipRow must render MixedSlotSwatch for mix slots",
+            "SlotPaletteRow in AiPaintViewer must render MixedSlotSwatch for mix slots",
             chipRowSrc.contains("MixedSlotSwatch"),
         )
     }
 
     @Test fun chipRowDoesNotCapAtTargetSlots() {
-        // FilamentMixChipRow must NOT cap at TARGET_SLOTS (hardcoded 4).
+        // SlotPaletteRow must NOT cap at TARGET_SLOTS (hardcoded 4).
         assertTrue(
-            "FilamentMixChipRow must not use .take(AiPaintViewModel.TARGET_SLOTS) to cap the palette",
+            "SlotPaletteRow in AiPaintViewer must not use .take(AiPaintViewModel.TARGET_SLOTS) to cap the palette",
             !chipRowSrc.contains("take(AiPaintViewModel.TARGET_SLOTS)"),
         )
     }
 
     @Test fun chipRowAcceptsMixesParam() {
-        // FilamentMixChipRow must accept a mixes parameter so it knows which mixes to render.
+        // SlotPaletteRow must accept a mixes parameter so it knows which mixes to render.
         assertTrue(
-            "FilamentMixChipRow must accept a mixes parameter",
+            "SlotPaletteRow in AiPaintViewer must accept a mixes parameter",
             chipRowSrc.contains("mixes"),
         )
     }
