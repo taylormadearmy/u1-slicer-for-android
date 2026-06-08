@@ -36,6 +36,7 @@ fun AiPaintResultScreen(
     projectMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     libraryMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     numPhysical: Int = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+    canonicalCount: Int = numPhysical,
     onCreateMix: () -> Unit = {},
     onEditMix: (com.u1.slicer.data.MixedFilamentRow) -> Unit = {},
 ) {
@@ -399,10 +400,19 @@ fun AiPaintResultScreen(
                     val treeWithCustom = result.tree + listOfNotNull(
                         com.u1.slicer.aipaint.CustomSelections.buildGroup(result.customSelections)
                     )
+                    val mixBase = maxOf(numPhysical, canonicalCount)
                     AiPaintTree(
                         tree = treeWithCustom,
                         slotPalette = slotPalette,
-                        onTapSwatch = { nodeSlot -> editSlotColour = nodeSlot },
+                        onTapSwatch = { nodeSlot ->
+                            // Tapping a mix-leaf's leading swatch opens the mix editor (#4/#5);
+                            // a physical slot opens the colour picker as before.
+                            if (nodeSlot >= mixBase) {
+                                activeMixes.getOrNull(nodeSlot - mixBase)?.let { onEditMix(it) }
+                            } else {
+                                editSlotColour = nodeSlot
+                            }
+                        },
                         onPickSlot = { path, slot ->
                             // fix35.2: tapping a slot chip on a row also highlights that row
                             // (so the model lights up the affected triangles in yellow). Reassign
@@ -423,6 +433,7 @@ fun AiPaintResultScreen(
                         selectedNodeId = result.highlightComponentId,
                         modifier = Modifier.weight(1f),
                         numPhysical = numPhysical,
+                        canonicalCount = canonicalCount,
                         activeMixes = activeMixes,
                         physicalColours = slotPalette.take(numPhysical),
                         onCreateMix = onCreateMix,

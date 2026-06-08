@@ -74,6 +74,11 @@ class MixSelectorAugmentationTest {
         )
     }
 
+    @Test fun smartPaint_mixChip_longPress_opensEditor() {
+        assertTrue("AiPaintTreeRow mix chip must wire long-press to onEditMix",
+            row.contains("onLongClick") && row.contains("onEditMix"))
+    }
+
     @Test fun mixSlotId_basedOnMaxOfPhysicalAndCanonical_noCollision() {
         val base = maxOf(4, 6)   // 6 canonical filaments, 4 physical
         org.junit.Assert.assertEquals(6, com.u1.slicer.ui.FilamentMixChipRow.mixSlotId(0, base))

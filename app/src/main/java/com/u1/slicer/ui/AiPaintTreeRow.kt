@@ -1,8 +1,10 @@
 package com.u1.slicer.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -29,6 +31,7 @@ internal fun tickContrastColor(color: Color): Color {
     return if (lum > 0.55f) Color.Black else Color.White
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AiPaintTreeRow(
     node: AiRegionNode,
@@ -41,11 +44,18 @@ fun AiPaintTreeRow(
     selected: Boolean = false,
     modifier: Modifier = Modifier,
     numPhysical: Int = 4,
+    canonicalCount: Int = numPhysical,
     activeMixes: List<MixedFilamentRow> = emptyList(),
     physicalColours: List<Color> = emptyList(),
     onCreateMix: () -> Unit = {},
     onEditMix: (MixedFilamentRow) -> Unit = {},
 ) {
+    // fix #2 (M4): mix-slot ids start above the larger of the physical extruder count and the
+    // canonical filament count, so a mix id never collides with a canonical file-filament index.
+    // When canonicalCount <= numPhysical (the normal case) mixBase == numPhysical → no behaviour
+    // change. Used for the mix-slot base, the "is this a mix slot" threshold, and the activeMixes
+    // index — all three must agree.
+    val mixBase = maxOf(numPhysical, canonicalCount)
     val rowBg = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     Row(
         modifier
@@ -76,9 +86,9 @@ fun AiPaintTreeRow(
         // slot wouldn't visibly change the row's swatch (user complaint: "tapping a region in
         // the list does not seem to change the colour"). Parents with mixed children fall back
         // to dominantSlot for the primary + a diagonal stripe of secondarySlot.
-        // C2 (M3-Phase-B): leaf nodes whose slot >= numPhysical are mix slots — render the
-        // two-tone MixedSlotSwatch using componentA/B of the active mix. Physical-slot leaves
-        // keep the existing path.
+        // C2 (M3-Phase-B) / M4: leaf nodes whose slot >= mixBase are mix slots — render the
+        // N-segment MixedSlotSwatch from the active mix's components/weights. Physical-slot leaves
+        // and parents-with-mixed-children keep the two-tone (corner-stripe) path.
         val primarySlot = if (node.isLeaf) node.region.slot else node.dominantSlot()
         val primary = slotPalette.getOrNull(primarySlot)
             ?: remember(node) {
@@ -86,33 +96,31 @@ fun AiPaintTreeRow(
                     .getOrDefault(android.graphics.Color.GRAY)
                 Color(argb)
             }
-        val secondary = when {
-            node.isLeaf && primarySlot >= numPhysical -> {
-                val mix = activeMixes.getOrNull(primarySlot - numPhysical)
-                mix?.let { physicalColours.getOrNull(it.componentB - 1) }
-            }
-            node.isLeaf -> null
-            else -> node.secondarySlot()?.let { slotPalette.getOrNull(it) }
+        val isMixLeaf = node.isLeaf && primarySlot >= mixBase
+        if (isMixLeaf) {
+            // Mix leaf: render the full N-segment blend bar from the mix's components/weights.
+            val mix = activeMixes.getOrNull(primarySlot - mixBase)
+            MixedSlotSwatch(
+                colours = (mix?.components ?: emptyList()).map {
+                    physicalColours.getOrNull(it - 1) ?: Color.Gray
+                },
+                weights = mix?.weights ?: emptyList(),
+                size = 32.dp,
+                modifier = Modifier.clickable { onTapSwatch() },
+            )
+        } else {
+            // Parent with mixed children → corner-stripe (no single percentage); plain physical
+            // slot → solid. Both stay on the legacy 2-tone overload with a null fraction.
+            val secondary = if (node.isLeaf) null
+                else node.secondarySlot()?.let { slotPalette.getOrNull(it) }
+            MixedSlotSwatch(
+                primary = primary,
+                secondary = secondary,
+                size = 32.dp,
+                secondaryFraction = null,
+                modifier = Modifier.clickable { onTapSwatch() },
+            )
         }
-        val swatchPrimary = when {
-            node.isLeaf && primarySlot >= numPhysical -> {
-                val mix = activeMixes.getOrNull(primarySlot - numPhysical)
-                mix?.let { physicalColours.getOrNull(it.componentA - 1) } ?: primary
-            }
-            else -> primary
-        }
-        // For a mix leaf, the leading swatch shows the blend ratio; parents with mixed children
-        // keep the corner-stripe (no single percentage), so leave the fraction null for them.
-        val swatchSecondaryFraction: Float? = if (node.isLeaf && primarySlot >= numPhysical) {
-            activeMixes.getOrNull(primarySlot - numPhysical)?.let { it.mixBPercent / 100f }
-        } else null
-        MixedSlotSwatch(
-            primary = swatchPrimary,
-            secondary = secondary,
-            size = 32.dp,
-            secondaryFraction = swatchSecondaryFraction,
-            modifier = Modifier.clickable { onTapSwatch() },
-        )
         Spacer(Modifier.width(10.dp))
 
         Column(modifier = Modifier.weight(1f)) {
@@ -148,22 +156,30 @@ fun AiPaintTreeRow(
                     }
                 }
             }
-            // One two-tone chip per active mix. Slot id = numPhysical + index. Tapping assigns.
-            // TODO(M4/#2): no canonical count in scope at this composable; numPhysical is the safe
-            // floor. Callers that have canonicalCount should pass maxOf(numPhysical, canonicalCount)
-            // as numPhysical when the canonical list exceeds TARGET_SLOTS.
+            // One N-segment chip per active mix. Slot id = mixBase + index. Tapping assigns the
+            // row to that mix; long-press opens the mix editor (#4/#5).
             activeMixes.forEachIndexed { idx, mix ->
-                val slot = numPhysical + idx
+                val slot = mixBase + idx
                 val isActive = node.region.slot == slot
-                val mPrimary = physicalColours.getOrNull(mix.componentA - 1) ?: Color.Gray
-                val mSecondary = physicalColours.getOrNull(mix.componentB - 1)
+                val mColours = mix.components.map { physicalColours.getOrNull(it - 1) ?: Color.Gray }
                 Box(
-                    Modifier.size(if (isActive) 24.dp else 20.dp).clickable { onPickSlot(slot) },
+                    Modifier.size(if (isActive) 24.dp else 20.dp).combinedClickable(
+                        onClick = { onPickSlot(slot) },
+                        onLongClick = { activeMixes.getOrNull(idx)?.let { onEditMix(it) } },
+                    ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    MixedSlotSwatch(primary = mPrimary, secondary = mSecondary, size = if (isActive) 24.dp else 20.dp, secondaryFraction = mix.mixBPercent / 100f)
+                    MixedSlotSwatch(
+                        colours = mColours,
+                        weights = mix.weights,
+                        size = if (isActive) 24.dp else 20.dp,
+                    )
                     if (isActive) {
-                        Text("✓", color = tickContrastColor(mPrimary), style = MaterialTheme.typography.labelSmall)
+                        Text(
+                            "✓",
+                            color = tickContrastColor(mColours.firstOrNull() ?: Color.Gray),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
                     }
                 }
             }

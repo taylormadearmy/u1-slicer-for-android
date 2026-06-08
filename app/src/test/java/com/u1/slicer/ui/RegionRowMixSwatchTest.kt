@@ -13,14 +13,15 @@ class RegionRowMixSwatchTest {
     @Test fun rowRendersMixSwatchForMixSlots() {
         val row = read("AiPaintTreeRow.kt")
         // Guard the actual mix-leaf branch, not just that MixedSlotSwatch appears (it was already
-        // used for parent nodes pre-Phase-B). The branch keys a leaf's mix slot off numPhysical
-        // and looks the row up in the activeMixes list by (slot - numPhysical).
-        assertTrue("row must render the two-tone MixedSlotSwatch",
+        // used for parent nodes pre-Phase-B). M4/#2: the branch now keys a leaf's mix slot off
+        // mixBase = maxOf(numPhysical, canonicalCount) and looks the row up by (slot - mixBase),
+        // so a mix id never collides with a canonical file-filament index.
+        assertTrue("row must render the MixedSlotSwatch",
             row.contains("MixedSlotSwatch"))
-        assertTrue("row must branch leaf mix slots on numPhysical",
-            row.contains("primarySlot >= numPhysical"))
-        assertTrue("row must resolve the mix row via activeMixes[slot - numPhysical]",
-            row.contains("activeMixes.getOrNull(primarySlot - numPhysical)"))
+        assertTrue("row must branch leaf mix slots on mixBase",
+            row.contains("primarySlot >= mixBase"))
+        assertTrue("row must resolve the mix row via activeMixes[primarySlot - mixBase]",
+            row.contains("activeMixes.getOrNull(primarySlot - mixBase)"))
     }
 
     @Test fun rowBranchesOnNumPhysical() {

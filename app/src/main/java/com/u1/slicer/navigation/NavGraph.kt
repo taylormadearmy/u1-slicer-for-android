@@ -211,6 +211,10 @@ fun U1NavGraph(
             val finalizeScope = rememberCoroutineScope()
             val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
             val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
+            // fix #2 (M4): canonical filament count drives the mix-slot base so mix ids never
+            // collide with a canonical file-filament index when the file declares >4 filaments.
+            val canonicalFilamentList by viewModel.canonicalFilamentList.collectAsState()
+            val canonicalCount = canonicalFilamentList?.size ?: numPhysical
 
             // C1a (M3-Phase-B): mix-slot dialog state for per-region SectionedSlotPicker.
             var createMixOpen by remember { mutableStateOf(false) }
@@ -256,6 +260,7 @@ fun U1NavGraph(
                 projectMixes = projectMixes,
                 libraryMixes = libraryMixes,
                 numPhysical = numPhysical,
+                canonicalCount = canonicalCount,
                 onUsePainting = {
                     finalizeScope.launch {
                         val finalPath = aiVm.finalizePainting()
