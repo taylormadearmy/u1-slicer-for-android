@@ -40,4 +40,10 @@ class FilamentMixPredictorTest {
         val sum = ((v shr 16) and 0xFF) + ((v shr 8) and 0xFF) + (v and 0xFF)
         assertTrue("3-way midtone sum=$sum", sum in 200..550)
     }
+
+    @Test fun predictor_differsFromNaiveAverage_forSubtractivePair() {
+        val naive = ColourMatch.naiveBlendHexMulti(listOf("#009bc3", "#f6b921"), listOf(50, 50))
+        val pred = FilamentMixPredictor.predict(listOf("#009bc3", "#f6b921"), listOf(50, 50))
+        org.junit.Assert.assertNotEquals("predictor must differ from the naive sRGB average", naive, pred)
+    }
 }

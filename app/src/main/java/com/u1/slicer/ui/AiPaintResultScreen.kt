@@ -138,7 +138,7 @@ fun AiPaintResultScreen(
                             )
                         }
                         val mixes = activeMixes.map { row ->
-                            val hex = com.u1.slicer.aipaint.ColourMatch.naiveBlendHexMulti(
+                            val hex = com.u1.slicer.aipaint.FilamentMixPredictor.predict(
                                 row.components.map { filamentColours.getOrNull(it - 1) ?: "#888888" },
                                 row.weights
                             )

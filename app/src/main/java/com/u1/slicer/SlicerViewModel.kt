@@ -1827,7 +1827,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // filaments) so the mix blends reflect what will actually print. Fall back to the
         // mix's own component lookups against whatever palette is available.
         mixedFilamentManager.activeOrder(physicalCount).map { row ->
-            com.u1.slicer.aipaint.ColourMatch.naiveBlendHexMulti(
+            com.u1.slicer.aipaint.FilamentMixPredictor.predict(
                 row.components.map { physicalColors.getOrNull(it - 1)?.takeIf { c -> c.isNotBlank() } ?: "#888888" },
                 row.weights
             )
