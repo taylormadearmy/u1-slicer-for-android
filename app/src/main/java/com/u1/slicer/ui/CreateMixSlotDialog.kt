@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.u1.slicer.data.MixWeights
 import com.u1.slicer.data.MixedFilamentRow
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Remove the component at [index] (no-op below 3 components) and renormalize weights. */
 fun removeMixComponent(components: List<Int>, weights: List<Int>, index: Int): Pair<List<Int>, List<Int>> {
@@ -78,7 +79,7 @@ fun CreateMixSlotDialog(
     val runMatch: (String, Int) -> Unit = { targetHex, count ->
         val loadedHex = physicalFilamentColours.map { c ->
             "#%02x%02x%02x".format(
-                (c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt(),
+                (c.red * 255).roundToInt(), (c.green * 255).roundToInt(), (c.blue * 255).roundToInt(),
             )
         }
         val s = com.u1.slicer.aipaint.MixColourMatcher.bestMix(
@@ -109,7 +110,10 @@ fun CreateMixSlotDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // --- Match-a-colour: pick a target and let the matcher pick the mix ---
-                TextButton(onClick = { matching = true }) { Text("🎯 Match a colour") }
+                TextButton(
+                    onClick = { matching = true },
+                    enabled = physicalFilamentColours.size >= 2,
+                ) { Text("🎯 Match a colour") }
                 matchBadge?.let {
                     Text("Closest mix: $it", style = MaterialTheme.typography.labelSmall)
                 }
