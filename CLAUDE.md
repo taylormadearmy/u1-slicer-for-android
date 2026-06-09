@@ -91,8 +91,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1584 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 420 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 1603 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 421 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -101,7 +101,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1584 tests across 134 classes
+### Unit tests (`app/src/test/`) - 1603 tests across 137 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -181,8 +181,11 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `data/MixedFilamentRowMigrationTest.kt` (4) — M4 N-component `MixedFilamentRow`: derived accessors match first two components, `fromLegacy` reconstructs components/weights, `autoLabel` list form, init rejects bad component count and mismatched weights
 - `ui/MixedSlotSwatchTest.kt` (1) — M4 N-segment swatch: `mixSegmentOffsets` cumulative start+fraction offsets for a 3-component weight list
 - `ui/CreateMixSlotDialogLogicTest.kt` (2) — M4 Create/Edit mix dialog state helpers: add-component-then-type-weight keeps sum at 100; remove-component floors at 2
+- `aipaint/FilamentMixPredictorTest.kt` (5) — pick-a-colour forward model: Kotlin port of prusa-fdm-mixer pinned to 7 reference vectors (ΔE<1), pure-endpoint short-circuit, blue+yellow→green (not grey), 3-way midtone, predictor differs from the naive sRGB average
+- `aipaint/MixColourMatcherTest.kt` (8) — pick-a-colour reverse search: recovers a known 2-colour mix's subset+ΔE, respects requested count, caps count to loaded, closest-single-filament nearest, <250ms/query, empty-loaded clear error + sentinel, count=1 single component
+- `ui/MatchAColourWiringTest.kt` (2) — pick-a-colour structural guard: `CreateMixSlotDialog` offers "Match a colour", calls `MixColourMatcher.bestMix`, has the 2/3/4 count selector, derives a closeness badge from `deltaE`, and surfaces the `closestSingleFilament` note
 
-### Instrumented tests (`app/src/androidTest/`) - 420 tests across 48 classes
+### Instrumented tests (`app/src/androidTest/`) - 421 tests across 49 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/SessionStateRepositoryTest.kt` (4) — F89 DataStore round-trip: write_thenRead_returnsSameSessionState, read_emptyStore_returnsNull, clear_afterWrite_readReturnsNull, write_overwrites_prior
@@ -198,6 +201,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/NegativeVolumePreservationTest.kt` (1) — B137: negative/modifier volumes survive process()+embed() on a >64MB-main-model compound 3MF (streaming sanitize path). Asserts embedded model_settings.config keeps both `subtype="negative_part"` entries (RED=0 pre-fix) so the native BBS importer subtracts them instead of slicing solid
 - `slicing/MixSlotNWayBlendGateTest.kt` (2) — M4 N-way engine gate: 3-component mix cycles 3 tools by weight; 4-component mix uses all four tools
+- `MatchAColourE2ETest.kt` (1) — pick-a-colour end-to-end gate: a mix suggested by `MixColourMatcher.bestMix` slices into G-code using EXACTLY the suggested filaments (every suggested tool prints; non-suggested tools absent)
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
 - `slicing/BambuPlateStateRegressionTest.kt` (5) — Tier A regression tests for the 6 PM-reported plate state bugs: Dragon plate 3 / F1 calendar extruder counts (#1/#2), hanging file translate preserved through slice (#3), H2C benchy multi-tool G-code (#5), Buzz cold-load perf gate (#6)
