@@ -7,6 +7,9 @@ package com.u1.slicer.aipaint
  * subsets × a coarse weight grid, then a fine local refine. Pure + deterministic.
  *
  * componentIndices are 1-BASED (matching MixedFilamentRow.components / the engine slot ids).
+ *
+ * Intended for small loadouts (≤~6 filaments): the brute-force candidate count grows
+ * super-linearly with both `loaded.size` and `count`, so larger loadouts get slow fast.
  */
 object MixColourMatcher {
 
@@ -20,6 +23,7 @@ object MixColourMatcher {
 
     /** Closest single loaded filament: (1-based index, ΔE). */
     fun closestSingleFilament(target: String, loaded: List<String>): Pair<Int, Double> {
+        if (loaded.isEmpty()) return 0 to Double.MAX_VALUE
         var bi = 1; var bd = Double.MAX_VALUE
         loaded.forEachIndexed { i, hex ->
             val d = ColourMatch.deltaE76(target, hex)
@@ -29,6 +33,7 @@ object MixColourMatcher {
     }
 
     fun bestMix(target: String, loaded: List<String>, count: Int): MixSuggestion {
+        require(loaded.isNotEmpty()) { "no candidates (loaded is empty)" }
         val k = count.coerceIn(1, loaded.size)
         var best: MixSuggestion? = null
         for (subset in combinations(loaded.indices.toList(), k)) {

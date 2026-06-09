@@ -42,4 +42,24 @@ class MixColourMatcherTest {
         val msPer = (System.nanoTime() - start) / 1e6 / 10.0
         assertTrue("avg ${msPer}ms/query should be < 250ms", msPer < 250.0)
     }
+
+    @Test fun emptyLoaded_bestMix_throwsClearError() {
+        val ex = try {
+            MixColourMatcher.bestMix("#888888", emptyList(), count = 2); null
+        } catch (e: IllegalArgumentException) { e }
+        assertTrue("expected a clear empty-loaded error", ex != null && (ex!!.message ?: "").contains("loaded", ignoreCase = true))
+    }
+
+    @Test fun emptyLoaded_closestSingle_returnsSentinel() {
+        val (idx, dE) = MixColourMatcher.closestSingleFilament("#888888", emptyList())
+        assertEquals(0, idx) // 0 = "no filament" sentinel (indices are otherwise 1-based)
+        assertEquals(Double.MAX_VALUE, dE, 0.0)
+    }
+
+    @Test fun count1_returnsSingleComponent() {
+        val s = MixColourMatcher.bestMix(loaded[1], loaded, count = 1)
+        assertEquals(1, s.componentIndices.size)
+        assertEquals(listOf(100), s.weights)
+        assertTrue("count=1 should pick the exact loaded colour (ΔE=${s.deltaE})", s.deltaE < 1.0)
+    }
 }
