@@ -67,6 +67,36 @@ fun CreateMixSlotDialog(
     val isEditing = editingRow != null
     val canConfirm = components.distinct().size == components.size && components.size >= 2
 
+    // --- Match-a-colour (pick-a-colour) state ---
+    var matching by remember { mutableStateOf(false) }            // target picker open
+    var matchCount by remember { mutableStateOf(2) }              // 2/3/4, default 2
+    var matchTarget by remember { mutableStateOf<String?>(null) } // last picked target hex
+    var matchBadge by remember { mutableStateOf<String?>(null) }  // "ΔE 6 · OK" etc.
+    var matchNote by remember { mutableStateOf<String?>(null) }   // single-filament note
+    val maxMatch = minOf(4, physicalFilamentColours.size)
+
+    val runMatch: (String, Int) -> Unit = { targetHex, count ->
+        val loadedHex = physicalFilamentColours.map { c ->
+            "#%02x%02x%02x".format(
+                (c.red * 255).toInt(), (c.green * 255).toInt(), (c.blue * 255).toInt(),
+            )
+        }
+        val s = com.u1.slicer.aipaint.MixColourMatcher.bestMix(
+            targetHex, loadedHex, count.coerceAtMost(maxMatch),
+        )
+        components = s.componentIndices
+        weights = s.weights
+        val q = when {
+            s.deltaE <= 3.0 -> "good"
+            s.deltaE <= 8.0 -> "OK"
+            else -> "weak"
+        }
+        matchBadge = "ΔE ${Math.round(s.deltaE)} · $q"
+        val (singleIdx, singleDe) =
+            com.u1.slicer.aipaint.MixColourMatcher.closestSingleFilament(targetHex, loadedHex)
+        matchNote = if (singleDe + 0.5 < s.deltaE) "Filament E$singleIdx alone is closer" else null
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -78,6 +108,39 @@ fun CreateMixSlotDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // --- Match-a-colour: pick a target and let the matcher pick the mix ---
+                TextButton(onClick = { matching = true }) { Text("🎯 Match a colour") }
+                matchBadge?.let {
+                    Text("Closest mix: $it", style = MaterialTheme.typography.labelSmall)
+                }
+                matchNote?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (matching) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Colours:",
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.align(Alignment.CenterVertically),
+                        )
+                        for (c in 2..maxMatch) {
+                            FilterChip(
+                                selected = matchCount == c,
+                                onClick = { matchCount = c; matchTarget?.let { runMatch(it, c) } },
+                                label = { Text("$c") },
+                            )
+                        }
+                    }
+                    FilamentColorEditDialog(
+                        initialHex = matchTarget ?: "#888888",
+                        onSave = { hex -> matchTarget = hex; runMatch(hex, matchCount); matching = false },
+                        onDismiss = { matching = false },
+                    )
+                }
                 MixWeightBar(
                     colours = components.map { physicalFilamentColours.getOrNull(it - 1) ?: Color.Gray },
                     weights = weights,
