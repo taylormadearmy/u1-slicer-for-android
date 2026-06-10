@@ -212,6 +212,10 @@ fun U1NavGraph(
             val finalizeScope = rememberCoroutineScope()
             val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
             val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
+            // Task 7: OpenPrintTag filament library state for the slot colour dialog's Library tab.
+            val libraryState by viewModel.libraryState.collectAsState()
+            val libraryFavourites by viewModel.libraryFavourites.collectAsState()
+            val libraryRecents by viewModel.libraryRecents.collectAsState()
             // fix #2 (M4): canonical filament count drives the mix-slot base so mix ids never
             // collide with a canonical file-filament index when the file declares >4 filaments.
             val canonicalFilamentList by viewModel.canonicalFilamentList.collectAsState()
@@ -295,6 +299,13 @@ fun U1NavGraph(
                 onCommitSelection = { triIds, toSlot -> aiVm.commitSelection(triIds, toSlot) },
                 onSwitchToAlternate = { aiVm.switchToAlternate() },
                 onSetSlotColor = { slot, hex -> viewModel.setSlotColor(slot, hex) },
+                libraryState = libraryState,
+                libraryFavourites = libraryFavourites,
+                libraryRecents = libraryRecents,
+                onToggleLibraryFavourite = { slug -> viewModel.toggleLibraryFavourite(slug) },
+                onPickLibraryFilament = { slot, entry -> viewModel.applyLibraryPick(slot, entry) },
+                onImportLibraryProfile = { slot, entry -> viewModel.importLibraryProfileForSlot(slot, entry) },
+                onRetryLibrary = { viewModel.retryLibraryLoad() },
                 onCreateMix = { createMixOpen = true },
                 onEditMix = { row -> editMixRow = row },
             )

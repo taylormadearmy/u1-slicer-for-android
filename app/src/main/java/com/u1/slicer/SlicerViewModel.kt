@@ -18,7 +18,9 @@ import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.bambu.ThreeMfPlate
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.FilamentProfile
+import com.u1.slicer.data.libraryEntryToProfile
 import com.u1.slicer.data.MixedFilamentManager
 import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.data.ModelInfo
@@ -208,6 +210,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val processProfilesRepo = container.processProfilesRepository
     private val filamentDao = container.filamentDao
     private val sliceJobDao = container.sliceJobDao
+    private val libraryRepo = container.filamentLibraryRepository
     private val profileEmbedder by lazy { ProfileEmbedder(getApplication()) }
 
     /** Debug-only: set by MainActivity to wire TestCommandReceiver navigation. */
@@ -2090,6 +2093,69 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ── OpenPrintTag filament library (Task 7) ────────────────────────────────
+    // Hosted in the AiPaint slot colour dialog's "Library" tab. The repository
+    // owns the asset load + favourites/recents; the ViewModel just exposes state
+    // and writes picks/imports through to the active printer's slot presets.
+    val libraryState = libraryRepo.state
+    val libraryFavourites = libraryRepo.favourites
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val libraryRecents = libraryRepo.recents
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun toggleLibraryFavourite(slug: String) {
+        viewModelScope.launch { libraryRepo.toggleFavourite(slug) }
+    }
+
+    fun retryLibraryLoad() = libraryRepo.retry(viewModelScope)
+
+    /** Updates the active printer's slot preset to apply [slotIndex] in place. */
+    private suspend fun updateSlotPreset(slotIndex: Int, transform: (ExtruderPreset) -> ExtruderPreset) {
+        val cfg = printersRepo.config.first() ?: return
+        val active = cfg.active
+        val existing = active.extruderPresets.firstOrNull { it.index == slotIndex }
+            ?: ExtruderPreset(index = slotIndex)
+        val updatedPreset = transform(existing)
+        val updatedPresets = (active.extruderPresets.filterNot { it.index == slotIndex } + updatedPreset)
+            .sortedBy { it.index }
+        printersRepo.update(active.copy(extruderPresets = updatedPresets))
+    }
+
+    /** Apply a library entry's colour + material to a physical slot (no profile link). */
+    fun applyLibraryPick(slotIndex: Int, entry: FilamentLibraryEntry) {
+        if (slotIndex !in 0..3) return
+        viewModelScope.launch(Dispatchers.IO) {
+            updateSlotPreset(slotIndex) { existing ->
+                existing.copy(
+                    color = entry.hex ?: existing.color,
+                    materialType = entry.material.ifBlank { existing.materialType },
+                    // Material changed → any prior profile link is stale (mirrors applySyncResult).
+                    filamentProfileId = null,
+                )
+            }
+            libraryRepo.recordRecent(entry.slug)
+        }
+    }
+
+    /** Apply a library entry AND upsert a linked FilamentProfile for the slot. */
+    fun importLibraryProfileForSlot(slotIndex: Int, entry: FilamentLibraryEntry) {
+        if (slotIndex !in 0..3) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val existing = filamentDao.getByName(entry.displayName)
+            val profile = libraryEntryToProfile(entry, existing)
+            val id = if (existing != null) { filamentDao.update(profile); existing.id }
+                     else filamentDao.insert(profile)
+            updateSlotPreset(slotIndex) { slot ->
+                slot.copy(
+                    color = entry.hex ?: slot.color,
+                    materialType = entry.material.ifBlank { slot.materialType },
+                    filamentProfileId = id,
+                )
+            }
+            libraryRepo.recordRecent(entry.slug)
+        }
+    }
+
     // Track the current working file (may be sanitized copy)
     private var _currentModelFile: File? = null
     private var currentModelFile: File?
@@ -2237,6 +2303,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     init {
         wireSessionPersistence()
         configureNativeDiagnosticsIfAvailable()
+        libraryRepo.ensureLoaded(viewModelScope)
 
         viewModelScope.launch {
             val saved = settingsRepo.sliceConfig.first()

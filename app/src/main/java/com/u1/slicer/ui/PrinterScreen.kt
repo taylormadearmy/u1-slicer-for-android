@@ -35,7 +35,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.FilamentProfile
+import com.u1.slicer.data.LibraryState
 import com.u1.slicer.printer.PrinterViewModel
 import android.content.Intent
 import android.net.Uri
@@ -85,6 +87,11 @@ fun PrinterScreen(
     val printerList by viewModel.printerList.collectAsState()
     val activePrinterId by viewModel.activePrinterId.collectAsState()
     var showSwitcher by remember { mutableStateOf(false) }
+
+    // Task 7: OpenPrintTag filament library state for the slot editor's "Library" tab.
+    val libraryState by viewModel.libraryState.collectAsState()
+    val libraryFavourites by viewModel.libraryFavourites.collectAsState()
+    val libraryRecents by viewModel.libraryRecents.collectAsState()
 
     var editingHeater by remember { mutableStateOf<String?>(null) }
     var editingValue by remember { mutableStateOf("") }
@@ -699,7 +706,14 @@ fun PrinterScreen(
                         ExtruderSlotRow(
                             preset = preset,
                             filaments = filaments,
-                            onUpdate = { viewModel.updateExtruderPreset(it) }
+                            onUpdate = { viewModel.updateExtruderPreset(it) },
+                            libraryState = libraryState,
+                            libraryFavourites = libraryFavourites,
+                            libraryRecents = libraryRecents,
+                            onToggleLibraryFavourite = { slug -> viewModel.toggleLibraryFavourite(slug) },
+                            onRetryLibrary = { viewModel.retryLibraryLoad() },
+                            onImportProfile = { entry, onDone -> viewModel.importLibraryProfile(entry, onDone) },
+                            onRecordRecent = { slug -> viewModel.recordLibraryRecent(slug) },
                         )
                     }
                 }
@@ -740,13 +754,27 @@ fun PrinterScreen(
 private fun ExtruderSlotRow(
     preset: ExtruderPreset,
     filaments: List<FilamentProfile> = emptyList(),
-    onUpdate: (ExtruderPreset) -> Unit
+    onUpdate: (ExtruderPreset) -> Unit,
+    libraryState: LibraryState = LibraryState.Loading,
+    libraryFavourites: List<String> = emptyList(),
+    libraryRecents: List<String> = emptyList(),
+    onToggleLibraryFavourite: (String) -> Unit = {},
+    onRetryLibrary: () -> Unit = {},
+    onImportProfile: (FilamentLibraryEntry, (Long) -> Unit) -> Unit = { _, _ -> },
+    onRecordRecent: (String) -> Unit = {},
 ) {
     var showEdit by remember { mutableStateOf(false) }
     if (showEdit) {
         ExtruderSlotEditDialog(preset = preset, filaments = filaments,
             onSave = { onUpdate(it); showEdit = false },
-            onDismiss = { showEdit = false })
+            onDismiss = { showEdit = false },
+            libraryState = libraryState,
+            libraryFavourites = libraryFavourites,
+            libraryRecents = libraryRecents,
+            onToggleLibraryFavourite = onToggleLibraryFavourite,
+            onRetryLibrary = onRetryLibrary,
+            onImportProfile = onImportProfile,
+            onRecordRecent = onRecordRecent)
     }
     val slotColor = try { Color(android.graphics.Color.parseColor(preset.color)) }
                    catch (_: Exception) { Color.White }
@@ -944,7 +972,14 @@ private fun ExtruderSlotEditDialog(
     preset: ExtruderPreset,
     filaments: List<FilamentProfile> = emptyList(),
     onSave: (ExtruderPreset) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    libraryState: LibraryState = LibraryState.Loading,
+    libraryFavourites: List<String> = emptyList(),
+    libraryRecents: List<String> = emptyList(),
+    onToggleLibraryFavourite: (String) -> Unit = {},
+    onRetryLibrary: () -> Unit = {},
+    onImportProfile: (FilamentLibraryEntry, (Long) -> Unit) -> Unit = { _, _ -> },
+    onRecordRecent: (String) -> Unit = {},
 ) {
     var color by remember { mutableStateOf(preset.color) }
     var materialType by remember { mutableStateOf(preset.materialType) }
@@ -960,11 +995,52 @@ private fun ExtruderSlotEditDialog(
     var sat by remember { mutableFloatStateOf(initialHsv[1]) }
     var hsv by remember { mutableFloatStateOf(initialHsv[2]) }  // "value" component
 
+    // Task 7: tab 0 = Colour (existing HSV editor), tab 1 = OpenPrintTag Library picker.
+    var tab by remember { mutableIntStateOf(0) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit ${preset.label}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                TabRow(selectedTabIndex = tab) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }) {
+                        Text("Colour", modifier = Modifier.padding(vertical = 10.dp))
+                    }
+                    Tab(selected = tab == 1, onClick = { tab = 1 }) {
+                        Text("Library", modifier = Modifier.padding(vertical = 10.dp))
+                    }
+                }
+
+                if (tab == 1) {
+                    FilamentLibraryPicker(
+                        state = libraryState,
+                        favourites = libraryFavourites,
+                        recents = libraryRecents,
+                        onToggleFavourite = onToggleLibraryFavourite,
+                        onPick = { entry ->
+                            entry.hex?.let {
+                                color = it
+                                val p = hexToHsv(it); hue = p[0]; sat = p[1]; hsv = p[2]
+                            }
+                            if (entry.material.isNotBlank()) materialType = entry.material
+                            linkedProfileId = null
+                            onRecordRecent(entry.slug)
+                            tab = 0
+                        },
+                        onImport = { entry ->
+                            entry.hex?.let {
+                                color = it
+                                val p = hexToHsv(it); hue = p[0]; sat = p[1]; hsv = p[2]
+                            }
+                            if (entry.material.isNotBlank()) materialType = entry.material
+                            onImportProfile(entry) { id -> linkedProfileId = id }
+                            tab = 0
+                        },
+                        onRetry = onRetryLibrary,
+                    )
+                    return@Column
+                }
                 HsvColorPicker(
                     hue = hue,
                     saturation = sat,

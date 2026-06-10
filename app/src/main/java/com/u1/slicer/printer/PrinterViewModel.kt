@@ -5,10 +5,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.u1.slicer.U1SlicerApplication
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.defaultExtruderPresets
+import com.u1.slicer.data.libraryEntryToProfile
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +29,38 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     private val printerRepo = (application as U1SlicerApplication).container.printerRepository
     private val printersRepo = (application as U1SlicerApplication).container.printersRepository
+    private val libraryRepo = (application as U1SlicerApplication).container.filamentLibraryRepository
+    private val filamentDao = (application as U1SlicerApplication).container.filamentDao
+
+    // ── OpenPrintTag filament library (Task 7) — hosted in ExtruderSlotEditDialog ──
+    val libraryState = libraryRepo.state
+    val libraryFavourites: StateFlow<List<String>> = libraryRepo.favourites
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val libraryRecents: StateFlow<List<String>> = libraryRepo.recents
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun toggleLibraryFavourite(slug: String) {
+        viewModelScope.launch { libraryRepo.toggleFavourite(slug) }
+    }
+
+    fun retryLibraryLoad() = libraryRepo.retry(viewModelScope)
+
+    fun recordLibraryRecent(slug: String) {
+        viewModelScope.launch { libraryRepo.recordRecent(slug) }
+    }
+
+    /** Upsert profile from a library entry; onDone delivers the row id on the main thread. */
+    fun importLibraryProfile(entry: FilamentLibraryEntry, onDone: (Long) -> Unit) {
+        viewModelScope.launch {
+            val id = withContext(Dispatchers.IO) {
+                val existing = filamentDao.getByName(entry.displayName)
+                val profile = libraryEntryToProfile(entry, existing)
+                if (existing != null) { filamentDao.update(profile); existing.id } else filamentDao.insert(profile)
+            }
+            libraryRepo.recordRecent(entry.slug)
+            onDone(id)
+        }
+    }
 
     val status: StateFlow<PrinterStatus> = printerRepo.status
     val printerUrl: StateFlow<String> = printerRepo.printerUrl
@@ -140,6 +175,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     init {
+        libraryRepo.ensureLoaded(viewModelScope)
         printerRepo.startPolling(viewModelScope)
         // Resolve webcam URLs for the already-saved printer URL (if any)
         viewModelScope.launch(Dispatchers.IO) { resolveWebcam() }
