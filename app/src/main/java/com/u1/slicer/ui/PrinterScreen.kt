@@ -1193,33 +1193,46 @@ private fun SyncEntryRow(entry: PrinterViewModel.SyncPreviewEntry, applyColors: 
     val currentColor = parseColor(entry.currentColor)
     val newColor = entry.newColor?.let { parseColor(it) }
 
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
             .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(entry.label, fontWeight = FontWeight.Medium, modifier = Modifier.width(28.dp))
-        Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(currentColor)
-            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
-        Text(entry.currentType, style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-        if (newColor != null) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
-            Box(modifier = Modifier.size(24.dp).clip(CircleShape)
-                .background(if (applyColors) newColor else currentColor)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(entry.label, fontWeight = FontWeight.Medium, modifier = Modifier.width(28.dp))
+            Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(currentColor)
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
+            Text(entry.currentType, style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            if (newColor != null) {
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                Box(modifier = Modifier.size(24.dp).clip(CircleShape)
+                    .background(if (applyColors) newColor else currentColor)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
+                Text(
+                    if (applyTypes && entry.newType != null) entry.newType else entry.currentType,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            } else {
+                Text("No data", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+            }
+        }
+
+        if (entry.matchedName != null) {
             Text(
-                if (applyTypes && entry.newType != null) entry.newType else entry.currentType,
+                "${entry.matchedName} (matched)",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.primary,
             )
-        } else {
-            Text("No data", style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
         }
     }
 }

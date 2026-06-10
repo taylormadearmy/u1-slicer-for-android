@@ -157,9 +157,11 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         val slotIndex: Int,
         val label: String,
         val currentColor: String,
-        val newColor: String?,       // from printer, null if printer slot unavailable
+        val newColor: String?,       // from printer (or catalogue match), null if printer slot unavailable
         val currentType: String,
-        val newType: String?
+        val newType: String?,
+        val matchedSlug: String? = null,  // OpenPrintTag catalogue slug, when a confident match was found
+        val matchedName: String? = null   // catalogue display name for the dialog, when matched
     )
 
     sealed class SyncState {
@@ -300,19 +302,8 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 _syncState.value = SyncState.Error("No filament data available from printer")
                 return@launch
             }
-            val presets = extruderPresets.value
-            val entries = (0..3).map { i ->
-                val preset = presets.getOrElse(i) { ExtruderPreset(i) }
-                val printerSlot = slots.getOrNull(i)
-                SyncPreviewEntry(
-                    slotIndex = i,
-                    label = "E${i + 1}",
-                    currentColor = preset.color,
-                    newColor = printerSlot?.color,
-                    currentType = preset.materialType,
-                    newType = printerSlot?.materialType
-                )
-            }
+            val library = (libraryState.value as? com.u1.slicer.data.LibraryState.Ready)?.library
+            val entries = buildSyncPreviewEntries(extruderPresets.value, slots, library)
             _syncState.value = SyncState.Preview(entries)
         }
     }
@@ -338,6 +329,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
             printersRepo.update(active.copy(extruderPresets = current))
+            // Record catalogue recents for slots whose matched filament was applied,
+            // so the library surfaces them in search/recents next time.
+            if (applyColors || applyTypes) {
+                entries.mapNotNull { it.matchedSlug }.forEach { slug ->
+                    libraryRepo.recordRecent(slug)
+                }
+            }
         }
     }
 
