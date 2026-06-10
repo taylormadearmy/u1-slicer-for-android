@@ -5,10 +5,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.u1.slicer.U1SlicerApplication
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.defaultExtruderPresets
+import com.u1.slicer.data.upsertLibraryProfile
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +29,36 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     private val printerRepo = (application as U1SlicerApplication).container.printerRepository
     private val printersRepo = (application as U1SlicerApplication).container.printersRepository
+    private val libraryRepo = (application as U1SlicerApplication).container.filamentLibraryRepository
+    private val filamentDao = (application as U1SlicerApplication).container.filamentDao
+
+    // ── OpenPrintTag filament library (Task 7) — hosted in ExtruderSlotEditDialog ──
+    val libraryState = libraryRepo.state
+    val libraryFavourites: StateFlow<List<String>> = libraryRepo.favourites
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val libraryRecents: StateFlow<List<String>> = libraryRepo.recents
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun toggleLibraryFavourite(slug: String) {
+        viewModelScope.launch { libraryRepo.toggleFavourite(slug) }
+    }
+
+    fun retryLibraryLoad() = libraryRepo.retry(viewModelScope)
+
+    fun recordLibraryRecent(slug: String) {
+        viewModelScope.launch { libraryRepo.recordRecent(slug) }
+    }
+
+    /** Upsert profile from a library entry; onDone delivers the row id on the main thread. */
+    fun importLibraryProfile(entry: FilamentLibraryEntry, onDone: (Long) -> Unit) {
+        viewModelScope.launch {
+            val id = withContext(Dispatchers.IO) {
+                upsertLibraryProfile(filamentDao, entry)
+            }
+            libraryRepo.recordRecent(entry.slug)
+            onDone(id)
+        }
+    }
 
     val status: StateFlow<PrinterStatus> = printerRepo.status
     val printerUrl: StateFlow<String> = printerRepo.printerUrl
@@ -124,9 +157,11 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         val slotIndex: Int,
         val label: String,
         val currentColor: String,
-        val newColor: String?,       // from printer, null if printer slot unavailable
+        val newColor: String?,       // from printer (or catalogue match), null if printer slot unavailable
         val currentType: String,
-        val newType: String?
+        val newType: String?,
+        val matchedSlug: String? = null,  // OpenPrintTag catalogue slug, when a confident match was found
+        val matchedName: String? = null   // catalogue display name for the dialog, when matched
     )
 
     sealed class SyncState {
@@ -140,6 +175,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     init {
+        libraryRepo.ensureLoaded(viewModelScope)
         printerRepo.startPolling(viewModelScope)
         // Resolve webcam URLs for the already-saved printer URL (if any)
         viewModelScope.launch(Dispatchers.IO) { resolveWebcam() }
@@ -266,19 +302,8 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 _syncState.value = SyncState.Error("No filament data available from printer")
                 return@launch
             }
-            val presets = extruderPresets.value
-            val entries = (0..3).map { i ->
-                val preset = presets.getOrElse(i) { ExtruderPreset(i) }
-                val printerSlot = slots.getOrNull(i)
-                SyncPreviewEntry(
-                    slotIndex = i,
-                    label = "E${i + 1}",
-                    currentColor = preset.color,
-                    newColor = printerSlot?.color,
-                    currentType = preset.materialType,
-                    newType = printerSlot?.materialType
-                )
-            }
+            val library = (libraryState.value as? com.u1.slicer.data.LibraryState.Ready)?.library
+            val entries = buildSyncPreviewEntries(extruderPresets.value, slots, library)
             _syncState.value = SyncState.Preview(entries)
         }
     }
@@ -304,6 +329,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
             printersRepo.update(active.copy(extruderPresets = current))
+            // Record catalogue recents for slots whose matched filament was applied,
+            // so the library surfaces them in search/recents next time.
+            if (applyColors || applyTypes) {
+                entries.mapNotNull { it.matchedSlug }.forEach { slug ->
+                    libraryRepo.recordRecent(slug)
+                }
+            }
         }
     }
 

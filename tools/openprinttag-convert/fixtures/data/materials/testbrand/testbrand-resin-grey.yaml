@@ -1,0 +1,10 @@
+uuid: 00000000-0000-0000-0000-000000000003
+slug: testbrand-resin-grey
+brand:
+  slug: testbrand
+name: Resin Grey
+class: SLA
+primary_color:
+  color_rgba: '#808080ff'
+properties:
+  density: 1.03

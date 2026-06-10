@@ -44,6 +44,8 @@ class SettingsRepository(private val context: Context) {
         val AI_NAMING_ENABLED = booleanPreferencesKey("ai_naming_enabled")
         val LIBRARY_MIXES = stringPreferencesKey("library_mixes")
         val PROJECT_MIXES = stringPreferencesKey("project_mixes")
+        val FILAMENT_LIBRARY_FAVOURITES = stringPreferencesKey("filament_library_favourites")
+        val FILAMENT_LIBRARY_RECENTS = stringPreferencesKey("filament_library_recents")
     }
 
     val sliceConfig: Flow<SliceConfig> = context.appDataStore.data.map { prefs ->
@@ -251,6 +253,26 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    val filamentLibraryFavourites: Flow<List<String>> = context.appDataStore.data.map { prefs ->
+        decodeSlugList(prefs[Keys.FILAMENT_LIBRARY_FAVOURITES] ?: "")
+    }
+
+    val filamentLibraryRecents: Flow<List<String>> = context.appDataStore.data.map { prefs ->
+        decodeSlugList(prefs[Keys.FILAMENT_LIBRARY_RECENTS] ?: "")
+    }
+
+    suspend fun setFilamentLibraryFavourites(slugs: List<String>) {
+        context.appDataStore.edit { prefs ->
+            prefs[Keys.FILAMENT_LIBRARY_FAVOURITES] = encodeSlugList(slugs)
+        }
+    }
+
+    suspend fun setFilamentLibraryRecents(slugs: List<String>) {
+        context.appDataStore.edit { prefs ->
+            prefs[Keys.FILAMENT_LIBRARY_RECENTS] = encodeSlugList(slugs)
+        }
+    }
+
     companion object {
 
         internal fun encodeLibraryMixes(rows: List<MixedFilamentRow>): String {
@@ -311,3 +333,15 @@ class SettingsRepository(private val context: Context) {
 
 }
 
+internal fun encodeSlugList(slugs: List<String>): String =
+    org.json.JSONArray().apply { slugs.forEach { put(it) } }.toString()
+
+internal fun decodeSlugList(json: String): List<String> {
+    if (json.isBlank()) return emptyList()
+    return try {
+        val arr = org.json.JSONArray(json)
+        (0 until arr.length()).map { arr.getString(it) }
+    } catch (_: Exception) {
+        emptyList()
+    }
+}

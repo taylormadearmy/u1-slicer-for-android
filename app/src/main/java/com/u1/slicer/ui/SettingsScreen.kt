@@ -190,6 +190,32 @@ fun SettingsScreen(
                     )
                 }
 
+                // MIT attribution for the bundled OpenPrintTag filament library snapshot.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW,
+                                    Uri.parse("https://github.com/OpenPrintTag/openprinttag-database"))
+                            )
+                        },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Filament library: OpenPrintTag", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "MIT licence — bundled FFF snapshot",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                }
+
                 // Check for Updates row
                 Row(
                     modifier = Modifier

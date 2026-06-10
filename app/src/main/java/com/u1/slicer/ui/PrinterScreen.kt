@@ -35,7 +35,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.FilamentProfile
+import com.u1.slicer.data.LibraryState
 import com.u1.slicer.printer.PrinterViewModel
 import android.content.Intent
 import android.net.Uri
@@ -85,6 +87,11 @@ fun PrinterScreen(
     val printerList by viewModel.printerList.collectAsState()
     val activePrinterId by viewModel.activePrinterId.collectAsState()
     var showSwitcher by remember { mutableStateOf(false) }
+
+    // Task 7: OpenPrintTag filament library state for the slot editor's "Library" tab.
+    val libraryState by viewModel.libraryState.collectAsState()
+    val libraryFavourites by viewModel.libraryFavourites.collectAsState()
+    val libraryRecents by viewModel.libraryRecents.collectAsState()
 
     var editingHeater by remember { mutableStateOf<String?>(null) }
     var editingValue by remember { mutableStateOf("") }
@@ -699,7 +706,14 @@ fun PrinterScreen(
                         ExtruderSlotRow(
                             preset = preset,
                             filaments = filaments,
-                            onUpdate = { viewModel.updateExtruderPreset(it) }
+                            onUpdate = { viewModel.updateExtruderPreset(it) },
+                            libraryState = libraryState,
+                            libraryFavourites = libraryFavourites,
+                            libraryRecents = libraryRecents,
+                            onToggleLibraryFavourite = { slug -> viewModel.toggleLibraryFavourite(slug) },
+                            onRetryLibrary = { viewModel.retryLibraryLoad() },
+                            onImportProfile = { entry, onDone -> viewModel.importLibraryProfile(entry, onDone) },
+                            onRecordRecent = { slug -> viewModel.recordLibraryRecent(slug) },
                         )
                     }
                 }
@@ -740,13 +754,27 @@ fun PrinterScreen(
 private fun ExtruderSlotRow(
     preset: ExtruderPreset,
     filaments: List<FilamentProfile> = emptyList(),
-    onUpdate: (ExtruderPreset) -> Unit
+    onUpdate: (ExtruderPreset) -> Unit,
+    libraryState: LibraryState = LibraryState.Loading,
+    libraryFavourites: List<String> = emptyList(),
+    libraryRecents: List<String> = emptyList(),
+    onToggleLibraryFavourite: (String) -> Unit = {},
+    onRetryLibrary: () -> Unit = {},
+    onImportProfile: (FilamentLibraryEntry, (Long) -> Unit) -> Unit = { _, _ -> },
+    onRecordRecent: (String) -> Unit = {},
 ) {
     var showEdit by remember { mutableStateOf(false) }
     if (showEdit) {
         ExtruderSlotEditDialog(preset = preset, filaments = filaments,
             onSave = { onUpdate(it); showEdit = false },
-            onDismiss = { showEdit = false })
+            onDismiss = { showEdit = false },
+            libraryState = libraryState,
+            libraryFavourites = libraryFavourites,
+            libraryRecents = libraryRecents,
+            onToggleLibraryFavourite = onToggleLibraryFavourite,
+            onRetryLibrary = onRetryLibrary,
+            onImportProfile = onImportProfile,
+            onRecordRecent = onRecordRecent)
     }
     val slotColor = try { Color(android.graphics.Color.parseColor(preset.color)) }
                    catch (_: Exception) { Color.White }
@@ -944,7 +972,14 @@ private fun ExtruderSlotEditDialog(
     preset: ExtruderPreset,
     filaments: List<FilamentProfile> = emptyList(),
     onSave: (ExtruderPreset) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    libraryState: LibraryState = LibraryState.Loading,
+    libraryFavourites: List<String> = emptyList(),
+    libraryRecents: List<String> = emptyList(),
+    onToggleLibraryFavourite: (String) -> Unit = {},
+    onRetryLibrary: () -> Unit = {},
+    onImportProfile: (FilamentLibraryEntry, (Long) -> Unit) -> Unit = { _, _ -> },
+    onRecordRecent: (String) -> Unit = {},
 ) {
     var color by remember { mutableStateOf(preset.color) }
     var materialType by remember { mutableStateOf(preset.materialType) }
@@ -960,82 +995,128 @@ private fun ExtruderSlotEditDialog(
     var sat by remember { mutableFloatStateOf(initialHsv[1]) }
     var hsv by remember { mutableFloatStateOf(initialHsv[2]) }  // "value" component
 
+    // Task 7: tab 0 = Colour (existing HSV editor), tab 1 = OpenPrintTag Library picker.
+    var tab by remember { mutableIntStateOf(0) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit ${preset.label}") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                HsvColorPicker(
-                    hue = hue,
-                    saturation = sat,
-                    value = hsv,
-                    onHsvChange = { h, s, v ->
-                        hue = h; sat = s; hsv = v
-                        color = hsvToHex(h, s, v)
+                TabRow(selectedTabIndex = tab) {
+                    Tab(selected = tab == 0, onClick = { tab = 0 }) {
+                        Text("Colour", modifier = Modifier.padding(vertical = 10.dp))
                     }
-                )
-                OutlinedTextField(
-                    value = color,
-                    onValueChange = { newHex ->
-                        color = newHex
-                        // Sync picker when user types a valid hex
-                        val parsed = hexToHsv(newHex)
-                        if (parsed[1] != 0f || parsed[2] != 0f || newHex.trimStart('#').length == 6) {
-                            hue = parsed[0]; sat = parsed[1]; hsv = parsed[2]
+                    Tab(selected = tab == 1, onClick = { tab = 1 }) {
+                        Text("Library", modifier = Modifier.padding(vertical = 10.dp))
+                    }
+                }
+
+                if (tab == 1) {
+                    FilamentLibraryPicker(
+                        state = libraryState,
+                        favourites = libraryFavourites,
+                        recents = libraryRecents,
+                        onToggleFavourite = onToggleLibraryFavourite,
+                        // Applies to the dialog's local state (not the VM) — this dialog commits on Save,
+                        // so a library pick must stay un-persisted until the user confirms.
+                        onPick = { entry ->
+                            entry.hex?.let {
+                                color = it
+                                val p = hexToHsv(it); hue = p[0]; sat = p[1]; hsv = p[2]
+                            }
+                            if (entry.material.isNotBlank()) materialType = entry.material
+                            linkedProfileId = null
+                            onRecordRecent(entry.slug)
+                            tab = 0
+                        },
+                        onImport = { entry ->
+                            entry.hex?.let {
+                                color = it
+                                val p = hexToHsv(it); hue = p[0]; sat = p[1]; hsv = p[2]
+                            }
+                            if (entry.material.isNotBlank()) materialType = entry.material
+                            onImportProfile(entry) { id -> linkedProfileId = id }
+                            tab = 0
+                        },
+                        onRetry = onRetryLibrary,
+                    )
+                }
+                // Compose lambdas must not early-return past sibling composables
+                // (unbalanced groups crash on recomposition) — use a sibling branch.
+                if (tab == 0) {
+                    HsvColorPicker(
+                        hue = hue,
+                        saturation = sat,
+                        value = hsv,
+                        onHsvChange = { h, s, v ->
+                            hue = h; sat = s; hsv = v
+                            color = hsvToHex(h, s, v)
                         }
-                    },
-                    label = { Text("Color (#RRGGBB)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    leadingIcon = {
-                        Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(
-                            try { Color(android.graphics.Color.parseColor(
-                                if (color.startsWith("#")) color else "#$color")) }
-                            catch (_: Exception) { Color.White }
-                        ))
-                    }
-                )
-                // Filament profile picker — links a FilamentProfile for temperature/speed settings
-                if (filaments.isNotEmpty()) {
-                    ExposedDropdownMenuBox(expanded = filamentExpanded, onExpandedChange = { filamentExpanded = it }) {
-                        OutlinedTextField(
-                            value = linkedProfile?.name ?: "None",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Filament Profile") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = filamentExpanded) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor()
-                        )
-                        ExposedDropdownMenu(expanded = filamentExpanded, onDismissRequest = { filamentExpanded = false }) {
-                            DropdownMenuItem(
-                                text = { Text("None") },
-                                onClick = { linkedProfileId = null; filamentExpanded = false }
+                    )
+                    OutlinedTextField(
+                        value = color,
+                        onValueChange = { newHex ->
+                            color = newHex
+                            // Sync picker when user types a valid hex
+                            val parsed = hexToHsv(newHex)
+                            if (parsed[1] != 0f || parsed[2] != 0f || newHex.trimStart('#').length == 6) {
+                                hue = parsed[0]; sat = parsed[1]; hsv = parsed[2]
+                            }
+                        },
+                        label = { Text("Color (#RRGGBB)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = {
+                            Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(
+                                try { Color(android.graphics.Color.parseColor(
+                                    if (color.startsWith("#")) color else "#$color")) }
+                                catch (_: Exception) { Color.White }
+                            ))
+                        }
+                    )
+                    // Filament profile picker — links a FilamentProfile for temperature/speed settings
+                    if (filaments.isNotEmpty()) {
+                        ExposedDropdownMenuBox(expanded = filamentExpanded, onExpandedChange = { filamentExpanded = it }) {
+                            OutlinedTextField(
+                                value = linkedProfile?.name ?: "None",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Filament Profile") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = filamentExpanded) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
                             )
-                            filaments.forEach { profile ->
+                            ExposedDropdownMenu(expanded = filamentExpanded, onDismissRequest = { filamentExpanded = false }) {
                                 DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(profile.name, style = MaterialTheme.typography.bodyMedium)
-                                            Text("${profile.material} · ${profile.nozzleTemp}°C",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        linkedProfileId = profile.id
-                                        materialType = profile.material
-                                        filamentExpanded = false
-                                    }
+                                    text = { Text("None") },
+                                    onClick = { linkedProfileId = null; filamentExpanded = false }
                                 )
+                                filaments.forEach { profile ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(profile.name, style = MaterialTheme.typography.bodyMedium)
+                                                Text("${profile.material} · ${profile.nozzleTemp}°C",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        },
+                                        onClick = {
+                                            linkedProfileId = profile.id
+                                            materialType = profile.material
+                                            filamentExpanded = false
+                                        }
+                                    )
+                                }
                             }
                         }
-                    }
-                    if (linkedProfile != null) {
-                        Text(
-                            "Nozzle ${linkedProfile.nozzleTemp}°C · Bed ${linkedProfile.bedTemp}°C",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (linkedProfile != null) {
+                            Text(
+                                "Nozzle ${linkedProfile.nozzleTemp}°C · Bed ${linkedProfile.bedTemp}°C",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -1115,33 +1196,46 @@ private fun SyncEntryRow(entry: PrinterViewModel.SyncPreviewEntry, applyColors: 
     val currentColor = parseColor(entry.currentColor)
     val newColor = entry.newColor?.let { parseColor(it) }
 
-    Row(
+    Column(
         modifier = Modifier.fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
             .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(entry.label, fontWeight = FontWeight.Medium, modifier = Modifier.width(28.dp))
-        Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(currentColor)
-            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
-        Text(entry.currentType, style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-        if (newColor != null) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(14.dp),
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
-            Box(modifier = Modifier.size(24.dp).clip(CircleShape)
-                .background(if (applyColors) newColor else currentColor)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(entry.label, fontWeight = FontWeight.Medium, modifier = Modifier.width(28.dp))
+            Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(currentColor)
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
+            Text(entry.currentType, style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            if (newColor != null) {
+                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                Box(modifier = Modifier.size(24.dp).clip(CircleShape)
+                    .background(if (applyColors) newColor else currentColor)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
+                Text(
+                    if (applyTypes && entry.newType != null) entry.newType else entry.currentType,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            } else {
+                Text("No data", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+            }
+        }
+
+        if (entry.matchedName != null) {
             Text(
-                if (applyTypes && entry.newType != null) entry.newType else entry.currentType,
+                "${entry.matchedName} (matched)",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.primary,
             )
-        } else {
-            Text("No data", style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
         }
     }
 }

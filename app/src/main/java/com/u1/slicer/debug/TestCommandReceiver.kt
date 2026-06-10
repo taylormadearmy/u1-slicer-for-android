@@ -98,6 +98,8 @@ class TestCommandReceiver(
         const val ACTION_EXPORT_GCODE = "${PREFIX}EXPORT_GCODE"
         const val ACTION_ADD_FILE = "${PREFIX}ADD_FILE"
         const val ACTION_ADD_FILE_FOR_PLATE = "${PREFIX}ADD_FILE_FOR_PLATE"
+        const val ACTION_CREATE_MIX = "${PREFIX}CREATE_MIX"
+        const val ACTION_ASSIGN_FILAMENT = "${PREFIX}ASSIGN_FILAMENT"
 
         fun intentFilter(): IntentFilter = IntentFilter().apply {
             addAction(ACTION_LOAD_FILE)
@@ -114,6 +116,8 @@ class TestCommandReceiver(
             addAction(ACTION_EXPORT_GCODE)
             addAction(ACTION_ADD_FILE)
             addAction(ACTION_ADD_FILE_FOR_PLATE)
+            addAction(ACTION_CREATE_MIX)
+            addAction(ACTION_ASSIGN_FILAMENT)
         }
     }
 
@@ -144,7 +148,55 @@ class TestCommandReceiver(
             ACTION_EXPORT_GCODE -> handleExportGcode()
             ACTION_ADD_FILE -> handleAddFile(context, intent)
             ACTION_ADD_FILE_FOR_PLATE -> handleAddFileForPlate(context, intent)
+            ACTION_CREATE_MIX -> handleCreateMix(intent)
+            ACTION_ASSIGN_FILAMENT -> handleAssignFilament(intent)
             else -> Log.w(TAG, "Unknown action: $action")
+        }
+    }
+
+    /**
+     * B142-class E2E support — create an N-component mix without UI driving:
+     * adb shell am broadcast -a com.u1.slicer.orca.CREATE_MIX \
+     *     --es components "2,3" --es weights "50,50" -p com.u1.slicer.orca
+     * Components are 1-based physical slots (E1..E4); weights must sum to 100.
+     */
+    private fun handleCreateMix(intent: Intent) {
+        val components = intent.getStringExtra("components")
+            ?.split(',')?.mapNotNull { it.trim().toIntOrNull() } ?: emptyList()
+        val weights = intent.getStringExtra("weights")
+            ?.split(',')?.mapNotNull { it.trim().toIntOrNull() } ?: emptyList()
+        if (components.size !in 2..4 || weights.size != components.size) {
+            Log.e(TAG, "CREATE_MIX: need --es components \"a,b[,c[,d]]\" + matching --es weights")
+            return
+        }
+        mainHandler.post {
+            slicerViewModel.createMixN(
+                components, weights,
+                com.u1.slicer.data.MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+            )
+            Log.i(TAG, "CREATE_MIX: components=$components weights=$weights")
+        }
+    }
+
+    /**
+     * B142-class E2E support — assign an object/volume to a filament or mix slot:
+     * adb shell am broadcast -a com.u1.slicer.orca.ASSIGN_FILAMENT \
+     *     --ei obj 0 --ei slot 5 [--ei vol 1] -p com.u1.slicer.orca
+     * slot is 1-based (1..4 physical/canonical; mixBase+idx+1 for mixes).
+     * Without --ei vol, every volume of the object is assigned.
+     */
+    private fun handleAssignFilament(intent: Intent) {
+        val obj = intent.getIntExtra("obj", -1)
+        val slot = intent.getIntExtra("slot", -1)
+        val vol = intent.getIntExtra("vol", -1)
+        if (obj < 0 || slot < 1) {
+            Log.e(TAG, "ASSIGN_FILAMENT: need --ei obj <0-based> --ei slot <1-based> [--ei vol <0-based>]")
+            return
+        }
+        mainHandler.post {
+            if (vol >= 0) slicerViewModel.setVolumeExtruder(obj, vol, slot)
+            else slicerViewModel.setObjectFilament(obj, slot)
+            Log.i(TAG, "ASSIGN_FILAMENT: obj=$obj vol=$vol slot=$slot")
         }
     }
 

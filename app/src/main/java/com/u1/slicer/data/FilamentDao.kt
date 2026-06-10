@@ -25,4 +25,7 @@ interface FilamentDao {
 
     @Query("SELECT COUNT(*) FROM filament_profiles")
     suspend fun count(): Int
+
+    @Query("SELECT * FROM filament_profiles WHERE name = :name LIMIT 1")
+    suspend fun getByName(name: String): FilamentProfile?
 }

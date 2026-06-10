@@ -33,6 +33,13 @@ fun AiPaintResultScreen(
     onCommitSelection: (triangleIds: List<Int>, toSlot: Int) -> Unit = { _, _ -> },
     onSwitchToAlternate: () -> Unit = {},
     onSetSlotColor: (slotIndex: Int, hex: String) -> Unit = { _, _ -> },
+    libraryState: com.u1.slicer.data.LibraryState = com.u1.slicer.data.LibraryState.Loading,
+    libraryFavourites: List<String> = emptyList(),
+    libraryRecents: List<String> = emptyList(),
+    onToggleLibraryFavourite: (String) -> Unit = {},
+    onPickLibraryFilament: (slot: Int, entry: com.u1.slicer.data.FilamentLibraryEntry) -> Unit = { _, _ -> },
+    onImportLibraryProfile: (slot: Int, entry: com.u1.slicer.data.FilamentLibraryEntry) -> Unit = { _, _ -> },
+    onRetryLibrary: () -> Unit = {},
     projectMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     libraryMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     numPhysical: Int = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
@@ -510,6 +517,17 @@ fun AiPaintResultScreen(
                     editSlotColour = null
                 },
                 onDismiss = { editSlotColour = null },
+                libraryContent = {
+                    FilamentLibraryPicker(
+                        state = libraryState,
+                        favourites = libraryFavourites,
+                        recents = libraryRecents,
+                        onToggleFavourite = onToggleLibraryFavourite,
+                        onPick = { entry -> onPickLibraryFilament(slot, entry); editSlotColour = null },
+                        onImport = { entry -> onImportLibraryProfile(slot, entry); editSlotColour = null },
+                        onRetry = onRetryLibrary,
+                    )
+                },
             )
         } else {
             editSlotColour = null

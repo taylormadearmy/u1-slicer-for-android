@@ -1,0 +1,9 @@
+uuid: 00000000-0000-0000-0000-000000000004
+slug: testbrand-pa6-natural
+brand:
+  slug: testbrand
+name: PA6 Natural
+class: FFF
+type: PA6
+properties:
+  density: 1.14

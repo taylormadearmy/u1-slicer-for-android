@@ -91,8 +91,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1605 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 421 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 1670 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 423 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -101,7 +101,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1605 tests across 138 classes
+### Unit tests (`app/src/test/`) - 1670 tests across 150 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -185,9 +185,22 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `aipaint/MixColourMatcherTest.kt` (8) — pick-a-colour reverse search: recovers a known 2-colour mix's subset+ΔE, respects requested count, caps count to loaded, closest-single-filament nearest, <250ms/query, empty-loaded clear error + sentinel, count=1 single component
 - `ui/MatchAColourWiringTest.kt` (2) — pick-a-colour structural guard: `CreateMixSlotDialog` offers "Match a colour", calls `MixColourMatcher.bestMix`, has the 2/3/4 count selector, derives a closeness badge from `deltaE`, and surfaces the `closestSingleFilament` note
 - `ui/MixBlendedColourTest.kt` (2) — pick-a-colour `mixBlendedColour`: cyan+yellow blends green-dominant (not the naive grey average), empty input → Gray; drives the blended-colour preview on mix-slot swatches + the Create-Mix editor
+- `data/FilamentLibraryTest.kt` (11) — F96 OpenPrintTag library: parse (snapshot info, optional fields, nulls), entry lookup, search ranking (favourites→recents→alpha on blank query; all-token substring match; material filter; favourite-first; limit cap), malformed-JSON rejection, displayName
+- `data/FilamentLibraryAssetContractTest.kt` (3) — F96 bundled asset guard: >10000 entries / ≥100 brands / count==size / commit+date stamped; every entry has slug/brand/name + well-formed #RRGGBB hex when present; prusament-pla-azure-blue round-trips (Prusament / PLA / #008FBE)
+- `data/LibrarySlugListCodecTest.kt` (3) — F96 favourites/recents slug-list codec round-trip, blank→empty, malformed→empty
+- `data/FilamentLibraryRecentsTest.kt` (3) — F96 updateRecents: new-first, move-to-front dedupe, MAX_RECENTS cap
+- `data/FilamentLibraryImportTest.kt` (7) — F96 import mapping: hasImportableData gate, preview rows (en-dash ranges, g/cm³, TD/RI translucency note, single-ended ranges, colour-only→empty), libraryEntryToProfile midpoints + material defaults + re-import keeps id
+- `data/FilamentLibraryMatcherTest.kt` (9) — F96 RFID sync matcher: exact brand+colour match, vendor normalisation both ways, ΔE>10 rejection, material mismatch rejection, unknown/missing vendor→null (incl. Snapmaker stock tags), subtype tie-break, colourless entries never matched, MAX_DELTA_E pinned at 10
+- `printer/SyncPreviewBuilderTest.kt` (5) — F96 buildSyncPreviewEntries: matched slot carries catalogue name/colour/material, unmatched falls back to raw RFID values, null library = raw behaviour, missing slot → null news, 4 entries always built
+- `ui/FilamentLibraryPickerStructuralTest.kt` (8) — F96 picker structural guards: search wiring, material chips, horizontal chip scroll + non-wrapping Use button, Failed-state retry, import affordance gated on hasImportableData, preview dialog rows, snapshot footer, star toggle
+- `ui/FilamentLibraryTabWiringTest.kt` (7) — F96 Library tab ONLY in physical-slot contexts (AiPaint slot dialog + PrinterScreen slot editor; CreateMix + Prepare per-file dialogs stay HSV-only); no early-return past sibling composables (Compose group-balance crash class); SlicerViewModel applyLibraryPick + PrinterViewModel importLibraryProfile wiring
+- `ui/FilamentSyncMatchWiringTest.kt` (3) — F96 sync dialog renders matched names; syncFilaments uses the pure builder; apply records library recents
+- `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
+- `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 421 tests across 49 classes
+### Instrumented tests (`app/src/androidTest/`) - 423 tests across 50 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
+- `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
 - `data/SessionStateRepositoryTest.kt` (4) — F89 DataStore round-trip: write_thenRead_returnsSameSessionState, read_emptyStore_returnsNull, clear_afterWrite_readReturnsNull, write_overwrites_prior
 - `SessionResumeIntegrationTest.kt` (3) — F89 ViewModel restore flow: init_savedSessionWithExistingFile_exposesResumeOffer, init_savedSessionMissingFile_emitsToastAndClears, dismissSessionResume_clearsOfferAndDataStore

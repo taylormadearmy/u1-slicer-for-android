@@ -18,7 +18,9 @@ import com.u1.slicer.bambu.ThreeMfInfo
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.bambu.ThreeMfPlate
 import com.u1.slicer.data.ExtruderPreset
+import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.FilamentProfile
+import com.u1.slicer.data.upsertLibraryProfile
 import com.u1.slicer.data.MixedFilamentManager
 import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.data.ModelInfo
@@ -208,6 +210,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val processProfilesRepo = container.processProfilesRepository
     private val filamentDao = container.filamentDao
     private val sliceJobDao = container.sliceJobDao
+    private val libraryRepo = container.filamentLibraryRepository
     private val profileEmbedder by lazy { ProfileEmbedder(getApplication()) }
 
     /** Debug-only: set by MainActivity to wire TestCommandReceiver navigation. */
@@ -1814,21 +1817,26 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _threeMfInfo,
         mixedFilamentManager.projectMixes,
         mixedFilamentManager.libraryMixes,
-        _activeExtruderColors,
+        extruderPresets,
         _perVolumeExtruders,
-    ) { mfInfo, _, _, physicalColors, perVolume ->
+    ) { mfInfo, _, _, presets, perVolume ->
         val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
         // Case 2: object assigned to a mix (1-based mix id > numPhysical). Mirrors the
         // slice-path `anyMixAssigned` gate so preview and G-code agree on when a mix is live.
         val objectAssignedMix = perVolume.values.any { it > numPhysical }
         val physicalCount = mfInfo?.fullSpectrumPhysicalCount
             ?: (numPhysical.takeIf { objectAssignedMix } ?: return@combine emptyList())
-        // Physical palette source: the active extruder slot colours (the user's loaded
-        // filaments) so the mix blends reflect what will actually print. Fall back to the
-        // mix's own component lookups against whatever palette is available.
+        // B142 (2026-06-10): physical palette source must be the PRINTER SLOT PRESETS —
+        // mixes blend physical extruders, so the blend must reflect the loaded filaments.
+        // The previous source was the model-narrowed preview palette: on a 2-filament 3MF
+        // only 2 entries existed, components E3/E4 fell back to grey, and every blend
+        // rendered as muddy grey-pink in the Prepare/G-code previews.
         mixedFilamentManager.activeOrder(physicalCount).map { row ->
             com.u1.slicer.aipaint.FilamentMixPredictor.predict(
-                row.components.map { physicalColors.getOrNull(it - 1)?.takeIf { c -> c.isNotBlank() } ?: "#888888" },
+                row.components.map { c ->
+                    presets.firstOrNull { p -> p.index == c - 1 }?.color?.takeIf { it.isNotBlank() }
+                        ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[(c - 1).mod(4)]
+                },
                 row.weights
             )
         }
@@ -1847,6 +1855,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Append virtual mix colours so a painted mix region (paint state > physical count)
         // renders its blend instead of falling off the end of the palette (grey).
         base + mixColors
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * B142b (2026-06-10): when the last slice had a mix assigned, the engine's tool
+     * space is PHYSICAL SLOTS — the `mixPhysicalBase` expansion in [startSlicing]
+     * sizes the filament arrays to TARGET_SLOTS and mixes alternate their physical
+     * component tools — NOT canonical fileIndices. Post-slice displays (G-code
+     * palette, per-extruder summary) must use the slot-preset palette then, with
+     * mix blends appended for virtual mix tools. Without this, a 2-filament 3MF
+     * with a mix sliced to 4 tools rendered tools 2/3 grey (off the file palette).
+     */
+    private val _sliceMixToolSpace = MutableStateFlow(false)
+    val sliceMixToolSpace: StateFlow<Boolean> = _sliceMixToolSpace.asStateFlow()
+
+    /** Slot-space post-slice palette: loaded slot colours E1..E4 + mix blend colours. */
+    val slotPaletteWithMixBlends: StateFlow<List<String>> = combine(
+        extruderPresets, loadedModelMixColors,
+    ) { presets, mixColors ->
+        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { i ->
+            presets.firstOrNull { it.index == i }?.color?.takeIf { it.isNotBlank() }
+                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
+        } + mixColors
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
@@ -2013,9 +2043,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // volumes in model config" per its docstring), and IS plate-
         // narrowed by the native-first plate-state read. One field,
         // covers compound objects, plate-correct.
-        val sourceExtruders = mfInfo?.usedExtruderIndices
-            ?.filter { it > 0 }
-            ?.sorted()
+        // B141 (2026-06-10): after ANY user assignment, the native mesh compacts its
+        // per-triangle indices over the LIVE per-volume extruder set — which can include
+        // mixes (or slots) absent from the file's static usedExtruderIndices. Order the
+        // palette by the live set when one exists (it is populated only by
+        // refreshMeshSourceExtruders after an assignment, and reset on load/plate switch),
+        // otherwise fall back to the file-declared set. Without this, assigning a part to
+        // a mix on a canonical 3MF left the Prepare preview unchanged/misaligned.
+        val sourceExtruders = meshSourceExtruders.takeIf { it.isNotEmpty() }?.map { it + 1 }
+            ?: mfInfo?.usedExtruderIndices?.filter { it > 0 }?.sorted()
             ?: return@combine fullPalette
         if (sourceExtruders.isEmpty()) return@combine fullPalette
         // Review finding #1: a mix-assigned object on a canonical 3MF previously fell through to
@@ -2079,14 +2115,67 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val cleaned = if (hex.startsWith("#")) hex else "#$hex"
         viewModelScope.launch(Dispatchers.IO) {
             // F78: write through PrintersRepository so the active printer's preset record is updated.
-            val cfg = printersRepo.config.first() ?: return@launch
-            val active = cfg.active
-            val existing = active.extruderPresets.firstOrNull { it.index == slotIndex }
-            val updatedPreset = existing?.copy(color = cleaned)
-                ?: com.u1.slicer.data.ExtruderPreset(index = slotIndex, color = cleaned)
-            val updatedPresets = (active.extruderPresets.filterNot { it.index == slotIndex } + updatedPreset)
-                .sortedBy { it.index }
-            printersRepo.update(active.copy(extruderPresets = updatedPresets))
+            updateSlotPreset(slotIndex) { it.copy(color = cleaned) }
+        }
+    }
+
+    // ── OpenPrintTag filament library (Task 7) ────────────────────────────────
+    // Hosted in the AiPaint slot colour dialog's "Library" tab. The repository
+    // owns the asset load + favourites/recents; the ViewModel just exposes state
+    // and writes picks/imports through to the active printer's slot presets.
+    val libraryState = libraryRepo.state
+    val libraryFavourites = libraryRepo.favourites
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val libraryRecents = libraryRepo.recents
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun toggleLibraryFavourite(slug: String) {
+        viewModelScope.launch { libraryRepo.toggleFavourite(slug) }
+    }
+
+    fun retryLibraryLoad() = libraryRepo.retry(viewModelScope)
+
+    /** Updates the active printer's slot preset to apply [slotIndex] in place. */
+    private suspend fun updateSlotPreset(slotIndex: Int, transform: (ExtruderPreset) -> ExtruderPreset) {
+        val cfg = printersRepo.config.first() ?: return
+        val active = cfg.active
+        val existing = active.extruderPresets.firstOrNull { it.index == slotIndex }
+            ?: ExtruderPreset(index = slotIndex)
+        val updatedPreset = transform(existing)
+        val updatedPresets = (active.extruderPresets.filterNot { it.index == slotIndex } + updatedPreset)
+            .sortedBy { it.index }
+        printersRepo.update(active.copy(extruderPresets = updatedPresets))
+    }
+
+    /** Apply a library entry's colour + material to a physical slot (no profile link). */
+    fun applyLibraryPick(slotIndex: Int, entry: FilamentLibraryEntry) {
+        if (slotIndex !in 0..3) return
+        viewModelScope.launch(Dispatchers.IO) {
+            updateSlotPreset(slotIndex) { existing ->
+                existing.copy(
+                    color = entry.hex ?: existing.color,
+                    materialType = entry.material.ifBlank { existing.materialType },
+                    // Material changed → any prior profile link is stale (mirrors applySyncResult).
+                    filamentProfileId = null,
+                )
+            }
+            libraryRepo.recordRecent(entry.slug)
+        }
+    }
+
+    /** Apply a library entry AND upsert a linked FilamentProfile for the slot. */
+    fun importLibraryProfileForSlot(slotIndex: Int, entry: FilamentLibraryEntry) {
+        if (slotIndex !in 0..3) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val id = upsertLibraryProfile(filamentDao, entry)
+            updateSlotPreset(slotIndex) { slot ->
+                slot.copy(
+                    color = entry.hex ?: slot.color,
+                    materialType = entry.material.ifBlank { slot.materialType },
+                    filamentProfileId = id,
+                )
+            }
+            libraryRepo.recordRecent(entry.slug)
         }
     }
 
@@ -2237,6 +2326,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     init {
         wireSessionPersistence()
         configureNativeDiagnosticsIfAvailable()
+        libraryRepo.ensureLoaded(viewModelScope)
 
         viewModelScope.launch {
             val saved = settingsRepo.sliceConfig.first()
@@ -5273,6 +5363,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // No-op when canonicalCount <= numPhysical: maxOf returns numPhysical unchanged.
                     val canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical
                     val mixPhysicalBase = if (anyMixAssigned) maxOf(numPhysical, canonicalCount) else 0
+                    // B142b: post-slice displays must know the tool space of THIS slice.
+                    _sliceMixToolSpace.value = anyMixAssigned
                     val effectiveExtruderCount = maxOf(
                         cfg.extruderCount,
                         cfg.supportFilament,

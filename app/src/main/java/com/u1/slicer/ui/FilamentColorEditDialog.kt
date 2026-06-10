@@ -26,6 +26,12 @@ import androidx.compose.ui.window.Dialog
  *
  * Material-type editing lives on the Prepare row's chip (DropdownMenu);
  * this dialog is colour-only to keep the surface small.
+ *
+ * [libraryContent] is non-null only in physical-slot contexts (AiPaint slot
+ * dialog / PrinterScreen slot editor). When supplied, a two-tab switch appears
+ * — "Custom colour" hosts the existing HSV editor; "Library" hosts the
+ * OpenPrintTag picker (which applies via its own Use buttons). When null the
+ * dialog is unchanged (Prepare per-file + mix-slot callers).
  */
 @Composable
 fun FilamentColorEditDialog(
@@ -33,12 +39,14 @@ fun FilamentColorEditDialog(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
     onReset: (() -> Unit)? = null,
+    libraryContent: (@Composable () -> Unit)? = null,
 ) {
     val initialHsv = remember(initialHex) { hexToHsv(initialHex) }
     var hue by remember { mutableFloatStateOf(initialHsv[0]) }
     var sat by remember { mutableFloatStateOf(initialHsv[1]) }
     var value by remember { mutableFloatStateOf(initialHsv[2]) }
     val currentHex = hsvToHex(hue, sat, value)
+    var tab by remember { mutableIntStateOf(0) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -56,44 +64,65 @@ fun FilamentColorEditDialog(
                     fontWeight = FontWeight.Bold,
                 )
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(parseHexColor(currentHex))
-                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
-                    )
-                    Text(
-                        currentHex.uppercase(),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
+                if (libraryContent != null) {
+                    TabRow(selectedTabIndex = tab) {
+                        Tab(selected = tab == 0, onClick = { tab = 0 }) {
+                            Text("Custom colour", modifier = Modifier.padding(vertical = 10.dp))
+                        }
+                        Tab(selected = tab == 1, onClick = { tab = 1 }) {
+                            Text("Library", modifier = Modifier.padding(vertical = 10.dp))
+                        }
+                    }
                 }
 
-                HsvColorPicker(
-                    hue = hue,
-                    saturation = sat,
-                    value = value,
-                    onHsvChange = { h, s, v -> hue = h; sat = s; value = v },
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (onReset != null) {
-                        TextButton(onClick = { onReset(); onDismiss() }) {
-                            Text("Reset")
-                        }
-                        Spacer(Modifier.width(4.dp))
+                if (libraryContent != null && tab == 1) {
+                    libraryContent()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
                     }
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    Spacer(Modifier.width(4.dp))
-                    Button(onClick = { onSave(currentHex); onDismiss() }) { Text("Save") }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(parseHexColor(currentHex))
+                                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                        )
+                        Text(
+                            currentHex.uppercase(),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+
+                    HsvColorPicker(
+                        hue = hue,
+                        saturation = sat,
+                        value = value,
+                        onHsvChange = { h, s, v -> hue = h; sat = s; value = v },
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (onReset != null) {
+                            TextButton(onClick = { onReset(); onDismiss() }) {
+                                Text("Reset")
+                            }
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                        Spacer(Modifier.width(4.dp))
+                        Button(onClick = { onSave(currentHex); onDismiss() }) { Text("Save") }
+                    }
                 }
             }
         }
