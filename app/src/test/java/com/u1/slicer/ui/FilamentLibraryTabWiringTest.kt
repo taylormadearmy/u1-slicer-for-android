@@ -23,6 +23,22 @@ class FilamentLibraryTabWiringTest {
     }
 
     @Test
+    fun `tab branches never early-return past sibling composables`() {
+        // 2026-06-10 E2E regression: `return@Column` after FilamentLibraryPicker in
+        // ExtruderSlotEditDialog left the HSV composables un-endGroup'd → deterministic
+        // IndexOutOfBoundsException (Compose group stack pop) when opening the Library
+        // tab. Tab content must be sibling if/else branches, never an early return.
+        listOf(
+            "src/main/java/com/u1/slicer/ui/PrinterScreen.kt",
+            "src/main/java/com/u1/slicer/ui/FilamentColorEditDialog.kt",
+            "src/main/java/com/u1/slicer/ui/FilamentLibraryPicker.kt",
+        ).forEach { p ->
+            assertFalse("$p must not early-return out of a composable column",
+                src(p).contains("return@Column"))
+        }
+    }
+
+    @Test
     fun `aipaint slot dialog passes library content`() {
         val s = src("src/main/java/com/u1/slicer/ui/AiPaintResultScreen.kt")
         assertTrue(s.contains("libraryContent"))

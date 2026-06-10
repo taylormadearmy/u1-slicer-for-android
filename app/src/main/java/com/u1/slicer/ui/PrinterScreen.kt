@@ -1041,79 +1041,82 @@ private fun ExtruderSlotEditDialog(
                         },
                         onRetry = onRetryLibrary,
                     )
-                    return@Column
                 }
-                HsvColorPicker(
-                    hue = hue,
-                    saturation = sat,
-                    value = hsv,
-                    onHsvChange = { h, s, v ->
-                        hue = h; sat = s; hsv = v
-                        color = hsvToHex(h, s, v)
-                    }
-                )
-                OutlinedTextField(
-                    value = color,
-                    onValueChange = { newHex ->
-                        color = newHex
-                        // Sync picker when user types a valid hex
-                        val parsed = hexToHsv(newHex)
-                        if (parsed[1] != 0f || parsed[2] != 0f || newHex.trimStart('#').length == 6) {
-                            hue = parsed[0]; sat = parsed[1]; hsv = parsed[2]
+                // Compose lambdas must not early-return past sibling composables
+                // (unbalanced groups crash on recomposition) — use a sibling branch.
+                if (tab == 0) {
+                    HsvColorPicker(
+                        hue = hue,
+                        saturation = sat,
+                        value = hsv,
+                        onHsvChange = { h, s, v ->
+                            hue = h; sat = s; hsv = v
+                            color = hsvToHex(h, s, v)
                         }
-                    },
-                    label = { Text("Color (#RRGGBB)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    leadingIcon = {
-                        Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(
-                            try { Color(android.graphics.Color.parseColor(
-                                if (color.startsWith("#")) color else "#$color")) }
-                            catch (_: Exception) { Color.White }
-                        ))
-                    }
-                )
-                // Filament profile picker — links a FilamentProfile for temperature/speed settings
-                if (filaments.isNotEmpty()) {
-                    ExposedDropdownMenuBox(expanded = filamentExpanded, onExpandedChange = { filamentExpanded = it }) {
-                        OutlinedTextField(
-                            value = linkedProfile?.name ?: "None",
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Filament Profile") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = filamentExpanded) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor()
-                        )
-                        ExposedDropdownMenu(expanded = filamentExpanded, onDismissRequest = { filamentExpanded = false }) {
-                            DropdownMenuItem(
-                                text = { Text("None") },
-                                onClick = { linkedProfileId = null; filamentExpanded = false }
+                    )
+                    OutlinedTextField(
+                        value = color,
+                        onValueChange = { newHex ->
+                            color = newHex
+                            // Sync picker when user types a valid hex
+                            val parsed = hexToHsv(newHex)
+                            if (parsed[1] != 0f || parsed[2] != 0f || newHex.trimStart('#').length == 6) {
+                                hue = parsed[0]; sat = parsed[1]; hsv = parsed[2]
+                            }
+                        },
+                        label = { Text("Color (#RRGGBB)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = {
+                            Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(
+                                try { Color(android.graphics.Color.parseColor(
+                                    if (color.startsWith("#")) color else "#$color")) }
+                                catch (_: Exception) { Color.White }
+                            ))
+                        }
+                    )
+                    // Filament profile picker — links a FilamentProfile for temperature/speed settings
+                    if (filaments.isNotEmpty()) {
+                        ExposedDropdownMenuBox(expanded = filamentExpanded, onExpandedChange = { filamentExpanded = it }) {
+                            OutlinedTextField(
+                                value = linkedProfile?.name ?: "None",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Filament Profile") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = filamentExpanded) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor()
                             )
-                            filaments.forEach { profile ->
+                            ExposedDropdownMenu(expanded = filamentExpanded, onDismissRequest = { filamentExpanded = false }) {
                                 DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(profile.name, style = MaterialTheme.typography.bodyMedium)
-                                            Text("${profile.material} · ${profile.nozzleTemp}°C",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        linkedProfileId = profile.id
-                                        materialType = profile.material
-                                        filamentExpanded = false
-                                    }
+                                    text = { Text("None") },
+                                    onClick = { linkedProfileId = null; filamentExpanded = false }
                                 )
+                                filaments.forEach { profile ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Column {
+                                                Text(profile.name, style = MaterialTheme.typography.bodyMedium)
+                                                Text("${profile.material} · ${profile.nozzleTemp}°C",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        },
+                                        onClick = {
+                                            linkedProfileId = profile.id
+                                            materialType = profile.material
+                                            filamentExpanded = false
+                                        }
+                                    )
+                                }
                             }
                         }
-                    }
-                    if (linkedProfile != null) {
-                        Text(
-                            "Nozzle ${linkedProfile.nozzleTemp}°C · Bed ${linkedProfile.bedTemp}°C",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (linkedProfile != null) {
+                            Text(
+                                "Nozzle ${linkedProfile.nozzleTemp}°C · Bed ${linkedProfile.bedTemp}°C",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
