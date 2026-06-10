@@ -3,6 +3,7 @@ package com.u1.slicer.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -38,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -156,7 +159,8 @@ private fun LibraryReadyContent(
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth(),
+            // Narrow host dialogs can't fit all six chips — keep TPU/ASA reachable.
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         ) {
             FilterChip(
                 selected = materialFilter == null,
@@ -301,12 +305,16 @@ private fun EntryRow(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (onImport != null && hasImportableData(entry)) {
-                    TextButton(onClick = { onRequestImport(entry) }) {
-                        Text("Use + import profile…")
+                    // The long label yields width first so the Use button never wraps.
+                    TextButton(
+                        onClick = { onRequestImport(entry) },
+                        modifier = Modifier.weight(1f, fill = false),
+                    ) {
+                        Text("Use + import profile…", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.width(4.dp))
                 }
-                Button(onClick = { onPick(entry) }) { Text("Use") }
+                Button(onClick = { onPick(entry) }) { Text("Use", maxLines = 1) }
             }
         }
     }

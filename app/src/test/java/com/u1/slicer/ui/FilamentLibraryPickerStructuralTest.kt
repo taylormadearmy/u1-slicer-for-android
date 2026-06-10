@@ -30,6 +30,16 @@ class FilamentLibraryPickerStructuralTest {
     }
 
     @Test
+    fun `chip row scrolls horizontally and use button text never wraps`() {
+        // 2026-06-10 sanity-test findings: in the narrow ExtruderSlotEditDialog the
+        // TPU/ASA chips were unreachable (no horizontal scroll) and the long
+        // "Use + import profile…" label squeezed the Use button until it wrapped.
+        assertTrue(src.contains("horizontalScroll"))
+        assertTrue(src.contains("weight(1f, fill = false)"))
+        assertTrue(src.contains("TextOverflow.Ellipsis"))
+    }
+
+    @Test
     fun `picker renders failed state with retry`() {
         assertTrue(src.contains("LibraryState.Failed"))
         assertTrue(src.contains("onRetry"))
