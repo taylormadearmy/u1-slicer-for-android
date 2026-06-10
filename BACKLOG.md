@@ -4,6 +4,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B141: Assigning a part to a mix on a 3MF doesn't update the Prepare preview (GitHub #178) — FIXED on `feature/filament-library` 2026-06-10 (unreleased)
+- **Symptom**: Picking a mix in the per-part "Assign to filament" dialog baked the mix correctly (slice blends), but the Prepare 3D preview kept the part's old colour on canonical 3MFs. STL/non-canonical models were unaffected.
+- **Root cause**: the canonical non-MMU branch of `meshAlignedFilamentColors` ordered its palette by the file's **static** `usedExtruderIndices`, while the native preview mesh compacts per-triangle indices over the **live** per-volume extruder set (`_meshSourceExtruders0Based`, refreshed on every assignment, includes mix ids) — order diverged after any assignment.
+- **Fix**: prefer the live set whenever non-empty (it only populates after an assignment and resets on load/plate switch); file-declared set remains the pre-assignment fallback. `buildCanonicalNonMmuPalette` mix-id colour math unchanged. Guard: `MeshPaletteLiveSourceTest`.
+- **Reported by**: Kevin, 2026-06-10, during the F96 sanity test (follow-on from B140). Pre-existing M3/M4 mix bug; fix rides with the F96 branch.
+
 ### B140: Object-selector mix swatches use model filament colours instead of printer slot colours (GitHub #177) — FIXED on `feature/filament-library` 2026-06-10 (unreleased)
 - **Symptom**: In the per-part "Assign to filament" dialog, the Mix slots swatches (and the Create-Mix component palette it opens) blended the **model's file-declared filament colours** instead of the printer's loaded slot colours — a CMYW-loaded printer with a red/black model showed maroon/red mixes for every `E1+E2+E3+E4` recipe. Mixes blend physical extruders, so their preview must use the slot presets.
 - **Root cause**: `FilamentChooserDialog` (PartsPanel.kt) built `physicalColours` preferring `resolvedFilamentColors` (file-fileIndex palette) with `activeExtruderColors` (also model-filtered) as fallback. Every other mix surface (Prepare mix subsection, NavGraph, FilamentScreen, AiPaint) already derived from `extruderPresets`.

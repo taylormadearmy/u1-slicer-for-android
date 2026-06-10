@@ -2016,9 +2016,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // volumes in model config" per its docstring), and IS plate-
         // narrowed by the native-first plate-state read. One field,
         // covers compound objects, plate-correct.
-        val sourceExtruders = mfInfo?.usedExtruderIndices
-            ?.filter { it > 0 }
-            ?.sorted()
+        // B141 (2026-06-10): after ANY user assignment, the native mesh compacts its
+        // per-triangle indices over the LIVE per-volume extruder set — which can include
+        // mixes (or slots) absent from the file's static usedExtruderIndices. Order the
+        // palette by the live set when one exists (it is populated only by
+        // refreshMeshSourceExtruders after an assignment, and reset on load/plate switch),
+        // otherwise fall back to the file-declared set. Without this, assigning a part to
+        // a mix on a canonical 3MF left the Prepare preview unchanged/misaligned.
+        val sourceExtruders = meshSourceExtruders.takeIf { it.isNotEmpty() }?.map { it + 1 }
+            ?: mfInfo?.usedExtruderIndices?.filter { it > 0 }?.sorted()
             ?: return@combine fullPalette
         if (sourceExtruders.isEmpty()) return@combine fullPalette
         // Review finding #1: a mix-assigned object on a canonical 3MF previously fell through to
