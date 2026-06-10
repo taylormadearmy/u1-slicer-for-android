@@ -37,14 +37,17 @@ object FilamentLibraryMatcher {
         }
         if (candidates.isEmpty()) return null
 
-        val ranked = candidates.map { e ->
+        // Gate on raw ΔE FIRST, then rank survivors with the subtype bonus. Ranking
+        // before gating would let the bonus promote an out-of-gate candidate to the
+        // top and reject the whole match even when an in-gate candidate existed.
+        val inGate = candidates.mapNotNull { e ->
             val dE = ColourMatch.deltaE76(hex, e.hex!!)
+            if (dE > MAX_DELTA_E) return@mapNotNull null
             val rank = dE - if (subtypeMatches(subType, e.name)) SUBTYPE_BONUS else 0.0
             Triple(e, dE, rank)
-        }.sortedBy { it.third }
-
-        val best = ranked.first()
-        return if (best.second <= MAX_DELTA_E) LibraryMatch(best.first, best.second) else null
+        }
+        val best = inGate.minByOrNull { it.third } ?: return null
+        return LibraryMatch(best.first, best.second)
     }
 
     private fun norm(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
