@@ -116,11 +116,14 @@ fun CreateMixSlotDialog(
                 // `matching`) so the user can choose 2/3/4 before or after picking a target;
                 // changing it re-runs the match live against the last picked target.
                 if (maxMatch >= 2) {
+                    TextButton(onClick = { matching = true }) { Text("🎯 Match a colour") }
+                    // Count selector on its OWN row — packing the button + label + 3 chips into a
+                    // single row overflowed the narrow dialog width and clipped the 3/4 chips off
+                    // the right edge (un-tappable). Separate row so all counts fit and respond.
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        TextButton(onClick = { matching = true }) { Text("🎯 Match a colour") }
                         Text("Colours:", style = MaterialTheme.typography.labelMedium)
                         for (c in 2..maxMatch) {
                             FilterChip(
