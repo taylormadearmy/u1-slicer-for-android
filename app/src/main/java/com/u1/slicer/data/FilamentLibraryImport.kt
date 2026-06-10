@@ -71,3 +71,18 @@ fun libraryEntryToProfile(e: FilamentLibraryEntry, existing: FilamentProfile?): 
         color = e.hex ?: base.color,
     )
 }
+
+/**
+ * Insert or update the [FilamentProfile] for a library entry (lookup by exact
+ * profile name — see [FilamentDao.getByName]) and return its row id.
+ */
+suspend fun upsertLibraryProfile(dao: FilamentDao, entry: FilamentLibraryEntry): Long {
+    val existing = dao.getByName(entry.displayName)
+    val profile = libraryEntryToProfile(entry, existing)
+    return if (existing != null) {
+        dao.update(profile)
+        existing.id
+    } else {
+        dao.insert(profile)
+    }
+}

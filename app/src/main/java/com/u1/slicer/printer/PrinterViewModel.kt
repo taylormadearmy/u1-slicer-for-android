@@ -7,7 +7,7 @@ import com.u1.slicer.U1SlicerApplication
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.defaultExtruderPresets
-import com.u1.slicer.data.libraryEntryToProfile
+import com.u1.slicer.data.upsertLibraryProfile
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
 import kotlinx.coroutines.Dispatchers
@@ -53,9 +53,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     fun importLibraryProfile(entry: FilamentLibraryEntry, onDone: (Long) -> Unit) {
         viewModelScope.launch {
             val id = withContext(Dispatchers.IO) {
-                val existing = filamentDao.getByName(entry.displayName)
-                val profile = libraryEntryToProfile(entry, existing)
-                if (existing != null) { filamentDao.update(profile); existing.id } else filamentDao.insert(profile)
+                upsertLibraryProfile(filamentDao, entry)
             }
             libraryRepo.recordRecent(entry.slug)
             onDone(id)

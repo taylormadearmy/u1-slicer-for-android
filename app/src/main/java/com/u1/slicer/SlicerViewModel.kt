@@ -20,7 +20,7 @@ import com.u1.slicer.bambu.ThreeMfPlate
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.FilamentProfile
-import com.u1.slicer.data.libraryEntryToProfile
+import com.u1.slicer.data.upsertLibraryProfile
 import com.u1.slicer.data.MixedFilamentManager
 import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.data.ModelInfo
@@ -2082,14 +2082,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val cleaned = if (hex.startsWith("#")) hex else "#$hex"
         viewModelScope.launch(Dispatchers.IO) {
             // F78: write through PrintersRepository so the active printer's preset record is updated.
-            val cfg = printersRepo.config.first() ?: return@launch
-            val active = cfg.active
-            val existing = active.extruderPresets.firstOrNull { it.index == slotIndex }
-            val updatedPreset = existing?.copy(color = cleaned)
-                ?: com.u1.slicer.data.ExtruderPreset(index = slotIndex, color = cleaned)
-            val updatedPresets = (active.extruderPresets.filterNot { it.index == slotIndex } + updatedPreset)
-                .sortedBy { it.index }
-            printersRepo.update(active.copy(extruderPresets = updatedPresets))
+            updateSlotPreset(slotIndex) { it.copy(color = cleaned) }
         }
     }
 
@@ -2141,10 +2134,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     fun importLibraryProfileForSlot(slotIndex: Int, entry: FilamentLibraryEntry) {
         if (slotIndex !in 0..3) return
         viewModelScope.launch(Dispatchers.IO) {
-            val existing = filamentDao.getByName(entry.displayName)
-            val profile = libraryEntryToProfile(entry, existing)
-            val id = if (existing != null) { filamentDao.update(profile); existing.id }
-                     else filamentDao.insert(profile)
+            val id = upsertLibraryProfile(filamentDao, entry)
             updateSlotPreset(slotIndex) { slot ->
                 slot.copy(
                     color = entry.hex ?: slot.color,

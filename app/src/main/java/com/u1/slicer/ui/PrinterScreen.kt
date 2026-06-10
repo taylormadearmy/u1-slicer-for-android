@@ -1018,6 +1018,8 @@ private fun ExtruderSlotEditDialog(
                         favourites = libraryFavourites,
                         recents = libraryRecents,
                         onToggleFavourite = onToggleLibraryFavourite,
+                        // Applies to the dialog's local state (not the VM) — this dialog commits on Save,
+                        // so a library pick must stay un-persisted until the user confirms.
                         onPick = { entry ->
                             entry.hex?.let {
                                 color = it
