@@ -4,6 +4,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B142: Mix blend colours computed from model palette; mix-assigned part chip grey/PLA (GitHub #179) — FIXED on `feature/filament-library` 2026-06-10 (unreleased)
+- **Symptoms** (follow-on from B140/B141, same sanity test): (1) a mix-assigned part rendered the wrong colour on the Prepare preview (grey-pink) and the sliced G-code preview showed grey-ish blend layers — `loadedModelMixColors` blended from the model-narrowed preview palette, so on a 2-filament 3MF mix components E3/E4 fell back to `#888888`; (2) the edit panel's Filament row showed a grey swatch + "PLA" for a mix-assigned object — `resolveFilamentChip` had no mix-slot branch (plus a pre-existing 0-based/1-based off-by-one in its STL preset-material lookup).
+- **Fix**: blends computed from `extruderPresets` (loaded printer filaments) via `FilamentMixPredictor`; chip resolver maps mix ids (`> max(numPhysical, canonicalSize)`) through `MixSlotOrdering.activeOrder` to the blend colour + "Mix" label. Guards in `MixSwatchPaletteSourceTest` (3 new tests).
+- **Reported by**: Kevin, 2026-06-10. Pre-existing M3/M4 mix bugs; fix rides with the F96 branch.
+- **Residual to verify on-device**: canonical-3MF mix slice G-code preview layer colours (tool-space alignment) — re-check after the B142 build.
+
 ### B141: Assigning a part to a mix on a 3MF doesn't update the Prepare preview (GitHub #178) — FIXED on `feature/filament-library` 2026-06-10 (unreleased)
 - **Symptom**: Picking a mix in the per-part "Assign to filament" dialog baked the mix correctly (slice blends), but the Prepare 3D preview kept the part's old colour on canonical 3MFs. STL/non-canonical models were unaffected.
 - **Root cause**: the canonical non-MMU branch of `meshAlignedFilamentColors` ordered its palette by the file's **static** `usedExtruderIndices`, while the native preview mesh compacts per-triangle indices over the **live** per-volume extruder set (`_meshSourceExtruders0Based`, refreshed on every assignment, includes mix ids) — order diverged after any assignment.

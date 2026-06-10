@@ -204,8 +204,9 @@ private fun PartFilamentRow(
 }
 
 /** Resolve the (colour, material, label) tuple for a given filament index, choosing
- *  between the file's canonical filament list (for 3MFs) and the printer's slot
- *  presets (for STLs). Returns a 1-based slot label. */
+ *  between the file's canonical filament list (for 3MFs), the printer's slot
+ *  presets (for STLs), and the active mixes (slot ids above the mix base).
+ *  Returns a 1-based slot label. */
 @Composable
 private fun resolveFilamentChip(
     slot: Int,                                  // 1-based; caller must guarantee > 0
@@ -216,10 +217,33 @@ private fun resolveFilamentChip(
     val displayedMaterials by viewModel.displayedFilamentMaterials.collectAsState()
     val activeColors by viewModel.activeExtruderColors.collectAsState()
     val presets by viewModel.extruderPresets.collectAsState()
+    val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
+    val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
 
+    val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
     val canonicalSize = canonical?.size ?: 0
-    val useFile = canonical != null && slot - 1 < canonicalSize
 
+    // B142 (2026-06-10): a mix-assigned part rendered a grey swatch + "PLA" here
+    // because mix slot ids (> mixBase) fell through to the slot-preset branch.
+    // Resolve them to the mix's blend colour over the printer's loaded presets.
+    val mixBase = maxOf(numPhysical, canonicalSize)
+    if (slot > mixBase) {
+        val mix = com.u1.slicer.data.MixSlotOrdering
+            .activeOrder(projectMixes, libraryMixes, numPhysical)
+            .getOrNull(slot - mixBase - 1)
+        if (mix != null) {
+            val blend = com.u1.slicer.aipaint.FilamentMixPredictor.predict(
+                mix.components.map { c ->
+                    presets.firstOrNull { it.index == c - 1 }?.color?.takeIf { it.isNotBlank() }
+                        ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[(c - 1).mod(4)]
+                },
+                mix.weights,
+            )
+            return Triple(parseHexColor(blend), "Mix", mix.label.ifBlank { "Mix" })
+        }
+    }
+
+    val useFile = canonical != null && slot - 1 < canonicalSize
     return if (useFile) {
         val idx = slot - 1
         val hex = resolvedColors.getOrNull(idx) ?: ""
@@ -227,7 +251,8 @@ private fun resolveFilamentChip(
         Triple(parseHexColor(hex), mat, "Filament $slot")
     } else {
         val hex = activeColors.getOrNull(slot - 1) ?: ""
-        val mat = presets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+        // `slot` is 1-based, preset.index is 0-based (pre-existing off-by-one fixed here).
+        val mat = presets.firstOrNull { it.index == slot - 1 }?.materialType ?: "PLA"
         Triple(parseHexColor(hex), mat, "Filament $slot")
     }
 }

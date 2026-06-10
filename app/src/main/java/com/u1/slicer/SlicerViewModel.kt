@@ -1817,21 +1817,26 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _threeMfInfo,
         mixedFilamentManager.projectMixes,
         mixedFilamentManager.libraryMixes,
-        _activeExtruderColors,
+        extruderPresets,
         _perVolumeExtruders,
-    ) { mfInfo, _, _, physicalColors, perVolume ->
+    ) { mfInfo, _, _, presets, perVolume ->
         val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
         // Case 2: object assigned to a mix (1-based mix id > numPhysical). Mirrors the
         // slice-path `anyMixAssigned` gate so preview and G-code agree on when a mix is live.
         val objectAssignedMix = perVolume.values.any { it > numPhysical }
         val physicalCount = mfInfo?.fullSpectrumPhysicalCount
             ?: (numPhysical.takeIf { objectAssignedMix } ?: return@combine emptyList())
-        // Physical palette source: the active extruder slot colours (the user's loaded
-        // filaments) so the mix blends reflect what will actually print. Fall back to the
-        // mix's own component lookups against whatever palette is available.
+        // B142 (2026-06-10): physical palette source must be the PRINTER SLOT PRESETS —
+        // mixes blend physical extruders, so the blend must reflect the loaded filaments.
+        // The previous source was the model-narrowed preview palette: on a 2-filament 3MF
+        // only 2 entries existed, components E3/E4 fell back to grey, and every blend
+        // rendered as muddy grey-pink in the Prepare/G-code previews.
         mixedFilamentManager.activeOrder(physicalCount).map { row ->
             com.u1.slicer.aipaint.FilamentMixPredictor.predict(
-                row.components.map { physicalColors.getOrNull(it - 1)?.takeIf { c -> c.isNotBlank() } ?: "#888888" },
+                row.components.map { c ->
+                    presets.firstOrNull { p -> p.index == c - 1 }?.color?.takeIf { it.isNotBlank() }
+                        ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[(c - 1).mod(4)]
+                },
                 row.weights
             )
         }
