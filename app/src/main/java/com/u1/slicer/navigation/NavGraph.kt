@@ -108,6 +108,9 @@ fun U1NavGraph(
             val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
             val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
             val previewLayerRange by viewModel.previewLayerRange.collectAsState()
+            // B142b: mix slices use physical-slot tool space — slot palette, no mapping.
+            val sliceMixToolSpace by viewModel.sliceMixToolSpace.collectAsState()
+            val slotPaletteWithMixBlends by viewModel.slotPaletteWithMixBlends.collectAsState()
             val slicerLayerCount = (slicerState as? com.u1.slicer.SlicerViewModel.SlicerState.SliceComplete)?.result?.totalLayers ?: 0
             if (parsedGcode != null) {
                 // B48: H2C models (>4 model colours) — slicer's T0-T3 are physical
@@ -116,7 +119,7 @@ fun U1NavGraph(
                 val isH2c = threeMfInfo?.hasPaintData == true &&
                     (colorMapping?.distinct()?.size ?: 0) >= 4 &&
                     (colorMapping?.size ?: 0) > (colorMapping?.distinct()?.size ?: 0)
-                val gcodeColorMapping = if (isH2c) null else colorMapping
+                val gcodeColorMapping = if (isH2c || sliceMixToolSpace) null else colorMapping
                 GcodeViewer3DScreen(
                     parsedGcode = parsedGcode!!,
                     extruderColors = extruderColors,
@@ -127,7 +130,9 @@ fun U1NavGraph(
                     // must be canonical-aligned. Pre-fix used
                     // resolvedFilamentColors (plate-narrowed) which
                     // misindexed for multi-plate Bambu fileIdx > 0.
-                    resolvedFilamentColors = canonicalFilamentColors
+                    // B142b: mix slices override to the slot-space palette.
+                    resolvedFilamentColors = if (sliceMixToolSpace) slotPaletteWithMixBlends
+                    else canonicalFilamentColors
                         .takeIf { it.isNotEmpty() }
                         ?: resolvedFilamentColors,
                     // B129: remember the layer-slider position across navigation

@@ -1981,6 +1981,9 @@ fun PreviewScreen(
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
     val previewLayerRange by viewModel.previewLayerRange.collectAsState()
+    // B142b: mix slices use physical-slot tool space — palette/summary must follow.
+    val sliceMixToolSpace by viewModel.sliceMixToolSpace.collectAsState()
+    val slotPaletteWithMixBlends by viewModel.slotPaletteWithMixBlends.collectAsState()
 
     Scaffold(
         topBar = {
@@ -2075,7 +2078,9 @@ fun PreviewScreen(
                         val isH2c = threeMfInfo?.hasPaintData == true &&
                             (colorMapping?.distinct()?.size ?: 0) >= 4 &&
                             (colorMapping?.size ?: 0) > (colorMapping?.distinct()?.size ?: 0)
-                        val gcodeColorMapping = if (isH2c) null else colorMapping
+                        // B142b: mix-assigned slices emit physical-slot tools — no
+                        // canonical→slot mapping applies and the palette is slot-space.
+                        val gcodeColorMapping = if (isH2c || sliceMixToolSpace) null else colorMapping
                         InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
@@ -2091,7 +2096,8 @@ fun PreviewScreen(
                             // to the right file colour. Pre-fix used
                             // `resolvedFilamentColors` which is plate-narrowed
                             // and misindexed for multi-plate fileIdx > 0.
-                            resolvedFilamentColors = canonicalFilamentColors
+                            resolvedFilamentColors = if (sliceMixToolSpace) slotPaletteWithMixBlends
+                            else canonicalFilamentColors
                                 .takeIf { it.isNotEmpty() }
                                 ?: resolvedFilamentColors,
                             // B129: same remembered layer range as the full-screen
@@ -2136,6 +2142,7 @@ fun PreviewScreen(
                         canonicalList = canonicalForSummary,
                         filamentOverrides = filamentOverrides,
                         plateFileIndices = plateFileIndicesForSummary,
+                        mixToolSpacePalette = if (sliceMixToolSpace) slotPaletteWithMixBlends else emptyList(),
                     )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -2657,6 +2664,12 @@ fun SliceCompleteSummaryCard(
      * canonical[0] + canonical[1] — wrong file filaments.
      */
     plateFileIndices: List<Int>? = null,
+    /**
+     * B142b (2026-06-10) — non-empty when the slice used physical-slot tool space
+     * (a mix was assigned): entry `i` is tool `i`'s display colour (slot presets
+     * E1..E4 + mix blends). Canonical/file lookups don't apply in that space.
+     */
+    mixToolSpacePalette: List<String> = emptyList(),
 ) {
     val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
         buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
@@ -2744,11 +2757,15 @@ fun SliceCompleteSummaryCard(
                                     else cm.getOrNull(fileIdx)
                                 }
                                 ?: displaySlots.getOrElse(entry.plateNarrowedPosition) { fileIdx }
-                            // Colour priority: user override → canonical (file's
-                            // declared, indexed by true canonical fileIdx) →
-                            // mapped slot's preset colour.
-                            val canonicalEntry = canonicalList?.filaments?.getOrNull(fileIdx)
-                            val colorHex = override?.color
+                            // B142b: mix-assigned slices use physical-slot tool space —
+                            // tool i IS slot Ei; canonical/file lookups don't apply.
+                            val canonicalEntry = if (mixToolSpacePalette.isEmpty())
+                                canonicalList?.filaments?.getOrNull(fileIdx) else null
+                            // Colour priority: slot-space palette (mix slices) → user
+                            // override → canonical (file's declared, indexed by true
+                            // canonical fileIdx) → mapped slot's preset colour.
+                            val colorHex = mixToolSpacePalette.getOrNull(fileIdx)
+                                ?: override?.color
                                 ?: canonicalEntry?.color
                                 ?: extruderColors.getOrNull(slot)?.takeIf { it.isNotBlank() }
                                 ?: "#808080"
@@ -2757,10 +2774,14 @@ fun SliceCompleteSummaryCard(
                             } catch (_: Exception) {
                                 Color.Gray
                             }
-                            // Material priority: override -> mapped slot preset -> canonical.
-                            val mappedMaterial = resolveExtruderMaterialType(slot, extruderPresets)
-                                .takeIf { it.isNotBlank() }
-                            val material = override?.materialType
+                            // Material priority: slot preset (mix slices, tool i = slot i)
+                            // -> override -> mapped slot preset -> canonical.
+                            val mappedMaterial = resolveExtruderMaterialType(
+                                if (mixToolSpacePalette.isNotEmpty()) fileIdx else slot,
+                                extruderPresets
+                            ).takeIf { it.isNotBlank() }
+                            val material = if (mixToolSpacePalette.isNotEmpty()) (mappedMaterial ?: "")
+                            else override?.materialType
                                 ?: mappedMaterial
                                 ?: canonicalEntry?.materialType
                                 ?: ""
@@ -2779,11 +2800,11 @@ fun SliceCompleteSummaryCard(
                                 }
                                 Spacer(Modifier.width(6.dp))
                                 Column {
+                                    // Slot-space rows are physical extruders, not file filaments.
+                                    val rowLabel = if (mixToolSpacePalette.isNotEmpty()) "E${fileIdx + 1}"
+                                    else "Filament ${fileIdx + 1}"
                                     Text(
-                                        if (material.isNotEmpty())
-                                            "Filament ${fileIdx + 1} · $material"
-                                        else
-                                            "Filament ${fileIdx + 1}",
+                                        if (material.isNotEmpty()) "$rowLabel · $material" else rowLabel,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = Color.White.copy(alpha = 0.7f)
                                     )

@@ -44,6 +44,22 @@ class MixSwatchPaletteSourceTest {
     }
 
     @Test
+    fun `gcode preview and summary use slot palette when slice is mix tool space`() {
+        // B142b: a mix-assigned slice emits PHYSICAL-SLOT tools (mixPhysicalBase
+        // expansion) — the post-slice G-code palette and per-extruder summary must
+        // use slot colours + mix blends, not the canonical file palette (which
+        // rendered tools 2/3 grey on a 2-filament 3MF).
+        val vm = File("src/main/java/com/u1/slicer/SlicerViewModel.kt").readText()
+        assertTrue(vm.contains("_sliceMixToolSpace.value = anyMixAssigned"))
+        assertTrue(vm.contains("val slotPaletteWithMixBlends"))
+        val main = File("src/main/java/com/u1/slicer/MainActivity.kt").readText()
+        assertTrue(main.contains("if (sliceMixToolSpace) slotPaletteWithMixBlends"))
+        assertTrue(main.contains("mixToolSpacePalette"))
+        val nav = File("src/main/java/com/u1/slicer/navigation/NavGraph.kt").readText()
+        assertTrue(nav.contains("if (sliceMixToolSpace) slotPaletteWithMixBlends"))
+    }
+
+    @Test
     fun `model mix blend colours come from printer slot presets`() {
         // B142: loadedModelMixColors blended from _activeExtruderColors (the
         // model-narrowed palette) — on a 2-filament 3MF, components E3/E4 fell

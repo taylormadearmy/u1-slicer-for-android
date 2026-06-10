@@ -1858,6 +1858,28 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
+     * B142b (2026-06-10): when the last slice had a mix assigned, the engine's tool
+     * space is PHYSICAL SLOTS — the `mixPhysicalBase` expansion in [startSlicing]
+     * sizes the filament arrays to TARGET_SLOTS and mixes alternate their physical
+     * component tools — NOT canonical fileIndices. Post-slice displays (G-code
+     * palette, per-extruder summary) must use the slot-preset palette then, with
+     * mix blends appended for virtual mix tools. Without this, a 2-filament 3MF
+     * with a mix sliced to 4 tools rendered tools 2/3 grey (off the file palette).
+     */
+    private val _sliceMixToolSpace = MutableStateFlow(false)
+    val sliceMixToolSpace: StateFlow<Boolean> = _sliceMixToolSpace.asStateFlow()
+
+    /** Slot-space post-slice palette: loaded slot colours E1..E4 + mix blend colours. */
+    val slotPaletteWithMixBlends: StateFlow<List<String>> = combine(
+        extruderPresets, loadedModelMixColors,
+    ) { presets, mixColors ->
+        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { i ->
+            presets.firstOrNull { it.index == i }?.color?.takeIf { it.isNotBlank() }
+                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
+        } + mixColors
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
      * Phase 2 (Approach C) — palette aligned to the **mesh's** extruder-index
      * space, NOT the file's. Used by the 3D Prepare preview's recolor path so
      * the displayed colours always agree with what the mesh's `extruderIndices`
@@ -5341,6 +5363,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // No-op when canonicalCount <= numPhysical: maxOf returns numPhysical unchanged.
                     val canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical
                     val mixPhysicalBase = if (anyMixAssigned) maxOf(numPhysical, canonicalCount) else 0
+                    // B142b: post-slice displays must know the tool space of THIS slice.
+                    _sliceMixToolSpace.value = anyMixAssigned
                     val effectiveExtruderCount = maxOf(
                         cfg.extruderCount,
                         cfg.supportFilament,
