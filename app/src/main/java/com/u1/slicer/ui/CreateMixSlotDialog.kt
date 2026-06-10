@@ -2,6 +2,7 @@ package com.u1.slicer.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -110,27 +111,17 @@ fun CreateMixSlotDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // --- Match-a-colour: pick a target and let the matcher pick the mix ---
-                TextButton(
-                    onClick = { matching = true },
-                    enabled = physicalFilamentColours.size >= 2,
-                ) { Text("🎯 Match a colour") }
-                matchBadge?.let {
-                    Text("Closest mix: $it", style = MaterialTheme.typography.labelSmall)
-                }
-                matchNote?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (matching) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "Colours:",
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.align(Alignment.CenterVertically),
-                        )
+                // Match-a-colour control row: the button + the 2/3/4 colour-count selector,
+                // always visible (>=2 loaded). The count selector is PERSISTENT (independent of
+                // `matching`) so the user can choose 2/3/4 before or after picking a target;
+                // changing it re-runs the match live against the last picked target.
+                if (maxMatch >= 2) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(onClick = { matching = true }) { Text("🎯 Match a colour") }
+                        Text("Colours:", style = MaterialTheme.typography.labelMedium)
                         for (c in 2..maxMatch) {
                             FilterChip(
                                 selected = matchCount == c,
@@ -139,6 +130,18 @@ fun CreateMixSlotDialog(
                             )
                         }
                     }
+                    matchBadge?.let {
+                        Text("Closest mix: $it", style = MaterialTheme.typography.labelSmall)
+                    }
+                    matchNote?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (matching) {
                     FilamentColorEditDialog(
                         initialHex = matchTarget ?: "#888888",
                         onSave = { hex -> matchTarget = hex; runMatch(hex, matchCount); matching = false },
@@ -152,6 +155,21 @@ fun CreateMixSlotDialog(
                         weights = MixWeights.rebalanceAfterDrag(weights, leftIndex, newLeft)
                     },
                 )
+                // Live "Result" preview: the actual blended colour this mix produces, so the
+                // user sees what they're making while editing weights / after a match.
+                val resultColour = remember(components, weights) {
+                    mixBlendedColour(
+                        components.map { physicalFilamentColours.getOrNull(it - 1) ?: Color.Gray },
+                        weights,
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Box(Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).background(resultColour))
+                    Text("Predicted result", style = MaterialTheme.typography.labelMedium)
+                }
                 components.forEachIndexed { idx, slot ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

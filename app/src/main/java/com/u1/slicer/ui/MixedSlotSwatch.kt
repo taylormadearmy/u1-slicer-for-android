@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -15,6 +16,27 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.u1.slicer.aipaint.FilamentMixPredictor
+import kotlin.math.roundToInt
+
+/**
+ * The predicted blended colour of a mix (FilamentMixPredictor), as a Compose Color.
+ * Used to preview "the colour this mix actually makes" on slot swatches + the editor.
+ * Falls back to Gray on empty input.
+ */
+fun mixBlendedColour(colours: List<Color>, weights: List<Int>): Color {
+    if (colours.isEmpty()) return Color.Gray
+    val hexes = colours.map { c ->
+        "#%02x%02x%02x".format((c.red * 255).roundToInt(), (c.green * 255).roundToInt(), (c.blue * 255).roundToInt())
+    }
+    val w = if (weights.size == hexes.size && weights.isNotEmpty()) weights else List(hexes.size) { 1 }
+    val v = FilamentMixPredictor.predict(hexes, w).removePrefix("#").toLong(16)
+    return Color(
+        red = (((v shr 16) and 0xFF) / 255f),
+        green = (((v shr 8) and 0xFF) / 255f),
+        blue = ((v and 0xFF) / 255f),
+    )
+}
 
 /** (leftOffsetFraction, widthFraction) per segment from integer weights. */
 fun mixSegmentOffsets(weights: List<Int>): List<Pair<Float, Float>> {
@@ -35,12 +57,20 @@ fun MixedSlotSwatch(
     size: Dp = 36.dp,
     modifier: Modifier = Modifier,
 ) {
+    // Main fill = the predicted blended colour (the "preview" of what the mix makes);
+    // the ratio is kept as a thin segmented strip across the bottom band.
+    val blended = remember(colours, weights) { mixBlendedColour(colours, weights) }
     Box(modifier.size(size).clip(MaterialTheme.shapes.small), contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.size(size)) {
             val w = this.size.width; val h = this.size.height
+            // (1) Whole square = blended preview colour.
+            drawRect(color = blended, topLeft = Offset(0f, 0f), size = Size(w, h))
+            // (2) Ratio segments confined to the bottom ~30% band.
+            val bandTop = h * 0.7f
+            val bandH = h * 0.3f
             mixSegmentOffsets(weights).forEachIndexed { i, (off, frac) ->
                 drawRect(color = colours.getOrElse(i) { Color.Gray },
-                    topLeft = Offset(w * off, 0f), size = Size(w * frac, h))
+                    topLeft = Offset(w * off, bandTop), size = Size(w * frac, bandH))
             }
         }
     }
