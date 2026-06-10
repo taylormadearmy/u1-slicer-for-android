@@ -269,14 +269,17 @@ private fun FilamentChooserDialog(
         com.u1.slicer.data.MixSlotOrdering.activeOrder(projectMixes, libraryMixes, numPhysical)
     }
 
-    val activeColors by viewModel.activeExtruderColors.collectAsState()
-    val resolvedColors by viewModel.resolvedFilamentColors.collectAsState()
-    // Physical chip colours (1-based slot n → colour). Prefer the file's
-    // resolved colours, fall back to the active slot presets.
-    val physicalColours = remember(numPhysical, activeColors, resolvedColors, canonical) {
+    val extruderPresets by viewModel.extruderPresets.collectAsState()
+    // Mixes blend PHYSICAL extruders (E1..E4), so mix swatches and the
+    // Create-Mix component palette must show what's loaded in the printer
+    // (slot presets) — never the model's file-declared filament colours.
+    // (2026-06-10 sanity test: a CMYW-loaded printer showed red/black mix
+    // swatches because this block preferred resolvedFilamentColors.)
+    val physicalColours = remember(numPhysical, extruderPresets) {
         (1..numPhysical).map { slot ->
-            val hex = resolvedColors.getOrNull(slot - 1)?.takeIf { it.isNotBlank() }
-                ?: activeColors.getOrNull(slot - 1) ?: ""
+            val hex = extruderPresets.firstOrNull { it.index == slot - 1 }?.color
+                ?.takeIf { it.isNotBlank() }
+                ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[(slot - 1) % 4]
             parseHexColor(hex)
         }
     }
