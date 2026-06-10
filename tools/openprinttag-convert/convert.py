@@ -15,7 +15,6 @@ import datetime
 import json
 import os
 import subprocess
-import sys
 
 import yaml
 
@@ -62,7 +61,7 @@ def load_brands(db_root):
 
 def convert_material(doc, brands):
     """One parsed material YAML -> entry dict, or None if not FFF / unusable."""
-    if not doc or doc.get("class") != "FFF":
+    if not isinstance(doc, dict) or doc.get("class") != "FFF":
         return None
     slug = doc.get("slug")
     name = doc.get("name")
@@ -110,8 +109,12 @@ def convert(db_root, commit, date):
         for fn in sorted(os.listdir(full)):
             if not fn.endswith(".yaml"):
                 continue
-            with open(os.path.join(full, fn), encoding="utf-8") as f:
-                doc = yaml.safe_load(f)
+            path = os.path.join(full, fn)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    doc = yaml.safe_load(f)
+            except yaml.YAMLError as e:
+                raise RuntimeError(f"Malformed YAML in {path}: {e}") from e
             entry = convert_material(doc, brands)
             if entry:
                 entries.append(entry)
