@@ -165,7 +165,7 @@ class MixSlotRealLoadPathBlendTest {
         )
 
         // PREVIEW-COLOUR FIX: the loaded model's mesh-aligned preview palette must extend past
-        // the 4 physical filaments to give the mix slot (index 4 ⇔ paint state 5) its naive
+        // the 4 physical filaments to give the mix slot (index 4 ⇔ paint state 5) its predicted
         // blend colour — otherwise palette[state-1] falls off the end and the region renders grey.
         waitUntil("preview palette extended with mix colour", timeoutMs = 10_000L) {
             viewModel.meshAlignedFilamentColors.value.size >= 5
@@ -176,11 +176,15 @@ class MixSlotRealLoadPathBlendTest {
             "Preview palette must have a 5th entry for the mix slot. Got $previewPalette",
             previewPalette.size >= 5,
         )
-        // E1(#FF0000) + E2(#00FF00) @ 50% → #808000 (not grey #808080).
+        // E1(#FF0000) + E2(#00FF00) @ 50% → the FilamentMixPredictor blend (not grey #808080, and
+        // not the old naive sRGB average #808000 — the pick-a-colour feature replaced the naive
+        // average with the predictor at every mix-colour display site, including this palette).
+        val expectedBlend = com.u1.slicer.aipaint.FilamentMixPredictor
+            .predict(listOf("#FF0000", "#00FF00"), listOf(50, 50)).uppercase()
         val mixColour = previewPalette[4].uppercase()
         assertTrue(
-            "Mix preview colour must be the E1+E2 50% blend (#808000), not grey. Got $mixColour",
-            mixColour == "#808000",
+            "Mix preview colour must be the E1+E2 50% predicted blend ($expectedBlend), not grey. Got $mixColour",
+            mixColour == expectedBlend,
         )
 
         // ── 4. Slice via the REAL path (startSlicing) ───────────────────────────────

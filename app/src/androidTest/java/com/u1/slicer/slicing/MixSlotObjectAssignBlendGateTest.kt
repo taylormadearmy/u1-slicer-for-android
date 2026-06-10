@@ -129,10 +129,10 @@ class MixSlotObjectAssignBlendGateTest {
         // ── 3b. BUG A — the Prepare PREVIEW palette must carry the mix's blend colour ──
         // The slice (below) bakes the mix into the object extruder and blends correctly, but
         // pre-fix the 3D Prepare preview rendered the object grey because no palette entry
-        // existed for the mix slot. meshAlignedFilamentColors must now expose the naive-blend
+        // existed for the mix slot. meshAlignedFilamentColors must now expose the predicted blend
         // colour at the mesh's compacted index for the assigned object. For a single-object STL
         // fully assigned to mix slot 5, the only source extruder is 4 (0-based) → compacted mesh
-        // index 0 → palette[0] must be the E1(#FF0000)+E2(#00FF00) 50% blend = #808000.
+        // index 0 → palette[0] must be the E1+E2 50% predicted blend (FilamentMixPredictor).
         waitUntil("preview palette carries mix blend colour", timeoutMs = 10_000L) {
             viewModel.meshAlignedFilamentColors.value.isNotEmpty()
         }
@@ -145,9 +145,11 @@ class MixSlotObjectAssignBlendGateTest {
         )
         // The mix blends the live E1 + E2 slot colours @ 50%. Compute the expected blend from
         // whatever the active slot presets actually are so the assertion is preset-independent.
+        // Source of truth for the displayed mix colour is FilamentMixPredictor (the pick-a-colour
+        // feature replaced the crude ColourMatch.naiveBlendHex average at every display site).
         val e1 = slotColors.getOrNull(0)?.takeIf { it.isNotBlank() } ?: "#888888"
         val e2 = slotColors.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "#888888"
-        val expectedBlend = com.u1.slicer.aipaint.ColourMatch.naiveBlendHex(e1, e2, 50).uppercase()
+        val expectedBlend = com.u1.slicer.aipaint.FilamentMixPredictor.predict(listOf(e1, e2), listOf(50, 50)).uppercase()
         Log.i("MixObjGate", "expected mix blend of E1=$e1 E2=$e2 @50% = $expectedBlend")
         assertTrue(
             "GATE: preview palette must contain the E1+E2 50% mix blend ($expectedBlend), " +
