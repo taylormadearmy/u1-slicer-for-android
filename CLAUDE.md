@@ -386,6 +386,14 @@ scripts/rebuild-native-so.sh \
   <worktree-path>/app/.cxx/Release/<name>/arm64-v8a   # build + strip + deploy + verify
 ```
 
+> **Tearing a worktree down? Run this FIRST:**
+> ```bash
+> scripts/setup-worktree-native.sh --teardown <worktree-path>
+> ```
+> It unlinks the extern junctions so the subsequent `git worktree remove` /
+> `rm -rf` cannot recurse THROUGH them and silently delete the shared deps
+> cache that every other worktree depends on. The cache is left untouched.
+
 What it does: clones the orcaslicer submodule **from the `taylormadearmy/OrcaSlicer`
 fork** (the pin lives there, and engine patches like ColorMix are fork-only) and
 checks out the pinned SHA; creates Windows directory **junctions** from the

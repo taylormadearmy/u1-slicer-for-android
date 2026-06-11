@@ -45,6 +45,13 @@
 
 set -euo pipefail
 
+# --teardown <worktree>: SAFELY unlink the extern junctions before the worktree
+# is deleted. Removing a provisioned worktree with `rm -rf` / `git worktree
+# remove` can otherwise recurse THROUGH the junctions and silently wipe the
+# shared deps cache that every other worktree depends on. Always run this first.
+MODE="setup"
+if [ "${1:-}" = "--teardown" ]; then MODE="teardown"; shift; fi
+
 WT="${1:-$(git rev-parse --show-toplevel)}"
 WT="$(cd "$WT" && pwd)"                       # normalise
 
@@ -73,6 +80,25 @@ STUBS=(freetype_stub jpeg_stub libbgcode_stub libpng_stub nlopt_stub opencv_stub
 
 say() { echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Teardown mode — unlink extern junctions, then it's safe to remove the worktree
+# ---------------------------------------------------------------------------
+if [ "$MODE" = "teardown" ]; then
+  [ -d "$EXTERN" ] || die "no extern dir under worktree: $WT"
+  say "Unlinking extern junctions under $EXTERN ..."
+  n=0
+  # Find directory reparse points (junctions) up to 2 levels deep and rmdir them.
+  # rmdir on a junction removes only the link; the cache target is untouched.
+  while IFS= read -r j; do
+    [ -n "$j" ] || continue
+    jwin="$(cygpath -w "$j" 2>/dev/null || echo "$j")"
+    if cmd //c rmdir "$jwin" >/dev/null 2>&1; then echo "    unlinked $j"; n=$((n+1)); fi
+  done < <(powershell -NoProfile -Command "Get-ChildItem -Path '$EXTERN' -Recurse -Depth 1 -Directory -Attributes ReparsePoint -ErrorAction SilentlyContinue | ForEach-Object { \$_.FullName }" 2>/dev/null | tr -d '\r')
+  say "Unlinked $n junction(s). The deps cache is untouched."
+  echo "Now safe to: git worktree remove --force \"$WT\""
+  exit 0
+fi
 
 [ -d "$CPP" ]   || die "no app/src/main/cpp under worktree: $WT"
 [ -d "$CACHE" ] || die "deps cache not found: $CACHE (populate it once from a known-good extern/)"
