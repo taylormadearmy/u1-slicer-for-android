@@ -109,9 +109,11 @@ class TopSurfaceMixWipeTowerTest {
     /**
      * BODY counterpart of [layersWithToolPairInTop] (diagnostics only): counts
      * layers whose extrusion lines in any ";TYPE:" section EXCEPT "Top surface"
-     * (and except lines before the first ";TYPE:") used BOTH tool [a] AND tool
-     * [b]. Tells us whether the engine splits BODY infill within-layer for a
-     * dots mix even when top surfaces stay single-tool.
+     * AND EXCEPT tower sections (Prime tower / Wipe tower — case-insensitive
+     * match on "tower" anywhere in the label) used BOTH tool [a] AND tool [b].
+     * Excludes tower sections because the wipe tower legitimately extrudes with
+     * multiple tools every layer, which would otherwise make bodyPairLayers
+     * equal the total layer count and mask real model-body mixing info.
      */
     private fun layersWithToolPairInBody(gcode: String, a: Int, b: Int): Int {
         var count = 0
@@ -134,8 +136,12 @@ class TopSurfaceMixWipeTowerTest {
                     layerOpen = true
                     inBody = false
                 }
-                t.startsWith(";TYPE:") ->
-                    inBody = !t.equals(";TYPE:Top surface", ignoreCase = true)
+                t.startsWith(";TYPE:") -> {
+                    val label = t.removePrefix(";TYPE:")
+                    val isTop = label.equals("Top surface", ignoreCase = true)
+                    val isTower = label.contains("tower", ignoreCase = true)
+                    inBody = !isTop && !isTower
+                }
                 t.matches(toolRe) ->
                     currentTool = t.substring(1).toInt()
                 inBody && layerOpen && currentTool >= 0 &&
@@ -145,6 +151,77 @@ class TopSurfaceMixWipeTowerTest {
         }
         closeLayer()
         return count
+    }
+
+    /**
+     * Per-layer summary of tool sets grouped by ;TYPE: label, for failure diagnostics.
+     * For each ;LAYER_CHANGE block, lists the distinct ;TYPE: labels seen and the set
+     * of tools that extruded (G1 with E) under each label.
+     * Format example: "L12{Internal infill:[2], Prime tower:[2,3], Top surface:[1]}"
+     * Only layers with any extrusion are included. [maxLayers] caps how many layers
+     * are included in the output (first [maxLayers] layers that have extrusion).
+     */
+    private fun perLayerToolTypeSummary(gcode: String, maxLayers: Int = 60): String {
+        // layerData: layerIdx -> map of typelabel -> set of tools
+        val layerData = mutableMapOf<Int, MutableMap<String, MutableSet<Int>>>()
+        var layerIdx = -1
+        var currentTool = -1
+        var currentType = ""
+        val toolRe = Regex("T\\d+")
+
+        for (line in gcode.lineSequence()) {
+            val t = line.trim()
+            when {
+                t.startsWith(";LAYER_CHANGE") -> {
+                    layerIdx++
+                    currentType = ""
+                }
+                t.startsWith(";TYPE:") -> {
+                    currentType = t.removePrefix(";TYPE:")
+                }
+                t.matches(toolRe) -> {
+                    currentTool = t.substring(1).toInt()
+                }
+                layerIdx >= 0 && currentType.isNotEmpty() && currentTool >= 0 &&
+                    t.startsWith("G1 ") && t.contains(" E") -> {
+                    layerData
+                        .getOrPut(layerIdx) { mutableMapOf() }
+                        .getOrPut(currentType) { mutableSetOf() }
+                        .add(currentTool)
+                }
+            }
+        }
+
+        if (layerData.isEmpty()) return "(no extrusion lines found)"
+
+        val sortedLayers = layerData.keys.sorted()
+        val sb = StringBuilder()
+
+        fun appendLayer(idx: Int) {
+            val typeMap = layerData[idx] ?: return
+            sb.append("L$idx{")
+            typeMap.entries.sortedBy { it.key }.forEachIndexed { i, (label, tools) ->
+                if (i > 0) sb.append(", ")
+                sb.append("$label:${tools.sorted()}")
+            }
+            sb.append("}")
+        }
+
+        // First maxLayers layers with extrusion
+        val firstLayers = sortedLayers.take(maxLayers)
+        firstLayers.forEach { appendLayer(it) }
+
+        return sb.toString().ifEmpty { "(no extrusion lines found)" }
+    }
+
+    /** Collects all distinct ;TYPE: labels appearing in the G-code. */
+    private fun allTypeLabels(gcode: String): Set<String> {
+        val labels = mutableSetOf<String>()
+        for (line in gcode.lineSequence()) {
+            val t = line.trim()
+            if (t.startsWith(";TYPE:")) labels.add(t.removePrefix(";TYPE:"))
+        }
+        return labels
     }
 
     /** All tools selected anywhere in the G-code (whole-file `T\d+` line set; diagnostics). */
@@ -380,14 +457,53 @@ class TopSurfaceMixWipeTowerTest {
         val tools = topSurfaceTools(g)
         val allTools = wholeFileToolSet(g)
         val changes = toolChangesInTopBlocks(g)
+        val allLabels = allTypeLabels(g)
+        val first30Summary = perLayerToolTypeSummary(g, maxLayers = 30)
+        // Compute last-10-layers summary by finding the last 10 layer indices with extrusion
+        val last10Summary = run {
+            val layerData = mutableMapOf<Int, MutableMap<String, MutableSet<Int>>>()
+            var layerIdx = -1
+            var currentTool = -1
+            var currentType = ""
+            val toolRe = Regex("T\\d+")
+            for (line in g.lineSequence()) {
+                val t = line.trim()
+                when {
+                    t.startsWith(";LAYER_CHANGE") -> { layerIdx++; currentType = "" }
+                    t.startsWith(";TYPE:") -> { currentType = t.removePrefix(";TYPE:") }
+                    t.matches(toolRe) -> { currentTool = t.substring(1).toInt() }
+                    layerIdx >= 0 && currentType.isNotEmpty() && currentTool >= 0 &&
+                        t.startsWith("G1 ") && t.contains(" E") -> {
+                        layerData.getOrPut(layerIdx) { mutableMapOf() }
+                            .getOrPut(currentType) { mutableSetOf() }.add(currentTool)
+                    }
+                }
+            }
+            val sortedLayers = layerData.keys.sorted()
+            val lastLayers = sortedLayers.takeLast(10)
+            val sb = StringBuilder()
+            for (idx in lastLayers) {
+                val typeMap = layerData[idx] ?: continue
+                sb.append("L$idx{")
+                typeMap.entries.sortedBy { it.key }.forEachIndexed { i, (label, ts) ->
+                    if (i > 0) sb.append(", ")
+                    sb.append("$label:${ts.sorted()}")
+                }
+                sb.append("}")
+            }
+            sb.toString().ifEmpty { "(no extrusion lines found)" }
+        }
         assertTrue(
             "SAME_LAYER_DOTS mix (components T2+T3) must place BOTH T2 and T3 within " +
                 "at least one layer's ;TYPE:Top surface lines, got $mixedLayers such layers. " +
                 "Diagnostics: top-surface tool set across all layers = $tools, " +
                 "whole-file tool set = $allTools, " +
-                "layers with BOTH T2+T3 in BODY (non-top) sections = $bodyPairLayers, " +
+                "layers with BOTH T2+T3 in BODY (non-top, non-tower) sections = $bodyPairLayers, " +
                 "tool changes inside top blocks = $changes, " +
-                "per-layer top-tool sets: ${perLayerTopToolSummary(g)}",
+                "distinct TYPE labels in file = $allLabels, " +
+                "per-layer top-tool sets: ${perLayerTopToolSummary(g)}\n" +
+                "per-type-tool summary first 30 layers: $first30Summary\n" +
+                "per-type-tool summary last 10 layers: $last10Summary",
             mixedLayers >= 1,
         )
     }
