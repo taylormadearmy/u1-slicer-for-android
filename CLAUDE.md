@@ -367,6 +367,43 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
 > `UnsatisfiedLinkError` mid-load). Always rebuild from the worktree whose source
 > matches the branch you intend to ship.
 
+### Isolated worktree builds — one command (preferred for worktrees)
+
+Historically only the `u1-slicer-orca` checkout could build the `.so`, because a
+fresh worktree is missing THREE build inputs and the old workflow borrowed them:
+
+1. the `orcaslicer/` submodule (gitlink only — empty until cloned);
+2. ~1.8 GB of prebuilt arm64 deps under `extern/*/{include,lib}` — these are
+   **gitignored binaries**, never committed, so checkouts don't get them;
+3. an NDK26/Release `.cxx` cache, which binds to its own source tree.
+
+`scripts/setup-worktree-native.sh` provisions all three so any worktree builds
+on its own, with no borrowing:
+
+```bash
+scripts/setup-worktree-native.sh <worktree-path>   # defaults to the current worktree
+scripts/rebuild-native-so.sh \
+  <worktree-path>/app/.cxx/Release/<name>/arm64-v8a   # build + strip + deploy + verify
+```
+
+What it does: clones the orcaslicer submodule **from the `taylormadearmy/OrcaSlicer`
+fork** (the pin lives there, and engine patches like ColorMix are fork-only) and
+checks out the pinned SHA; creates Windows directory **junctions** from the
+worktree's `extern/<dep>/{include,lib}` into a shared neutral deps cache
+(`U1_DEPS_CACHE`, default `D:/projects/u1-native-deps-cache/extern`) so the 1.8 GB
+is shared, not duplicated, and the junctions sit exactly on the gitignored paths
+(no `git status` noise); copies the small `*_stub` shim dirs if the checkout
+lacked them; then fresh-configures a worktree-local NDK26/Release build dir.
+
+The shared cache is the single source of truth for every build input that is NOT
+in git: the big prebuilt `extern/*/{include,lib}` (junctioned) AND the small
+`*_stub` shim dirs (copied — their `include/` subdirs are caught by the
+`extern/*/include/` gitignore rule, so they can't live in git without fighting the
+negation; treating them like the big deps keeps provisioning uniform). The cache
+is populated once from a known-good `extern/` — the prebuilt deps are NOT rebuilt
+from source (`scripts/build_deps.sh` is the slow from-scratch path; the cache copy
+is the fast one).
+
 ### Using an existing build directory (preferred — faster)
 
 If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous build:
