@@ -1,6 +1,5 @@
 package com.u1.slicer.slicing
 
-import com.u1.slicer.NativeLibrary
 import com.u1.slicer.data.MixedFilamentManager
 import com.u1.slicer.data.MixedFilamentRow
 
@@ -12,8 +11,8 @@ import com.u1.slicer.data.MixedFilamentRow
  * Wired to match how the real app drives a mix recipe to the engine:
  *  - Recipe string built via MixedFilamentManager.addN() + serialize(numPhysical=4)
  *  - Per-volume extruder set via NativeLibrary.nativeSetVolumeExtruder(obj, vol, slot)
- *  - Mix slot = numPhysical + 0 + 1 = 5 (mixBase=max(4, canonicalCount)=4 for a
- *    2-canonical file; first mix id = mixBase + 1 = 5)
+ *  - Mix slot = max(NUM_PHYSICAL, canonicalCount) + 1 (e.g. 5 for a 2-canonical file
+ *    with NUM_PHYSICAL=4; first mix id = mixBase + 1 = 5)
  *
  * Mirrors MixSlotBlendVerificationTest and MixSlotObjectAssignBlendGateTest for the
  * recipe-building and volume-assignment patterns.
@@ -33,12 +32,17 @@ object SurfaceColorMixTestSupport {
      * distributionMode: how the engine distributes the components — LAYER_CYCLE
      *          alternates whole layers; SAME_LAYER_DOTS splits infill by component
      *          within a layer (wipe-tower-safe).
+     * canonicalCount: number of canonical filament slots the file declares (default 2).
+     *          Determines mixBase = max(NUM_PHYSICAL, canonicalCount); the mix slot is
+     *          mixBase + 1. Pass a higher value for files with more canonical slots so
+     *          the computed mix slot does not collide with an existing file slot.
      */
     fun buildRecipeAndSlot(
         componentSlots: List<Int>,
         weights: List<Int>,
         distributionMode: MixedFilamentRow.MixDistributionMode =
             MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+        canonicalCount: Int = 2,
     ): Pair<Int, String> {
         val mgr = MixedFilamentManager(
             loadProject = { emptyList() },
@@ -52,22 +56,8 @@ object SurfaceColorMixTestSupport {
             distributionMode = distributionMode,
         )
         val recipe = mgr.serialize(numPhysicalFilaments = NUM_PHYSICAL)
-        // Mix slot: mixBase = max(NUM_PHYSICAL, canonicalCount). For a 2-canonical file
-        // canonicalCount=2 so mixBase=NUM_PHYSICAL=4; first mix id = 5.
-        val mixSlot = NUM_PHYSICAL + 0 + 1  // = 5
+        val mixBase = maxOf(NUM_PHYSICAL, canonicalCount)
+        val mixSlot = mixBase + 1
         return Pair(mixSlot, recipe)
-    }
-
-    /**
-     * Assigns every volume of every object in the currently-loaded model to [mixSlot]
-     * via the native extruder-override path (mirrors SlicerViewModel.setObjectFilament /
-     * setVolumeExtruder called from the FilamentChooserDialog onPick path).
-     */
-    fun assignWholeModel(lib: NativeLibrary, mixSlot: Int) {
-        val objCount = lib.nativeGetObjectCount()
-        for (o in 0 until objCount) {
-            val vols = lib.nativeGetVolumeCount(o)
-            for (v in 0 until vols) lib.nativeSetVolumeExtruder(o, v, mixSlot)
-        }
     }
 }
