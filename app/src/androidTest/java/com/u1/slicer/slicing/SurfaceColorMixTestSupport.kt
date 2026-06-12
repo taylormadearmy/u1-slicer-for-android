@@ -36,6 +36,9 @@ object SurfaceColorMixTestSupport {
      *          Determines mixBase = max(NUM_PHYSICAL, canonicalCount); the mix slot is
      *          mixBase + 1. Pass a higher value for files with more canonical slots so
      *          the computed mix slot does not collide with an existing file slot.
+     * topMixMode / fineTopLines / ironingGlaze: per-row BETA top-surface settings
+     *          (recipe tokens t/f/i) applied via updateTopSurfaceSettings before
+     *          serialization. Defaults mirror the row defaults (STRIPES / off / off).
      */
     fun buildRecipeAndSlot(
         componentSlots: List<Int>,
@@ -43,6 +46,9 @@ object SurfaceColorMixTestSupport {
         distributionMode: MixedFilamentRow.MixDistributionMode =
             MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
         canonicalCount: Int = 2,
+        topMixMode: MixedFilamentRow.TopMixMode = MixedFilamentRow.TopMixMode.STRIPES,
+        fineTopLines: Boolean = false,
+        ironingGlaze: Boolean = false,
     ): Pair<Int, String> {
         val mgr = MixedFilamentManager(
             loadProject = { emptyList() },
@@ -50,10 +56,16 @@ object SurfaceColorMixTestSupport {
             saveProject = {},
             saveLibrary = {},
         )
-        mgr.addN(
+        val row = mgr.addN(
             components = componentSlots,
             weights = weights,
             distributionMode = distributionMode,
+        )
+        mgr.updateTopSurfaceSettings(
+            id = row.id,
+            topMixMode = topMixMode,
+            fineTopLines = fineTopLines,
+            ironingGlaze = ironingGlaze,
         )
         val recipe = mgr.serialize(numPhysicalFilaments = NUM_PHYSICAL)
         val mixBase = maxOf(NUM_PHYSICAL, canonicalCount)
