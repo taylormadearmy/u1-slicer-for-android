@@ -108,8 +108,8 @@ class MixedFilamentManagerTest {
             distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
         val out = mgr.serialize(numPhysicalFilaments = 4)
         // Engine format (mirrors libslic3r/MixedFilament.cpp::serialize_custom_entries):
-        //   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g<ids>,w<weights>,m<dist>,z0,xa0,xb0,d0,o0,u<stable_id>
-        assertEquals("1,2,1,1,50,0,g12,w50/50,m0,z0,xa0,xb0,d0,o0,u${r.id}", out)
+        //   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g<ids>,w<weights>,m<dist>,z0,xa0,xb0,d0,o0,t<mode>,f<fine>,i<glaze>,u<stable_id>
+        assertEquals("1,2,1,1,50,0,g12,w50/50,m0,z0,xa0,xb0,d0,o0,t0,f0,i0,u${r.id}", out)
     }
 
     @Test
@@ -119,9 +119,9 @@ class MixedFilamentManagerTest {
         val r2 = mgr.add(2, 3, 33, MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS)
         val out = mgr.serialize(numPhysicalFilaments = 4)
         val expected =
-            "1,2,1,1,50,0,g12,w50/50,m0,z0,xa0,xb0,d0,o0,u${r1.id}" +
+            "1,2,1,1,50,0,g12,w50/50,m0,z0,xa0,xb0,d0,o0,t0,f0,i0,u${r1.id}" +
             ";" +
-            "2,3,1,1,33,0,g23,w67/33,m1,z0,xa0,xb0,d0,o0,u${r2.id}"
+            "2,3,1,1,33,0,g23,w67/33,m1,z0,xa0,xb0,d0,o0,t0,f0,i0,u${r2.id}"
         assertEquals(expected, out)
     }
 
@@ -170,7 +170,7 @@ class MixedFilamentManagerTest {
             saveLibrary = {},
         )
         val out = mgr.serialize(numPhysicalFilaments = 2)
-        assertEquals("1,2,1,1,25,0,g12,w75/25,m0,z0,xa0,xb0,d0,o0,u200", out)
+        assertEquals("1,2,1,1,25,0,g12,w75/25,m0,z0,xa0,xb0,d0,o0,t0,f0,i0,u200", out)
     }
 
     @Test

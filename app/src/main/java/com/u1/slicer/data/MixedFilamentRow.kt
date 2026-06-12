@@ -17,6 +17,10 @@ data class MixedFilamentRow(
     val distributionMode: MixDistributionMode,
     val label: String,
     val inLibrary: Boolean,
+    // BETA per-row top-surface mixing settings — defaults preserve v1 behaviour.
+    val topMixMode: TopMixMode = TopMixMode.STRIPES,
+    val fineTopLines: Boolean = false,
+    val ironingGlaze: Boolean = false,
 ) {
     init {
         require(components.size in 2..4) { "a mix has 2..4 components, got ${components.size}" }
@@ -33,6 +37,16 @@ data class MixedFilamentRow(
         LAYER_CYCLE,
         /** Same-layer dot pattern: each layer interleaves components in XY. */
         SAME_LAYER_DOTS,
+    }
+
+    /** How a mix divides its TOP-surface lines between components (BETA). */
+    enum class TopMixMode {
+        /** v1 behaviour: whole lines round-robin across components. */
+        STRIPES,
+        /** Each line splits at the cumulative-weight boundary, brick-staggered. */
+        PROPORTIONAL,
+        /** Lines chopped to dashes assigned by position-based halftone. */
+        DITHER,
     }
 
     companion object {

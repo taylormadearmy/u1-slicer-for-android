@@ -194,6 +194,10 @@ data class SessionState(
                     put("distributionMode", m.distributionMode.name)
                     put("label", m.label)
                     put("inLibrary", m.inLibrary)
+                    // BETA top-surface settings (absent in old saves -> defaults on read)
+                    put("topMixMode", m.topMixMode.name)
+                    put("fineTopLines", m.fineTopLines)
+                    put("ironingGlaze", m.ironingGlaze)
                 })
             }
             obj.put("projectMixes", mixesArray)
@@ -272,8 +276,16 @@ data class SessionState(
                     (0 until mixesArray.length()).map { i ->
                         val o = mixesArray.getJSONObject(i)
                         val mode = MixedFilamentRow.MixDistributionMode.valueOf(o.getString("distributionMode"))
+                        // BETA top-surface settings — absent keys (old saves) fall back to defaults.
+                        val topMixMode = try {
+                            MixedFilamentRow.TopMixMode.valueOf(o.optString("topMixMode", MixedFilamentRow.TopMixMode.STRIPES.name))
+                        } catch (e: IllegalArgumentException) {
+                            MixedFilamentRow.TopMixMode.STRIPES
+                        }
+                        val fineTopLines = o.optBoolean("fineTopLines", false)
+                        val ironingGlaze = o.optBoolean("ironingGlaze", false)
                         val comps = o.optJSONArray("components")
-                        if (comps != null) {
+                        val row = if (comps != null) {
                             val weightsArr = o.getJSONArray("weights")
                             MixedFilamentRow(
                                 id = o.getLong("id"),
@@ -294,6 +306,7 @@ data class SessionState(
                                 inLibrary = o.getBoolean("inLibrary"),
                             )
                         }
+                        row.copy(topMixMode = topMixMode, fineTopLines = fineTopLines, ironingGlaze = ironingGlaze)
                     }
 
                 SessionState(

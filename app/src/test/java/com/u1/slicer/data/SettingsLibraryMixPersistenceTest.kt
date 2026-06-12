@@ -32,6 +32,45 @@ class SettingsLibraryMixPersistenceTest {
     }
 
     @Test
+    fun `encodeLibraryMixes round-trips top-surface settings`() {
+        val rows = listOf(
+            MixedFilamentRow.fromLegacy(
+                id = 7L, componentA = 1, componentB = 3, mixBPercent = 40,
+                distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+                label = "Glazed", inLibrary = true,
+            ).copy(
+                topMixMode = MixedFilamentRow.TopMixMode.DITHER,
+                fineTopLines = true,
+                ironingGlaze = true,
+            ),
+        )
+        val decoded = SettingsRepository.decodeLibraryMixes(SettingsRepository.encodeLibraryMixes(rows))
+        assertEquals(rows, decoded)
+        assertEquals(MixedFilamentRow.TopMixMode.DITHER, decoded[0].topMixMode)
+        assertEquals(true, decoded[0].fineTopLines)
+        assertEquals(true, decoded[0].ironingGlaze)
+    }
+
+    @Test
+    fun `decodeLibraryMixes defaults top-surface settings when keys absent (old save)`() {
+        // Encode a row, then strip the new keys to simulate a pre-feature save.
+        val rows = listOf(
+            MixedFilamentRow.fromLegacy(
+                id = 8L, componentA = 1, componentB = 2, mixBPercent = 50,
+                distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+                label = "Old", inLibrary = true,
+            ),
+        )
+        val arr = org.json.JSONArray(SettingsRepository.encodeLibraryMixes(rows))
+        val obj = arr.getJSONObject(0)
+        obj.remove("topMixMode"); obj.remove("fineTopLines"); obj.remove("ironingGlaze")
+        val decoded = SettingsRepository.decodeLibraryMixes(arr.toString())
+        assertEquals(MixedFilamentRow.TopMixMode.STRIPES, decoded[0].topMixMode)
+        assertEquals(false, decoded[0].fineTopLines)
+        assertEquals(false, decoded[0].ironingGlaze)
+    }
+
+    @Test
     fun `decodeLibraryMixes tolerates malformed input`() {
         // Corrupt DataStore values (e.g. partial writes) must not crash.
         assertEquals(emptyList<MixedFilamentRow>(), SettingsRepository.decodeLibraryMixes("not-json"))
