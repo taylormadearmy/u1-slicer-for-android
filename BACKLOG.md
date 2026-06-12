@@ -4,6 +4,12 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### F97: ColorMix — within-layer top-surface mixing + per-mix modes (GitHub #TBD) — DONE on `feature/colormix-topsurface` (unreleased)
+- **v1 (top-surface mixer)**: top solid infill of any mix region splits per printed line across the mix components, routed via the engine's wipe-tower-safe by-tool islands + ToolOrdering registration; defensive planned-tools gate makes the fork port's `append_tcr` crash class structurally impossible. Red→green `TopSurfaceMixWipeTowerTest` (wipe tower ON).
+- **Per-mix modes (BETA, all default off / STRIPES)**: per-`MixedFilamentRow` settings — `topMixMode` STRIPES/PROPORTIONAL (weighted in-line boundary, brick-staggered)/DITHER (1.5mm dashes, ordinal 4×4 Bayer halftone), `fineTopLines` (region `top_surface_line_width` → nozzle/2), `ironingGlaze` (force top-surface ironing, ironing pass split across components, phase-offset). Carried as `t/f/i` tokens in `mixed_filament_definitions`; editor section "Top surface mixing (BETA)"; settings are per-mix so multiple objects on one plate can A/B modes in a single print.
+- **Verification**: TopSurfaceMixModesTest 5/5 + TopSurfaceMixWipeTowerTest 2/2 + MixSlot*×7 + SemmSlicingTest + SlicingIntegrationTest (85 instrumented total) + full JVM suite, all green on Pixel 8a. Engine submodule branch `colormix-topsurface` @32eac5e913. APK staged: `G:\My Drive\claude\u1-slicer-colormix-modes-beta-f9caea5.apk`. Awaiting Kevin's print verdict; GitHub issue + release at merge time.
+- **Follow-ups noted in review (non-blocking)**: `make_ironing` nozzle lookup uses element-0 fallback for virtual mix ids (invisible on U1's uniform nozzles); glaze phase offset only meaningful for STRIPES tops; Bayer 4×4 floors components with cumulative share <1/32 in dither.
+
 ### B143: G-code preview layer label tops out at N-1/N — final layer looks unreachable (GitHub #TBD) — FIXED on `feature/colormix-topsurface`
 - **Symptoms** (Kevin, 2026-06-12, 122-layer calib cube): the inline Preview slider at maximum reads "Layer 121/122", so the topmost layer — the only one with `;TYPE:Top surface` on a cube — appears unviewable.
 - **Root cause**: `MainActivity` scaled the **0-based** slider index by `displayLayerCount/gcodeLayerCount`, so the label could never reach the full count. Geometry renders all layers (GcodeParser flushes the trailing layer at parse end) — label-only off-by-one.
