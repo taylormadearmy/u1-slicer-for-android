@@ -5131,9 +5131,9 @@ fun InlineGcodePreview(
             com.u1.slicer.ui.resolveInitialLayerRange(initialLayerRange, gcodeLayerCount).second
         )
     }
-    val displayLayer = if (gcodeLayerCount > 0)
-        ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
-    else 1
+    // B143: 1-based mapping so the slider's top position reads N/N, not N-1/N.
+    val displayLayer =
+        com.u1.slicer.ui.computeDisplayLayer(maxLayer, displayLayerCount, gcodeLayerCount)
 
     val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
         normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
