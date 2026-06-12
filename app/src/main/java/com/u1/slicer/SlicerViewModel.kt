@@ -701,8 +701,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         components: List<Int>,
         weights: List<Int>,
         mode: MixedFilamentRow.MixDistributionMode,
+        topMixMode: MixedFilamentRow.TopMixMode = MixedFilamentRow.TopMixMode.STRIPES,
+        fineTopLines: Boolean = false,
+        ironingGlaze: Boolean = false,
     ) {
-        mixedFilamentManager.addN(components, weights, mode)
+        val row = mixedFilamentManager.addN(components, weights, mode)
+        mixedFilamentManager.updateTopSurfaceSettings(row.id, topMixMode, fineTopLines, ironingGlaze)
     }
 
     /** Edit an existing N-component mix slot in place. */
@@ -711,8 +715,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         components: List<Int>,
         weights: List<Int>,
         mode: MixedFilamentRow.MixDistributionMode,
+        topMixMode: MixedFilamentRow.TopMixMode = MixedFilamentRow.TopMixMode.STRIPES,
+        fineTopLines: Boolean = false,
+        ironingGlaze: Boolean = false,
     ) {
         mixedFilamentManager.editN(id, components, weights, mode)
+        mixedFilamentManager.updateTopSurfaceSettings(id, topMixMode, fineTopLines, ironingGlaze)
     }
 
     // F89: toast events surfaced to MainActivity (Toast.makeText). One-shot strings.

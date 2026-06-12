@@ -246,12 +246,12 @@ fun U1NavGraph(
                     physicalFilamentColours = physicalColours,
                     physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
                     editingRow = editMixRow,
-                    onConfirmN = { components, weights, mode ->
+                    onConfirmN = { components, weights, mode, topMixMode, fineTopLines, ironingGlaze ->
                         val editing = editMixRow
                         if (editing != null) {
-                            viewModel.editMixN(editing.id, components, weights, mode)
+                            viewModel.editMixN(editing.id, components, weights, mode, topMixMode, fineTopLines, ironingGlaze)
                         } else {
-                            viewModel.createMixN(components, weights, mode)
+                            viewModel.createMixN(components, weights, mode, topMixMode, fineTopLines, ironingGlaze)
                         }
                     },
                     onDelete = editMixRow?.let { row ->
