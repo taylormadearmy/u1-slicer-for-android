@@ -48,14 +48,14 @@ import java.io.File
  *    run count must EXCEED the stripes control's for the same layer. Today
  *    PROPORTIONAL degrades to stripes → identical run counts → RED on the gate.
  *    Both slices happen inside the test.
- *  - Test 2 (DITHER): each scattered halftone dash is its own travel-separated
- *    run (a tool's dashes are non-adjacent), so the dither slice's MIX-TOOL
- *    (T2/T3) top-block run count must be ≥ 2× the stripes control's. TOTALS are
- *    NOT gated: they were diluted by the unmixed second cube's constant baseline
- *    runs and by small-top layers where the sliver-merge guard emits whole lines
- *    (identical to stripes there) — see the test's own KDoc for the fixture
- *    math. Today dither degrades to stripes → equal run counts → RED on the
- *    gate.
+ *  - Test 2 (DITHER): the gate is the ABSENCE of long mix-tool runs — dither's
+ *    1.5mm halftone dashes (plus sliver merges) can never exceed 3mm of XY
+ *    path, while stripes provably emits long mid-diagonal top strokes (>3mm).
+ *    Any long run in the dither slice means a whole line leaked through, i.e.
+ *    dithering did not engage. Count- and ratio-based gates were all abandoned
+ *    after measurement — see the test's own KDoc for the full gate history
+ *    (alternation → total-run ratio → mix-tool-run ratio → short-run ratio →
+ *    long-run absence) so it is never re-litigated.
  *  - Test 3 (fine): the width metric prefers explicit `;WIDTH:<mm>` annotations
  *    inside top blocks (Orca's G-code processor annotations); if a slice carries
  *    none, it falls back to the E-per-XY-mm ratio of positive-E moves inside top
@@ -167,59 +167,78 @@ class TopSurfaceMixModesTest {
         perLayerTopStats(gcode).values.count { a in it.tools && b in it.tools }
 
     /**
-     * Total travel-separated extrusion-run count inside ";TYPE:Top surface" blocks
-     * across the whole file (sum of [LayerTopStats.runCount] over all layers).
-     * NOTE: do NOT replace this with tool-CHANGE counting inside top blocks — the
-     * engine's per-tool island routing makes every top block single-tool, so that
-     * count is structurally always 0 in every mode (see class KDoc).
+     * Per-run XY path lengths inside ";TYPE:Top surface" blocks for the
+     * mix-component [tools]: same run definition as [perLayerTopStats]
+     * (a run is a maximal sequence of extruding G1 moves not interrupted by a
+     * travel, tool change, ;TYPE: section change, or layer boundary), but each
+     * run's total XY path length is accumulated (X/Y coordinates persist when
+     * omitted from a move, per G-code semantics) and returned as one Double per
+     * run. Callers partition by length: runs <= 3mm are short (dither's 1.5mm
+     * halftone dashes plus sliver merges can never exceed 3mm — and 45° fill on
+     * a small square also yields many legitimately short corner strokes even
+     * under stripes), while runs > 3mm are whole mid-diagonal top lines that a
+     * working dither must eliminate entirely.
      */
-    private fun totalTopBlockRunCount(gcode: String): Int =
-        perLayerTopStats(gcode).values.sumOf { it.runCount }
-
-    /**
-     * Travel-separated extrusion-run count inside ";TYPE:Top surface" blocks,
-     * counting ONLY runs whose active tool is in [tools] (the mix-component
-     * tools). Same run definition as [perLayerTopStats] — a run is a maximal
-     * sequence of extruding G1 moves not interrupted by a travel, tool change,
-     * ;TYPE: section change, or layer boundary — but the unmixed second cube's
-     * constant baseline runs (other tools) are excluded, isolating the feature
-     * signal from the fixture's dilution (see the dither test's KDoc).
-     */
-    private fun mixToolTopBlockRunCount(gcode: String, tools: Set<Int>): Int {
+    private fun mixToolRunLengths(
+        gcode: String,
+        tools: Set<Int>,
+    ): List<Double> {
         var currentTool = -1
         var inTop = false
         var runOpen = false
         var runTool = -1
-        var count = 0
+        var runLen = 0.0
+        val lengths = mutableListOf<Double>()
+        var x = 0.0
+        var y = 0.0
+
+        fun closeRun() {
+            if (runOpen) lengths.add(runLen)
+            runOpen = false
+            runLen = 0.0
+        }
+
         for (line in gcode.lineSequence()) {
             val t = line.trim()
+            // Coordinate tracking for every motion line (coordinates persist when
+            // omitted), so each extruding move's segment length is last->new XY.
+            var dx = 0.0
+            var dy = 0.0
+            if (t.startsWith("G1") || t.startsWith("G0")) {
+                val nx = xRe.find(t)?.groupValues?.get(1)?.toDoubleOrNull()
+                val ny = yRe.find(t)?.groupValues?.get(1)?.toDoubleOrNull()
+                if (nx != null) { dx = nx - x; x = nx }
+                if (ny != null) { dy = ny - y; y = ny }
+            }
             when {
                 t.startsWith(";LAYER_CHANGE") -> {
-                    runOpen = false
+                    closeRun()
                     inTop = false
                 }
                 t.startsWith(";TYPE:") -> {
+                    closeRun()
                     inTop = t.equals(";TYPE:Top surface", ignoreCase = true)
-                    runOpen = false
                 }
                 t.matches(toolRe) -> {
                     currentTool = t.substring(1).toInt()
                 }
                 inTop && currentTool in tools && isExtrudingMove(t) -> {
                     if (!runOpen || runTool != currentTool) {
-                        count++
+                        closeRun()
                         runTool = currentTool
                         runOpen = true
                     }
+                    runLen += Math.hypot(dx, dy)
                 }
                 // Travel (G0, or G1 without positive E) — or an extruding move by a
                 // non-mix tool — inside a top block ends the run.
                 inTop && (t.startsWith("G0") || t.startsWith("G1")) -> {
-                    runOpen = false
+                    closeRun()
                 }
             }
         }
-        return count
+        closeRun()
+        return lengths
     }
 
     /** Tools seen on extrusion lines within ";TYPE:Top surface" blocks. */
@@ -473,56 +492,82 @@ class TopSurfaceMixModesTest {
     }
 
     /**
-     * RED gate 2 — DITHER chops lines into halftone dashes: every scattered dash
-     * is its own travel-separated extrusion run (a tool's dashes are non-adjacent),
-     * so the dither slice's MIX-TOOL (T2/T3) top-block run count must be >= 2x the
-     * STRIPES control's mix-tool count. Tool-alternation counting inside top blocks
-     * is NOT used because per-tool island routing makes it structurally always 0 in
-     * every mode (see class KDoc). Today dither degrades to stripes → equal run
-     * counts → RED (control mix-tool run count asserted > 0 first so 2x0 can't
-     * trivially pass).
+     * Gate 2 — DITHER scatters top lines into halftone dashes: the airtight
+     * signature is the ABSENCE of LONG mix-tool runs. A 1.5mm dash plus the
+     * sliver-merge guard can never produce a run exceeding 3mm of XY path, so a
+     * working dither leaves ZERO long (>3mm) mix-tool runs in top blocks; any
+     * long run means a whole top line leaked through, i.e. dithering did not
+     * engage. The stripes control provably HAS long runs (mid-diagonal strokes
+     * of the 45° monotonic fill), which the precondition asserts so the gate
+     * is meaningful on this fixture.
      *
-     * Gate calibration — why MIX-TOOL-ONLY runs, not totals: the earlier total-run
-     * metric was diluted by (a) the UNMIXED second cube's constant baseline runs
-     * (identical in both slices, printed by non-mix tools) and (b) layers where
-     * the mixed cube's top region is too small to dash (the sliver-merge guard
-     * emits whole lines → identical to stripes there, e.g. layer L9 on this
-     * fixture). Measured on the working engine at a 1.0mm dash: per-object
-     * analysis showed the MIXED cube's runs going ~23/layer → ~87-100/layer
-     * (≈4x) on big top layers, while the diluted TOTALS only reached
-     * dither=337 vs control=228 (≈1.48x). Counting runs only for the mix
-     * component tools T2/T3 isolates the feature signal from both dilution
-     * sources, so the honest 2x gate holds with margin. The broken spatial-cell
-     * Bayer behaviour (cells >= line pitch → adjacent lines same tool → monotonic
-     * fill MERGED lines into fewer runs) measured 0.92x on totals and also fails
-     * this mix-tool gate. Both metrics are reported in the failure diagnostics.
+     * Precondition: control long-run count (>3.0mm) >= 10 — the fixture's top
+     * fill must contain long strokes for "dither has none" to mean anything.
+     * Gate: dither long-run count (>3.0mm) == 0.
+     *
+     * GATE HISTORY — measured on-device, do NOT re-litigate or weaken:
+     *  1. Alternation counting (T-line transitions inside top blocks):
+     *     structurally ALWAYS 0 in every mode — per-tool island routing makes
+     *     every top block single-tool. Cannot discriminate anything.
+     *  2. Total-run-count ratio (dither/control >= 2x over ALL top runs):
+     *     diluted by the unmixed second cube's constant baseline runs and by
+     *     undithered small-top layers (sliver-merge emits whole lines there,
+     *     identical to stripes). Measured 0.92x with the broken spatial-cell
+     *     Bayer (cells >= line pitch merged adjacent lines into the same tool).
+     *  3. Mix-tool-run-count ratio (T2/T3 runs only, >= 2x): removed baseline
+     *     dilution but still capped by control fragmentation — the stripes
+     *     control already splits into per-line runs (alternating tools make
+     *     every top line its own travel-separated run), so dashing can only
+     *     multiply counts by ~dashes-per-line/2. Measured 1.47x (1.5mm dash)
+     *     and 1.75x (1.0mm dash) with the working ordinal-Bayer engine — never
+     *     reaching 2x even though per-layer dash runs verifiably rose ~4x on
+     *     big layers.
+     *  4. Short-run ratio (share of mix-tool runs <= 3mm): the control is
+     *     LEGITIMATELY ~82% short (measured 145 total / 119 short / 26 long) —
+     *     45° monotonic fill on a 10mm square yields many short corner strokes
+     *     under stripes too — so short-share ratios have almost no headroom.
+     *  5. Long-run ABSENCE (this gate): direct and dilution-free. Measured:
+     *     control = 26 long runs (>3mm mid-diagonal strokes) of 145 mix-tool
+     *     runs; dither = 213 runs, ALL <= 3mm, ZERO long. Broken behaviours
+     *     measured along the way: spatial-cell Bayer 0.92x on totals;
+     *     dither-off engine = output identical to stripes.
+     * The behaviour target never changed (prove WITHIN-LINE dashing); only the
+     * metric did. Short/total run counts are kept in the failure DIAGNOSTICS
+     * below for context.
      */
     @Test
-    fun dither_topRunCountFarExceedsStripes() {
+    fun dither_topLinesScatterIntoShortDashes() {
         val mixTools = setOf(2, 3)
         val controlG = sliceWithSettings(MixedFilamentRow.TopMixMode.STRIPES)
         val mixedG = sliceWithSettings(MixedFilamentRow.TopMixMode.DITHER)
-        val controlMixRuns = mixToolTopBlockRunCount(controlG, mixTools)
-        val ditherMixRuns = mixToolTopBlockRunCount(mixedG, mixTools)
-        val controlTotalRuns = totalTopBlockRunCount(controlG)
-        val ditherTotalRuns = totalTopBlockRunCount(mixedG)
+        val controlLens = mixToolRunLengths(controlG, mixTools)
+        val ditherLens = mixToolRunLengths(mixedG, mixTools)
+        val longThresholdMm = 3.0
+        val controlLong = controlLens.count { it > longThresholdMm }
+        val ditherLong = ditherLens.count { it > longThresholdMm }
+        val controlShort = controlLens.size - controlLong
+        val ditherShort = ditherLens.size - ditherLong
         assertTrue(
-            "stripes control must have mix-tool (T2/T3) travel-separated extrusion " +
-                "runs inside top blocks (precondition), got $controlMixRuns mix-tool " +
-                "runs (total runs=$controlTotalRuns); " +
+            "precondition: the stripes control's top fill must contain long " +
+                "(>${longThresholdMm}mm) mix-tool (T2/T3) strokes for the dither " +
+                "gate to mean anything — expected >= 10, got $controlLong long of " +
+                "${controlLens.size} total mix-tool runs (short=$controlShort); " +
                 "top tools=${topSurfaceTools(controlG)}",
-            controlMixRuns > 0,
+            controlLong >= 10,
         )
         assertTrue(
-            "DITHER must scatter top lines into dashes: mix-tool (T2/T3) top-block " +
-                "extrusion-run count must be >= 2x the stripes control's: " +
-                "ditherMixRuns=$ditherMixRuns vs controlMixRuns=$controlMixRuns " +
-                "(needed >= ${2 * controlMixRuns}); totals for reference: " +
-                "ditherTotal=$ditherTotalRuns vs controlTotal=$controlTotalRuns. " +
+            "DITHER must leave ZERO long (>${longThresholdMm}mm) mix-tool (T2/T3) " +
+                "runs in top blocks — 1.5mm dashes + sliver-merge can never exceed " +
+                "3mm, so any long run means whole lines leaked through (dither not " +
+                "engaged). Got $ditherLong long runs, lengths=" +
+                "${ditherLens.filter { it > longThresholdMm }.map { "%.2f".format(it) }}. " +
+                "Diagnostics: dither runs total=${ditherLens.size} short=$ditherShort | " +
+                "control runs total=${controlLens.size} short=$controlShort " +
+                "long=$controlLong. " +
                 "dither top tools=${topSurfaceTools(mixedG)} | " +
                 "control per-layer: ${statsSummary(perLayerTopStats(controlG))} | " +
                 "dither per-layer: ${statsSummary(perLayerTopStats(mixedG))}",
-            ditherMixRuns >= 2 * controlMixRuns,
+            ditherLong == 0,
         )
     }
 
