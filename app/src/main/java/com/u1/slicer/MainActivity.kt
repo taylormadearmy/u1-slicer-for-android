@@ -788,9 +788,10 @@ class MainActivity : ComponentActivity() {
                         }
                     val mixSlotSpace = mixSlotMapping != null
                     val plateNarrowed: Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? =
-                        remember(canonical, threeMfInfo, viewModel.recoveryPlateId, parsedGcodeForDialog, extruderPresets, mixSlotMapping) {
-                            // B144: mix slices win — show physical slots, not file filaments.
-                            mixSlotMapping?.let { return@remember it }
+                        remember(canonical, threeMfInfo, viewModel.recoveryPlateId, parsedGcodeForDialog, extruderPresets) {
+                            // B144: the mix physical-slot list is applied per-action below
+                            // (PrintAndUpload only). Upload-Only ships the canonical body for
+                            // the printer to map, so it keeps the canonical filament view.
                             val full = canonical ?: return@remember null
                             val perMm = parsedGcodeForDialog?.perExtruderFilamentMm
                             val plateFileIndices = computePlateFileIndices(
@@ -896,6 +897,11 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                     PendingMappingSend.Action.PrintAndUpload -> {
+                                // B144: mix slices win for Print — show physical slots
+                                // (the body is already physical-slot space), not file
+                                // filaments. Falls back to the canonical narrowing.
+                                val (narrowedList, plateFileIndices) =
+                                    mixSlotMapping ?: plateNarrowed
                                 // Phase 2.5 final: slices produce canonical
                                 // (file-filament-relative) T-indices. The
                                 // dialog now shows only the plate's

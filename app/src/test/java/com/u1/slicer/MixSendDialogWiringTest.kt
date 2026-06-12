@@ -50,13 +50,15 @@ class MixSendDialogWiringTest {
                 "dialog model for a mix-tool-space slice.",
             src.contains("buildMixSlotMapping("),
         )
-        // The plateNarrowed remember must consult the mix mapping first.
+        // The PrintAndUpload action must consult the mix mapping first so a mix
+        // slice shows physical slots; Upload-Only deliberately keeps the canonical
+        // list (it ships the canonical body for the printer to map).
         val plateNarrowedIdx = src.indexOf("val plateNarrowed:")
         assertTrue("plateNarrowed remember must still exist.", plateNarrowedIdx >= 0)
         assertTrue(
-            "The plateNarrowed remember must short-circuit to the mix mapping " +
-                "(`mixSlotMapping?.let`) so a mix slice shows physical slots first.",
-            src.contains("mixSlotMapping?.let"),
+            "The Print path must prefer the mix mapping (`mixSlotMapping ?: plateNarrowed`) " +
+                "so a mix slice shows physical slots first.",
+            src.contains("mixSlotMapping ?: plateNarrowed"),
         )
     }
 }
