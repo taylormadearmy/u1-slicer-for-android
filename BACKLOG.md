@@ -4,6 +4,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B143: G-code preview layer label tops out at N-1/N — final layer looks unreachable (GitHub #TBD) — FIXED on `feature/colormix-topsurface`
+- **Symptoms** (Kevin, 2026-06-12, 122-layer calib cube): the inline Preview slider at maximum reads "Layer 121/122", so the topmost layer — the only one with `;TYPE:Top surface` on a cube — appears unviewable.
+- **Root cause**: `MainActivity` scaled the **0-based** slider index by `displayLayerCount/gcodeLayerCount`, so the label could never reach the full count. Geometry renders all layers (GcodeParser flushes the trailing layer at parse end) — label-only off-by-one.
+- **Fix**: `computeDisplayLayer()` in `ui/GcodeViewer3DScreen.kt` scales the 1-based position (extremes map to exactly 1 and N); 6 unit tests in `GcodeLayerRangeTest`. GitHub issue still to be filed (issue creation was permission-blocked in-session; file at merge time).
+
 ### B142: Mix blend colours computed from model palette; mix-assigned part chip grey/PLA (GitHub #179) — FIXED on `feature/filament-library`, RELEASED v3.2.0-beta (released 2026-06-10)
 - **Symptoms** (follow-on from B140/B141, same sanity test): (1) a mix-assigned part rendered the wrong colour on the Prepare preview (grey-pink) and the sliced G-code preview showed grey-ish blend layers — `loadedModelMixColors` blended from the model-narrowed preview palette, so on a 2-filament 3MF mix components E3/E4 fell back to `#888888`; (2) the edit panel's Filament row showed a grey swatch + "PLA" for a mix-assigned object — `resolveFilamentChip` had no mix-slot branch (plus a pre-existing 0-based/1-based off-by-one in its STL preset-material lookup).
 - **Fix**: blends computed from `extruderPresets` (loaded printer filaments) via `FilamentMixPredictor`; chip resolver maps mix ids (`> max(numPhysical, canonicalSize)`) through `MixSlotOrdering.activeOrder` to the blend colour + "Mix" label. Guards in `MixSwatchPaletteSourceTest` (3 new tests).
