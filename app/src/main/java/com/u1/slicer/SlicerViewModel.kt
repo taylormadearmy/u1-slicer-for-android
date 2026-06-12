@@ -709,15 +709,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         mixedFilamentManager.updateTopSurfaceSettings(row.id, topMixMode, fineTopLines, ironingGlaze)
     }
 
-    /** Edit an existing N-component mix slot in place. */
+    /**
+     * Edit an existing N-component mix slot in place.
+     *
+     * The top-surface params are deliberately NOT defaulted: an edit always
+     * rewrites all three via updateTopSurfaceSettings, so a defaulted call
+     * would silently reset a mix's saved settings to STRIPES/false/false.
+     * Callers must pass the current (or newly chosen) values explicitly.
+     */
     fun editMixN(
         id: Long,
         components: List<Int>,
         weights: List<Int>,
         mode: MixedFilamentRow.MixDistributionMode,
-        topMixMode: MixedFilamentRow.TopMixMode = MixedFilamentRow.TopMixMode.STRIPES,
-        fineTopLines: Boolean = false,
-        ironingGlaze: Boolean = false,
+        topMixMode: MixedFilamentRow.TopMixMode,
+        fineTopLines: Boolean,
+        ironingGlaze: Boolean,
     ) {
         mixedFilamentManager.editN(id, components, weights, mode)
         mixedFilamentManager.updateTopSurfaceSettings(id, topMixMode, fineTopLines, ironingGlaze)
