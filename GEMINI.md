@@ -1,42 +1,101 @@
 # u1-slicer-orca — Gemini Instructions
 
-**Read `CLAUDE.md` for full project context.** This file contains architecture, conventions, build commands, test suite breakdown, and the native rebuild procedure.
+Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders), powered by OrcaSlicer 2.2.4. Kotlin + Jetpack Compose + native C++ via JNI. App ID: `com.u1.slicer.orca`.
 
-## Quick reference
+**`AGENTS.md`** contains the complete quick reference for builds, testing, native rebuilds, and architecture. **`CLAUDE.md`** has the detailed test-class listing. Read both as needed — this file covers the same content with Gemini-specific notes.
 
-**Build & install:**
+---
+
+## Build
+
 ```bash
-./gradlew installDebug
+./gradlew installDebug          # Build and install on connected device
+./gradlew assembleDebug         # Build APK only
+./gradlew assembleRelease       # Release APK
 ```
 
-**Test:**
+Use `--no-daemon` if Gradle daemon OOMs. The native `.so` is pre-built — normal builds do not need the NDK.
+
+**SDK locations:** `ANDROID_HOME=D:\Android\Sdk`, `GRADLE_USER_HOME=D:\.gradle` (Windows registry env vars, already set).
+
+---
+
+## Testing
+
 ```bash
-./gradlew testDebugUnitTest                 # 1190 JVM unit tests
-./gradlew connectedDebugAndroidTest         # 304 instrumented tests
+./gradlew testDebugUnitTest                        # 1479 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 424 instrumented tests — uses Orchestrator
 ```
 
-**Target device:** `<pixel-8a-device-id>` (Pixel 8a)
-- Always pass `-s <pixel-8a-device-id>` to adb commands
-- `<nf22e1-device-id>` (NF22E1) — not a phone, never deploy to it
-- `<pixel-9a-device-id>` (Pixel 9a) — user's personal device, no automated tests
+**1903 total tests.** Requires ARM64 Android device. Set target with `ANDROID_SERIAL=<device-id>`. See `AGENTS.local.md` or `CLAUDE.local.md` for local device IDs — never deploy to the NF22E1 (`NE12442001324`) or the user's personal Pixel 9a.
 
-**App ID:** `com.u1.slicer.orca`
-**Current release:** `v2.2.6` (`versionCode 279`)
+Single-test run:
+```bash
+ANDROID_SERIAL=<id> ./gradlew connectedDebugAndroidTest --no-daemon \
+  "-Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.SomeTest#method"
+```
 
-**SDK / Gradle / AVD locations:** the user has moved these to `D:` to keep `C:` free.
-The persistent user env vars `ANDROID_HOME=D:\Android\Sdk`,
-`ANDROID_AVD_HOME=D:\Android\avd`, `GRADLE_USER_HOME=D:\.gradle` are set in the
-Windows registry — every fresh shell + Studio launch picks them up automatically.
-`local.properties` also points at `D:\Android\Sdk`. No need to override anything
-in build commands.
+All tests must pass. Do not weaken assertions to fix failures — investigate the root cause.
+
+---
+
+## Native Rebuild
+
+Must use **NDK 26** (Clang 17), **Release** build type. Verify: `llvm-readelf -p .comment libprusaslicer-jni.so` → `clang version 17.0.2`. Stripped size ~19–21 MB.
+
+Before rebuilding from a fresh worktree:
+```bash
+git submodule update --init --recursive app/src/main/cpp/orcaslicer
+```
+
+Run ninja in the existing build dir:
+```bash
+ninja -j1    # in app/.cxx/Release/<dir>/arm64-v8a/ — higher -j OOMs
+$NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-strip.exe --strip-unneeded libprusaslicer-jni.so
+cp libprusaslicer-jni.so app/src/main/jniLibs/arm64-v8a/
+./gradlew clean installDebug
+```
+
+Full CMake configure and fresh-build details: see `AGENTS.md §Native Rebuild` or `CLAUDE.md §Native Rebuild`.
+
+---
+
+## Architecture
+
+- **MVVM**: `SlicerViewModel` (StateFlow) + Compose UI; manual DI via `AppContainer`
+- **Persistence**: Room DB (filaments, jobs) + DataStore (settings)
+- **Network**: OkHttp (Moonraker printer API)
+- **Native**: OrcaSlicer C++ via JNI — pre-built `.so` in `app/src/main/jniLibs/arm64-v8a/`
+- **3D**: OpenGL ES 3.0 (`GLSurfaceView`, `viewer/` package)
+- Kotlin 1.9.22, compileSdk 34, minSdk 26, JVM 17
+
+---
+
+## Key conventions
+
+- Do NOT add fields to `ModelInfo`/`SliceConfig` without rebuilding the native `.so`
+- OrcaSlicer config keys differ from PrusaSlicer: `wall_loops`, `sparse_infill_density`, `enable_prime_tower`, `initial_layer_print_height`, etc.
+- Add unit tests for every new parsing/logic function
+- `org.json` is Android API — add `testImplementation 'org.json:json:20231013'` for JVM tests
+
+---
+
+## ColorMix (this branch: `feature/colormix-topsurface`)
+
+Within-layer top-surface colour mixing: filaments can be designated mixes of 2–4 physical components; top solid infill splits per line across components. Modes: STRIPES (round-robin), PROPORTIONAL (weighted), DITHER (Bayer halftone). Fine-lines and ironing-glaze flags available per mix. Wipe-tower-safe. Works for both object-assignment and Smart Paint. See `AGENTS.md §ColorMix` for full details.
+
+---
+
+## Critical safety rules
+
+> **NEVER start a print without explicit user permission.** Use Map & Upload / Upload Only for send-flow testing.
+
+> **NEVER create a GitHub release or push a tag without explicit user authorisation.**
+
+> **NEVER deploy tests to NF22E1** (`NE12442001324`).
+
+---
 
 ## Backlog
 
 Open bugs and features: see [`BACKLOG.md`](BACKLOG.md).
-
-## Critical constraints
-
-- Do NOT add fields to `ModelInfo` or `SliceConfig` without rebuilding the native `.so` — JNI signatures must match
-- The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/` — CMake is disabled
-- Always bump the version number before committing a release — never reuse or update an existing GitHub release
-- Always update `CLAUDE.md` (test counts, version) after every push or release
