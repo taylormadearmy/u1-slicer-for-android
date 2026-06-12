@@ -17,32 +17,27 @@ import org.junit.runner.RunWith
 import java.io.File
 
 /**
- * B146 gate — a model PAINTED (Smart Paint) to a MIX slot must apply the
- * within-layer top-surface mix split, exactly as the object/part-assignment path
- * already does.
+ * B146/B147 gate — a model PAINTED (Smart Paint) to a MIX slot must apply the
+ * within-layer top-surface mix split for ALL top-mix modes, exactly as the
+ * object/part-assignment path already does.
  *
  * RED→GREEN history (do not weaken): the painted path encodes the mix per-triangle
  * as an mmu paint state and the engine resolves it through `apply_mm_segmentation`.
- * Before the fix that pass COLLAPSED the painted mix channel onto a single physical
- * tool per layer, so `region.config().solid_infill_filament` was a single physical
- * slot (3 or 4), never the mix id. The GCode top-surface split and the ToolOrdering
- * component registration BOTH gate on `is_mixed(solid_infill_filament)`, so the
- * within-layer split never engaged: the body blended (via the layer-cycling vertical
- * distribution) but NO `;TYPE:Top surface` block ever carried both mix-component
- * tools in the same layer. Confirmed empirically on-device with native instrumentation
- * (B146DBG): `is_mixed=0`, `region_sif=3/4`, `seq=(null)` at the GCode gate.
+ * Before B146, that pass COLLAPSED the painted mix channel onto a single physical
+ * tool per layer for ALL modes, so `region.config().solid_infill_filament` was a
+ * single physical slot (3 or 4), never the mix id. The GCode top-surface split and
+ * the ToolOrdering component registration BOTH gate on `is_mixed(solid_infill_filament)`,
+ * so the within-layer split never engaged. Confirmed empirically on-device with native
+ * instrumentation (B146DBG): `is_mixed=0`, `region_sif=3/4`, `seq=(null)`.
  *
- * Fix: `apply_mm_segmentation` keeps the mix filament id for a painted mix region
- * whenever the row requests a within-layer top-surface treatment (top_mix_mode
- * proportional/dither or ironing-glaze), routing it down the same pipeline the
- * object-assignment path uses.
+ * B146 fixed proportional/dither/ironing-glaze modes but accidentally excluded
+ * STRIPES (top_mix_mode == 0) and STRIPES + fine_top_lines — both still collapsed.
+ * B147 broadens the condition to `mixed_row->enabled` (any enabled painted mix keeps
+ * its mix id, regardless of mode flags).
  *
- * This test paints EVERY triangle of 3DBenchy.stl to a 2-component mix slot with
- * DITHER top mix mode (a clear within-layer signal) and slices WITHOUT calling
- * nativeSetVolumeExtruder — i.e. the painted path, not the object-assignment path.
- *
- * Gate: at least one layer must place BOTH mix-component tools (T2 + T3) on its
- * `;TYPE:Top surface` extrusion lines.
+ * This file tests both DITHER (existing B146 gate) and STRIPES (new B147 gate).
+ * Gate for each: at least one layer must place BOTH mix-component tools (T2 + T3)
+ * on its `;TYPE:Top surface` extrusion lines.
  */
 @RunWith(AndroidJUnit4::class)
 class PaintedMixTopSurfaceTest {
@@ -174,6 +169,67 @@ class PaintedMixTopSurfaceTest {
             }
         }
         return out
+    }
+
+    /**
+     * B147 gate — STRIPES mode (top_mix_mode == 0) painted mix must split the top
+     * surface. Before B147, the collapse-prevention condition in apply_mm_segmentation
+     * only covered proportional/dither/ironing-glaze, so STRIPES mode collapsed to one
+     * physical tool per layer and produced no within-layer split on the top surface.
+     */
+    @Test
+    fun paintedMix_stripesMode_topSurfaceSplits() {
+        val stl = asset(ASSET)
+        val positions = readTrianglePositions(stl)
+        val nTri = positions.size / 9
+        assertTrue("STL must have triangles", nTri > 0)
+
+        val (_, recipe) = SurfaceColorMixTestSupport.buildRecipeAndSlot(
+            componentSlots = listOf(3, 4),
+            weights = listOf(50, 50),
+            distributionMode = MixedFilamentRow.MixDistributionMode.SAME_LAYER_DOTS,
+            canonicalCount = 4,
+            topMixMode = MixedFilamentRow.TopMixMode.STRIPES,
+        )
+
+        val mixRegionId = 4
+        val regionIds = IntArray(nTri) { mixRegionId }
+        val regions = (0..3).map { s ->
+            AiRegion(id = s, label = "Slot ${s + 1}", suggestedColour = "#888888", slot = s)
+        }
+        val painted = File(cacheDir, "painted_mix_stripes_${System.currentTimeMillis()}.3mf")
+        PaintedMeshWriter.write(
+            positions = positions,
+            regionIds = regionIds,
+            regions = regions,
+            outputFile = painted,
+            printerColours = listOf("#000000", "#FF0000", "#00FF00", "#0000FF"),
+            mixDisplayColours = listOf("#00FFFF"),
+        )
+        assertTrue("painted 3MF must be written", painted.length() > 0)
+        assertTrue("loadModel must succeed", lib.loadModel(painted.absolutePath))
+
+        val result = lib.slice(makeConfig(recipe)) ?: error("slice() returned null")
+        assertTrue("slice must succeed, error='${result.errorMessage}'", result.success)
+        val gcode = File(result.gcodePath).readText()
+
+        val bodyTools = bodyExtrudingTools(gcode).sorted()
+        assertTrue(
+            "precondition: painted STRIPES mix must blend the body (>=2 tools), got body=$bodyTools",
+            bodyTools.size >= 2,
+        )
+
+        val topByLayer = perLayerTopTools(gcode)
+        val topLayersWithMix = topByLayer.entries.filter { 2 in it.value && 3 in it.value }
+        val topSummary = topByLayer.entries.sortedBy { it.key }
+            .joinToString(" ") { (l, s) -> "L$l${s.sorted()}" }
+            .ifEmpty { "(no top-surface extrusion)" }
+        assertTrue(
+            "B147: STRIPES mode painted mix must apply within-layer top-surface split: " +
+                "expected >=1 layer with BOTH T2+T3 in ;TYPE:Top surface, got " +
+                "${topLayersWithMix.size}. body=$bodyTools | top per layer: $topSummary",
+            topLayersWithMix.isNotEmpty(),
+        )
     }
 
     @Test
