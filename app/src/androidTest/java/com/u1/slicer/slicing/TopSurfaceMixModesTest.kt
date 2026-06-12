@@ -50,8 +50,10 @@ import java.io.File
  *    Both slices happen inside the test.
  *  - Test 2 (DITHER): each scattered halftone dash is its own travel-separated
  *    run (a tool's dashes are non-adjacent), so the dither slice's TOTAL top-block
- *    run count must be ≥ 3× the stripes control's. Today dither degrades to
- *    stripes → equal run counts → RED on the gate.
+ *    run count must be ≥ 2× the stripes control's (2× not 3×: the unmixed second
+ *    cube's constant baseline runs are included in both totals — see the test's
+ *    own KDoc for the fixture math). Today dither degrades to stripes → equal
+ *    run counts → RED on the gate.
  *  - Test 3 (fine): the width metric prefers explicit `;WIDTH:<mm>` annotations
  *    inside top blocks (Orca's G-code processor annotations); if a slice carries
  *    none, it falls back to the E-per-XY-mm ratio of positive-E moves inside top
@@ -425,11 +427,23 @@ class TopSurfaceMixModesTest {
     /**
      * RED gate 2 — DITHER chops lines into halftone dashes: every scattered dash
      * is its own travel-separated extrusion run (a tool's dashes are non-adjacent),
-     * so the dither slice's TOTAL top-block run count must be >= 3x the STRIPES
+     * so the dither slice's TOTAL top-block run count must be >= 2x the STRIPES
      * control's. Tool-alternation counting inside top blocks is NOT used because
      * per-tool island routing makes it structurally always 0 in every mode (see
      * class KDoc). Today dither degrades to stripes → equal run counts → RED
-     * (control run count asserted > 0 first so 3x0 can't trivially pass).
+     * (control run count asserted > 0 first so 2x0 can't trivially pass).
+     *
+     * Gate calibration (2x, not 3x) — fixture math: both totals include the SAME
+     * unmixed second cube, whose constant baseline runs dilute the mixed cube's
+     * ratio. The mixed 10mm calib cube's top lines are ~9mm at ~0.43mm pitch
+     * (~23 lines/layer); with 1.5mm dashes that's ~6 dashes per line, and the
+     * ordinal-Bayer checkerboard at 50/50 alternates tools per dash, so each mixed
+     * line yields multiple runs vs the stripes control's one whole-line run — but
+     * averaged against the unmixed cube's unchanged baseline the achievable TOTAL
+     * ratio sits well under 3x. 2x retains a huge margin over the broken behaviour,
+     * which measured 0.92x (dither=210 vs control=228: the old spatial-cell Bayer,
+     * with cells >= the line pitch, put adjacent lines on the same tool so monotonic
+     * fill merged them into FEWER runs than stripes).
      */
     @Test
     fun dither_topRunCountFarExceedsStripes() {
@@ -445,12 +459,12 @@ class TopSurfaceMixModesTest {
         )
         assertTrue(
             "DITHER must scatter top lines into dashes: total top-block extrusion-run " +
-                "count must be >= 3x the stripes control's: dither=$ditherRuns vs " +
-                "control=$controlRuns (needed >= ${3 * controlRuns}). " +
+                "count must be >= 2x the stripes control's: dither=$ditherRuns vs " +
+                "control=$controlRuns (needed >= ${2 * controlRuns}). " +
                 "dither top tools=${topSurfaceTools(mixedG)} | " +
                 "control per-layer: ${statsSummary(perLayerTopStats(controlG))} | " +
                 "dither per-layer: ${statsSummary(perLayerTopStats(mixedG))}",
-            ditherRuns >= 3 * controlRuns,
+            ditherRuns >= 2 * controlRuns,
         )
     }
 
