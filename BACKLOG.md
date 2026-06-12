@@ -758,6 +758,14 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
+### F98: Mix → printer-colour UX — signal slot-space shift + Prepare "Sync colours to printer" (GitHub #180) — OPEN
+- **Problem**: once any mix is assigned, the model's file colours become secondary — the truth shifts to physical printer-slot space (E1–E4). Users aren't told this. B144 put E-labels on the Send dialog as a partial signal, but nothing on the Prepare screen communicates the shift.
+- **Two linked improvements**:
+  1. When a mix is in play, surface a signal on the Prepare screen (banner / inline note) that slot colours govern the print.
+  2. General "Sync colours to printer" action on Prepare: replaces filament colour swatches with the printer's currently loaded filament colours (`extruderPresets`). Makes the 3D preview match what will actually print. Useful for all prints, not just mixes.
+- **Design questions to resolve**: colour-only vs material too; reversibility; sync semantics for mixed parts (blend colour? skip?); per-part vs global.
+- **Not yet designed** — brainstorm session needed before any build. Natural home: F87/phase-2.6 editable Prepare filament list.
+
 ### F96: OpenPrintTag filament library + RFID sync matching (GitHub #176) — DONE v3.2.0-beta (released 2026-06-10)
 - Bundled FFF-only snapshot of the MIT [OpenPrintTag database](https://github.com/OpenPrintTag/openprinttag-database) (12,804 filaments, 112 brands, 1.4 MB asset + NOTICE) as a searchable **Library tab** in the physical-slot colour dialogs (AiPaint slot dialog + PrinterScreen extruder slot editor; CreateMix and Prepare per-file dialogs stay HSV-only by design): search-as-you-type across brand/name/material, material filter chips, favourites (⭐) + recents (DataStore slug lists), pick = slot colour + material type (clears stale `filamentProfileId`).
 - **Opt-in profile import**: "Use + import profile…" previews exactly the fields the entry has (nozzle/bed ranges, density, TD/RI labelled "for future translucency features — not used in slicing") → creates/updates a `FilamentProfile` (dedupe by exact name via `FilamentDao.getByName`, no Room migration) and links it via `ExtruderPreset.filamentProfileId`.
