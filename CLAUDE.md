@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v3.0.0-beta` (`versionCode 327`) — N-way colour mixing (M4) on `feature/m4-nway-mixes` (bundles prepare-ux); public main line was `v2.10.15` (`versionCode 325`)
+Current release: `v3.2.0-beta` (`versionCode 329`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
