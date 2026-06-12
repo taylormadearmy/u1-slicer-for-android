@@ -487,3 +487,75 @@ class BuildWideGcodeMappingTest {
         assertEquals("PETG", expanded.filaments[1].materialType)
     }
 }
+
+/**
+ * B144 unit tests for [buildMixSlotMapping].
+ *
+ * A mix-tool-space slice emits G-code in PHYSICAL-SLOT space (E1..E4 baked in),
+ * so the Send dialog must show one row per active physical slot — each row
+ * carrying that slot's PRESET colour + material and marked as a physical slot
+ * (NOT a model "Filament N" or a synthetic SUPPORT_FILAMENT row).
+ */
+class BuildMixSlotMappingTest {
+
+    private fun presets(vararg specs: Pair<String, String>) = specs.mapIndexed { i, (color, mat) ->
+        ExtruderPreset(index = i, color = color, materialType = mat)
+    }
+
+    @Test
+    fun `active physical slots become one preset-backed row each`() {
+        // Slots 0, 2, 3 used (slot 1 idle). Presets E1..E4 distinct.
+        val presetList = presets(
+            "#FF0000" to "PLA",   // E1
+            "#00FF00" to "PETG",  // E2 (idle)
+            "#0000FF" to "ABS",   // E3
+            "#FFFFFF" to "TPU",   // E4
+        )
+        val (canon, indices) = buildMixSlotMapping(
+            listOf(5f, 0f, 3f, 2f), presetList
+        )!!
+        // plateFileIndices = active slots, sorted.
+        assertEquals(listOf(0, 2, 3), indices)
+        assertEquals(3, canon.filaments.size)
+        // Row 0 → slot 0 preset (E1 / red / PLA), physical-slot marker.
+        assertEquals(0, canon.filaments[0].fileIndex)
+        assertEquals("#FF0000", canon.filaments[0].color)
+        assertEquals("PLA", canon.filaments[0].materialType)
+        assertEquals(FilamentSource.PHYSICAL_SLOT, canon.filaments[0].source)
+        // Row 1 → slot 2 preset (E3 / blue / ABS).
+        assertEquals(2, canon.filaments[1].fileIndex)
+        assertEquals("#0000FF", canon.filaments[1].color)
+        assertEquals("ABS", canon.filaments[1].materialType)
+        assertEquals(FilamentSource.PHYSICAL_SLOT, canon.filaments[1].source)
+        // Row 2 → slot 3 preset (E4 / white / TPU).
+        assertEquals(3, canon.filaments[2].fileIndex)
+        assertEquals("#FFFFFF", canon.filaments[2].color)
+        assertEquals("TPU", canon.filaments[2].materialType)
+        assertEquals(FilamentSource.PHYSICAL_SLOT, canon.filaments[2].source)
+    }
+
+    @Test
+    fun `missing preset for active slot falls back to grey, null material`() {
+        // Slot 1 active but only one preset supplied.
+        val presetList = presets("#FF0000" to "PLA")
+        val (canon, indices) = buildMixSlotMapping(
+            listOf(0f, 7f), presetList
+        )!!
+        assertEquals(listOf(1), indices)
+        assertEquals(1, canon.filaments.size)
+        assertEquals(1, canon.filaments[0].fileIndex)
+        assertEquals("#808080", canon.filaments[0].color)
+        assertEquals(null, canon.filaments[0].materialType)
+        assertEquals(FilamentSource.PHYSICAL_SLOT, canon.filaments[0].source)
+    }
+
+    @Test
+    fun `empty perExtruderFilamentMm returns null`() {
+        assertNull(buildMixSlotMapping(emptyList(), presets("#FF0000" to "PLA")))
+    }
+
+    @Test
+    fun `all-zero perExtruderFilamentMm returns null`() {
+        assertNull(buildMixSlotMapping(listOf(0f, 0f, 0f, 0f), presets("#FF0000" to "PLA")))
+    }
+}
