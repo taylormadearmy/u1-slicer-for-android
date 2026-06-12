@@ -4,6 +4,11 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Bugs
 
+### B146: Top-surface mix not applied for Smart-Paint (painted) mixes (GitHub #TBD) — FIXED on `feature/colormix-topsurface`
+- **Symptoms** (Kevin, 2026-06-12): painting a region with a mix via Smart Paint blends the body but the within-layer TOP-surface split (stripes/proportional/dither/glaze) never applies; assigning a mix by object/part/whole-model in Prepare DOES apply it.
+- **Root cause** (instrumented on-device): `apply_mm_segmentation` collapsed a painted mix channel to a single physical tool per layer, so `region.config().solid_infill_filament` was a physical slot — the engine never saw a painted region as a mix. Both the GCode top-surface split and the ToolOrdering component registration gate on `is_mixed(solid_infill_filament)`, so neither engaged. The object/part-assignment path worked because the volume's extruder carries the mix id directly. (Confirmed the mix otherwise reaches the engine fine: painted-mix body extrudes both component tools.)
+- **Fix**: keep the mix filament id for painted top-surface mix regions so `is_mixed` is true and the split + registration fire. Engine submodule `colormix-topsurface` @978e3f2d47. Red→green `PaintedMixTopSurfaceTest`; regressions 76/76 (TopSurfaceMix*×7, StlMixPrimeTower, MixSlotPaintRoundTrip, SemmSlicing, SlicingIntegration 54) green on Pixel 8a.
+
 ### B145: Single-object STL + mix gets no prime tower even when enabled (GitHub #TBD) — FIXED on `feature/colormix-topsurface`
 - **Symptoms** (Kevin, 2026-06-12, flatty_test.stl): an STL assigned a mix, prime tower enabled, slices with the mix tool-changes (LAYER_CYCLE T2↔T3) but NO prime tower in the G-code/preview. Dual-colour 3MF + mix was fine.
 - **Root cause** (on-device repro + trace): for a single-object STL+mix every region's configured filament is the single VIRTUAL mix id, so `Print::extruders(true).size() == 1`. `PrintApply.cpp:1289/1792` feeds that to `normalize_fdm_2`, which force-disables `enable_prime_tower` when `used_filaments == 1`. The mix's physical component tools (E3/E4) only materialise at G-code export, after the gate — so the count never sees them. The 3MF cube escaped it via a 2nd real file filament (count = 2). Confirmed: app sent `wipeTower=true` but engine header showed `enable_prime_tower = 0`.
