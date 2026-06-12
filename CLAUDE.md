@@ -92,7 +92,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 1670 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 423 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 424 instrumented tests — uses Orchestrator
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -215,6 +215,10 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/NegativeVolumePreservationTest.kt` (1) — B137: negative/modifier volumes survive process()+embed() on a >64MB-main-model compound 3MF (streaming sanitize path). Asserts embedded model_settings.config keeps both `subtype="negative_part"` entries (RED=0 pre-fix) so the native BBS importer subtracts them instead of slicing solid
 - `slicing/MixSlotNWayBlendGateTest.kt` (2) — M4 N-way engine gate: 3-component mix cycles 3 tools by weight; 4-component mix uses all four tools
+- `slicing/TopSurfaceMixWipeTowerTest.kt` (1) — F97 wipe-tower-ON gate: wipe tower planned, dual-object plate, one object assigned a 2-component mix; at least one layer's `;TYPE:Top surface` block extrudes BOTH component tools (T2 + T3)
+- `slicing/TopSurfaceMixModesTest.kt` (5) — F97 per-mix mode gates: proportional in-line boundary runs present; dither long runs absent (>2× dash = 0 for dither, >0 for stripes control); fine top lines narrower width; ironing glaze emits ironing tools; stripes control has long runs (correctness baseline)
+- `slicing/StlMixPrimeTowerTest.kt` (1) — B145 gate: single-object STL + mix assigned → prime tower PRESENT when enabled (before fix, normalize_fdm_2 disabled it because extruders().size()==1)
+- `slicing/PaintedMixTopSurfaceTest.kt` (2) — B146/B147 gate: model painted to a mix via Smart Paint (no nativeSetVolumeExtruder) must split the top surface within-layer for DITHER mode (B146) and STRIPES mode (B147); gate = >=1 layer with BOTH T2+T3 in `;TYPE:Top surface` blocks
 - `MatchAColourE2ETest.kt` (1) — pick-a-colour end-to-end gate: a mix suggested by `MixColourMatcher.bestMix` slices into G-code using EXACTLY the suggested filaments (every suggested tool prints; non-suggested tools absent)
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
