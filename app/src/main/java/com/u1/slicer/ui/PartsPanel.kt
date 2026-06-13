@@ -318,10 +318,13 @@ private fun FilamentChooserDialog(
             physicalFilamentColours = physicalColours,
             physicalFilamentLabels = physicalLabels,
             editingRow = editingMix,
-            onConfirmN = { components, weights, mode ->
+            onConfirmN = { components, weights, mode, topMixMode, fineTopLines, ironingGlaze ->
                 val edit = editingMix
-                if (edit != null) viewModel.editMixN(edit.id, components, weights, mode)
-                else viewModel.createMixN(components, weights, mode)
+                if (edit != null) {
+                    viewModel.editMixN(edit.id, components, weights, mode, topMixMode, fineTopLines, ironingGlaze)
+                } else {
+                    viewModel.createMixN(components, weights, mode, topMixMode, fineTopLines, ironingGlaze)
+                }
             },
             onDelete = editingMix?.let { row -> { viewModel.mixedFilamentManager.delete(row.id) } },
             onDismiss = { creatingMix = false; editingMix = null },

@@ -54,7 +54,10 @@ fun CreateMixSlotDialog(
     physicalFilamentLabels: List<String>,        // size matches colours
     editingRow: MixedFilamentRow? = null,
     onConfirmN: (components: List<Int>, weights: List<Int>,
-        distributionMode: MixedFilamentRow.MixDistributionMode) -> Unit,
+        distributionMode: MixedFilamentRow.MixDistributionMode,
+        topMixMode: MixedFilamentRow.TopMixMode,
+        fineTopLines: Boolean,
+        ironingGlaze: Boolean) -> Unit,
     onDelete: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
@@ -66,6 +69,12 @@ fun CreateMixSlotDialog(
     // Only LAYER_CYCLE is functional; an edited legacy row keeps its stored mode (harmless —
     // the engine treats the dead SameLayerPointillisme as LayerCycle). No UI toggle anymore.
     val distributionMode = editingRow?.distributionMode ?: MixedFilamentRow.MixDistributionMode.LAYER_CYCLE
+    // --- Top surface mixing (BETA) state, seeded from the row being edited ---
+    var topMixMode by remember {
+        mutableStateOf(editingRow?.topMixMode ?: MixedFilamentRow.TopMixMode.STRIPES)
+    }
+    var fineTopLines by remember { mutableStateOf(editingRow?.fineTopLines ?: false) }
+    var ironingGlaze by remember { mutableStateOf(editingRow?.ironingGlaze ?: false) }
     var typingIndex by remember { mutableStateOf(-1) }
     var typingText by remember { mutableStateOf("") }
     val isEditing = editingRow != null
@@ -236,6 +245,45 @@ fun CreateMixSlotDialog(
                         weights = MixWeights.addEven(weights); components = components + next
                     }) { Text("+ Add colour") }
                 }
+                // --- Top surface mixing (BETA): how the mix divides its top-surface
+                // lines between components, plus fine-line and ironing-glaze options.
+                // Defaults preserve v1 behaviour (Stripes, both toggles off).
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Top surface mixing",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    BetaPill()
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = topMixMode == MixedFilamentRow.TopMixMode.STRIPES,
+                        onClick = { topMixMode = MixedFilamentRow.TopMixMode.STRIPES },
+                        label = { Text("Stripes") },
+                    )
+                    FilterChip(
+                        selected = topMixMode == MixedFilamentRow.TopMixMode.PROPORTIONAL,
+                        onClick = { topMixMode = MixedFilamentRow.TopMixMode.PROPORTIONAL },
+                        label = { Text("Proportional") },
+                    )
+                    FilterChip(
+                        selected = topMixMode == MixedFilamentRow.TopMixMode.DITHER,
+                        onClick = { topMixMode = MixedFilamentRow.TopMixMode.DITHER },
+                        label = { Text("Dither") },
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Fine top lines", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.weight(1f))
+                    Switch(checked = fineTopLines, onCheckedChange = { fineTopLines = it })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Ironing glaze", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.weight(1f))
+                    Switch(checked = ironingGlaze, onCheckedChange = { ironingGlaze = it })
+                }
                 // NOTE: no distribution-mode toggle. The only functional mode is layer
                 // alternation (LAYER_CYCLE). "Same-layer dots" (SameLayerPointillisme) is NOT
                 // implemented in the Snapmaker Orca engine — its generators are #if 0-disabled
@@ -248,7 +296,10 @@ fun CreateMixSlotDialog(
         confirmButton = {
             TextButton(
                 enabled = canConfirm,
-                onClick = { onConfirmN(components, weights, distributionMode); onDismiss() },
+                onClick = {
+                    onConfirmN(components, weights, distributionMode, topMixMode, fineTopLines, ironingGlaze)
+                    onDismiss()
+                },
             ) { Text(if (isEditing) "Save" else "Create") }
         },
         dismissButton = {

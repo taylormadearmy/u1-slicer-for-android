@@ -24,15 +24,21 @@ Use `--no-daemon` if Gradle daemon OOMs. The native `.so` is pre-built — norma
 
 ```bash
 ./gradlew testDebugUnitTest                        # 1670 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 423 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 433 instrumented tests — uses Orchestrator
 ```
 
-**2093 total tests.** Requires ARM64 Android device. Set target with `ANDROID_SERIAL=<device-id>`. See `AGENTS.local.md` or `CLAUDE.local.md` for local device IDs — never deploy to the NF22E1 (`NE12442001324`) or the user's personal Pixel 9a.
+**2103 total tests.** Requires ARM64 Android device. Set target with `ANDROID_SERIAL=<device-id>`. See `AGENTS.local.md` or `CLAUDE.local.md` for local device IDs — never deploy to the NF22E1 (`NE12442001324`) or the user's personal Pixel 9a.
 
 Single-test run:
 ```bash
 ANDROID_SERIAL=<id> ./gradlew connectedDebugAndroidTest --no-daemon \
   "-Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.SomeTest#method"
+```
+
+For live progress on Windows, use:
+```powershell
+.\scripts\run-connected-with-progress.ps1 -Device <id>
+.\scripts\run-connected-with-progress.ps1 -Device <id> -ClassFilter com.u1.slicer.SomeTest
 ```
 
 All tests must pass. Do not weaken assertions to fix failures — investigate the root cause.

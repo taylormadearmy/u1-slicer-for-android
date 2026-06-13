@@ -22,6 +22,13 @@ package com.u1.slicer.data
  *                      slot used beyond the model's canonical filament list
  *                      (e.g. STL with support on E2). Entry is derived from
  *                      the user's extruder preset for that slot.
+ * - [PHYSICAL_SLOT]  — synthetic: a row that addresses a PHYSICAL extruder
+ *                      slot directly (E1..E4), not a file/model filament.
+ *                      Produced for mix-tool-space slices (B144), where the
+ *                      G-code body is already in physical-slot space, so the
+ *                      Send dialog lists active nozzles rather than the
+ *                      model's file filaments. Entry colour + material come
+ *                      from the user's extruder preset for that slot.
  */
 enum class FilamentSource {
     FILE_COLOUR,
@@ -30,6 +37,7 @@ enum class FilamentSource {
     LAYER_TOOL,
     STL_DEFAULT,
     SUPPORT_FILAMENT,
+    PHYSICAL_SLOT,
 }
 
 /**

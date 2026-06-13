@@ -748,6 +748,10 @@ class MainActivity : ComponentActivity() {
                     val overrides by viewModel.filamentOverrides.collectAsState()
                     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
                     val parsedGcodeForDialog by viewModel.parsedGcode.collectAsState()
+                    // B144: a mix slice emits a physical-slot G-code body, so the
+                    // Send dialog must list active physical nozzles, not the model's
+                    // file filaments (mirrors B142b in the inline preview / summary).
+                    val sliceMixToolSpace by viewModel.sliceMixToolSpace.collectAsState()
                     val canonical = remember(canonicalState, overrides) {
                         (canonicalState as? CanonicalLookup.Present)?.let { p ->
                             com.u1.slicer.data.applyOverridesToCanonical(
@@ -770,8 +774,24 @@ class MainActivity : ComponentActivity() {
                     // onConfirm can expand the dialog's plate-narrowed
                     // mapping back to canonical-fileIndex space for
                     // applyPrintTimeRemap (which keys by full canonical fileIdx).
+                    // B144: when the slice is mix-tool-space, build the dialog from
+                    // active physical slots (preset colour + material, identity
+                    // picker). `mixSlotSpace` is true only when that succeeded so
+                    // the dialog relabels rows "E<n>" and the mismatch warning uses
+                    // per-slot materials.
+                    val mixSlotMapping: Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? =
+                        remember(sliceMixToolSpace, parsedGcodeForDialog, extruderPresets) {
+                            if (!sliceMixToolSpace) return@remember null
+                            val perMm = parsedGcodeForDialog?.perExtruderFilamentMm
+                                ?: return@remember null
+                            buildMixSlotMapping(perMm, extruderPresets)
+                        }
+                    val mixSlotSpace = mixSlotMapping != null
                     val plateNarrowed: Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? =
                         remember(canonical, threeMfInfo, viewModel.recoveryPlateId, parsedGcodeForDialog, extruderPresets) {
+                            // B144: the mix physical-slot list is applied per-action below
+                            // (PrintAndUpload only). Upload-Only ships the canonical body for
+                            // the printer to map, so it keeps the canonical filament view.
                             val full = canonical ?: return@remember null
                             val perMm = parsedGcodeForDialog?.perExtruderFilamentMm
                             val plateFileIndices = computePlateFileIndices(
@@ -877,6 +897,11 @@ class MainActivity : ComponentActivity() {
                                         )
                                     }
                                     PendingMappingSend.Action.PrintAndUpload -> {
+                                // B144: mix slices win for Print — show physical slots
+                                // (the body is already physical-slot space), not file
+                                // filaments. Falls back to the canonical narrowing.
+                                val (narrowedList, plateFileIndices) =
+                                    mixSlotMapping ?: plateNarrowed
                                 // Phase 2.5 final: slices produce canonical
                                 // (file-filament-relative) T-indices. The
                                 // dialog now shows only the plate's
@@ -889,14 +914,29 @@ class MainActivity : ComponentActivity() {
                                 com.u1.slicer.ui.FilamentMappingDialog(
                                     canonicalList = narrowedList,
                                     extruderPresets = extruderPresets,
-                                    initialMapping = currentMapping,
+                                    // B144: a mix slice's dialog is seeded identity
+                                    // (slot → same slot) since the body is already
+                                    // physical-slot space; the picker only diverges
+                                    // if the user re-maps. Otherwise use the slice's
+                                    // canonical→slot mapping.
+                                    initialMapping = if (mixSlotSpace) plateFileIndices else currentMapping,
                                     plateFileIndices = plateFileIndices,
                                     filamentMaterialOverrides = overrides.mapValues { (_, ov) -> ov.materialType },
-                                    sliceTimeColorMapping = currentMapping,
+                                    // B144: under mix-slot-space, "sliced with" for a
+                                    // row IS its own slot's preset material — identity
+                                    // mapping shows no warning; re-mapping to a
+                                    // different-material nozzle warns. Otherwise feed
+                                    // the canonical slice mapping.
+                                    sliceTimeColorMapping = if (mixSlotSpace) (0 until 4).toList() else currentMapping,
                                     // B128: feed the actual sliced materials (file-declared
                                     // when applicable) so the "Sliced as X" mismatch check
                                     // matches the slice instead of the slot preset.
-                                    sliceTimeMaterials = viewModel.sliceTimeMaterials(canonical, currentMapping),
+                                    sliceTimeMaterials = if (mixSlotSpace)
+                                        (0 until 4).map { slot ->
+                                            extruderPresets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+                                        }
+                                    else viewModel.sliceTimeMaterials(canonical, currentMapping),
+                                    physicalSlotSpace = mixSlotSpace,
                                     activeNickname = activeNickname,
                                     showNicknameInTitle = printerCount > 1,
                                     onConfirm = { plateMapping ->
@@ -1086,6 +1126,44 @@ internal fun buildWideGcodeMapping(
             )
     }
     return canonical.copy(filaments = syntheticEntries) to activeIndices
+}
+
+/**
+ * B144 — builds the Send "Filament mapping" dialog model for a mix-tool-space
+ * slice. When a mix is assigned the sliced G-code body is in PHYSICAL-SLOT
+ * space (E1..E4 baked in), so the dialog must list the ACTIVE PHYSICAL SLOTS
+ * (each with `perExtruderFilamentMm > 0`) — NOT the model's file filaments,
+ * and NOT synthetic SUPPORT_FILAMENT rows.
+ *
+ * Each active slot `s` becomes a [com.u1.slicer.data.FilamentEntry] with
+ * `fileIndex = s` carrying slot `s`'s preset colour + material and source
+ * [com.u1.slicer.data.FilamentSource.PHYSICAL_SLOT]. The returned
+ * `plateFileIndices` is the sorted list of active slots, so the dialog's
+ * physical→physical expansion in onConfirm seeds an identity mapping
+ * (slot → same slot) that [com.u1.slicer.gcode.applyPrintTimeRemap] leaves
+ * untouched unless the user re-maps.
+ *
+ * Returns null when no slot has filament used (caller falls back to the
+ * existing canonical/wide-mapping logic).
+ */
+internal fun buildMixSlotMapping(
+    perExtruderFilamentMm: List<Float>,
+    extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+): Pair<com.u1.slicer.data.CanonicalFilamentList, List<Int>>? {
+    val active = perExtruderFilamentMm.indices
+        .filter { perExtruderFilamentMm[it] > 0f }
+        .sorted()
+    if (active.isEmpty()) return null
+    val entries = active.map { slot ->
+        val preset = extruderPresets.firstOrNull { it.index == slot }
+        com.u1.slicer.data.FilamentEntry(
+            fileIndex = slot,
+            color = preset?.color ?: "#808080",
+            materialType = preset?.materialType,
+            source = com.u1.slicer.data.FilamentSource.PHYSICAL_SLOT,
+        )
+    }
+    return com.u1.slicer.data.CanonicalFilamentList(filaments = entries) to active
 }
 
 /**
@@ -4890,12 +4968,12 @@ fun PrepareMixSlotsSectionContent(
             physicalFilamentColours = physicalColours,
             physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
             editingRow = editingRow,
-            onConfirmN = { components, weights, mode ->
+            onConfirmN = { components, weights, mode, topMixMode, fineTopLines, ironingGlaze ->
                 val edit = editingRow
                 if (edit != null) {
-                    viewModel.editMixN(edit.id, components, weights, mode)
+                    viewModel.editMixN(edit.id, components, weights, mode, topMixMode, fineTopLines, ironingGlaze)
                 } else {
-                    viewModel.createMixN(components, weights, mode)
+                    viewModel.createMixN(components, weights, mode, topMixMode, fineTopLines, ironingGlaze)
                 }
             },
             onDelete = editingRow?.let { row -> { viewModel.mixedFilamentManager.delete(row.id) } },
@@ -5131,9 +5209,9 @@ fun InlineGcodePreview(
             com.u1.slicer.ui.resolveInitialLayerRange(initialLayerRange, gcodeLayerCount).second
         )
     }
-    val displayLayer = if (gcodeLayerCount > 0)
-        ((maxLayer.toLong() * displayLayerCount) / gcodeLayerCount).toInt().coerceIn(1, displayLayerCount)
-    else 1
+    // B143: 1-based mapping so the slider's top position reads N/N, not N-1/N.
+    val displayLayer =
+        com.u1.slicer.ui.computeDisplayLayer(maxLayer, displayLayerCount, gcodeLayerCount)
 
     val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
         normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)

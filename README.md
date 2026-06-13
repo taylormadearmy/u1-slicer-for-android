@@ -30,6 +30,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 - **Settings backup/restore** — export and import all app settings as JSON
 - **Background slicing** — foreground service keeps slicing alive when app is backgrounded
 - **Auto-resume** (v2.6.0): If Android closes the app while you have a model loaded, sliced, or being edited, a "Resume <name>?" banner appears on next launch to restore your session. Sliced sessions resume on the Preview tab instantly; the model loads in the background for editing.
+- **ColorMix** — blend 2–4 physical extruder filaments into a single virtual mix slot. The top surface splits per printed line across the mix components for visible colour mixing. Three top-surface modes per mix: Stripes (per-line round-robin), Proportional (weighted within-line boundary), and Dither (1.5 mm Bayer halftone dashes). Optional fine-line mode (nozzle/2 line width) and ironing glaze (force-ironing pass split across components). Works with both object/part assignment and Smart Paint. Wipe-tower-safe.
 
 ### Smart Paint
 
@@ -89,10 +90,10 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 
 ```bash
 ./gradlew testDebugUnitTest              # 1670 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 423 instrumented tests (ARM64 device required)
+./gradlew connectedDebugAndroidTest      # 433 instrumented tests (ARM64 device required)
 ```
 
-**2093 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament list, and more.
+**2103 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament list, ColorMix top-surface mixing, and more.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

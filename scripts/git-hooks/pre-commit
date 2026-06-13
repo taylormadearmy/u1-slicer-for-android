@@ -39,7 +39,7 @@ if [ ! -d "$SUBMODULE_PATH/.git" ] && [ ! -f "$SUBMODULE_PATH/.git" ]; then
   exit 1
 fi
 
-DIRTY=$(env -u GIT_DIR -u GIT_WORK_TREE git -C "$SUBMODULE_PATH" status --porcelain)
+DIRTY=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_PREFIX git -C "$SUBMODULE_PATH" status --porcelain)
 if [ -n "$DIRTY" ]; then
   echo "PRE-COMMIT REFUSED:" >&2
   echo "  $SO_PATH is staged for commit, but the orca submodule has" >&2

@@ -82,6 +82,14 @@ fun FilamentMappingDialog(
      * (legacy behaviour) when null.
      */
     sliceTimeMaterials: List<String>? = null,
+    /**
+     * B144 — when true, the dialog's rows address PHYSICAL extruder slots
+     * (a mix-tool-space slice), not the model's file filaments. Row titles
+     * read "E<n>" instead of "Filament <n>" and the header asks the user to
+     * map printed extruders to nozzles. The swatch, picker, mismatch chip,
+     * and duplicate-slot overlap chip are unchanged.
+     */
+    physicalSlotSpace: Boolean = false,
     onConfirm: (List<Int>) -> Unit,
     onDismiss: () -> Unit,
     activeNickname: String = "",
@@ -134,10 +142,14 @@ fun FilamentMappingDialog(
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    if (canonicalList.size == 1)
-                        "Pick which physical extruder to print this on."
-                    else
-                        "Assign each of the ${canonicalList.size} filaments to a physical extruder.",
+                    when {
+                        physicalSlotSpace ->
+                            "Map each printed extruder to a physical nozzle."
+                        canonicalList.size == 1 ->
+                            "Pick which physical extruder to print this on."
+                        else ->
+                            "Assign each of the ${canonicalList.size} filaments to a physical extruder."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -181,6 +193,7 @@ fun FilamentMappingDialog(
                             ?: extruderPresets.firstOrNull { it.index == sliceTimeSlot }?.materialType
                         FilamentMappingRow(
                             fileIndex = displayFileIndex,
+                            physicalSlotSpace = physicalSlotSpace,
                             fileColor = entry.color,
                             filamentMaterial = entry.materialType,
                             overrideMaterial = filamentMaterialOverrides[displayFileIndex],
@@ -270,6 +283,7 @@ fun FilamentMappingDialog(
 @Composable
 private fun FilamentMappingRow(
     fileIndex: Int,
+    physicalSlotSpace: Boolean = false,
     fileColor: String,
     filamentMaterial: String?,
     overrideMaterial: String?,
@@ -325,7 +339,8 @@ private fun FilamentMappingRow(
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                "Filament ${fileIndex + 1}",
+                // B144: a physical-slot row addresses nozzle E<n>, not a file filament.
+                if (physicalSlotSpace) "E${fileIndex + 1}" else "Filament ${fileIndex + 1}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -443,6 +458,7 @@ private fun sourceShortLabel(source: FilamentSource): String? = when (source) {
     FilamentSource.OBJECT_DEFAULT -> "object default"
     FilamentSource.FILE_COLOUR -> null  // most common, hide label
     FilamentSource.SUPPORT_FILAMENT -> "support"
+    FilamentSource.PHYSICAL_SLOT -> null  // B144: physical-slot row, title already reads "E<n>"
 }
 
 /**

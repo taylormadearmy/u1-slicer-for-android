@@ -92,7 +92,12 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 1670 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 423 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 433 instrumented tests — uses Orchestrator
+```
+
+For live progress during the long Windows instrumented sweep, use:
+```powershell
+.\scripts\run-connected-with-progress.ps1 -Device <id>
 ```
 
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
@@ -198,7 +203,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 423 tests across 50 classes
+### Instrumented tests (`app/src/androidTest/`) - 433 tests across 61 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
@@ -215,6 +220,10 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/SensoryTwistSupportsTest.kt` (1) — B77 Sensory Twist Ball: paint_supports + per-object enable_support=1 emits Support features in G-code
 - `slicing/NegativeVolumePreservationTest.kt` (1) — B137: negative/modifier volumes survive process()+embed() on a >64MB-main-model compound 3MF (streaming sanitize path). Asserts embedded model_settings.config keeps both `subtype="negative_part"` entries (RED=0 pre-fix) so the native BBS importer subtracts them instead of slicing solid
 - `slicing/MixSlotNWayBlendGateTest.kt` (2) — M4 N-way engine gate: 3-component mix cycles 3 tools by weight; 4-component mix uses all four tools
+- `slicing/TopSurfaceMixWipeTowerTest.kt` (2) — F97 wipe-tower-ON gate: wipe tower planned, dual-object plate, one object assigned a 2-component mix; at least one layer's `;TYPE:Top surface` block extrudes BOTH component tools (T2 + T3)
+- `slicing/TopSurfaceMixModesTest.kt` (5) — F97 per-mix mode gates: proportional in-line boundary runs present; dither long runs absent (>2× dash = 0 for dither, >0 for stripes control); fine top lines narrower width; ironing glaze emits ironing tools; stripes control has long runs (correctness baseline)
+- `slicing/StlMixPrimeTowerTest.kt` (1) — B145 gate: single-object STL + mix assigned → prime tower PRESENT when enabled (before fix, normalize_fdm_2 disabled it because extruders().size()==1)
+- `slicing/PaintedMixTopSurfaceTest.kt` (2) — B146/B147 gate: model painted to a mix via Smart Paint (no nativeSetVolumeExtruder) must split the top surface within-layer for DITHER mode (B146) and STRIPES mode (B147); gate = >=1 layer with BOTH T2+T3 in `;TYPE:Top surface` blocks
 - `MatchAColourE2ETest.kt` (1) — pick-a-colour end-to-end gate: a mix suggested by `MixColourMatcher.bestMix` slices into G-code using EXACTLY the suggested filaments (every suggested tool prints; non-suggested tools absent)
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
@@ -366,6 +375,51 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. To rebuild:
 > produced a `.so` without `nativeGetAllVolumeExtruders`, causing
 > `UnsatisfiedLinkError` mid-load). Always rebuild from the worktree whose source
 > matches the branch you intend to ship.
+
+### Isolated worktree builds — one command (preferred for worktrees)
+
+Historically only the `u1-slicer-orca` checkout could build the `.so`, because a
+fresh worktree is missing THREE build inputs and the old workflow borrowed them:
+
+1. the `orcaslicer/` submodule (gitlink only — empty until cloned);
+2. ~1.8 GB of prebuilt arm64 deps under `extern/*/{include,lib}` — these are
+   **gitignored binaries**, never committed, so checkouts don't get them;
+3. an NDK26/Release `.cxx` cache, which binds to its own source tree.
+
+`scripts/setup-worktree-native.sh` provisions all three so any worktree builds
+on its own, with no borrowing:
+
+```bash
+scripts/setup-worktree-native.sh <worktree-path>   # defaults to the current worktree
+scripts/rebuild-native-so.sh \
+  <worktree-path>/app/.cxx/Release/<name>/arm64-v8a   # build + strip + deploy + verify
+```
+
+> **Tearing a worktree down? Run this FIRST:**
+> ```bash
+> scripts/setup-worktree-native.sh --teardown <worktree-path>
+> ```
+> It unlinks the extern junctions so the subsequent `git worktree remove` /
+> `rm -rf` cannot recurse THROUGH them and silently delete the shared deps
+> cache that every other worktree depends on. The cache is left untouched.
+
+What it does: clones the orcaslicer submodule **from the `taylormadearmy/OrcaSlicer`
+fork** (the pin lives there, and engine patches like ColorMix are fork-only) and
+checks out the pinned SHA; creates Windows directory **junctions** from the
+worktree's `extern/<dep>/{include,lib}` into a shared neutral deps cache
+(`U1_DEPS_CACHE`, default `D:/projects/u1-native-deps-cache/extern`) so the 1.8 GB
+is shared, not duplicated, and the junctions sit exactly on the gitignored paths
+(no `git status` noise); copies the small `*_stub` shim dirs if the checkout
+lacked them; then fresh-configures a worktree-local NDK26/Release build dir.
+
+The shared cache is the single source of truth for every build input that is NOT
+in git: the big prebuilt `extern/*/{include,lib}` (junctioned) AND the small
+`*_stub` shim dirs (copied — their `include/` subdirs are caught by the
+`extern/*/include/` gitignore rule, so they can't live in git without fighting the
+negation; treating them like the big deps keeps provisioning uniform). The cache
+is populated once from a known-good `extern/` — the prebuilt deps are NOT rebuilt
+from source (`scripts/build_deps.sh` is the slow from-scratch path; the cache copy
+is the fast one).
 
 ### Using an existing build directory (preferred — faster)
 

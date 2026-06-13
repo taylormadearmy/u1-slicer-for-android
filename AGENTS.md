@@ -26,10 +26,10 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal build
 
 ```bash
 ./gradlew testDebugUnitTest                        # 1670 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 423 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 433 instrumented tests — uses Orchestrator
 ```
 
-**2093 total tests.** Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
+**2103 total tests.** Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
 
 **Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs. Pass the serial via `ANDROID_SERIAL=<id>` env var. Never deploy automated tests to personal or non-phone devices (the NF22E1 listed in local notes is off-limits).
 
@@ -37,6 +37,12 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal build
 ```bash
 ANDROID_SERIAL=<id> ./gradlew connectedDebugAndroidTest --no-daemon \
   "-Pandroid.testInstrumentationRunnerArguments.class=com.u1.slicer.SomeTest#someMethod"
+```
+
+**Windows progress wrapper** (prints `[current/total]` while the long instrumented suite runs):
+```powershell
+.\scripts\run-connected-with-progress.ps1 -Device <id>
+.\scripts\run-connected-with-progress.ps1 -Device <id> -ClassFilter com.u1.slicer.SomeTest
 ```
 
 **Sharded across two devices** (roughly 2× speedup):
@@ -127,6 +133,20 @@ Never reuse or update a published release — always use a new tag.
 - Add unit tests for every new parsing/logic function
 - `org.json` is Android API — add `testImplementation 'org.json:json:20231013'` for JVM tests that use it
 - `MeshData` vertex format: 10 floats/vertex (3 pos + 3 normal + 4 RGBA); `recolor(extruderColors)` updates RGBA in-place
+
+---
+
+## ColorMix
+
+Within-layer top-surface colour mixing:
+
+- Any filament can be designated a **mix** of 2–4 physical extruder components with weighted distribution
+- **Top-surface modes** (per-mix BETA setting): `STRIPES` (default — per-line round-robin), `PROPORTIONAL` (weighted within-line boundary), `DITHER` (1.5mm Bayer halftone dashes)
+- **`fineTopLines`**: narrows top-surface line width to nozzle/2 so component stripes interleave tightly
+- **`ironingGlaze`**: force-enables ironing on top surfaces and splits the ironing pass across components
+- Fully wipe-tower-safe: only splits if all component tools are planned by the wipe tower for that layer
+- Works for both object/part assignment (Prepare screen) and Smart Paint (painted mixes)
+- Mix recipe serialized as `t<mode>,f<0|1>,i<0|1>` tokens in `mixed_filament_definitions`
 
 ---
 

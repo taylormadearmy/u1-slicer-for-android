@@ -1143,3 +1143,6 @@ target_link_libraries(prusaslicer-jni
     ${log-lib}
     libslic3r
 )
+
+# 16KB page-size compliance (Android 15+ devices with 16KB kernel pages).
+target_link_options(prusaslicer-jni PRIVATE "-Wl,-z,max-page-size=16384")

@@ -55,4 +55,39 @@ class GcodeLayerRangeTest {
     fun zeroLayers_returnsZeroZero() {
         assertEquals(0 to 0, resolveInitialLayerRange(null, 0))
     }
+
+    // ── B143: computeDisplayLayer — slider position → "Layer N/M" label ──
+
+    @Test
+    fun displayLayer_topOfSlider_reachesFullCount() {
+        // B143 regression: 122-layer print, slider at max (index 121) must
+        // read "Layer 122/122", not "Layer 121/122".
+        assertEquals(122, computeDisplayLayer(121, 122, 122))
+    }
+
+    @Test
+    fun displayLayer_bottomOfSlider_isLayerOne() {
+        assertEquals(1, computeDisplayLayer(0, 122, 122))
+    }
+
+    @Test
+    fun displayLayer_midSlider_mapsOneBased() {
+        // Index 60 = the 61st parsed layer.
+        assertEquals(61, computeDisplayLayer(60, 122, 122))
+    }
+
+    @Test
+    fun displayLayer_slicerCountDiffers_scalesAndReachesTop() {
+        // Parsed 121 layers but slicer reports 122: top of slider still maps
+        // to the full display count.
+        assertEquals(122, computeDisplayLayer(120, 122, 121))
+        assertEquals(1, computeDisplayLayer(0, 122, 121))
+    }
+
+    @Test
+    fun displayLayer_degenerateCounts_returnOne() {
+        assertEquals(1, computeDisplayLayer(0, 0, 0))
+        assertEquals(1, computeDisplayLayer(5, 10, 0))
+        assertEquals(1, computeDisplayLayer(5, 0, 10))
+    }
 }

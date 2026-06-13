@@ -94,7 +94,7 @@ ALIGNS=$("$LLVM_READELF" -l "$SO_TARGET" 2>/dev/null | awk '/^[[:space:]]*LOAD/ 
 echo "==> LOAD segment alignments: $ALIGNS (expect 0x4000 for 16KB-page-aligned Android 15+ compat)"
 
 KOTLIN_COUNT=$(grep -cE 'external fun' "$REPO_ROOT/app/src/main/java/com/u1/slicer/NativeLibrary.kt" || echo "?")
-JNI_COUNT=$("$LLVM_READELF" -p .dynsym "$SO_TARGET" 2>/dev/null | grep -c 'Java_com_u1_slicer_NativeLibrary' || echo "?")
+JNI_COUNT=$("$LLVM_READELF" --dyn-syms "$SO_TARGET" 2>/dev/null | grep -c 'Java_com_u1_slicer_NativeLibrary' || echo "?")
 echo "==> JNI symbols: $JNI_COUNT in .so vs $KOTLIN_COUNT external fun in NativeLibrary.kt"
 if [ "$JNI_COUNT" != "$KOTLIN_COUNT" ]; then
   echo "WARNING: JNI symbol count mismatch — CMake may have dropped a source file." >&2

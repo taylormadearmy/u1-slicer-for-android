@@ -290,6 +290,10 @@ class SettingsRepository(private val context: Context) {
                     put("distributionMode", r.distributionMode.name)
                     put("label", r.label)
                     put("inLibrary", r.inLibrary)
+                    // BETA top-surface settings (absent in old saves -> defaults on read)
+                    put("topMixMode", r.topMixMode.name)
+                    put("fineTopLines", r.fineTopLines)
+                    put("ironingGlaze", r.ironingGlaze)
                 })
             }
             return arr.toString()
@@ -302,8 +306,14 @@ class SettingsRepository(private val context: Context) {
                 (0 until arr.length()).map { i ->
                     val o = arr.getJSONObject(i)
                     val mode = MixedFilamentRow.MixDistributionMode.valueOf(o.getString("distributionMode"))
+                    // BETA top-surface settings - absent keys (old saves) fall back to defaults.
+                    val topMixMode = runCatching {
+                        MixedFilamentRow.TopMixMode.valueOf(o.optString("topMixMode", MixedFilamentRow.TopMixMode.STRIPES.name))
+                    }.getOrDefault(MixedFilamentRow.TopMixMode.STRIPES)
+                    val fineTopLines = o.optBoolean("fineTopLines", false)
+                    val ironingGlaze = o.optBoolean("ironingGlaze", false)
                     val comps = o.optJSONArray("components")
-                    if (comps != null) {
+                    val row = if (comps != null) {
                         val weightsArr = o.getJSONArray("weights")
                         MixedFilamentRow(
                             id = o.getLong("id"),
@@ -324,6 +334,7 @@ class SettingsRepository(private val context: Context) {
                             inLibrary = o.getBoolean("inLibrary"),
                         )
                     }
+                    row.copy(topMixMode = topMixMode, fineTopLines = fineTopLines, ironingGlaze = ironingGlaze)
                 }
             } catch (e: org.json.JSONException) {
                 emptyList()

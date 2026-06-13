@@ -265,3 +265,24 @@ internal fun resolveInitialLayerRange(saved: Pair<Int, Int>?, layerCount: Int): 
     val hi = saved.second.coerceIn(lo, maxIdx)
     return lo to hi
 }
+
+/**
+ * B143 — map the 0-based slider position to the 1-based "Layer N/M" label.
+ *
+ * The slider indexes parsed G-code layers (`0..gcodeLayerCount-1`) while the
+ * label uses the slicer's 1-based layer numbering ([displayLayerCount] can
+ * differ from [gcodeLayerCount] when the slicer reports a different total).
+ * Scaling the 0-based index directly could never reach [displayLayerCount],
+ * so the slider's top position showed "Layer 121/122" and the final layer
+ * appeared unreachable. Scale the 1-based position instead so the extremes
+ * map to exactly 1 and [displayLayerCount].
+ *
+ * Pure and Android-free so the mapping is unit-testable (see
+ * `GcodeLayerRangeTest`).
+ */
+internal fun computeDisplayLayer(maxLayer: Int, displayLayerCount: Int, gcodeLayerCount: Int): Int {
+    if (gcodeLayerCount <= 0 || displayLayerCount <= 0) return 1
+    return (((maxLayer + 1).toLong() * displayLayerCount) / gcodeLayerCount)
+        .toInt()
+        .coerceIn(1, displayLayerCount)
+}

@@ -99,6 +99,26 @@ class MixedFilamentManager(
         editN(id, listOf(componentA, componentB), listOf(100 - mixBPercent, mixBPercent), distributionMode, label)
     }
 
+    /** BETA top-surface mixing settings — copy-on-write the row in both flows and persist. */
+    fun updateTopSurfaceSettings(
+        id: Long,
+        topMixMode: MixedFilamentRow.TopMixMode,
+        fineTopLines: Boolean,
+        ironingGlaze: Boolean,
+    ) {
+        fun patch(existing: MixedFilamentRow) =
+            if (existing.id != id) existing
+            else existing.copy(
+                topMixMode = topMixMode,
+                fineTopLines = fineTopLines,
+                ironingGlaze = ironingGlaze,
+            )
+        _projectMixes.value = _projectMixes.value.map(::patch)
+        _libraryMixes.value = _libraryMixes.value.map(::patch)
+        saveProject(_projectMixes.value)
+        saveLibrary(_libraryMixes.value)
+    }
+
     fun delete(id: Long) {
         _projectMixes.value = _projectMixes.value.filterNot { it.id == id }
         _libraryMixes.value = _libraryMixes.value.filterNot { it.id == id }
@@ -133,7 +153,7 @@ class MixedFilamentManager(
      * current project).
      *
      * Format mirrors `libslic3r/MixedFilament.cpp::serialize_custom_entries`:
-     *   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g<ids>,w<weights>,m<dist>,z0,xa0,xb0,d0,o0,u<id>
+     *   <a>,<b>,<enabled>,<custom>,<mix_b_pct>,<pointillism>,g<ids>,w<weights>,m<dist>,z0,xa0,xb0,d0,o0,t<mode>,f<fine>,i<glaze>,u<id>
      * separated by `;`. Empty string when no rows are present (engine treats
      * this as "no mixing").
      */
@@ -155,9 +175,16 @@ class MixedFilamentManager(
         }
         val ids = MixWeights.encodeIds(r.components)          // e.g. "123" or "1/12/3"
         val weights = MixWeights.encodeWeights(r.weights)     // e.g. "50/30/20"
+        val topMode = when (r.topMixMode) {
+            MixedFilamentRow.TopMixMode.STRIPES -> 0
+            MixedFilamentRow.TopMixMode.PROPORTIONAL -> 1
+            MixedFilamentRow.TopMixMode.DITHER -> 2
+        }
         // a,b = first two components; mix_b_pct = weight of component B (legacy 2-way fallback fields).
         // gradient tokens g<ids>,w<weights> drive the N-way engine path when ids.size >= 3.
+        // t/f/i = BETA top-surface settings (mode / fine top lines / ironing glaze).
         return "${r.componentA},${r.componentB},1,1,${r.mixBPercent},0," +
-            "g$ids,w$weights,m$distMode,z0,xa0,xb0,d0,o0,u${r.id}"
+            "g$ids,w$weights,m$distMode,z0,xa0,xb0,d0,o0," +
+            "t$topMode,f${if (r.fineTopLines) 1 else 0},i${if (r.ironingGlaze) 1 else 0},u${r.id}"
     }
 }

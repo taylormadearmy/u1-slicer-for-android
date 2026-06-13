@@ -69,6 +69,37 @@ class SessionStateMixPersistenceTest {
     }
 
     @Test
+    fun `roundtrip preserves top-surface settings and defaults absent keys`() {
+        val s = minimalSession(
+            projectMixes = listOf(
+                sampleRow(1L).copy(
+                    topMixMode = MixedFilamentRow.TopMixMode.PROPORTIONAL,
+                    fineTopLines = true,
+                    ironingGlaze = true,
+                ),
+                sampleRow(2L), // defaults: STRIPES / false / false
+            ),
+        )
+        val back = SessionState.fromJson(SessionState.toJson(s))!!
+        assertEquals(MixedFilamentRow.TopMixMode.PROPORTIONAL, back.projectMixes[0].topMixMode)
+        assertEquals(true, back.projectMixes[0].fineTopLines)
+        assertEquals(true, back.projectMixes[0].ironingGlaze)
+        assertEquals(MixedFilamentRow.TopMixMode.STRIPES, back.projectMixes[1].topMixMode)
+        assertEquals(false, back.projectMixes[1].fineTopLines)
+        assertEquals(false, back.projectMixes[1].ironingGlaze)
+
+        // Old-format JSON (keys absent) must default safely.
+        val arr = org.json.JSONObject(SessionState.toJson(s)).getJSONArray("projectMixes")
+        val o0 = arr.getJSONObject(0)
+        o0.remove("topMixMode"); o0.remove("fineTopLines"); o0.remove("ironingGlaze")
+        val patched = org.json.JSONObject(SessionState.toJson(s)).put("projectMixes", arr).toString()
+        val old = SessionState.fromJson(patched)!!
+        assertEquals(MixedFilamentRow.TopMixMode.STRIPES, old.projectMixes[0].topMixMode)
+        assertEquals(false, old.projectMixes[0].fineTopLines)
+        assertEquals(false, old.projectMixes[0].ironingGlaze)
+    }
+
+    @Test
     fun `fromJson tolerates missing projectMixes field (older state)`() {
         // An older app version's SessionState JSON won't have the field.
         // Reading it back must default to an empty list.
