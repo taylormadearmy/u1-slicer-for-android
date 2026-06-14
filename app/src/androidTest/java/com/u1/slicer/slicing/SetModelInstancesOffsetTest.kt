@@ -58,6 +58,62 @@ class SetModelInstancesOffsetTest {
         return out
     }
 
+    private data class GcodeBounds(
+        val minX: Float,
+        val maxX: Float,
+        val minY: Float,
+        val maxY: Float
+    )
+
+    private fun readGcodeBounds(gcodePath: String): GcodeBounds {
+        var minX = Float.POSITIVE_INFINITY
+        var maxX = Float.NEGATIVE_INFINITY
+        var minY = Float.POSITIVE_INFINITY
+        var maxY = Float.NEGATIVE_INFINITY
+
+        File(gcodePath).forEachLine { rawLine ->
+            val line = rawLine.substringBefore(';').trim()
+            if (!line.startsWith("G0 ") && !line.startsWith("G1 ")) return@forEachLine
+
+            var x: Float? = null
+            var y: Float? = null
+            line.splitToSequence(' ', '\t')
+                .filter { it.length > 1 }
+                .forEach { token ->
+                    when (token[0]) {
+                        'X' -> x = token.substring(1).toFloatOrNull()
+                        'Y' -> y = token.substring(1).toFloatOrNull()
+                    }
+                }
+
+            x?.takeIf { it > 0f }?.let {
+                minX = minOf(minX, it)
+                maxX = maxOf(maxX, it)
+            }
+            y?.takeIf { it > 0f }?.let {
+                minY = minOf(minY, it)
+                maxY = maxOf(maxY, it)
+            }
+        }
+
+        return GcodeBounds(
+            minX = if (minX.isFinite()) minX else Float.NaN,
+            maxX = if (maxX.isFinite()) maxX else Float.NaN,
+            minY = if (minY.isFinite()) minY else Float.NaN,
+            maxY = if (maxY.isFinite()) maxY else Float.NaN
+        )
+    }
+
+    private fun firstGcodeXyMoves(gcodePath: String, limit: Int): List<String> =
+        File(gcodePath).useLines { lines ->
+            lines.filter { line ->
+                val code = line.substringBefore(';')
+                (code.startsWith("G0 ") || code.startsWith("G1 ")) &&
+                    code.contains('X') &&
+                    code.contains('Y')
+            }.take(limit).map { it.trim() }.toList()
+        }
+
     /**
      * Mirror the user's slice flow: load → setModelScale(1.5) → setModelInstances.
      * Compare to no-scale probe to see if setModelScale changes what
@@ -181,12 +237,9 @@ class SetModelInstancesOffsetTest {
         val result = lib.slice(SliceConfig().copy(extruderCount = 1))
         assertNotNull("slice", result)
         assertTrue("slice success: ${result!!.errorMessage}", result.success)
-        val gcode = File(result.gcodePath).readText()
-        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
-        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
-        val gcodeMaxX = if (xs.isNotEmpty()) xs.max() else Float.NaN
+        val bounds = readGcodeBounds(result.gcodePath)
+        val gcodeMinX = bounds.minX
+        val gcodeMaxX = bounds.maxX
         Log.i("OffsetDiag", "calicube gcodeBounds: x=[$gcodeMinX, $gcodeMaxX]")
         Log.i("OffsetDiag", "calicube expected: minX=$originX")
         // Copy G-code to a stable, persistent path so we can inspect it post-teardown.
@@ -194,11 +247,7 @@ class SetModelInstancesOffsetTest {
         File(result.gcodePath).copyTo(keepPath, overwrite = true)
         Log.i("OffsetDiag", "calicube gcode persisted to ${keepPath.absolutePath}")
         // Also log the first 30 G1 X moves so we can read them straight out of logcat.
-        val firstMoves = Regex("""^G[01]\s+(?:[^\n;]*?\b)X(-?[\d.]+)[^\n;]*?\bY(-?[\d.]+)""")
-            .findAll(gcode)
-            .take(30)
-            .map { it.value.trim() }
-            .toList()
+        val firstMoves = firstGcodeXyMoves(result.gcodePath, 30)
         firstMoves.forEachIndexed { i, line -> Log.i("OffsetDiag", "calicube g1[$i]: $line") }
 
         // Soft assertion — log diagnostic on either branch so we capture the data.
@@ -254,18 +303,11 @@ class SetModelInstancesOffsetTest {
         val result = lib.slice(SliceConfig().copy(extruderCount = 1))
         assertNotNull("slice result", result)
         assertTrue("slice success: ${result!!.errorMessage}", result.success)
-        val gcode = File(result.gcodePath).readText()
-
-        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
-        val yRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*Y(-?[\d.]+)""")
-        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val ys = yRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
-        val gcodeMinY = if (ys.isNotEmpty()) ys.min() else Float.NaN
-        val gcodeMaxX = if (xs.isNotEmpty()) xs.max() else Float.NaN
-        val gcodeMaxY = if (ys.isNotEmpty()) ys.max() else Float.NaN
+        val bounds = readGcodeBounds(result.gcodePath)
+        val gcodeMinX = bounds.minX
+        val gcodeMinY = bounds.minY
+        val gcodeMaxX = bounds.maxX
+        val gcodeMaxY = bounds.maxY
 
         Log.i("OffsetDiag", "gcodeBounds: x=[$gcodeMinX, $gcodeMaxX] y=[$gcodeMinY, $gcodeMaxY]")
         Log.i("OffsetDiag", "expected: minX=$originX minY=$originY " +
@@ -335,18 +377,11 @@ class SetModelInstancesOffsetTest {
         val result = lib.slice(SliceConfig().copy(extruderCount = 1))
         assertNotNull("slice result", result)
         assertTrue("slice success: ${result!!.errorMessage}", result.success)
-        val gcode = File(result.gcodePath).readText()
-
-        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
-        val yRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*Y(-?[\d.]+)""")
-        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val ys = yRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
-        val gcodeMinY = if (ys.isNotEmpty()) ys.min() else Float.NaN
-        val gcodeMaxX = if (xs.isNotEmpty()) xs.max() else Float.NaN
-        val gcodeMaxY = if (ys.isNotEmpty()) ys.max() else Float.NaN
+        val bounds = readGcodeBounds(result.gcodePath)
+        val gcodeMinX = bounds.minX
+        val gcodeMinY = bounds.minY
+        val gcodeMaxX = bounds.maxX
+        val gcodeMaxY = bounds.maxY
         Log.i("OffsetDiag", "multi-copy gcodeBounds: x=[$gcodeMinX, $gcodeMaxX] y=[$gcodeMinY, $gcodeMaxY]")
 
         val tol = 5f
@@ -412,18 +447,11 @@ class SetModelInstancesOffsetTest {
         val result = lib.slice(SliceConfig().copy(extruderCount = 1))
         assertNotNull("nonUniform slice", result)
         assertTrue("nonUniform slice success: ${result!!.errorMessage}", result.success)
-        val gcode = File(result.gcodePath).readText()
-
-        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
-        val yRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*Y(-?[\d.]+)""")
-        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val ys = yRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
-        val gcodeMaxX = if (xs.isNotEmpty()) xs.max() else Float.NaN
-        val gcodeMinY = if (ys.isNotEmpty()) ys.min() else Float.NaN
-        val gcodeMaxY = if (ys.isNotEmpty()) ys.max() else Float.NaN
+        val bounds = readGcodeBounds(result.gcodePath)
+        val gcodeMinX = bounds.minX
+        val gcodeMaxX = bounds.maxX
+        val gcodeMinY = bounds.minY
+        val gcodeMaxY = bounds.maxY
         Log.i("OffsetDiag", "nonUniform gcodeBounds: x=[$gcodeMinX, $gcodeMaxX] y=[$gcodeMinY, $gcodeMaxY]")
 
         val tol = 5f
@@ -481,16 +509,9 @@ class SetModelInstancesOffsetTest {
         val result = lib.slice(SliceConfig().copy(extruderCount = 1, brimWidth = 0f, skirtLoops = 0))
         assertNotNull("bug3 slice", result)
         assertTrue("bug3 slice success: ${result!!.errorMessage}", result.success)
-        val gcode = File(result.gcodePath).readText()
-
-        val xRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*X(-?[\d.]+)""")
-        val yRegex = Regex("""G[01]\s+(?:[^\s;]+\s+)*Y(-?[\d.]+)""")
-        val xs = xRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val ys = yRegex.findAll(gcode).mapNotNull { it.groupValues[1].toFloatOrNull() }
-            .filter { it > 0f }.toList()
-        val gcodeMinX = if (xs.isNotEmpty()) xs.min() else Float.NaN
-        val gcodeMinY = if (ys.isNotEmpty()) ys.min() else Float.NaN
+        val bounds = readGcodeBounds(result.gcodePath)
+        val gcodeMinX = bounds.minX
+        val gcodeMinY = bounds.minY
         Log.i("OffsetDiag", "bug3 smallFixture gcodeBounds: minX=$gcodeMinX minY=$gcodeMinY")
 
         val tol = 5f

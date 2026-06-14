@@ -497,6 +497,7 @@ fun UploadConfirmationDialog(
     plateFileIndices: List<Int>? = null,
     modelName: String? = null,
     slicedMaterials: List<String>? = null,
+    physicalToolSpace: Boolean = false,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -547,7 +548,7 @@ fun UploadConfirmationDialog(
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    "Filament ${displayFileIndex + 1}",
+                                    if (physicalToolSpace) "E${displayFileIndex + 1}" else "Filament ${displayFileIndex + 1}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -572,8 +573,11 @@ fun UploadConfirmationDialog(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        "When you start this print on the printer, it will ask " +
-                            "you to assign each colour to a nozzle.",
+                        if (physicalToolSpace) {
+                            "This file already contains E-slot tool changes. Keep the printer's filament assignment matched to these slots when starting it from storage."
+                        } else {
+                            "When you start this print on the printer, it will ask you to assign each colour to a nozzle."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(10.dp),

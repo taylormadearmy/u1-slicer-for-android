@@ -840,20 +840,28 @@ class MainActivity : ComponentActivity() {
                                 val (narrowedList, plateFileIndices) = plateNarrowed
                                 when (pending.action) {
                                     PendingMappingSend.Action.UploadOnly -> {
-                                        // Internal-memory wrong-nozzle fix (2026-06-03):
-                                        // send-to-hold ships the CANONICAL body and lets the
-                                        // printer's Filament Setup map it once. No in-app slot
-                                        // picker — its picks would double-remap (the body is
-                                        // already physical + the printer maps again → wrong
-                                        // nozzle). See gcode.sendRemapForAction KDoc.
+                                        // Internal-memory wrong-nozzle fix (2026-06-03),
+                                        // extended for mix-tool-space slices (2026-06-13):
+                                        // canonical bodies stay canonical for printer-side
+                                        // Filament Setup; mix bodies are already physical
+                                        // E-slot G-code, so the confirmation must show E slots
+                                        // and the copy must not canonical-remap them again.
+                                        val uploadPhysicalSlotSpace = sliceMixToolSpace && mixSlotMapping != null
+                                        val (uploadList, uploadFileIndices) =
+                                            if (uploadPhysicalSlotSpace) mixSlotMapping!! else (narrowedList to plateFileIndices)
                                         com.u1.slicer.ui.UploadConfirmationDialog(
-                                            canonicalList = narrowedList,
-                                            plateFileIndices = plateFileIndices,
+                                            canonicalList = uploadList,
+                                            plateFileIndices = uploadFileIndices,
                                             modelName = viewModel.modelFileName.value,
                                             // Show the sliced-with material (slot preset wins
                                             // over file-declared), matching the Per-Extruder
                                             // summary — e.g. PETG, not the file's PLA.
-                                            slicedMaterials = viewModel.sliceTimeMaterials(canonical, currentMapping),
+                                            slicedMaterials = if (uploadPhysicalSlotSpace)
+                                                (0 until 4).map { slot ->
+                                                    extruderPresets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
+                                                }
+                                            else viewModel.sliceTimeMaterials(canonical, currentMapping),
+                                            physicalToolSpace = uploadPhysicalSlotSpace,
                                             onConfirm = {
                                                 val sourceFile = java.io.File(pending.gcodePath)
                                                 val heldFile = java.io.File(
@@ -869,12 +877,20 @@ class MainActivity : ComponentActivity() {
                                                     // the app is backgrounded.
                                                     LongOpService.start(toastContext, "Preparing G-code")
                                                     val physical = try {
+                                                        val sourceToolSpace =
+                                                            if (sliceMixToolSpace) com.u1.slicer.gcode.GcodeToolSpace.PHYSICAL
+                                                            else com.u1.slicer.gcode.GcodeToolSpace.CANONICAL
                                                         com.u1.slicer.gcode.applyPrintTimeRemap(
                                                             source = com.u1.slicer.gcode.CanonicalGcodePath.of(sourceFile),
                                                             output = com.u1.slicer.gcode.PhysicalGcodePath.of(heldFile),
                                                             colorMapping = com.u1.slicer.gcode.sendRemapForAction(
                                                                 uploadOnly = true,
-                                                                physicalMapping = emptyList(),
+                                                                physicalMapping = if (sourceToolSpace == com.u1.slicer.gcode.GcodeToolSpace.PHYSICAL) {
+                                                                    (0 until 4).toList()
+                                                                } else {
+                                                                    emptyList()
+                                                                },
+                                                                sourceToolSpace = sourceToolSpace,
                                                             ),
                                                         )
                                                     } catch (ce: kotlinx.coroutines.CancellationException) {

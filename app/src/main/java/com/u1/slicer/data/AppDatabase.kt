@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 
 @Database(
     entities = [FilamentProfile::class, SliceJob::class],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -123,6 +123,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v7 → v8: add nullable G-code tool-space marker to slice_jobs.
+         * Existing rows keep NULL so share/export preserves the legacy
+         * interpretation: rows without canonical metadata are already physical,
+         * rows with canonical metadata are canonical-space.
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE slice_jobs ADD COLUMN gcodeToolSpace TEXT")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -130,7 +142,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "u1_slicer.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .addCallback(SeedCallback())
                     .build()
                 INSTANCE = instance

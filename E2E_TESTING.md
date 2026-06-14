@@ -19,6 +19,14 @@ Run before release:
 ./gradlew assembleRelease
 ```
 
+For the repo-defined confidence sweep with live progress output and a status file you can query mid-run, use:
+
+```powershell
+.\scripts\run-confidence-check.ps1
+.\scripts\run-confidence-check.ps1 -Status
+```
+The default smoke list and E2E range are in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1).
+
 If Gradle's connected-test wrapper is flaky on this Windows machine, run the device suite directly:
 
 ```bash

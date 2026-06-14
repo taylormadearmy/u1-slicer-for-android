@@ -1,6 +1,7 @@
 package com.u1.slicer.data
 
-import com.u1.slicer.gcode.resolveCanonicalExportMapping
+import com.u1.slicer.gcode.GcodeToolSpace
+import com.u1.slicer.gcode.gcodeToolSpaceToDb
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -30,19 +31,14 @@ import org.junit.Test
 class SliceJobMappingResolutionTest {
 
     private fun resolveForJob(job: SliceJob): List<Int>? {
-        val canonicalSize = job.canonicalListSize ?: 0
-        if (canonicalSize == 0) return null
-        return resolveCanonicalExportMapping(
-            canonicalSize = canonicalSize,
-            confirmedMapping = decodedColorMapping(job),
-            selectedExtruder = job.selectedExtruderAtSlice ?: 0,
-        )
+        return resolveExportMapping(job)
     }
 
     private fun jobOf(
         canonicalListSize: Int? = null,
         colorMappingCsv: String? = null,
         selectedExtruderAtSlice: Int? = null,
+        gcodeToolSpace: String? = null,
     ): SliceJob = SliceJob(
         modelName = "fixture",
         gcodePath = "/tmp/x.gcode",
@@ -58,6 +54,7 @@ class SliceJobMappingResolutionTest {
         canonicalListSize = canonicalListSize,
         colorMappingCsv = colorMappingCsv,
         selectedExtruderAtSlice = selectedExtruderAtSlice,
+        gcodeToolSpace = gcodeToolSpace,
     )
 
     @Test
@@ -65,6 +62,28 @@ class SliceJobMappingResolutionTest {
         // Pre-schema-v5 job. Stored G-code is already physical-slot.
         val job = jobOf(canonicalListSize = null)
         assertNull(resolveForJob(job))
+    }
+
+    @Test
+    fun physicalToolSpaceJob_resolvesToNullForIdentityCopyEvenWithCanonicalMetadata() {
+        val job = jobOf(
+            canonicalListSize = 4,
+            colorMappingCsv = "3,2,1,0",
+            selectedExtruderAtSlice = 0,
+            gcodeToolSpace = gcodeToolSpaceToDb(GcodeToolSpace.PHYSICAL),
+        )
+        assertNull(resolveForJob(job))
+    }
+
+    @Test
+    fun canonicalToolSpaceJob_resolvesStoredCanonicalMapping() {
+        val job = jobOf(
+            canonicalListSize = 4,
+            colorMappingCsv = "3,2,1,0",
+            selectedExtruderAtSlice = 0,
+            gcodeToolSpace = gcodeToolSpaceToDb(GcodeToolSpace.CANONICAL),
+        )
+        assertEquals(listOf(3, 2, 1, 0), resolveForJob(job))
     }
 
     @Test

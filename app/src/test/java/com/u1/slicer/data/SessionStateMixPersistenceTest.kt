@@ -77,14 +77,14 @@ class SessionStateMixPersistenceTest {
                     fineTopLines = true,
                     ironingGlaze = true,
                 ),
-                sampleRow(2L), // defaults: STRIPES / false / false
+                sampleRow(2L).copy(topMixMode = MixedFilamentRow.TopMixMode.OFF),
             ),
         )
         val back = SessionState.fromJson(SessionState.toJson(s))!!
         assertEquals(MixedFilamentRow.TopMixMode.PROPORTIONAL, back.projectMixes[0].topMixMode)
         assertEquals(true, back.projectMixes[0].fineTopLines)
         assertEquals(true, back.projectMixes[0].ironingGlaze)
-        assertEquals(MixedFilamentRow.TopMixMode.STRIPES, back.projectMixes[1].topMixMode)
+        assertEquals(MixedFilamentRow.TopMixMode.OFF, back.projectMixes[1].topMixMode)
         assertEquals(false, back.projectMixes[1].fineTopLines)
         assertEquals(false, back.projectMixes[1].ironingGlaze)
 

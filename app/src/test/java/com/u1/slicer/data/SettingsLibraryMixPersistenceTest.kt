@@ -43,12 +43,18 @@ class SettingsLibraryMixPersistenceTest {
                 fineTopLines = true,
                 ironingGlaze = true,
             ),
+            MixedFilamentRow.fromLegacy(
+                id = 8L, componentA = 2, componentB = 4, mixBPercent = 60,
+                distributionMode = MixedFilamentRow.MixDistributionMode.LAYER_CYCLE,
+                label = "Off", inLibrary = true,
+            ).copy(topMixMode = MixedFilamentRow.TopMixMode.OFF),
         )
         val decoded = SettingsRepository.decodeLibraryMixes(SettingsRepository.encodeLibraryMixes(rows))
         assertEquals(rows, decoded)
         assertEquals(MixedFilamentRow.TopMixMode.DITHER, decoded[0].topMixMode)
         assertEquals(true, decoded[0].fineTopLines)
         assertEquals(true, decoded[0].ironingGlaze)
+        assertEquals(MixedFilamentRow.TopMixMode.OFF, decoded[1].topMixMode)
     }
 
     @Test

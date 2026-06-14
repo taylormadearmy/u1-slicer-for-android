@@ -45,7 +45,7 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
 
     // Multi-object models (e.g. multi-color 3MF): move all objects by the
     // same delta to preserve their relative positions.
-    bool multiObject = model.objects.size() > 1 && positions.size() == 1;
+    bool multiObject = model.objects.size() > 1;
 
     if (multiObject) {
         // Compute current world bounding box across all objects (mesh + instance
@@ -82,22 +82,51 @@ bool SlicerEngine::setModelInstances(const std::vector<std::pair<float, float>>&
             return false;
         }
         Slic3r::Vec3d worldMin = worldBB.min;
-        Slic3r::Vec3d delta(
-            positions[0].first - worldMin.x(),
-            positions[0].second - worldMin.y(),
-            0.0
-        );
+        if (positions.size() == 1) {
+            Slic3r::Vec3d delta(
+                positions[0].first - worldMin.x(),
+                positions[0].second - worldMin.y(),
+                0.0
+            );
 
-        for (auto* obj : model.objects) {
-            for (auto* inst : obj->instances) {
-                auto offset = inst->get_offset();
-                inst->set_offset(Slic3r::Vec3d(
-                    offset.x() + delta.x(),
-                    offset.y() + delta.y(),
-                    offset.z()
-                ));
+            for (auto* obj : model.objects) {
+                for (auto* inst : obj->instances) {
+                    auto offset = inst->get_offset();
+                    inst->set_offset(Slic3r::Vec3d(
+                        offset.x() + delta.x(),
+                        offset.y() + delta.y(),
+                        offset.z()
+                    ));
+                }
+                obj->invalidate_bounding_box();
             }
-            obj->invalidate_bounding_box();
+        } else {
+            // Assembly copy: preserve the relative spacing of all objects by
+            // translating each object by the same copy delta from its original
+            // instance offset. This keeps the intra-assembly spacing intact
+            // while still duplicating the whole assembly at each requested
+            // position.
+            for (auto* obj : model.objects) {
+                if (obj->instances.empty()) continue;
+                auto trafo = obj->instances[0]->get_transformation();
+                auto baseOffset = obj->instances[0]->get_offset();
+                obj->clear_instances();
+
+                for (const auto& pos : positions) {
+                    auto* inst = obj->add_instance();
+                    inst->set_transformation(trafo);
+                    const Slic3r::Vec3d delta(
+                        static_cast<double>(pos.first)  - worldMin.x(),
+                        static_cast<double>(pos.second) - worldMin.y(),
+                        -worldMin.z()
+                    );
+                    inst->set_offset(Slic3r::Vec3d(
+                        baseOffset.x() + delta.x(),
+                        baseOffset.y() + delta.y(),
+                        baseOffset.z() + delta.z()
+                    ));
+                }
+            }
         }
     } else {
         // Single object, possibly multiple copies: preserve first instance's

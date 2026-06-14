@@ -112,6 +112,12 @@ class LongOpService : Service() {
         /** Stack-mutation result: what the Service should now render. */
         internal data class DispatchPayload(val action: String, val stage: String?, val progress: Int)
 
+        @VisibleForTesting
+        internal enum class ServiceStartMode {
+            START_SERVICE,
+            START_FOREGROUND_SERVICE
+        }
+
         /**
          * Optional Android-side dispatch sink for instrumented tests. When non-null, the
          * companion records the [DispatchPayload] here instead of starting the actual Service.
@@ -197,20 +203,46 @@ class LongOpService : Service() {
             dispatch(context, payload)
         }
 
+        @VisibleForTesting
+        internal fun startModeFor(
+            payload: DispatchPayload,
+            sdkInt: Int = Build.VERSION.SDK_INT,
+            appInForeground: Boolean = AppForegroundTracker.isInForeground
+        ): ServiceStartMode =
+            when {
+                payload.action == ACTION_STOP -> ServiceStartMode.START_SERVICE
+                sdkInt < Build.VERSION_CODES.O -> ServiceStartMode.START_SERVICE
+                // Try a normal service start first. When it is legal, Android does not arm
+                // startForegroundService()'s 5s watchdog while the UI thread is busy entering
+                // native work. If the app is truly backgrounded Android throws immediately;
+                // dispatch() catches that and falls back to startForegroundService().
+                else -> ServiceStartMode.START_SERVICE
+            }
+
         private fun dispatch(context: Context, payload: DispatchPayload) {
-            dispatchSink?.invoke(payload)
+            dispatchSink?.let {
+                it(payload)
+                return
+            }
             val intent = Intent(context, LongOpService::class.java).apply {
                 this.action = payload.action
                 if (payload.stage != null) putExtra(EXTRA_STAGE, payload.stage)
                 putExtra(EXTRA_PROGRESS, payload.progress)
             }
             try {
-                if (payload.action == ACTION_STOP) {
-                    context.startService(intent)
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
+                when (startModeFor(payload)) {
+                    ServiceStartMode.START_SERVICE -> context.startService(intent)
+                    ServiceStartMode.START_FOREGROUND_SERVICE -> context.startForegroundService(intent)
+                }
+            } catch (state: IllegalStateException) {
+                if (payload.action != ACTION_STOP && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        context.startForegroundService(intent)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "LongOpService foreground fallback failed for action=${payload.action} stage=${payload.stage}: ${t.message}")
+                    }
                 } else {
-                    context.startService(intent)
+                    Log.w(TAG, "LongOpService dispatch failed for action=${payload.action} stage=${payload.stage}: ${state.message}")
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "LongOpService dispatch failed for action=${payload.action} stage=${payload.stage}: ${t.message}")

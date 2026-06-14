@@ -12,7 +12,7 @@ import java.io.File
  *
  * 1. `CreateMixSlotDialog` contains a "Top surface mixing" section header with a
  *    BETA marker (the shared [BetaPill] used by the other mix BETA affordances).
- * 2. The section offers three mode options labelled Stripes / Proportional /
+ * 2. The section offers four mode options labelled Off / Stripes / Proportional /
  *    Dither, bound to `MixedFilamentRow.TopMixMode`.
  * 3. Two toggles labelled "Fine top lines" and "Ironing glaze" bound to
  *    `fineTopLines` / `ironingGlaze` state.
@@ -55,13 +55,18 @@ class TopSurfaceMixSettingsUiTest {
 
     @Test
     fun editor_offersStripesProportionalDither_boundToTopMixMode() {
-        for (label in listOf("\"Stripes\"", "\"Proportional\"", "\"Dither\"")) {
+        for (label in listOf("\"Off\"", "\"Stripes\"", "\"Proportional\"", "\"Dither\"")) {
             assertTrue(
                 "mode picker must render an option labelled $label",
                 dialog.contains(label),
             )
         }
-        for (value in listOf("TopMixMode.STRIPES", "TopMixMode.PROPORTIONAL", "TopMixMode.DITHER")) {
+        for (value in listOf(
+            "TopMixMode.OFF",
+            "TopMixMode.STRIPES",
+            "TopMixMode.PROPORTIONAL",
+            "TopMixMode.DITHER",
+        )) {
             assertTrue(
                 "mode picker options must be bound to MixedFilamentRow.$value",
                 dialog.contains(value),

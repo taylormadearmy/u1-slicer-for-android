@@ -25,12 +25,11 @@ import java.io.File
  * enforces the distinction at every call site.
  *
  * Migration note: at the Room database boundary [SliceJob.gcodePath]
- * stays a raw `String` because Phase-1-era jobs carry physical-slot
- * G-code (no remap was applied at slice time) and Phase-2-era jobs
- * carry canonical (remap is applied at Send/Save/Share time).
- * `shareJobGcode` decides the wrap based on
- * [SliceJob.canonicalListSize] — null → wrap as `PhysicalGcodePath`
- * (legacy), non-null → wrap as `CanonicalGcodePath`.
+ * stays a raw `String`. Phase-1-era rows with null
+ * [SliceJob.canonicalListSize] are treated as physical-slot G-code for
+ * compatibility. New rows persist [SliceJob.gcodeToolSpace] so mix
+ * slices that already emit physical component tools are copied/exported
+ * without a second canonical remap.
  */
 @JvmInline
 value class CanonicalGcodePath(val absolutePath: String) {

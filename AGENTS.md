@@ -25,11 +25,11 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal build
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest                        # 1670 JVM unit tests
+./gradlew testDebugUnitTest                        # 1699 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 433 instrumented tests — uses Orchestrator
 ```
 
-**2103 total tests.** Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
+**2132 total tests.** Instrumented tests run each test in its own process (Android Test Orchestrator) to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
 
 **Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs. Pass the serial via `ANDROID_SERIAL=<id>` env var. Never deploy automated tests to personal or non-phone devices (the NF22E1 listed in local notes is off-limits).
 
@@ -44,6 +44,13 @@ ANDROID_SERIAL=<id> ./gradlew connectedDebugAndroidTest --no-daemon \
 .\scripts\run-connected-with-progress.ps1 -Device <id>
 .\scripts\run-connected-with-progress.ps1 -Device <id> -ClassFilter com.u1.slicer.SomeTest
 ```
+
+**Confidence checks** (single entrypoint with live progress + status file):
+```powershell
+.\scripts\run-confidence-check.ps1
+.\scripts\run-confidence-check.ps1 -Status
+```
+The default instrumented smoke set and E2E range live in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1). Use `-InstrumentedClasses` / `-SkipUnit` / `-SkipInstrumented` / `-SkipE2E` only when you intentionally want a partial sweep.
 
 **Sharded across two devices** (roughly 2× speedup):
 ```bash
@@ -78,7 +85,7 @@ cp libprusaslicer-jni.so app/src/main/jniLibs/arm64-v8a/
 **Verification after strip:**
 - Size ~19–21 MB (if 50 MB+, you built Debug — redo)
 - `llvm-readelf -p .comment libprusaslicer-jni.so` → `clang version 17.0.2`
-- JNI symbol count: `llvm-readelf -p .dynsym ... | grep Java_com_u1_slicer | wc -l` matches the count of `external fun` declarations in `NativeLibrary.kt`
+- JNI symbol count: `llvm-readelf --dyn-syms ... | grep Java_com_u1_slicer | wc -l` matches the count of `external fun` declarations in `NativeLibrary.kt`
 
 **Fresh CMake configure** (no existing build dir):
 ```bash

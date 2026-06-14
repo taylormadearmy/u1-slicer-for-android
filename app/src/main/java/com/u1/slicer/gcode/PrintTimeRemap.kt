@@ -2,6 +2,19 @@ package com.u1.slicer.gcode
 
 import java.io.File
 
+enum class GcodeToolSpace {
+    CANONICAL,
+    PHYSICAL,
+}
+
+fun gcodeToolSpaceFromDb(value: String?): GcodeToolSpace =
+    when (value) {
+        GcodeToolSpace.PHYSICAL.name -> GcodeToolSpace.PHYSICAL
+        else -> GcodeToolSpace.CANONICAL
+    }
+
+fun gcodeToolSpaceToDb(value: GcodeToolSpace): String = value.name
+
 /**
  * Phase 2.3 — non-destructive print-time T-index rewrite.
  *
@@ -125,6 +138,22 @@ fun resolveCanonicalExportMapping(
     return List(canonicalSize) { it % 4 }
 }
 
+fun resolveExportMappingForToolSpace(
+    toolSpace: GcodeToolSpace,
+    canonicalSize: Int,
+    confirmedMapping: List<Int>?,
+    selectedExtruder: Int,
+    confirmedMappingFileIndices: List<Int>? = null,
+): List<Int>? {
+    if (toolSpace == GcodeToolSpace.PHYSICAL) return null
+    return resolveCanonicalExportMapping(
+        canonicalSize = canonicalSize,
+        confirmedMapping = confirmedMapping,
+        selectedExtruder = selectedExtruder,
+        confirmedMappingFileIndices = confirmedMappingFileIndices,
+    )
+}
+
 fun applyPrintTimeRemap(
     sourceGcodePath: String,
     outputPath: String,
@@ -179,14 +208,21 @@ fun applyPrintTimeRemap(
  * physical-slot space, the two maps compose → double remap → the first
  * colour prints on the wrong nozzle.
  *
- * So for the Upload-Only / send-to-hold path we return an EMPTY mapping
- * (verbatim copy = canonical body) and let the printer map once via Filament
- * Setup. Map & Print returns the resolved [physicalMapping] so its body is
- * print-ready for the verbatim API start.
+ * So for the Upload-Only / send-to-hold path with a canonical source we return
+ * an EMPTY mapping (verbatim copy = canonical body) and let the printer map
+ * once via Filament Setup. When the source is already physical-slot G-code
+ * (ColorMix component-tool output), the caller can keep a physical mapping so
+ * the upload remains an E-slot body rather than being treated as canonical.
+ * Map & Print returns the resolved [physicalMapping] so its body is print-ready
+ * for the verbatim API start.
  *
  * @param uploadOnly true for the send-to-hold / Upload-Only action.
  * @param physicalMapping the resolved canonical-fileIndex → physical-slot
- *   mapping (used only for Map & Print).
+ *   mapping, interpreted in [sourceToolSpace].
  */
-fun sendRemapForAction(uploadOnly: Boolean, physicalMapping: List<Int>): List<Int> =
-    if (uploadOnly) emptyList() else physicalMapping
+fun sendRemapForAction(
+    uploadOnly: Boolean,
+    physicalMapping: List<Int>,
+    sourceToolSpace: GcodeToolSpace = GcodeToolSpace.CANONICAL,
+): List<Int> =
+    if (uploadOnly && sourceToolSpace == GcodeToolSpace.CANONICAL) emptyList() else physicalMapping

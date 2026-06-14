@@ -2,6 +2,9 @@ package com.u1.slicer.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.u1.slicer.gcode.GcodeToolSpace
+import com.u1.slicer.gcode.gcodeToolSpaceFromDb
+import com.u1.slicer.gcode.resolveExportMappingForToolSpace
 
 @Entity(tableName = "slice_jobs")
 data class SliceJob(
@@ -54,6 +57,13 @@ data class SliceJob(
      * those) and for pre-schema-v6 jobs.
      */
     val selectedExtruderAtSlice: Int? = null,
+    /**
+     * Schema v8 — tool space of the stored G-code body. Null on pre-v8
+     * rows. For legacy rows with null [canonicalListSize], null means
+     * "already physical" as before; for rows with canonical metadata,
+     * null is treated as canonical for backwards compatibility.
+     */
+    val gcodeToolSpace: String? = null,
 )
 
 /**
@@ -71,3 +81,17 @@ fun decodedColorMapping(job: SliceJob): List<Int>? =
         ?.split(',')
         ?.mapNotNull { it.trim().toIntOrNull() }
         ?.takeIf { it.isNotEmpty() }
+
+fun storedGcodeIsPhysical(job: SliceJob): Boolean =
+    gcodeToolSpaceFromDb(job.gcodeToolSpace) == GcodeToolSpace.PHYSICAL ||
+        (job.gcodeToolSpace == null && job.canonicalListSize == null)
+
+fun resolveExportMapping(job: SliceJob): List<Int>? {
+    val toolSpace = if (storedGcodeIsPhysical(job)) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL
+    return resolveExportMappingForToolSpace(
+        toolSpace = toolSpace,
+        canonicalSize = job.canonicalListSize ?: 0,
+        confirmedMapping = decodedColorMapping(job),
+        selectedExtruder = job.selectedExtruderAtSlice ?: 0,
+    )
+}

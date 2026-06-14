@@ -49,4 +49,17 @@ class MixTopSurfaceSettingsTest {
         )
         assertTrue(m.serialize(4).contains(",t1,f0,i0,"))
     }
+
+    @Test
+    fun offMode_serializesT3() {
+        val m = mgr()
+        m.addN(listOf(1, 2), listOf(50, 50), MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+        m.updateTopSurfaceSettings(
+            m.projectMixes.value.first().id,
+            topMixMode = MixedFilamentRow.TopMixMode.OFF,
+            fineTopLines = false,
+            ironingGlaze = false,
+        )
+        assertTrue(m.serialize(4).contains(",t3,f0,i0,"))
+    }
 }

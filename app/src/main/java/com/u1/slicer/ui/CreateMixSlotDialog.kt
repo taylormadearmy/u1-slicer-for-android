@@ -25,6 +25,20 @@ import com.u1.slicer.data.MixedFilamentRow
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+private val topSurfaceMixModes = listOf(
+    MixedFilamentRow.TopMixMode.OFF,
+    MixedFilamentRow.TopMixMode.STRIPES,
+    MixedFilamentRow.TopMixMode.PROPORTIONAL,
+    MixedFilamentRow.TopMixMode.DITHER,
+)
+
+private fun MixedFilamentRow.TopMixMode.label(): String = when (this) {
+    MixedFilamentRow.TopMixMode.OFF -> "Off"
+    MixedFilamentRow.TopMixMode.STRIPES -> "Stripes"
+    MixedFilamentRow.TopMixMode.PROPORTIONAL -> "Proportional"
+    MixedFilamentRow.TopMixMode.DITHER -> "Dither"
+}
+
 /** Remove the component at [index] (no-op below 3 components) and renormalize weights. */
 fun removeMixComponent(components: List<Int>, weights: List<Int>, index: Int): Pair<List<Int>, List<Int>> {
     if (components.size <= 2) return components to weights
@@ -73,6 +87,7 @@ fun CreateMixSlotDialog(
     var topMixMode by remember {
         mutableStateOf(editingRow?.topMixMode ?: MixedFilamentRow.TopMixMode.STRIPES)
     }
+    var topMixExpanded by remember { mutableStateOf(false) }
     var fineTopLines by remember { mutableStateOf(editingRow?.fineTopLines ?: false) }
     var ironingGlaze by remember { mutableStateOf(editingRow?.ironingGlaze ?: false) }
     var typingIndex by remember { mutableStateOf(-1) }
@@ -257,22 +272,33 @@ fun CreateMixSlotDialog(
                     Spacer(Modifier.width(6.dp))
                     BetaPill()
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = topMixMode == MixedFilamentRow.TopMixMode.STRIPES,
-                        onClick = { topMixMode = MixedFilamentRow.TopMixMode.STRIPES },
-                        label = { Text("Stripes") },
+                ExposedDropdownMenuBox(
+                    expanded = topMixExpanded,
+                    onExpandedChange = { topMixExpanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = topMixMode.label(),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Mode") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = topMixExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                        singleLine = true,
                     )
-                    FilterChip(
-                        selected = topMixMode == MixedFilamentRow.TopMixMode.PROPORTIONAL,
-                        onClick = { topMixMode = MixedFilamentRow.TopMixMode.PROPORTIONAL },
-                        label = { Text("Proportional") },
-                    )
-                    FilterChip(
-                        selected = topMixMode == MixedFilamentRow.TopMixMode.DITHER,
-                        onClick = { topMixMode = MixedFilamentRow.TopMixMode.DITHER },
-                        label = { Text("Dither") },
-                    )
+                    ExposedDropdownMenu(
+                        expanded = topMixExpanded,
+                        onDismissRequest = { topMixExpanded = false },
+                    ) {
+                        topSurfaceMixModes.forEach { mode ->
+                            DropdownMenuItem(
+                                text = { Text(mode.label()) },
+                                onClick = {
+                                    topMixMode = mode
+                                    topMixExpanded = false
+                                },
+                            )
+                        }
+                    }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Fine top lines", style = MaterialTheme.typography.bodyMedium)

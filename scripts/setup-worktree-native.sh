@@ -32,7 +32,7 @@
 #     scripts/rebuild-native-so.sh <worktree>/app/.cxx/Release/<name>/arm64-v8a
 #
 # Usage:
-#     scripts/setup-worktree-native.sh [worktree-path]
+#     bash scripts/setup-worktree-native.sh [worktree-path]
 # Default worktree-path: the git toplevel of the current directory.
 #
 # Env overrides:

@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v3.2.0-beta` (`versionCode 329`)
+Current release: `v3.3.0` (`versionCode 330`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -91,7 +91,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1670 JVM unit tests
+./gradlew testDebugUnitTest                        # 1699 JVM unit tests
 ./gradlew connectedDebugAndroidTest                # 433 instrumented tests — uses Orchestrator
 ```
 
@@ -100,29 +100,37 @@ For live progress during the long Windows instrumented sweep, use:
 .\scripts\run-connected-with-progress.ps1 -Device <id>
 ```
 
+For the repo-defined confidence sweep, use:
+```powershell
+.\scripts\run-confidence-check.ps1
+.\scripts\run-confidence-check.ps1 -Status
+```
+The default smoke set is defined in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1). When touching session resume, copy-count / bed-fit, or Prepare/slice state, include the recent-change add-ons from the manifest rather than inventing a new subset.
+
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1670 tests across 150 classes
+### Unit tests (`app/src/test/`) - 1699 tests across 150 classes
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
 - `gcode/SuspiciousLineContextTest.kt` (6) — B52 streaming line context lookup: window clamping, multi-sample cap, large file smoke test
 - `gcode/GcodeToolRemapperTest.kt` (19) — Compact tool index remapping, SM_ params, M104/M109
-- `gcode/CanonicalExportMappingTest.kt` (17) — resolveCanonicalExportMapping: full/plate-narrowed/single-colour/no-canonical export mapping cases, fileIndex-key sparse mapping, clamping, B106 STL non-canonical E2/E3/E4 slot remap, default E1 identity
+- `gcode/CanonicalExportMappingTest.kt` (24) — resolveCanonicalExportMapping: full/plate-narrowed/single-colour/no-canonical export mapping cases, fileIndex-key sparse mapping, clamping, B106 STL non-canonical E2/E3/E4 slot remap, default E1 identity, physical/canonical G-code tool-space export and Upload Only handling
 - `viewer/StlParserTest.kt` (10) — Binary/ASCII STL parsing, bounding box, vertex data, 10-float vertex format
 - `viewer/MeshDataTest.kt` (12) — MeshData 10-float vertex format, extruderIndices, recolor(), RGBA values, multi-extruder recolor, F95 recolor paints trailing modifier block translucent (modifierBlockStartTriangle boundary) while model parts keep palette colour
 - `network/MakerWorldUtilsTest.kt` (36) — URL parsing, design→instance ID resolution, download response parsing, error classification, cookie sanitization
 - `network/MoonrakerClientTest.kt` (38) — PrinterStatus computed properties, URL normalization, LED state, remoteScreenUrl(), B33 virtual_sdcard progress parsing, sendGcode network path, queryWebcamSnapshotCandidates monitor.jpg appending
 - `data/SliceConfigTest.kt` (25) — Default values match Snapmaker U1 hardware specs, wipe tower bounds clamping
 - `data/DataClassesTest.kt` (17) — FilamentProfile, SliceJob, GcodeMove, ModelInfo, WipeTowerInfo
+- `data/SliceJobMappingResolutionTest.kt` (10) — historical job export mapping: legacy physical rows, single-colour selected slot, canonical-wide CSV, blank/malformed fallbacks, physical/canonical G-code tool-space rows
 - `data/PlateTypeTest.kt` (21) — PlateType.bedTempFor per-material presets, fromName, case-insensitivity
 - `data/SlicingOverridesTest.kt` (108) — Override modes, JSON serialization round-trip, defaults, resolveInto(), multi-extruder wipe tower, B24 stale config, B31 brim_type, F30/F31 plus F41/F42/F43 override/file-value coverage, F57/F58 primeTowerWidth + wipeTowerRotationAngle, B53 computeTogglePrimeTower, B71 nozzle temp extruderTemps + nozzleTemps slice-time override, B79 resolveInto supportType/supportAngle, B100 buildProfileOverrides layer_height omitted for USE_FILE mode, B105 single-slot nozzle_temperature/filament_type 1-element guard, B125 support_filament emitted/omitted for Bambu file depending on OverrideMode, B125 sibling per-field OVERRIDE respected when supports=USE_FILE
 - `data/SettingsBackupTest.kt` (15) — Export/import round-trip, version validation, partial restore, filament profile name resolution, stale skirt-loop import normalization, F76 legacy cookie key import regression
-- `data/SessionStateTest.kt` (12) — F89 session-resume schema: toJson/fromJson round-trip (basic fields, FloatArray positions, empty/multi additionalFiles, all-nullables-null), malformed JSON returns null, missing version returns null, unknown future schema version returns null, past schema version returns null, missing required modelName/rawInputPath returns null, odd-length customObjectPositions array returns null
+- `data/SessionStateTest.kt` (16) — F89 session-resume schema: toJson/fromJson round-trip (basic fields, FloatArray positions, empty/multi additionalFiles, all-nullables-null), malformed JSON returns null, missing version returns null, unknown future schema version returns null, past schema version returns null, missing required modelName/rawInputPath returns null, odd-length customObjectPositions array returns null, G-code tool-space round-trip/default
 - `bambu/ThreeMfParserTest.kt` (12) - 3MF data model construction, isMultiPlate detection, hasPaintSupports field (B57)
 - `bambu/BambuSanitizerTest.kt` (25) — INI config parsing, nil replacement, array normalization, filterModelToPlate, component size guard, group recentering
 - `bambu/ProfileEmbedderTest.kt` (5) — convertToModelSettings: per-volume extruder preservation, remap, attribute order
@@ -135,6 +143,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `FilePickerValidationTest.kt` (8) — isSupportedFile extension matching for 3MF, STL, OBJ, STEP; rejects unsupported types
 - `model/CopyArrangeCalculatorTest.kt` (42) — Centered grid layout, bed bounds, copy capping, wipe tower auto-positioning, skirt clearance, B109 computeRotatedFootprint (5 rotation cases), B109 v2.2.6 effectivePlacementFootprint (6 cases: mesh-AABB priority, scale handling, null fallback, fallback applies scale, zero-rotation shortcut, Dragon-Scale-class divergence proof), F77 buildMultiObjectPositions (5 cases: empty, single, two-in-row, row-wrap, row-height tracking), F92 autoArrange (5 cases: two-object no-tower, reserved wipe-tower keep-out, overflow-never-off-bed, single-object clear-of-reserved, row-wrap)
 - `ui/SendPreparingBannerTest.kt` (4) — F94 structural guard: PrinterViewModel `SendingState.Preparing` + `beginSendPreparing`/`reportSendError`; PrinterScreen Preparing card arm; ≥3 `beginSendPreparing()` + ≥3 `reportSendError(` calls across the MainActivity send sites
+- `ui/UploadOnlyUxTest.kt` (6) — Upload Only confirmation dialog wiring, sliced-material display, physical tool-space threading for mix G-code, button label guard
 - `UpgradeDetectorTest.kt` (15) — APK upgrade detection logic, version/timestamp comparison, file clearing patterns
 - `DiagnosticsStoreTest.kt` (5) — Diagnostics event logging, JSONL output
 - `MergeThreeMfInfoTest.kt` (49) — mergeThreeMfInfo/ForPlate objectExtruderMap preference, preview file selection, H2C source detection, SEMM extruderRemap suppression, isHueforgePlate classification (extruder diversity, plate-level paint data, uniform extruder, mixed-paint plates), B60 hasPaintSupports preservation, B82 per-plate layer-tool secondary colour matching (palette-match = real, off-palette = artefact)
@@ -441,7 +450,7 @@ If `app/.cxx/Debug/<hash>/arm64-v8a/build.ninja` already exists from a previous 
 6. Copy to `app/src/main/jniLibs/arm64-v8a/`
 7. **Verify size**: stripped Release `.so` should be ~19-21MB. If it's 50MB+, you built with Debug — redo.
 8. **Verify compiler**: `llvm-readelf -p .comment libprusaslicer-jni.so` must show `clang version 17.0.2`.
-9. **Verify JNI symbol completeness**: `llvm-readelf -p .dynsym libprusaslicer-jni.so | grep Java_com_u1_slicer_NativeLibrary | wc -l` should match the count of `external fun` declarations in `app/src/main/java/com/u1/slicer/NativeLibrary.kt`. A mismatch means the build dropped JNI methods (often: a worktree-only source file wasn't picked up by CMake — see step 3).
+9. **Verify JNI symbol completeness**: `llvm-readelf --dyn-syms libprusaslicer-jni.so | grep Java_com_u1_slicer_NativeLibrary | wc -l` should match the count of `external fun` declarations in `app/src/main/java/com/u1/slicer/NativeLibrary.kt`. A mismatch means the build dropped JNI methods (often: a worktree-only source file wasn't picked up by CMake — see step 3).
 10. `./gradlew clean installDebug` — incremental builds may cache old APK
 
 ### Fresh build (when no existing build dir works)

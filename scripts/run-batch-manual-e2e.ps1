@@ -135,6 +135,7 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     }
 
     Invoke-Adb logcat -c | Out-Null
+    Invoke-Adb shell "run-as $AppId mkdir -p files" | Out-Null
     Invoke-Adb shell "run-as $AppId sh -c 'rm -rf files/transient files/embedded_*.3mf files/sanitized_*.3mf files/output.gcode'" | Out-Null
     Invoke-Adb push $hostPath "/data/local/tmp/$deviceFile" | Out-Null
     Invoke-Adb shell "run-as $AppId cp /data/local/tmp/$deviceFile files/$deviceFile" | Out-Null
@@ -274,8 +275,10 @@ Invoke-Adb get-state | Out-Host
 Invoke-Adb shell getprop ro.product.model | Out-Host
 
 if (!$NoInstall) {
-    Write-Step "Installing debug APK via Gradle"
-    & .\gradlew.bat --no-daemon :app:installDebug
+    Write-Step "Building debug APK via Gradle"
+    & .\gradlew.bat --no-daemon :app:assembleDebug
+    Write-Step "Installing debug APK on $Device"
+    Invoke-Adb install -r "app/build/outputs/apk/debug/app-debug.apk" | Out-Host
 }
 
 Invoke-Adb shell pm grant $AppId android.permission.POST_NOTIFICATIONS 2>$null

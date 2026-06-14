@@ -73,32 +73,49 @@ if [ -n "$DIRTY" ]; then
   exit 1
 fi
 
-# Strip + deploy
+# Strip + verify before deploy
 echo "==> Stripping with llvm-strip --strip-unneeded..."
-"$LLVM_STRIP" --strip-unneeded "$UNSTRIPPED" -o "$SO_TARGET"
+TMP_STRIPPED="$BUILD_DIR/libprusaslicer-jni.stripped.verify.so"
+"$LLVM_STRIP" --strip-unneeded "$UNSTRIPPED" -o "$TMP_STRIPPED"
 
 # Verify
-SIZE_BYTES=$(stat -c '%s' "$SO_TARGET" 2>/dev/null || stat -f '%z' "$SO_TARGET")
+SIZE_BYTES=$(stat -c '%s' "$TMP_STRIPPED" 2>/dev/null || stat -f '%z' "$TMP_STRIPPED")
 SIZE_MB=$((SIZE_BYTES / 1024 / 1024))
-echo "==> Deployed: $SO_TARGET (${SIZE_MB} MB)"
+echo "==> Stripped candidate: $TMP_STRIPPED (${SIZE_MB} MB)"
 
 if [ "$SIZE_MB" -lt 18 ] || [ "$SIZE_MB" -gt 25 ]; then
-  echo "WARNING: .so size ${SIZE_MB} MB outside expected 19-22 MB range." >&2
-  echo "         Debug builds run ~80 MB. Verify CMAKE_BUILD_TYPE in CMakeCache.txt." >&2
+  echo "ERROR: .so size ${SIZE_MB} MB outside expected 18-25 MB range." >&2
+  echo "       Debug builds run ~80 MB. Verify CMAKE_BUILD_TYPE in CMakeCache.txt." >&2
+  exit 1
 fi
 
-COMPILER=$("$LLVM_READELF" -p .comment "$SO_TARGET" 2>/dev/null | grep -o 'clang version [0-9.]*' | head -1)
+COMPILER=$("$LLVM_READELF" -p .comment "$TMP_STRIPPED" 2>/dev/null | grep -o 'clang version [0-9.]*' | head -1)
 echo "==> Compiler: $COMPILER (expect 'clang version 17.0.2' for NDK 26)"
+if [ "$COMPILER" != "clang version 17.0.2" ]; then
+  echo "ERROR: native .so compiler mismatch; expected NDK 26 clang version 17.0.2." >&2
+  exit 1
+fi
 
-ALIGNS=$("$LLVM_READELF" -l "$SO_TARGET" 2>/dev/null | awk '/^[[:space:]]*LOAD/ {print $NF}' | sort -u)
+ALIGNS=$("$LLVM_READELF" -l "$TMP_STRIPPED" 2>/dev/null | awk '/^[[:space:]]*LOAD/ {print $NF}' | sort -u)
 echo "==> LOAD segment alignments: $ALIGNS (expect 0x4000 for 16KB-page-aligned Android 15+ compat)"
+if [ "$ALIGNS" != "0x4000" ]; then
+  echo "ERROR: native .so LOAD alignment mismatch; expected only 0x4000." >&2
+  exit 1
+fi
 
 KOTLIN_COUNT=$(grep -cE 'external fun' "$REPO_ROOT/app/src/main/java/com/u1/slicer/NativeLibrary.kt" || echo "?")
-JNI_COUNT=$("$LLVM_READELF" --dyn-syms "$SO_TARGET" 2>/dev/null | grep -c 'Java_com_u1_slicer_NativeLibrary' || echo "?")
+JNI_COUNT=$("$LLVM_READELF" --dyn-syms "$TMP_STRIPPED" 2>/dev/null | grep -c 'Java_com_u1_slicer_NativeLibrary' || echo "?")
 echo "==> JNI symbols: $JNI_COUNT in .so vs $KOTLIN_COUNT external fun in NativeLibrary.kt"
+if [ "$JNI_COUNT" != "$KOTLIN_COUNT" ]; then
+  echo "ERROR: JNI symbol count mismatch; CMake may have dropped a source file." >&2
+  exit 1
+fi
 if [ "$JNI_COUNT" != "$KOTLIN_COUNT" ]; then
   echo "WARNING: JNI symbol count mismatch — CMake may have dropped a source file." >&2
 fi
+
+cp "$TMP_STRIPPED" "$SO_TARGET"
+echo "==> Deployed: $SO_TARGET (${SIZE_MB} MB)"
 
 echo ""
 echo "Done. Test before committing: ./gradlew testDebugUnitTest --no-daemon"

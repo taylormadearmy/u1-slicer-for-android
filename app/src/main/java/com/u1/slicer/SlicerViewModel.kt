@@ -38,14 +38,20 @@ import com.u1.slicer.data.SliceJob
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.SlicingOverrides
 import com.u1.slicer.data.WipeTowerDepthEstimator
+import com.u1.slicer.data.resolveExportMapping
+import com.u1.slicer.data.storedGcodeIsPhysical
 import com.u1.slicer.gcode.ExcludeObjectInfo
+import com.u1.slicer.gcode.GcodeToolSpace
 import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
 import com.u1.slicer.gcode.GcodeValidator
 import com.u1.slicer.gcode.LayerToolPauseInjector
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.gcode.buildSuspiciousModelLineContexts
+import com.u1.slicer.gcode.gcodeToolSpaceFromDb
+import com.u1.slicer.gcode.gcodeToolSpaceToDb
 import com.u1.slicer.gcode.parseExcludeObjects
+import com.u1.slicer.gcode.resolveExportMappingForToolSpace
 import com.u1.slicer.model.CopyArrangeCalculator
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
@@ -338,8 +344,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      */
     private fun beginNewModelLoad() {
         _canonicalFilamentList.value = null
+        _sliceMixToolSpace.value = false
         canonicalCacheSourcePath = null
         _filamentOverrides.value = emptyMap()
+        _copyCount.value = 1
+        _copyBedWarning.value = null
         _objectBoundingBoxes.value = floatArrayOf()
         hasMultipleDistinctObjectsVar = false
         customObjectPositions = null
@@ -823,6 +832,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setRotatedMeshSize(width: Float, depth: Float) {
         _rotatedMeshSizeXY.value = width to depth
+        refreshCopyBedWarning()
     }
 
     fun invalidatePrepareMeshCache() {
@@ -4132,6 +4142,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             customObjectPositions = null
         }
         invalidatePrepareMeshCache() // B49: force fresh native fetch for new geometry
+        refreshCopyBedWarning()
         _sliceStale.value = true
     }
 
@@ -4142,29 +4153,33 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             customObjectPositions = null
         }
         invalidatePrepareMeshCache() // B49: force fresh native fetch for rotated geometry
+        refreshCopyBedWarning()
         _sliceStale.value = true
+    }
+
+    private fun currentCopyFootprint(): Pair<Float, Float>? {
+        val mi = lastModelInfo ?: return null
+        if (mi.sizeX <= 0f || mi.sizeY <= 0f) return null
+        val s = _modelScale.value
+        val rot = _modelRotation.value
+        return CopyArrangeCalculator.effectivePlacementFootprint(
+            rotatedMeshSizeXY = _rotatedMeshSizeXY.value,
+            loadTimeSizeX = mi.sizeX, loadTimeSizeY = mi.sizeY, loadTimeSizeZ = mi.sizeZ,
+            scaleX = s.x, scaleY = s.y,
+            rotationXDeg = rot.x, rotationYDeg = rot.y, rotationZDeg = rot.z,
+        )
+    }
+
+    private fun refreshCopyBedWarning() {
+        val footprint = currentCopyFootprint()
+        _copyBedWarning.value = if (footprint != null) {
+            CopyArrangeCalculator.copyBedWarning(footprint.first, footprint.second, _copyCount.value)
+        } else null
     }
 
     fun setCopyCount(count: Int) {
         _copyCount.value = count.coerceIn(1, 16)
-        // B65 + B109 review: use the mesh-AABB-aware effective footprint when
-        // available so the bed-warning chip doesn't false-positive at off-axis
-        // rotations on non-box meshes (e.g. Dragon Scale 45°, where the box
-        // approximation reports a much larger footprint than the actual rotated
-        // mesh, triggering a "may overlap" warning even when the model clearly
-        // fits).
-        val mi = lastModelInfo
-        val s = _modelScale.value
-        val rot = _modelRotation.value
-        _copyBedWarning.value = if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
-            val (effW, effH) = CopyArrangeCalculator.effectivePlacementFootprint(
-                rotatedMeshSizeXY = _rotatedMeshSizeXY.value,
-                loadTimeSizeX = mi.sizeX, loadTimeSizeY = mi.sizeY, loadTimeSizeZ = mi.sizeZ,
-                scaleX = s.x, scaleY = s.y,
-                rotationXDeg = rot.x, rotationYDeg = rot.y, rotationZDeg = rot.z,
-            )
-            CopyArrangeCalculator.copyBedWarning(effW, effH, _copyCount.value)
-        } else null
+        refreshCopyBedWarning()
         customObjectPositions = null // reset custom positions when count changes
         // B132c sibling: keep _multiObjectPositions in sync with customObjectPositions
         // so the two state-flow consumers (renderer + slice path) don't drift.
@@ -4244,15 +4259,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      *  function with the refined bounds. */
     fun getPlacementPositions(): FloatArray {
         customObjectPositions?.let { return it }
-        val mi = lastModelInfo ?: return floatArrayOf(135f, 135f)
-        val s = _modelScale.value
-        val rot = _modelRotation.value
-        val (effW, effH) = CopyArrangeCalculator.effectivePlacementFootprint(
-            rotatedMeshSizeXY = _rotatedMeshSizeXY.value,
-            loadTimeSizeX = mi.sizeX, loadTimeSizeY = mi.sizeY, loadTimeSizeZ = mi.sizeZ,
-            scaleX = s.x, scaleY = s.y,
-            rotationXDeg = rot.x, rotationYDeg = rot.y, rotationZDeg = rot.z,
-        )
+        if (lastModelInfo == null) return floatArrayOf(135f, 135f)
+        val (effW, effH) = currentCopyFootprint() ?: return floatArrayOf(135f, 135f)
         return CopyArrangeCalculator.calculate(effW, effH, _copyCount.value)
     }
 
@@ -5260,19 +5268,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // the user gets a single cookie even though Copies=2 — Jon's
                 // "couldn't make more than one copy on the plate" report.
                 if (mi != null && copies > 1 && custom == null && mi.sizeX > 0f && mi.sizeY > 0f) {
-                    val s = _modelScale.value
-                    val maxFit = CopyArrangeCalculator.maxCopies(
-                        objectSizeX = mi.sizeX * s.x,
-                        objectSizeY = mi.sizeY * s.y,
-                    )
-                    if (maxFit < copies) {
-                        Log.e("SlicerVM", "Copies don't fit on bed: requested=$copies, maxFit=$maxFit, model=${mi.sizeX}×${mi.sizeY}mm")
-                        _state.value = SlicerState.Error(
-                            "Only $maxFit copy of this model fits on the 270×270mm bed " +
-                                "(model footprint ${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm).\n" +
-                                "Either reduce Copies to $maxFit or scale the model down."
+                    val footprint = currentCopyFootprint()
+                    if (footprint != null) {
+                        val (effW, effH) = footprint
+                        val maxFit = CopyArrangeCalculator.maxCopies(
+                            objectSizeX = effW,
+                            objectSizeY = effH,
                         )
-                        return@launch
+                        if (maxFit < copies) {
+                            Log.e("SlicerVM", "Copies don't fit on bed: requested=$copies, maxFit=$maxFit, model=${mi.sizeX}×${mi.sizeY}mm")
+                            _state.value = SlicerState.Error(
+                                "Only $maxFit copy of this model fits on the 270×270mm bed " +
+                                    "(model footprint ${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm).\n" +
+                                    "Either reduce Copies to $maxFit or scale the model down."
+                            )
+                            return@launch
+                        }
                     }
                 }
 
@@ -5299,7 +5310,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // Auto-arrange: single copy → centered, multiple copies → grid
                     if (mi != null && mi.sizeX > 0f && mi.sizeY > 0f) {
                         val s = _modelScale.value
-                        val positions = CopyArrangeCalculator.calculate(mi.sizeX * s.x, mi.sizeY * s.y, copies)
+                        val positions = getPlacementPositions()
                         Log.i("SlicerVM", "setModelInstances: model=${mi.sizeX}×${mi.sizeY}mm " +
                             "pos=[${positions.toList().take(4)}]")
                         val ok = native.setModelInstances(positions)
@@ -5370,15 +5381,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // for the object-assignment path where no painted 3MF marker
                     // is present.
                     val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
-                    val anyMixAssigned = mixedFilamentManager.activeOrder(numPhysical).isNotEmpty() &&
-                        _perVolumeExtruders.value.values.any { it > numPhysical }
+                    val hasActiveMixRows = mixedFilamentManager.activeOrder(numPhysical).isNotEmpty()
+                    val objectMixAssigned = _perVolumeExtruders.value.values.any { it > numPhysical }
+                    val paintedMixAssigned =
+                        ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0
+                    val anyMixAssigned = hasActiveMixRows && (objectMixAssigned || paintedMixAssigned)
                     // M4/#2: use max(numPhysical, canonicalCount) as the mix base so mix slot ids
                     // (base + idx) cannot collide with canonical filament slots when the 3MF
                     // declares more than TARGET_SLOTS (4) canonical filaments.
                     // No-op when canonicalCount <= numPhysical: maxOf returns numPhysical unchanged.
                     val canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical
                     val mixPhysicalBase = if (anyMixAssigned) maxOf(numPhysical, canonicalCount) else 0
-                    // B142b: post-slice displays must know the tool space of THIS slice.
+                    // B142b/B147: post-slice displays and export paths must know the
+                    // tool space of THIS slice. Object-assigned mixes and Smart-Paint
+                    // full-spectrum mixes both emit physical component tools.
                     _sliceMixToolSpace.value = anyMixAssigned
                     val effectiveExtruderCount = maxOf(
                         cfg.extruderCount,
@@ -5767,6 +5783,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                             // canonical list is single-filament.
                             selectedExtruderAtSlice = _selectedExtruder.value
                                 .takeIf { it in 0..3 },
+                            gcodeToolSpace = gcodeToolSpaceToDb(
+                                if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL
+                            ),
                         )
                     )
                     lastSliceJobId = jobId
@@ -5970,10 +5989,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         custom: FloatArray?
     ): ExpectedModelFootprint? {
         if (mi == null || mi.sizeX <= 0f || mi.sizeY <= 0f) return null
-        val scale = _modelScale.value
-        val scaledSizeX = mi.sizeX * scale.x
-        val scaledSizeY = mi.sizeY * scale.y
-        if (scaledSizeX <= 0f || scaledSizeY <= 0f) return null
+        val footprint = currentCopyFootprint() ?: return null
+        val (effW, effH) = footprint
         // CopyArrangeCalculator returns lower-left world coords; setModelInstances
         // also takes lower-left world coords (verified on-device for STL files
         // via SetModelInstancesOffsetTest — gcodeMinX matches requested origin
@@ -5983,7 +6000,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // (STL); for Bambu files whose mesh vertices live at world coordinates
         // the raw offset is shifted by half the scaled mesh size and doesn't
         // represent the world lower-left.
-        val positions = custom ?: CopyArrangeCalculator.calculate(scaledSizeX, scaledSizeY, copies)
+        val positions = custom ?: getPlacementPositions()
         if (positions.isEmpty()) return null
         var minX = Float.POSITIVE_INFINITY
         var maxX = Float.NEGATIVE_INFINITY
@@ -5993,9 +6010,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val ox = positions[i]
             val oy = positions.getOrNull(i + 1) ?: continue
             minX = minOf(minX, ox)
-            maxX = maxOf(maxX, ox + scaledSizeX)
+            maxX = maxOf(maxX, ox + effW)
             minY = minOf(minY, oy)
-            maxY = maxOf(maxY, oy + scaledSizeY)
+            maxY = maxOf(maxY, oy + effH)
         }
         if (minX.isInfinite() || maxX.isInfinite() || minY.isInfinite() || maxY.isInfinite()) {
             return null
@@ -6221,8 +6238,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "$baseName.share.gcode"
             )
             // Build the mapping from job metadata. Routes through the
-            // same `resolveCanonicalExportMapping` helper as Save / Share
-            // / Send so the four export paths share one source of truth.
+            // same `resolveExportMapping(job)` helper as Save / Share
+            // / Send so the four export paths share one source of truth,
+            // including explicit physical-tool-space mix rows.
             //
             //   - canonicalListSize == null → pre-Phase-2 job whose stored
             //     G-code is already physical-slot. Skip the helper and
@@ -6238,16 +6256,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             //   - canonicalListSize > 1 + colorMappingCsv null →
             //     pre-schema-v5 multi-colour job. Identity-mod-4 fallback
             //     via the helper.
-            val canonicalSize = job.canonicalListSize ?: 0
-            val mapping: List<Int>? = if (canonicalSize == 0) {
-                null
-            } else {
-                com.u1.slicer.gcode.resolveCanonicalExportMapping(
-                    canonicalSize = canonicalSize,
-                    confirmedMapping = com.u1.slicer.data.decodedColorMapping(job),
-                    selectedExtruder = job.selectedExtruderAtSlice ?: 0,
-                )
-            }
+            val mapping = resolveExportMapping(job)
             if (!prepareExportableGcodeWithMapping(sourceFile, shareFile, mapping)) return@launch
 
             val uri = FileProvider.getUriForFile(
@@ -6281,12 +6290,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
             try {
+                _sliceMixToolSpace.value = false
                 val parsed = GcodeParser.parse(gcodeFile)
                 setParsedGcodeWithRangeReset(parsed)
+                _sliceMixToolSpace.value = storedGcodeIsPhysical(job)
                 _state.value = SlicerState.SliceComplete(sliceResultFromJob(job))
                 _gcodePreview.value = ""
                 launch(Dispatchers.Main) { onResult(true) }
             } catch (e: Exception) {
+                _sliceMixToolSpace.value = false
                 Log.e("SlicerVM", "Failed to parse job G-code: ${e.message}")
                 launch(Dispatchers.Main) { onResult(false) }
             }
@@ -6511,6 +6523,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             },
             sliceJobId = lastSliceJobId,
             wasSliceComplete = _state.value is SlicerState.SliceComplete,
+            gcodeToolSpace = gcodeToolSpaceToDb(
+                if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL
+            ),
             savedAtEpochMs = System.currentTimeMillis(),
             appVersionCode = BuildConfig.VERSION_CODE,
             // ---- F66 ----
@@ -6655,6 +6670,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             null
         }
         setParsedGcodeWithRangeReset(parsed)
+        _sliceMixToolSpace.value = saved.gcodeToolSpace?.let {
+            gcodeToolSpaceFromDb(it) == GcodeToolSpace.PHYSICAL
+        } ?: storedGcodeIsPhysical(row)
         _state.value = SlicerState.SliceComplete(sliceResultFromJob(row))
         _gcodePreview.value = ""
         _navigateEvents.tryEmit("preview")
@@ -6886,6 +6904,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val gcode = File(row.gcodePath)
                 if (gcode.exists()) {
                     lastSliceJobId = row.id
+                    _sliceMixToolSpace.value = saved.gcodeToolSpace?.let {
+                        gcodeToolSpaceFromDb(it) == GcodeToolSpace.PHYSICAL
+                    } ?: storedGcodeIsPhysical(row)
                     _state.value = SlicerState.SliceComplete(
                         SliceResult(
                             success = true,
@@ -6968,6 +6989,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         recoveryPlateId = -1
         clipperRetryAttempted = false
         _state.value = SlicerState.Idle
+        _sliceMixToolSpace.value = false
         _gcodePreview.value = ""
         setParsedGcodeWithRangeReset(null)
         _lastSliceResult = null
@@ -7145,7 +7167,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 ?.takeIf { it.size == confirmed.size }
         } else null
 
-        return com.u1.slicer.gcode.resolveCanonicalExportMapping(
+        return resolveExportMappingForToolSpace(
+            toolSpace = if (_sliceMixToolSpace.value) GcodeToolSpace.PHYSICAL else GcodeToolSpace.CANONICAL,
             canonicalSize = canonicalSize,
             confirmedMapping = confirmed,
             selectedExtruder = _selectedExtruder.value,

@@ -40,6 +40,8 @@ data class SessionState(
     val splitVolumeOperations: List<String> = emptyList(), // replay order: "objIdx:volIdx" entries
     // ---- M3-A (schema v3) ----
     val projectMixes: List<MixedFilamentRow> = emptyList(),
+    // ---- v3 optional extension: tool space of the active/restored G-code ----
+    val gcodeToolSpace: String? = null,
 ) {
     data class AdditionalFile(val path: String, val plateIdx: Int)
 
@@ -71,7 +73,8 @@ data class SessionState(
             perVolumeExtruders == other.perVolumeExtruders &&
             splitObjectOperations == other.splitObjectOperations &&
             splitVolumeOperations == other.splitVolumeOperations &&
-            projectMixes == other.projectMixes
+            projectMixes == other.projectMixes &&
+            gcodeToolSpace == other.gcodeToolSpace
     }
 
     override fun hashCode(): Int {
@@ -98,6 +101,7 @@ data class SessionState(
         result = 31 * result + splitObjectOperations.hashCode()
         result = 31 * result + splitVolumeOperations.hashCode()
         result = 31 * result + projectMixes.hashCode()
+        result = 31 * result + (gcodeToolSpace?.hashCode() ?: 0)
         return result
     }
 
@@ -144,6 +148,7 @@ data class SessionState(
             }
             obj.put("additionalFiles", filesArr)
             state.sliceJobId?.let { obj.put("sliceJobId", it) }
+            state.gcodeToolSpace?.let { obj.put("gcodeToolSpace", it) }
             obj.put("wasSliceComplete", state.wasSliceComplete)
             obj.put("savedAtEpochMs", state.savedAtEpochMs)
             obj.put("appVersionCode", state.appVersionCode)
@@ -323,6 +328,7 @@ data class SessionState(
                     customWipeTowerPos = customTower,
                     additionalFiles = files,
                     sliceJobId = if (obj.has("sliceJobId")) obj.getLong("sliceJobId") else null,
+                    gcodeToolSpace = if (obj.has("gcodeToolSpace")) obj.getString("gcodeToolSpace") else null,
                     wasSliceComplete = obj.optBoolean("wasSliceComplete", false),
                     savedAtEpochMs = obj.getLong("savedAtEpochMs"),
                     appVersionCode = obj.getInt("appVersionCode"),

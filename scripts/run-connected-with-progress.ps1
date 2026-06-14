@@ -15,7 +15,7 @@ if ([string]::IsNullOrWhiteSpace($Device)) {
 }
 $env:ANDROID_SERIAL = $Device
 
-$resultLog = Join-Path $repoRoot "app\build\outputs\androidTest-results\connected\debug\Pixel 8a - 16\testlog\test-results.log"
+$resultRoot = Join-Path $repoRoot "app\build\outputs\androidTest-results\connected\debug"
 $progressDir = Join-Path $repoRoot "app\build\test-progress"
 New-Item -ItemType Directory -Force -Path $progressDir | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -38,8 +38,9 @@ if (-not [string]::IsNullOrWhiteSpace($ClassFilter)) {
 Write-Host "Gradle log: $gradleLog"
 Write-Host ""
 
-if (Test-Path $resultLog) {
-    Remove-Item -Force $resultLog
+if (Test-Path $resultRoot) {
+    Get-ChildItem -Path $resultRoot -Recurse -Filter "test-results.log" -ErrorAction SilentlyContinue |
+        Remove-Item -Force
 }
 
 $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -64,6 +65,7 @@ $stdoutTask = $process.StandardOutput.ReadToEndAsync()
 $stderrTask = $process.StandardError.ReadToEndAsync()
 
 $seenOffset = 0L
+$seenPath = ""
 $currentClass = ""
 $currentTest = ""
 $currentIndex = ""
@@ -75,7 +77,7 @@ $skipped = 0
 function Read-NewInstrumentationLines {
     param([string]$Path, [ref]$Offset)
 
-    if (-not (Test-Path $Path)) {
+    if ([string]::IsNullOrEmpty($Path) -or -not (Test-Path $Path)) {
         return @()
     }
 
@@ -97,6 +99,19 @@ function Read-NewInstrumentationLines {
     }
 }
 
+function Get-CurrentResultLog {
+    if (-not (Test-Path $resultRoot)) {
+        return ""
+    }
+    $match = Get-ChildItem -Path $resultRoot -Recurse -Filter "test-results.log" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($null -eq $match) {
+        return ""
+    }
+    return $match.FullName
+}
+
 function Show-ProgressLine {
     param(
         [string]$Status,
@@ -112,6 +127,11 @@ function Show-ProgressLine {
 }
 
 while (-not $process.HasExited) {
+    $resultLog = Get-CurrentResultLog
+    if ($resultLog -ne $seenPath) {
+        $seenPath = $resultLog
+        $seenOffset = 0L
+    }
     foreach ($line in (Read-NewInstrumentationLines -Path $resultLog -Offset ([ref]$seenOffset))) {
         if ($line -match '^INSTRUMENTATION_STATUS: class=(.+)$') {
             $currentClass = $matches[1]
@@ -144,6 +164,11 @@ if (-not [string]::IsNullOrWhiteSpace($stderr)) {
     Add-Content -Path $gradleLog -Value "`n--- STDERR ---`n$stderr"
 }
 
+$resultLog = Get-CurrentResultLog
+if ($resultLog -ne $seenPath) {
+    $seenPath = $resultLog
+    $seenOffset = 0L
+}
 foreach ($line in (Read-NewInstrumentationLines -Path $resultLog -Offset ([ref]$seenOffset))) {
     if ($line -match '^INSTRUMENTATION_STATUS: class=(.+)$') {
         $currentClass = $matches[1]

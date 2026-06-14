@@ -6,7 +6,7 @@ Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 ex
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v3.2.0-beta` (`versionCode 329`)
+Current release: `v3.3.0` (`versionCode 330`)
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -89,11 +89,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 1670 JVM unit tests
+./gradlew testDebugUnitTest              # 1699 JVM unit tests
 ./gradlew connectedDebugAndroidTest      # 433 instrumented tests (ARM64 device required)
 ```
 
-**2103 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament list, ColorMix top-surface mixing, and more.
+**2132 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament list, ColorMix top-surface mixing, and more.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

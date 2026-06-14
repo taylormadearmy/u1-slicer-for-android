@@ -88,6 +88,7 @@ class TestCommandReceiver(
         const val ACTION_SET_PRINTER = "${PREFIX}SET_PRINTER"
         const val ACTION_SYNC_FILAMENTS = "${PREFIX}SYNC_FILAMENTS"
         const val ACTION_SET_COLORS = "${PREFIX}SET_COLORS"
+        const val ACTION_SET_COPY_COUNT = "${PREFIX}SET_COPY_COUNT"
         const val ACTION_SLICE = "${PREFIX}SLICE"
         const val ACTION_SELECT_PLATE = "${PREFIX}SELECT_PLATE"
         const val ACTION_NAVIGATE = "${PREFIX}NAVIGATE"
@@ -106,6 +107,7 @@ class TestCommandReceiver(
             addAction(ACTION_SET_PRINTER)
             addAction(ACTION_SYNC_FILAMENTS)
             addAction(ACTION_SET_COLORS)
+            addAction(ACTION_SET_COPY_COUNT)
             addAction(ACTION_SLICE)
             addAction(ACTION_SELECT_PLATE)
             addAction(ACTION_NAVIGATE)
@@ -138,6 +140,7 @@ class TestCommandReceiver(
             ACTION_SET_PRINTER -> handleSetPrinter(intent)
             ACTION_SYNC_FILAMENTS -> handleSyncFilaments()
             ACTION_SET_COLORS -> handleSetColors(intent)
+            ACTION_SET_COPY_COUNT -> handleSetCopyCount(intent)
             ACTION_SLICE -> handleSlice()
             ACTION_SELECT_PLATE -> handleSelectPlate(intent)
             ACTION_NAVIGATE -> handleNavigate(intent)
@@ -267,6 +270,18 @@ class TestCommandReceiver(
                 val preset = ExtruderPreset(index = i, color = color)
                 printerViewModel.updateExtruderPreset(preset)
             }
+        }
+    }
+
+    private fun handleSetCopyCount(intent: Intent) {
+        val copyCount = intent.getIntExtra("count", -1)
+        if (copyCount < 1) {
+            Log.e(TAG, "SET_COPY_COUNT: missing or invalid --ei count")
+            return
+        }
+        mainHandler.post {
+            slicerViewModel.setCopyCount(copyCount)
+            Log.i(TAG, "SET_COPY_COUNT: count=$copyCount")
         }
     }
 

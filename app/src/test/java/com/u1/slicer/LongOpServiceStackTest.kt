@@ -139,4 +139,30 @@ class LongOpServiceStackTest {
             firstStop == Int.MAX_VALUE || firstStartFg < firstStop,
         )
     }
+
+    @Test
+    fun `long op starts use normal service first to avoid foreground-service watchdog`() {
+        val payload = LongOpService.startPure("Preparing preview")
+
+        assertEquals(
+            "START_SERVICE",
+            LongOpService.startModeFor(payload, sdkInt = 34, appInForeground = true).name
+        )
+        assertEquals(
+            "START_SERVICE",
+            LongOpService.startModeFor(payload, sdkInt = 34, appInForeground = false).name
+        )
+        assertEquals(
+            "START_SERVICE",
+            LongOpService.startModeFor(payload, sdkInt = 25, appInForeground = false).name
+        )
+        assertEquals(
+            "START_SERVICE",
+            LongOpService.startModeFor(
+                LongOpService.stopPure(),
+                sdkInt = 34,
+                appInForeground = false
+            ).name
+        )
+    }
 }

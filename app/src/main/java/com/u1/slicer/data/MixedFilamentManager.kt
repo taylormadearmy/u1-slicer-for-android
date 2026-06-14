@@ -176,6 +176,7 @@ class MixedFilamentManager(
         val ids = MixWeights.encodeIds(r.components)          // e.g. "123" or "1/12/3"
         val weights = MixWeights.encodeWeights(r.weights)     // e.g. "50/30/20"
         val topMode = when (r.topMixMode) {
+            MixedFilamentRow.TopMixMode.OFF -> 3
             MixedFilamentRow.TopMixMode.STRIPES -> 0
             MixedFilamentRow.TopMixMode.PROPORTIONAL -> 1
             MixedFilamentRow.TopMixMode.DITHER -> 2

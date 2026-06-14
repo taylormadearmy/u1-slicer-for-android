@@ -7,6 +7,7 @@ import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
+import com.u1.slicer.gcode.parseExcludeObjects
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -957,6 +958,16 @@ class PreparePreviewViewModelTest {
         return outFile
     }
 
+    private fun parseFilamentUsedMm(gcode: String): Float {
+        val line = gcode.lineSequence()
+            .firstOrNull { it.startsWith("; filament used [mm] = ") }
+            ?: return Float.NaN
+        return line.substringAfter("=")
+            .split(',')
+            .mapNotNull { it.trim().toFloatOrNull() }
+            .sum()
+    }
+
     private fun zipEntryNames(file: File): Set<String> = ZipFile(file).use { zip ->
         zip.entries().asSequence().map { it.name }.toSet()
     }
@@ -1380,6 +1391,22 @@ class PreparePreviewViewModelTest {
             Thread.sleep(100)
         }
         throw AssertionError("Timed out waiting for $label")
+    }
+
+    private fun waitForLoadOrPlateSelector(
+        viewModel: SlicerViewModel,
+        label: String,
+        timeoutMs: Long = 120_000L
+    ) {
+        waitUntil(label, timeoutMs = timeoutMs) {
+            viewModel.showPlateSelector.value ||
+                viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded ||
+                viewModel.state.value is SlicerViewModel.SlicerState.Error
+        }
+        val state = viewModel.state.value
+        if (state is SlicerViewModel.SlicerState.Error) {
+            throw AssertionError("$label failed: ${state.message}")
+        }
     }
 
     /**
@@ -2393,6 +2420,147 @@ class PreparePreviewViewModelTest {
         } finally {
             collectorJob.cancel()
             viewModel.clearModel()
+            modelFile.delete()
+        }
+    }
+
+    @Test
+    fun orcaCubeV2_twoCopies_sliceProducesMoreFilamentThanSingleCopy() {
+        val application = targetContext.applicationContext as U1SlicerApplication
+        val modelFile = copyAssetToCache("Cube+v2.3mf")
+
+        data class SliceProbe(
+            val filamentUsedMm: Float,
+            val objectMarkerCount: Int,
+            val distinctCenterCount: Int,
+            val minX: Float,
+            val maxX: Float,
+            val minY: Float,
+            val maxY: Float
+        )
+
+        fun sliceForCopies(copies: Int): SliceProbe {
+            val viewModel = SlicerViewModel(application)
+            try {
+                viewModel.loadModelFromFile(modelFile)
+                waitForLoadOrPlateSelector(
+                    viewModel,
+                    "Cube+v2 load or plate selector",
+                    timeoutMs = 180_000L
+                )
+                if (viewModel.showPlateSelector.value) {
+                    viewModel.selectPlate(1)
+                    waitUntil("Cube+v2 plate 1 load", timeoutMs = 180_000L) {
+                        viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
+                            viewModel.colorMapping.value != null
+                    }
+                }
+                Thread.sleep(500)
+
+                viewModel.setCopyCount(copies)
+                Thread.sleep(200)
+
+                val positions = viewModel.getPlacementPositions()
+                assertEquals(
+                    "OrcaCube_v2 copyCount=$copies should publish one [x,y] pair per copy",
+                    copies * 2, positions.size
+                )
+
+                viewModel.startSlicing()
+                waitUntil("OrcaCube_v2 slice copies=$copies", timeoutMs = 120_000L) {
+                    viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
+                        viewModel.state.value is SlicerViewModel.SlicerState.Error
+                }
+
+                val state = viewModel.state.value
+                if (state is SlicerViewModel.SlicerState.Error) {
+                    throw AssertionError("Cube+v2 copyCount=$copies slice failed: ${state.message}")
+                }
+                state as SlicerViewModel.SlicerState.SliceComplete
+                val gcodePath = state.result.gcodePath
+                val gcode = File(gcodePath).readText()
+                val filamentUsed = parseFilamentUsedMm(gcode)
+                val excludeObjects = parseExcludeObjects(gcodePath)
+                val objectMarkerCount = excludeObjects.size
+                val distinctCenterCount = excludeObjects.map { it.center }.distinct().size
+                assertEquals(
+                    "Cube+v2 copyCount=$copies should emit one object marker per original object per copy",
+                    copies * 2, objectMarkerCount
+                )
+                assertEquals(
+                    "Cube+v2 copyCount=$copies should preserve the two-object plate spacing across copies",
+                    copies * 2, distinctCenterCount
+                )
+                var minX = Float.POSITIVE_INFINITY
+                var maxX = Float.NEGATIVE_INFINITY
+                var minY = Float.POSITIVE_INFINITY
+                var maxY = Float.NEGATIVE_INFINITY
+                gcode.lineSequence().forEach { rawLine ->
+                    val line = rawLine.substringBefore(';').trim()
+                    if (!line.startsWith("G0 ") && !line.startsWith("G1 ")) return@forEach
+                    var x: Float? = null
+                    var y: Float? = null
+                    line.splitToSequence(' ', '\t')
+                        .filter { it.length > 1 }
+                        .forEach { token ->
+                            when (token[0]) {
+                                'X' -> x = token.substring(1).toFloatOrNull()
+                                'Y' -> y = token.substring(1).toFloatOrNull()
+                            }
+                        }
+                    x?.takeIf { it > 0f }?.let {
+                        minX = minOf(minX, it)
+                        maxX = maxOf(maxX, it)
+                    }
+                    y?.takeIf { it > 0f }?.let {
+                        minY = minOf(minY, it)
+                        maxY = maxOf(maxY, it)
+                    }
+                }
+                assertTrue(
+                    "Cube+v2 copyCount=$copies slice must report filament usage in G-code",
+                    filamentUsed.isFinite() && filamentUsed > 0f
+                )
+
+                return SliceProbe(
+                    filamentUsedMm = filamentUsed,
+                    objectMarkerCount = objectMarkerCount,
+                    distinctCenterCount = distinctCenterCount,
+                    minX = minX,
+                    maxX = maxX,
+                    minY = minY,
+                    maxY = maxY
+                )
+            } finally {
+                viewModel.clearModel()
+            }
+        }
+
+        try {
+            val oneCopy = sliceForCopies(1)
+            val twoCopy = sliceForCopies(2)
+
+            assertTrue(
+                "Cube+v2 should use substantially more filament for 2 copies than 1 copy. " +
+                    "1-copy=${oneCopy.filamentUsedMm}mm, 2-copy=${twoCopy.filamentUsedMm}mm",
+                twoCopy.filamentUsedMm > oneCopy.filamentUsedMm * 1.6f
+            )
+            assertTrue(
+                "Cube+v2 2-copy slice should emit four object markers, got ${twoCopy.objectMarkerCount}",
+                twoCopy.objectMarkerCount == 4
+            )
+            assertTrue(
+                "Cube+v2 2-copy slice should preserve four unique object centers, got ${twoCopy.distinctCenterCount}",
+                twoCopy.distinctCenterCount == 4
+            )
+            assertTrue(
+                "Cube+v2 2-copy toolpath should expand the footprint on at least one axis. " +
+                    "1-copy spanX=${oneCopy.maxX - oneCopy.minX}mm spanY=${oneCopy.maxY - oneCopy.minY}mm, " +
+                    "2-copy spanX=${twoCopy.maxX - twoCopy.minX}mm spanY=${twoCopy.maxY - twoCopy.minY}mm",
+                (twoCopy.maxX - twoCopy.minX) > (oneCopy.maxX - oneCopy.minX) + 10f ||
+                    (twoCopy.maxY - twoCopy.minY) > (oneCopy.maxY - oneCopy.minY) + 10f
+            )
+        } finally {
             modelFile.delete()
         }
     }

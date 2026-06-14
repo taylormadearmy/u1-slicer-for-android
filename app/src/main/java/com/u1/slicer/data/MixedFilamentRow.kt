@@ -41,6 +41,8 @@ data class MixedFilamentRow(
 
     /** How a mix divides its TOP-surface lines between components (BETA). */
     enum class TopMixMode {
+        /** Disable the within-layer top-surface split and keep the resolved tool. */
+        OFF,
         /** v1 behaviour: whole lines round-robin across components. */
         STRIPES,
         /** Each line splits at the cumulative-weight boundary, brick-staggered. */

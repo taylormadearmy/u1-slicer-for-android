@@ -315,4 +315,36 @@ class CanonicalExportMappingTest {
         assertEquals("T1\nT0\n", out.readText())
         src.delete(); out.delete()
     }
+
+    @Test
+    fun physicalToolSpaceExport_returnsNullSoSaveShareCopyVerbatim() {
+        val result = resolveExportMappingForToolSpace(
+            toolSpace = GcodeToolSpace.PHYSICAL,
+            canonicalSize = 4,
+            confirmedMapping = listOf(3, 2, 1, 0),
+            selectedExtruder = 0,
+        )
+        assertNull(result)
+    }
+
+    @Test
+    fun canonicalToolSpaceExport_stillResolvesCanonicalMapping() {
+        val result = resolveExportMappingForToolSpace(
+            toolSpace = GcodeToolSpace.CANONICAL,
+            canonicalSize = 4,
+            confirmedMapping = listOf(3, 2, 1, 0),
+            selectedExtruder = 0,
+        )
+        assertEquals(listOf(3, 2, 1, 0), result)
+    }
+
+    @Test
+    fun uploadOnly_physicalToolSpaceKeepsPhysicalMappingAvailable() {
+        val result = sendRemapForAction(
+            uploadOnly = true,
+            physicalMapping = listOf(0, 1, 2, 3),
+            sourceToolSpace = GcodeToolSpace.PHYSICAL,
+        )
+        assertEquals(listOf(0, 1, 2, 3), result)
+    }
 }

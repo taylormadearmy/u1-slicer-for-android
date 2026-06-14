@@ -77,10 +77,30 @@ class UploadOnlyUxTest {
         val src = source("app/src/main/java/com/u1/slicer/MainActivity.kt")
         val callIdx = src.indexOf("UploadConfirmationDialog(")
         require(callIdx >= 0) { "UploadConfirmationDialog call not found" }
-        val callBlock = src.substring(callIdx, minOf(callIdx + 1200, src.length))
+        val callBlock = src.substring(callIdx, minOf(callIdx + 2200, src.length))
         assertTrue(
-            "Upload Only must pass slicedMaterials = viewModel.sliceTimeMaterials(...)",
-            callBlock.contains("slicedMaterials = viewModel.sliceTimeMaterials(")
+            "Upload Only must pass canonical sliced materials through viewModel.sliceTimeMaterials(...)",
+            callBlock.contains("slicedMaterials =") &&
+                callBlock.contains("viewModel.sliceTimeMaterials(")
+        )
+    }
+
+    @Test
+    fun uploadOnlyBranch_threadsPhysicalToolSpaceForMixGcode() {
+        val main = source("app/src/main/java/com/u1/slicer/MainActivity.kt")
+        assertTrue(
+            "Upload Only must pass the current source tool-space into sendRemapForAction",
+            main.contains("sourceToolSpace =")
+        )
+        assertTrue(
+            "Upload Only confirmation must know when it is showing already-physical mix G-code",
+            main.contains("physicalToolSpace =")
+        )
+
+        val dialog = source("app/src/main/java/com/u1/slicer/ui/FilamentMappingDialog.kt")
+        assertTrue(
+            "UploadConfirmationDialog must accept physicalToolSpace",
+            dialog.contains("physicalToolSpace: Boolean")
         )
     }
 

@@ -18,6 +18,7 @@ class SessionStateTest {
         selectedPlateId: Int? = 8,
         sliceJobId: Long? = 42L,
         wasSliceComplete: Boolean = false,
+        gcodeToolSpace: String? = null,
     ) = SessionState(
         modelName = "Buzz Lightyear.3mf",
         rawInputPath = "/cache/buzz.3mf",
@@ -35,6 +36,7 @@ class SessionStateTest {
         wasSliceComplete = wasSliceComplete,
         savedAtEpochMs = 1716480000000L,
         appVersionCode = 295,
+        gcodeToolSpace = gcodeToolSpace,
     )
 
     @Test
@@ -182,5 +184,19 @@ class SessionStateTest {
         assertEquals(MixedFilamentRow.MixDistributionMode.LAYER_CYCLE, parsed.projectMixes[0].distributionMode)
         assertEquals("E1+E2+E3", parsed.projectMixes[0].label)
         assertEquals(77L, parsed.projectMixes[0].id)
+    }
+
+    @Test
+    fun gcodeToolSpace_roundTripsAndDefaultsToNullForOldJson() {
+        val src = sampleSession(gcodeToolSpace = "PHYSICAL")
+        val json = SessionState.toJson(src)
+        val parsed = SessionState.fromJson(json)!!
+        assertEquals("PHYSICAL", parsed.gcodeToolSpace)
+
+        val stripped = org.json.JSONObject(json)
+            .apply { remove("gcodeToolSpace") }
+            .toString()
+        val old = SessionState.fromJson(stripped)!!
+        assertNull(old.gcodeToolSpace)
     }
 }

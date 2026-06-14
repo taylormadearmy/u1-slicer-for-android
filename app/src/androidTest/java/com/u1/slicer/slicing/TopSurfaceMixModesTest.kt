@@ -14,7 +14,7 @@ import org.junit.runner.RunWith
 import java.io.File
 
 /**
- * RED tests for the per-mix top-surface settings (TopMixMode PROPORTIONAL/DITHER,
+ * RED tests for the per-mix top-surface settings (TopMixMode OFF/PROPORTIONAL/DITHER,
  * fineTopLines, ironingGlaze) — Task 4 of the 2026-06-12 top-surface mix-modes plan.
  *
  * The Kotlin side (Task 1) already serializes the t/f/i recipe tokens and the engine
@@ -648,6 +648,23 @@ class TopSurfaceMixModesTest {
                 ">=1 layer with both T2+T3 in top-surface blocks, got $mixedLayers. " +
                 "per-layer: ${statsSummary(perLayerTopStats(g))}",
             mixedLayers >= 1,
+        )
+    }
+
+    /**
+     * RED gate 5 â€” OFF disables the within-layer top-surface split entirely.
+     * The mix may still alternate components by layer, but no layer may contain
+     * both mix tools inside top-surface blocks.
+     */
+    @Test
+    fun off_topSurfaceDoesNotSplitWithinLayer() {
+        val g = sliceWithSettings(MixedFilamentRow.TopMixMode.OFF)
+        val mixedLayers = layersWithToolPairInTop(g, 2, 3)
+        assertTrue(
+            "OFF must disable the within-layer top-surface split: expected 0 layers " +
+                "with both T2+T3 in top-surface blocks, got $mixedLayers. " +
+                "per-layer: ${statsSummary(perLayerTopStats(g))}",
+            mixedLayers == 0,
         )
     }
 }
