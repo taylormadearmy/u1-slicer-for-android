@@ -194,6 +194,24 @@ class MixedFilamentManagerTest {
     }
 
     @Test
+    fun `replaceProjectMixesFromImportedRecipe replaces project rows in one shot`() = runTest {
+        val mgr = newManager()
+        mgr.add(1, 2, 50, MixedFilamentRow.MixDistributionMode.LAYER_CYCLE)
+
+        val imported = com.u1.slicer.data.parseMixedFilamentRecipe(
+            "1,3,1,1,25,0,g13,w75/25,m1,z0,xa0,xb0,d0,o0,t2,f1,i0,u9"
+        )!!
+
+        mgr.replaceProjectMixesFromImportedRecipe(imported)
+
+        val project = mgr.projectMixes.first()
+        assertEquals(1, project.size)
+        assertEquals(listOf(1, 3), project.single().components)
+        assertEquals(listOf(75, 25), project.single().weights)
+        assertEquals(MixedFilamentRow.TopMixMode.DITHER, project.single().topMixMode)
+    }
+
+    @Test
     fun addN_threeComponents_serializesGradientTokens() {
         val mgr = MixedFilamentManager({ emptyList() }, { emptyList() }, {}, {})
         mgr.addN(

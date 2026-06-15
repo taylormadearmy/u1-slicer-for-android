@@ -126,6 +126,28 @@ class MixedFilamentManager(
         saveLibrary(_libraryMixes.value)
     }
 
+    /**
+     * Replace the editable project rows in one shot.
+     *
+     * Used when the user explicitly chooses to make an imported 3MF recipe
+     * editable in the project mix editor.
+     */
+    fun replaceProjectMixes(rows: List<MixedFilamentRow>) {
+        _projectMixes.value = rows.map { row -> row.copy(inLibrary = false) }
+        saveProject(_projectMixes.value)
+    }
+
+    /**
+     * Duplicate an imported recipe into the project mix list.
+     * Rows that cannot be represented as 2..4 component mixes are skipped.
+     */
+    fun replaceProjectMixesFromImportedRecipe(importedRecipe: MixedFilamentSliceSummary) {
+        val rows = importedRecipe.editableRows.map { row ->
+            row.copy(id = nextId(), inLibrary = false)
+        }
+        replaceProjectMixes(rows)
+    }
+
     fun promoteToLibrary(id: Long) {
         val row = _projectMixes.value.firstOrNull { it.id == id } ?: return
         val promoted = row.copy(inLibrary = true)

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -45,6 +46,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.core.content.pm.PackageInfoCompat
 import com.u1.slicer.data.ModelInfo
+import com.u1.slicer.data.MixedFilamentDefinitionSource
+import com.u1.slicer.data.MixedFilamentSliceSummary
+import com.u1.slicer.data.resolveImportedMixRecipeDisplaySummary
 import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.WipeTowerDepthEstimator
@@ -1426,10 +1430,19 @@ fun PrepareScreen(
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     val meshAlignedFilamentColors by viewModel.meshAlignedFilamentColors.collectAsState()
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
+    val importedMixRecipe by viewModel.importedMixRecipeState.collectAsState()
+    val mixRecipeSource by viewModel.mixRecipeSource.collectAsState()
     var captureViewer by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
     val pendingAddFile by viewModel.pendingAddFile.collectAsState()
     val sessionResumeOffer by viewModel.sessionResumeOffer.collectAsState()
     val silentRestoreInProgress by viewModel.silentRestoreInProgress.collectAsState()
+    val displayedMixRecipe = resolveImportedMixRecipeDisplaySummary(
+        source = mixRecipeSource,
+        importedRecipe = importedMixRecipe,
+        mixedFilamentManager = viewModel.mixedFilamentManager,
+        numPhysicalFilaments = extruderPresets.size.coerceAtLeast(4),
+    )
+    var showImportedRecipeDialog by remember { mutableStateOf(false) }
 
     // Plate selector dialogs — mutually exclusive: only one can be shown at a time.
     // If the initial-load selector is open and the user also triggers an add-to-bed
@@ -1819,6 +1832,17 @@ fun PrepareScreen(
                             onColorOverride = { idx, color ->
                                 viewModel.setFilamentColorOverride(idx, color)
                             },
+                            importedMixRecipe = displayedMixRecipe,
+                            mixRecipeSource = mixRecipeSource,
+                            onViewImportedMixRecipe = { showImportedRecipeDialog = true },
+                            onPrimaryImportedMixRecipeAction = {
+                                when (displayedMixRecipe?.source) {
+                                    MixedFilamentDefinitionSource.FILE_EMBEDDED,
+                                    MixedFilamentDefinitionSource.NONE -> viewModel.createEditableImportedMixCopy()
+                                    MixedFilamentDefinitionSource.MANAGER_STATE -> viewModel.revertToImportedMixRecipe()
+                                    null -> Unit
+                                }
+                            },
                             // Task 3: Mixes subsection folded into this card.
                             mixSlotsContent = {
                                 PrepareMixSlotsSectionContent(
@@ -1873,6 +1897,28 @@ fun PrepareScreen(
                         )
                     }
                 }
+            }
+
+            if (showImportedRecipeDialog && displayedMixRecipe != null) {
+                AlertDialog(
+                    onDismissRequest = { showImportedRecipeDialog = false },
+                    title = { Text("Imported mix") },
+                    text = {
+                        com.u1.slicer.ui.ImportedMixRecipeDetails(
+                            recipe = displayedMixRecipe,
+                            source = mixRecipeSource,
+                            extruderPresets = extruderPresets,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 320.dp),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showImportedRecipeDialog = false }) {
+                            Text("Close")
+                        }
+                    }
+                )
             }
 
             // Sticky slice button overlayed at the top
@@ -4283,6 +4329,10 @@ fun PrintSetupSection(
     filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
     onMaterialOverride: (fileIndex: Int, materialType: String?) -> Unit = { _, _ -> },
     onColorOverride: (fileIndex: Int, color: String?) -> Unit = { _, _ -> },
+    importedMixRecipe: MixedFilamentSliceSummary? = null,
+    mixRecipeSource: MixedFilamentDefinitionSource = MixedFilamentDefinitionSource.NONE,
+    onViewImportedMixRecipe: (() -> Unit)? = null,
+    onPrimaryImportedMixRecipeAction: (() -> Unit)? = null,
     // Task 3 UX consolidation: optional "Mixes" subsection rendered inside this
     // card after the filament rows, so both live in one Card. The caller provides
     // the content lambda; null = no Mixes subsection (default, safe for previews).
@@ -4354,6 +4404,14 @@ fun PrintSetupSection(
 
             AnimatedVisibility(visible = expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (importedMixRecipe != null) {
+                com.u1.slicer.ui.ImportedMixRecipeBanner(
+                    recipe = importedMixRecipe,
+                    source = mixRecipeSource,
+                    onViewRecipe = { onViewImportedMixRecipe?.invoke() },
+                    onPrimaryAction = { onPrimaryImportedMixRecipeAction?.invoke() },
+                )
+            }
                     // Caption explaining where slot picking happens. For multi-colour
                     // files, mention the Map & Print step. For single-filament files,
                     // emphasise the override use case — DC15's exact request.

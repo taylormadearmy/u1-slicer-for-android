@@ -66,6 +66,8 @@ fun U1NavGraph(
         composable(Routes.FILAMENTS) {
             val filaments by viewModel.filaments.collectAsState(initial = emptyList())
             val extruderPresets by viewModel.extruderPresets.collectAsState()
+            val importedMixRecipe by viewModel.importedMixRecipeState.collectAsState()
+            val mixRecipeSource by viewModel.mixRecipeSource.collectAsState()
             FilamentScreen(
                 filaments = filaments,
                 onAdd = { viewModel.addFilament(it) },
@@ -82,6 +84,10 @@ fun U1NavGraph(
                 // Filaments screen can render mix rows and open the dialog.
                 mixedFilamentManager = viewModel.mixedFilamentManager,
                 extruderPresets = extruderPresets,
+                importedMixRecipe = importedMixRecipe,
+                mixRecipeSource = mixRecipeSource,
+                onCreateEditableMixCopy = { viewModel.createEditableImportedMixCopy() },
+                onRevertToImportedMixRecipe = { viewModel.revertToImportedMixRecipe() },
             )
         }
         composable(Routes.JOBS) {

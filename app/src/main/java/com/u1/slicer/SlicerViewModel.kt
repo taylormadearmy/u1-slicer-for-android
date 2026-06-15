@@ -21,8 +21,11 @@ import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.data.upsertLibraryProfile
+import com.u1.slicer.data.MixedFilamentDefinitionSource
 import com.u1.slicer.data.MixedFilamentManager
 import com.u1.slicer.data.MixedFilamentRow
+import com.u1.slicer.data.MixedFilamentSliceSummary
+import com.u1.slicer.data.parseMixedFilamentRecipe
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
@@ -82,6 +85,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
+import java.util.concurrent.atomic.AtomicLong
 
 internal fun loadingMessageFor(filename: String, fileSizeBytes: Long): String =
     if (fileSizeBytes > 50 * 1024 * 1024L) "Large model — this may take a moment…"
@@ -327,6 +331,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private var canonicalCacheSourcePath: String? = null
 
     /**
+     * Monotonic token that identifies the newest load in flight.
+     * Imported-recipe metadata only publishes when the token captured by the
+     * load coroutine still matches the current token.
+     */
+    private val modelLoadGeneration = AtomicLong(0)
+
+    /**
      * Phase 2 (2026-04-28, post-adversarial-review) — synchronous
      * reset called at the very start of every load entry point
      * ([loadModel], [loadModelFromFile]). Clears all per-file mutable
@@ -342,7 +353,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * the review's "synchronously clear at the start of every load"
      * recommendation.
      */
-    private fun beginNewModelLoad() {
+    private fun beginNewModelLoad(): Long {
+        val generation = modelLoadGeneration.incrementAndGet()
         _canonicalFilamentList.value = null
         _sliceMixToolSpace.value = false
         canonicalCacheSourcePath = null
@@ -353,6 +365,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         hasMultipleDistinctObjectsVar = false
         customObjectPositions = null
         _multiObjectPositions.value = null
+        _importedMixRecipeState.value = null
+        _mixRecipeSource.value = MixedFilamentDefinitionSource.MANAGER_STATE
         additionalModelFiles.clear()
         _pendingAddFile.value?.copiedFile?.delete()
         _pendingAddFile.value = null
@@ -371,7 +385,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // model load can capture the stack again if applyPlacementPositions
         // ever sees a mismatched count.
         b132cTraceLogged = false
+        return generation
     }
+
+    private fun isCurrentModelLoad(generation: Long): Boolean =
+        modelLoadGeneration.get() == generation
 
     /**
      * Reloads [_canonicalFilamentList] from the current model file. The paint-
@@ -737,6 +755,41 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         mixedFilamentManager.editN(id, components, weights, mode)
         mixedFilamentManager.updateTopSurfaceSettings(id, topMixMode, fineTopLines, ironingGlaze)
+    }
+
+    /** Switch to the imported recipe as the editable project copy. */
+    fun createEditableImportedMixCopy() {
+        val imported = _importedMixRecipeState.value ?: return
+        mixedFilamentManager.replaceProjectMixesFromImportedRecipe(imported)
+        _mixRecipeSource.value = MixedFilamentDefinitionSource.MANAGER_STATE
+    }
+
+    /** Revert the working copy back to the file-embedded imported recipe. */
+    fun revertToImportedMixRecipe() {
+        val imported = _importedMixRecipeState.value ?: return
+        mixedFilamentManager.replaceProjectMixesFromImportedRecipe(imported)
+        _mixRecipeSource.value = MixedFilamentDefinitionSource.FILE_EMBEDDED
+    }
+
+    private fun updateImportedMixRecipeState(sourceConfig: Map<String, Any>?) {
+        val imported = sourceConfig
+            ?.get("mixed_filament_definitions")
+            ?.toString()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { raw ->
+                MixedFilamentSliceSummary(
+                    source = MixedFilamentDefinitionSource.FILE_EMBEDDED,
+                    recipe = raw,
+                    rows = parseMixedFilamentRecipe(raw).rows,
+                )
+            }
+        _importedMixRecipeState.value = imported
+        _mixRecipeSource.value = if (imported != null) {
+            MixedFilamentDefinitionSource.FILE_EMBEDDED
+        } else {
+            MixedFilamentDefinitionSource.MANAGER_STATE
+        }
     }
 
     // F89: toast events surfaced to MainActivity (Toast.makeText). One-shot strings.
@@ -2241,6 +2294,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _sourceConfig = MutableStateFlow<Map<String, Any>?>(null)
     val sourceConfig: StateFlow<Map<String, Any>?> = _sourceConfig.asStateFlow()
 
+    // Imported 3MF mix recipe state. FILE means the embedded recipe is active;
+    // PROJECT means the editable project mix list wins.
+    private val _importedMixRecipeState = MutableStateFlow<MixedFilamentSliceSummary?>(null)
+    val importedMixRecipeState: StateFlow<MixedFilamentSliceSummary?> = _importedMixRecipeState.asStateFlow()
+    private val _mixRecipeSource = MutableStateFlow(MixedFilamentDefinitionSource.MANAGER_STATE)
+    val mixRecipeSource: StateFlow<MixedFilamentDefinitionSource> = _mixRecipeSource.asStateFlow()
+
     // Recovery fields — track the pre-sanitize raw input so attemptClipperRecovery() can
     // re-run the full pipeline after clearing intermediate files.  rawInputFile is NOT an
     // intermediate (no embedded_/sanitized_/plate prefix) so clearIntermediateCache() leaves
@@ -2728,7 +2788,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 recoveryPlateId = -1
                 _state.value = SlicerState.Loading("Preparing model…")
 
-                val prepared = prepareImportedModelArtifacts(outputFile, workspaceDir)
+                val loadGeneration = beginNewModelLoad()
+                val prepared = prepareImportedModelArtifacts(outputFile, workspaceDir, loadGeneration) ?: return@launch
+                if (!isCurrentModelLoad(loadGeneration)) return@launch
 
                 currentModelFile = prepared.embeddedFile
                 if (prepared.requiresPlateSelection) {
@@ -2763,7 +2825,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // `loadModelFromFile`. The adversarial review found this picker
         // path missing the override-clear; without it, file A's
         // per-filament overrides could silently apply to file B.
-        beginNewModelLoad()
+        val loadGeneration = beginNewModelLoad()
         viewModelScope.launch(Dispatchers.IO) {
             val longOpCtx = beginLongOp("Loading model")
             try {
@@ -2847,7 +2909,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
 
-                    val prepared = prepareImportedModelArtifacts(file, workspaceDir)
+                    val prepared = prepareImportedModelArtifacts(file, workspaceDir, loadGeneration) ?: return@launch
+                    if (!isCurrentModelLoad(loadGeneration)) return@launch
                     val origInfo = prepared.origInfo
 
                     Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
@@ -2977,7 +3040,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _state.value = SlicerState.Error("Native slicer library not available on this device (arm64 required)")
             return
         }
-        beginNewModelLoad()
+        val loadGeneration = beginNewModelLoad()
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
@@ -3286,7 +3349,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // cache at the start of every load so file A's overrides /
         // canonical-list don't silently apply to file B (the adversarial
         // review's cross-load leak).
-        beginNewModelLoad()
+        val loadGeneration = beginNewModelLoad()
         viewModelScope.launch(Dispatchers.IO) {
             val longOpCtx = beginLongOp("Loading model")
             try {
@@ -3374,7 +3437,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
 
-                    val prepared = prepareImportedModelArtifacts(sourceFile, workspaceDir)
+                    val prepared = prepareImportedModelArtifacts(sourceFile, workspaceDir, loadGeneration) ?: return@launch
+                    if (!isCurrentModelLoad(loadGeneration)) return@launch
                     val origInfo = prepared.origInfo
 
                     Log.i("SlicerVM", "3MF: bambu=${origInfo.isBambu}, multiPlate=${origInfo.isMultiPlate}, " +
@@ -4327,10 +4391,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * parse original metadata, capture file-level config, sanitize/defer restructure,
      * merge stage metadata, then embed the active Snapmaker profile.
      */
-    private fun prepareImportedModelArtifacts(sourceFile: File, workspaceDir: File): PreparedModelArtifacts {
+    private fun prepareImportedModelArtifacts(
+        sourceFile: File,
+        workspaceDir: File,
+        loadGeneration: Long,
+    ): PreparedModelArtifacts? {
         val parseT0 = System.currentTimeMillis()
         val origInfo = ThreeMfParser.parse(sourceFile)
         val parseMs = System.currentTimeMillis() - parseT0
+        if (!isCurrentModelLoad(loadGeneration)) return null
         recoveryOrigInfo = origInfo
 
         val sourceConfig = if (origInfo.isBambu) {
@@ -4338,7 +4407,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             null
         }
+        if (!isCurrentModelLoad(loadGeneration)) return null
         _sourceConfig.value = sourceConfig
+        updateImportedMixRecipeState(sourceConfig)
 
         val sanitizeT0 = System.currentTimeMillis()
         val processed = BambuSanitizer.process(sourceFile, workspaceDir, isBambu = origInfo.isBambu)
@@ -4347,6 +4418,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val mergedInfo = mergeThreeMfInfo(processedInfo, origInfo)
         Log.i("LoadTiming", "prepareImportedModelArtifacts parse=${parseMs}ms sanitize=${sanitizeMs}ms file=${sourceFile.name} sizeBytes=${sourceFile.length()}")
 
+        if (!isCurrentModelLoad(loadGeneration)) return null
         _threeMfInfo.value = mergedInfo
         _fileThreeMfInfo = mergedInfo
         _multiPlatePlates.value = if (origInfo.isMultiPlate) mergedInfo.plates else emptyList()
@@ -5351,6 +5423,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         cfg.copy(wipeTowerX = clampedX, wipeTowerY = clampedY)
                     } else cfg
                 }
+                val mixedFilamentDefinitions = resolveMixedFilamentDefinitionsForSlice(
+                    recipeSource = _mixRecipeSource.value,
+                    importedRecipe = _importedMixRecipeState.value,
+                    mixedFilamentManager = mixedFilamentManager,
+                    numPhysicalFilaments = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+                )
                 // Recompute extruderTemps from current presets at slice time.
                 // applyMultiColorAssignments / updateSingleColorExtruder set extruderTemps at
                 // model-load time; if the user changes presets (or applies a filament profile via
@@ -5385,17 +5463,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val objectMixAssigned = _perVolumeExtruders.value.values.any { it > numPhysical }
                     val paintedMixAssigned =
                         ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0
-                    val anyMixAssigned = hasActiveMixRows && (objectMixAssigned || paintedMixAssigned)
+                    val mixDecision = decideSliceMixToolSpace(
+                        numPhysical = numPhysical,
+                        canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical,
+                        hasActiveMixRows = hasActiveMixRows,
+                        objectMixAssigned = objectMixAssigned,
+                        paintedMixAssigned = paintedMixAssigned,
+                    )
                     // M4/#2: use max(numPhysical, canonicalCount) as the mix base so mix slot ids
                     // (base + idx) cannot collide with canonical filament slots when the 3MF
                     // declares more than TARGET_SLOTS (4) canonical filaments.
                     // No-op when canonicalCount <= numPhysical: maxOf returns numPhysical unchanged.
-                    val canonicalCount = _canonicalFilamentList.value?.size ?: numPhysical
-                    val mixPhysicalBase = if (anyMixAssigned) maxOf(numPhysical, canonicalCount) else 0
+                    val mixPhysicalBase = mixDecision.mixPhysicalBase
                     // B142b/B147: post-slice displays and export paths must know the
                     // tool space of THIS slice. Object-assigned mixes and Smart-Paint
                     // full-spectrum mixes both emit physical component tools.
-                    _sliceMixToolSpace.value = anyMixAssigned
+                    _sliceMixToolSpace.value = mixDecision.mixToolSpace
                     val effectiveExtruderCount = maxOf(
                         cfg.extruderCount,
                         cfg.supportFilament,
@@ -5408,6 +5491,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     cfg.copy(
                         extruderCount = effectiveExtruderCount,
                         wipeTowerEnabled = ov.resolvePrimeTower(effectiveExtruderCount, cfg.wipeTowerEnabled),
+                        mixedFilamentDefinitions = mixedFilamentDefinitions,
                         filamentTypes = Array(effectiveExtruderCount) { idx ->
                             slotFilamentTypes.getOrNull(idx) ?: cfg.filamentType.takeIf { it.isNotBlank() } ?: "PLA"
                         },
@@ -5537,9 +5621,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // NOTE: this aligns the Kotlin recipe with the documented slot-id model;
                     // see the C-1 part-B concern in the branch report re: the native engine
                     // deriving num_physical from filament_diameter.size() (= 4 + nMix).
-                    mixedFilamentDefinitions = mixedFilamentManager.serialize(
-                        numPhysicalFilaments = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
-                    ),
+                    mixedFilamentDefinitions = mixedFilamentDefinitions,
                 )
                 val result = native.slice(jniSliceConfig)
                 ensureActive()
@@ -8441,6 +8523,28 @@ internal fun computeTogglePrimeTower(
 ): com.u1.slicer.data.OverrideValue<Boolean> {
     val effective = current.value ?: cfgWipeTower
     return com.u1.slicer.data.OverrideValue(com.u1.slicer.data.OverrideMode.OVERRIDE, !effective)
+}
+
+/**
+ * File-first precedence for mixed-filament slicing.
+ *
+ * If the loaded 3MF carries its own `mixed_filament_definitions` entry, the slicer should use
+ * that exact recipe string. Otherwise fall back to the current in-app mix manager state.
+ */
+internal fun resolveMixedFilamentDefinitionsForSlice(
+    recipeSource: MixedFilamentDefinitionSource,
+    importedRecipe: MixedFilamentSliceSummary?,
+    mixedFilamentManager: MixedFilamentManager,
+    numPhysicalFilaments: Int,
+): String {
+    if (recipeSource == MixedFilamentDefinitionSource.FILE_EMBEDDED) {
+        val embedded = importedRecipe
+            ?.recipe
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (embedded != null) return embedded
+    }
+    return mixedFilamentManager.serialize(numPhysicalFilaments)
 }
 
 /** Returns a sensible nozzle temperature default for a given material type string. */

@@ -29,8 +29,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentProfile
+import com.u1.slicer.data.ImportedMixRecipeRowSummary
+import com.u1.slicer.data.MixedFilamentDefinitionSource
 import com.u1.slicer.data.MixedFilamentManager
 import com.u1.slicer.data.MixedFilamentRow
+import com.u1.slicer.data.MixedFilamentSliceSummary
+import com.u1.slicer.data.resolveImportedMixRecipeDisplaySummary
 import com.u1.slicer.util.toFloatLenient
 import org.json.JSONArray
 import org.json.JSONException
@@ -53,6 +57,10 @@ fun FilamentScreen(
     // CreateMixSlotDialog.
     mixedFilamentManager: MixedFilamentManager? = null,
     extruderPresets: List<ExtruderPreset> = emptyList(),
+    importedMixRecipe: MixedFilamentSliceSummary? = null,
+    mixRecipeSource: MixedFilamentDefinitionSource = MixedFilamentDefinitionSource.MANAGER_STATE,
+    onCreateEditableMixCopy: (() -> Unit)? = null,
+    onRevertToImportedMixRecipe: (() -> Unit)? = null,
 ) {
     var showDialog by remember { mutableStateOf(false) }
     var editingFilament by remember { mutableStateOf<FilamentProfile?>(null) }
@@ -62,10 +70,17 @@ fun FilamentScreen(
     // M3 Phase A: mix-slot dialog state. `editingMix` non-null = Edit mode.
     var showMixDialog by remember { mutableStateOf(false) }
     var editingMix by remember { mutableStateOf<MixedFilamentRow?>(null) }
+    var showImportedRecipeDialog by remember { mutableStateOf(false) }
     val projectMixes by (mixedFilamentManager?.projectMixes?.collectAsState()
         ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
     val libraryMixes by (mixedFilamentManager?.libraryMixes?.collectAsState()
         ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
+    val displayedMixRecipe = resolveImportedMixRecipeDisplaySummary(
+        source = mixRecipeSource,
+        importedRecipe = importedMixRecipe,
+        mixedFilamentManager = mixedFilamentManager,
+        numPhysicalFilaments = extruderPresets.size.coerceAtLeast(4),
+    )
 
     if (showMixDialog && mixedFilamentManager != null) {
         val physicalColours = remember(extruderPresets) {
@@ -95,6 +110,36 @@ fun FilamentScreen(
                 showMixDialog = false
                 editingMix = null
             },
+        )
+    }
+
+    if (showImportedRecipeDialog && displayedMixRecipe != null) {
+        AlertDialog(
+            onDismissRequest = { showImportedRecipeDialog = false },
+            title = {
+                Text(
+                    if (mixRecipeSource == MixedFilamentDefinitionSource.FILE_EMBEDDED) {
+                        "Imported mix"
+                    } else {
+                        "Project mix copy"
+                    }
+                )
+            },
+            text = {
+                ImportedMixRecipeDetails(
+                    recipe = displayedMixRecipe,
+                    source = mixRecipeSource,
+                    extruderPresets = extruderPresets,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showImportedRecipeDialog = false }) {
+                    Text("Close")
+                }
+            }
         )
     }
 
@@ -212,6 +257,23 @@ fun FilamentScreen(
                         onDelete = { onDelete(filament) },
                         onApply = { onApply(filament) },
                         onSetDefault = { onSetDefault(filament) }
+                    )
+                }
+            }
+
+            if (mixedFilamentManager != null && displayedMixRecipe != null) {
+                item("imported-mix-recipe") {
+                    ImportedMixRecipeBanner(
+                        recipe = displayedMixRecipe,
+                        source = mixRecipeSource,
+                        onViewRecipe = { showImportedRecipeDialog = true },
+                        onPrimaryAction = {
+                            when (mixRecipeSource) {
+                                MixedFilamentDefinitionSource.FILE_EMBEDDED,
+                                MixedFilamentDefinitionSource.NONE -> onCreateEditableMixCopy?.invoke()
+                                MixedFilamentDefinitionSource.MANAGER_STATE -> onRevertToImportedMixRecipe?.invoke()
+                            }
+                        },
                     )
                 }
             }

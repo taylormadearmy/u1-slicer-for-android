@@ -50,13 +50,31 @@ class MixSwatchPaletteSourceTest {
         // use slot colours + mix blends, not the canonical file palette (which
         // rendered tools 2/3 grey on a 2-filament 3MF).
         val vm = File("src/main/java/com/u1/slicer/SlicerViewModel.kt").readText()
-        assertTrue(vm.contains("_sliceMixToolSpace.value = anyMixAssigned"))
+        assertTrue(vm.contains("decideSliceMixToolSpace("))
+        assertTrue(vm.contains("_sliceMixToolSpace.value = mixDecision.mixToolSpace"))
         assertTrue(vm.contains("val slotPaletteWithMixBlends"))
         val main = File("src/main/java/com/u1/slicer/MainActivity.kt").readText()
         assertTrue(main.contains("if (sliceMixToolSpace) slotPaletteWithMixBlends"))
         assertTrue(main.contains("mixToolSpacePalette"))
         val nav = File("src/main/java/com/u1/slicer/navigation/NavGraph.kt").readText()
         assertTrue(nav.contains("if (sliceMixToolSpace) slotPaletteWithMixBlends"))
+    }
+
+    @Test
+    fun `filaments screen exposes imported mix recipe provenance and copy controls`() {
+        val banner = File("src/main/java/com/u1/slicer/ui/ImportedMixRecipeBanner.kt").readText()
+        assertTrue(banner.contains("Imported mix active"))
+        assertTrue(banner.contains("View mix"))
+        assertTrue(banner.contains("Make copy"))
+        assertTrue(banner.contains("Use file mix"))
+        assertTrue(banner.contains("ImportedMixRecipeDetails("))
+        assertTrue(banner.contains("MixedSlotSwatch("))
+        val filaments = File("src/main/java/com/u1/slicer/ui/FilamentScreen.kt").readText()
+        assertTrue(filaments.contains("ImportedMixRecipeBanner("))
+        val nav = File("src/main/java/com/u1/slicer/navigation/NavGraph.kt").readText()
+        assertTrue(nav.contains("importedMixRecipe = importedMixRecipe"))
+        assertTrue(nav.contains("onCreateEditableMixCopy = { viewModel.createEditableImportedMixCopy() }"))
+        assertTrue(nav.contains("onRevertToImportedMixRecipe = { viewModel.revertToImportedMixRecipe() }"))
     }
 
     @Test
