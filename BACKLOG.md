@@ -766,6 +766,10 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Design questions to resolve**: colour-only vs material too; reversibility; sync semantics for mixed parts (blend colour? skip?); per-part vs global.
 - **Not yet designed** — brainstorm session needed before any build. Natural home: F87/phase-2.6 editable Prepare filament list.
 
+### F99: Adaptive Prepare preview quality for large detailed models (GitHub #181 follow-up) — OPEN
+- **Problem**: the current Prepare preview uses a single fixed triangle budget, so large painted models can collapse into scattered dots while smaller previews still need to stay responsive.
+- **Goal**: make preview quality adapt to model size and paint state so detailed models keep a legible high-quality preview without slowing down the common path.
+- **Design questions to resolve**: when to switch budgets; whether the cutoff should be based on paint presence, triangle count, bounding box, or render-time feedback; how to keep the logic simple enough that the regression does not keep returning.
 ### F96: OpenPrintTag filament library + RFID sync matching (GitHub #176) — DONE v3.2.0-beta (released 2026-06-10)
 - Bundled FFF-only snapshot of the MIT [OpenPrintTag database](https://github.com/OpenPrintTag/openprinttag-database) (12,804 filaments, 112 brands, 1.4 MB asset + NOTICE) as a searchable **Library tab** in the physical-slot colour dialogs (AiPaint slot dialog + PrinterScreen extruder slot editor; CreateMix and Prepare per-file dialogs stay HSV-only by design): search-as-you-type across brand/name/material, material filter chips, favourites (⭐) + recents (DataStore slug lists), pick = slot colour + material type (clears stale `filamentProfileId`).
 - **Opt-in profile import**: "Use + import profile…" previews exactly the fields the entry has (nozzle/bed ranges, density, TD/RI labelled "for future translucency features — not used in slicing") → creates/updates a `FilamentProfile` (dedupe by exact name via `FilamentDao.getByName`, no Room migration) and links it via `ExtruderPreset.filamentProfileId`.
@@ -1122,6 +1126,8 @@ The following are candidate options for M5. We'll choose which to build next. Al
 - Useful for both routine Snapmaker Orca updates and the eventual FullSpectrum fork evaluation (F14)
 
 ## Closed (recent)
+
+**v3.3.2 (released 2026-06-16)** - Prepare preview budget fix for painted MULTI_COL models: painted models now request the larger Kotlin preview budget while normal models stay on the native decimation cap, preventing the Chubby Darth Vader preview from collapsing into scattered dots. Confidence check passed (unit + Smoke-7 E2E on Pixel 8a). Issue #181 closed.
 
 **v3.3.1 (released 2026-06-15)** - imported mix provenance UI and file-first mix handling: the app now preserves file-embedded `mixed_filament_definitions` for slicing, shows a compact imported-mix banner inside the collapsible Filaments/Mix section on Prepare and Filaments, and opens a parsed mix-row detail view with physical colour swatches instead of raw serialized text. Smoke-tested on device with PeggyPalette38+Mini+BRYW.3mf. 1699 unit + 433 instrumented all green. No issues filed.
 

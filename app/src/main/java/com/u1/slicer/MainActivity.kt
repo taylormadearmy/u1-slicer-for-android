@@ -65,6 +65,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+internal fun preparePreviewTriangleBudget(hasPaintData: Boolean): Int =
+    if (hasPaintData) {
+        NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES
+    } else {
+        NativePreviewMesh.MAX_DECIMATED_TRIANGLES
+    }
+
 class MainActivity : ComponentActivity() {
     private val diagnostics by lazy { DiagnosticsStore(this) }
     private val viewModel: SlicerViewModel by viewModels()
@@ -4547,6 +4554,29 @@ fun PrintSetupSection(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                                 )
+                                Spacer(modifier = Modifier.weight(0.01f))
+                                val hasAnyOverride = isOverridden || colorIsOverridden
+                                IconButton(
+                                    onClick = {
+                                        if (hasAnyOverride) {
+                                            onColorOverride(colorIdx, null)
+                                            onMaterialOverride(colorIdx, null)
+                                        } else {
+                                            suggestedPreset?.let { preset ->
+                                                onColorOverride(colorIdx, preset.color)
+                                                onMaterialOverride(colorIdx, preset.materialType)
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (hasAnyOverride) Icons.Default.Restore else Icons.Default.Sync,
+                                        contentDescription = if (hasAnyOverride) "Revert to file default" else "Sync to printer slot",
+                                        tint = if (hasAnyOverride) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }

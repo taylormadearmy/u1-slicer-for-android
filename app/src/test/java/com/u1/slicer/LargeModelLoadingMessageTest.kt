@@ -30,4 +30,18 @@ class LargeModelLoadingMessageTest {
     @Test fun `triangle count over threshold is large`() {
         assertTrue(isLargeTriangleCount(NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES + 1))
     }
+
+    @Test fun `non painted previews use decimated triangle budget`() {
+        assertEquals(
+            NativePreviewMesh.MAX_DECIMATED_TRIANGLES,
+            preparePreviewTriangleBudget(hasPaintData = false)
+        )
+    }
+
+    @Test fun `painted previews use larger kotlin triangle budget`() {
+        assertEquals(
+            NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES,
+            preparePreviewTriangleBudget(hasPaintData = true)
+        )
+    }
 }
