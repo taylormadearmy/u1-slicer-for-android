@@ -115,7 +115,8 @@ Claude is pre-authorised to rebuild the native `.so` whenever a fix genuinely re
 
 1. Bump `versionCode` and `versionName` in `app/build.gradle`
 2. Update test counts in `CLAUDE.md` and `README.md`
-3. Commit, push, build release APK, create GitHub release, sync BACKLOG + close issues — see `CLAUDE.md §Release` for the full checklist.
+3. Commit, push, build the release APK, upload that APK to the GitHub release, create the release tag, then sync `BACKLOG.md` + close issues — see `CLAUDE.md §Release` for the full checklist.
+4. A release is not complete until the APK asset is attached to the GitHub release page.
 
 Never reuse or update a published release — always use a new tag.
 

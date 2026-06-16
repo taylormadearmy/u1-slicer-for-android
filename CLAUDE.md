@@ -52,12 +52,13 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```bash
    cp app/build/outputs/apk/release/app-release.apk u1-slicer-v1.4.11.apk
    ```
-6. **Create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
+6. **Upload the APK asset and create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
    ```bash
    gh release create v1.4.11 u1-slicer-v1.4.11.apk \
      --title "v1.4.11" \
      --notes "Brief description of what changed."
    ```
+   - The release is not complete until the APK asset is attached to the GitHub release and visible on the release page.
 7. **Post-release sync** — must happen in the same turn as the release, not deferred:
    1. **Flip statuses in [`BACKLOG.md`](BACKLOG.md)** for every bug/feature that shipped:
       - Bugs: `OPEN` / `FIXED v<earlier>` → `FIXED v<earlier>, RELEASED v1.4.11 (released YYYY-MM-DD)`.
