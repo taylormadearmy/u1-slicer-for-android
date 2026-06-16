@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v3.3.2` (`versionCode 332`)
+Current release: `v3.3.3` (`versionCode 333`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -48,13 +48,13 @@ Gradle daemon may OOM — use `--no-daemon` if builds fail.
    ```bash
    ./gradlew assembleRelease --no-daemon
    ```
-5. **Rename the APK** with the version number:
+5. **Rename the APK** with the app name and version number:
    ```bash
-   cp app/build/outputs/apk/release/app-release.apk u1-slicer-v1.4.11.apk
+   cp app/build/outputs/apk/release/app-release.apk u1-slicer-orca-v1.4.11.apk
    ```
 6. **Upload the APK asset and create a GitHub release** (never overwrite or delete an existing release — always use a new tag):
    ```bash
-   gh release create v1.4.11 u1-slicer-v1.4.11.apk \
+   gh release create v1.4.11 u1-slicer-orca-v1.4.11.apk \
      --title "v1.4.11" \
      --notes "Brief description of what changed."
    ```

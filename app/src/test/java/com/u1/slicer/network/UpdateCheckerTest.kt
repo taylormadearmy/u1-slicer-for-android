@@ -43,6 +43,16 @@ class UpdateCheckerTest {
     }
 
     @Test
+    fun `parseLatestRelease prefers branded apk asset when present`() {
+        val json = """{"tag_name":"v1.5.49","html_url":"https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v1.5.49","assets":[
+            {"name":"app-release.apk","browser_download_url":"https://github.com/download/app-release.apk"},
+            {"name":"u1-slicer-orca-v1.5.49.apk","browser_download_url":"https://github.com/download/u1-slicer-orca-v1.5.49.apk"}
+        ]}"""
+        val result = UpdateChecker.parseLatestRelease(json)
+        assertEquals("https://github.com/download/u1-slicer-orca-v1.5.49.apk", result?.downloadUrl)
+    }
+
+    @Test
     fun `parseLatestRelease extracts html_url as releaseUrl`() {
         val json = """{"tag_name":"v1.5.49","html_url":"https://github.com/taylormadearmy/u1-slicer-for-android/releases/tag/v1.5.49","assets":[
             {"name":"u1-slicer-v1.5.49.apk","browser_download_url":"https://github.com/download/u1-slicer-v1.5.49.apk"}

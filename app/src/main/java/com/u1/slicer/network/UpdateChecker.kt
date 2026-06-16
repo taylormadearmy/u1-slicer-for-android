@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
 object UpdateChecker {
 
     private const val TAG = "UpdateChecker"
+    private const val BRANDED_APK_PREFIX = "u1-slicer-orca-"
 
     data class ReleaseInfo(val version: String, val downloadUrl: String, val releaseUrl: String)
 
@@ -23,20 +24,29 @@ object UpdateChecker {
             val releaseUrl = obj.optString("html_url", "")
 
             val assets = obj.optJSONArray("assets")
+            var brandedDownloadUrl: String? = null
             var downloadUrl: String? = null
             if (assets != null) {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
                     val name = asset.optString("name", "")
-                    if (name.endsWith(".apk")) {
-                        downloadUrl = asset.optString("browser_download_url", "")
+                    val assetUrl = asset.optString("browser_download_url", "")
+                    if (name.startsWith(BRANDED_APK_PREFIX) && name.endsWith(".apk")) {
+                        brandedDownloadUrl = assetUrl
                         break
+                    }
+                    if (downloadUrl.isNullOrEmpty() && name.endsWith(".apk")) {
+                        downloadUrl = assetUrl
                     }
                 }
             }
-            if (downloadUrl.isNullOrEmpty()) {
-                downloadUrl = releaseUrl
+            if (brandedDownloadUrl.isNullOrEmpty()) {
+                brandedDownloadUrl = downloadUrl
             }
+            if (brandedDownloadUrl.isNullOrEmpty()) {
+                brandedDownloadUrl = releaseUrl
+            }
+            downloadUrl = brandedDownloadUrl
             if (downloadUrl.isNullOrEmpty()) return null
 
             ReleaseInfo(version, downloadUrl, releaseUrl)

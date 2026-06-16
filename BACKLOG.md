@@ -1127,7 +1127,8 @@ The following are candidate options for M5. We'll choose which to build next. Al
 
 ## Closed (recent)
 
-**v3.3.2 (released 2026-06-16)** - Prepare preview budget fix for painted MULTI_COL models: painted models now request the larger Kotlin preview budget while normal models stay on the native decimation cap, preventing the Chubby Darth Vader preview from collapsing into scattered dots. Confidence check passed (unit + Smoke-7 E2E on Pixel 8a). Issue #181 closed.
+**v3.3.2 (released 2026-06-16)** - Prepare preview budget fix for painted MULTI_COL models: painted models now request the larger Kotlin preview budget while normal models stay on the native decimation cap, preventing the Chubby Darth Vader preview from collapsing into scattered dots. Confidence check passed (unit + Smoke-7 E2E on Pixel 8a). Issue #181 closed. Follow-up: release assets now prefer the branded `u1-slicer-orca-v3.3.2.apk` name so in-app update downloads resolve the correct package.
+**v3.3.3 (released 2026-06-16)** - Release asset naming fix: app branding now reads `U1 Slicer Orca`, updater prefers branded `u1-slicer-orca-v<version>.apk` assets, and the new release publishes the APK under that name so in-app updates resolve reliably. UpdateChecker parser + unit coverage added.
 
 **v3.3.1 (released 2026-06-15)** - imported mix provenance UI and file-first mix handling: the app now preserves file-embedded `mixed_filament_definitions` for slicing, shows a compact imported-mix banner inside the collapsible Filaments/Mix section on Prepare and Filaments, and opens a parsed mix-row detail view with physical colour swatches instead of raw serialized text. Smoke-tested on device with PeggyPalette38+Mini+BRYW.3mf. 1699 unit + 433 instrumented all green. No issues filed.
 
