@@ -3612,7 +3612,9 @@ fun InlineModelPreview(
                         }
                     }
                     val previewT0 = System.currentTimeMillis()
-                    val raw = lib.getPreparePreviewMesh(NativePreviewMesh.MAX_DECIMATED_TRIANGLES)
+                    val raw = lib.getPreparePreviewMesh(
+                        preparePreviewTriangleBudget(hasPaintData)
+                    )
                     // F95: tag the trailing negative/modifier-volume block so toMeshData carries
                     // the boundary into MeshData and the renderer draws it translucent. Read in
                     // the same critical section as the mesh build (static is valid post-build).

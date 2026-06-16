@@ -242,6 +242,33 @@ class NativePreparePreviewTest {
     }
 
     @Test
+    fun getPreparePreviewMesh_ghostfaceFlatHugePaintedFile_staysCapped() {
+        copyAssetToModelFile("GhostfacePokemoncard.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val mesh = lib.getPreparePreviewMesh(100_000)
+        assertNotNull(mesh); mesh!!
+        assertTrue("Ghostface preview must have triangles", mesh.extruderIndices.isNotEmpty())
+
+        val triCount = mesh.extruderIndices.size
+        val span = previewSpanXYZ(mesh.trianglePositions)
+        Log.i(
+            "NativePreparePreviewTest",
+            "Ghostface capped preview triangles=$triCount span=[${span[0]}, ${span[1]}, ${span[2]}]"
+        )
+
+        assertTrue(
+            "Huge FLAT painted files should remain capped for responsiveness; got $triCount triangles",
+            triCount < 200_000
+        )
+        assertTrue(
+            "Ghostface preview bounds must stay sane after capped export, got span=" +
+                "[${span[0]}, ${span[1]}, ${span[2]}]",
+            span[0] < 500f && span[1] < 500f && span[2] < 500f
+        )
+    }
+
+    @Test
     fun getPreparePreviewMesh_preservesAtLeastFourDistinctExtruderIndices_forSydneyButtonsAsset() {
         copyAssetToModelFile("Button-for-S-trousers.3mf")
         assertTrue(lib.loadModel(modelFile.absolutePath))

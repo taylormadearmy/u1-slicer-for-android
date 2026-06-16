@@ -11,6 +11,13 @@ does not age well:
 - huge detailed models can still be expensive if the budget is too high
 - fixed thresholds keep reappearing as regressions because they are model-blind
 
+Current evidence from real-device checks:
+
+- tall painted figures like Chubby Darth Vader need to stay on the solid-mesh path even when
+  they exceed 2M triangles
+- flat Hueforge-style painted files like Ghostface still need bounded loading behavior, but the
+  current sparse fallback makes the Prepare preview visibly degraded
+
 The app needs a preview that stays readable on large detailed meshes without
 making the UI slow or brittle.
 
@@ -78,6 +85,9 @@ Rules:
 - keep seam edges and sharp feature edges intact
 - prefer topology-preserving simplification over blind stride skipping
 
+The Ghostface result is the current proof that stride-only fallback is not good enough as the
+long-term answer: it stays bounded and on-bed, but still looks broken to the user.
+
 This is the main reason the current bug class keeps coming back: generic
 decimation can destroy the structure that makes the preview readable.
 
@@ -124,4 +134,3 @@ Good regression coverage should include:
 - Should the policy consider camera distance and zoom level?
 - Should painted models get a stricter boundary-preservation mode than plain STL?
 - What telemetry, if any, is needed to tune the tiers safely?
-

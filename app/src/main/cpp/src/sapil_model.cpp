@@ -528,18 +528,24 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     //   - QEM edge-collapse explodes/erodes non-manifold patches →
                     //     ~±30000mm vertices → model off-screen → "empty plate" (H2C Benchy).
                     // So keep the FULL solid mesh (stride=1) for normal painted files, and
-                    // only stride-skip genuinely enormous Hueforge-class volumes (>2M tris,
+                    // only stride-skip genuinely enormous FLAT Hueforge-class volumes (>2M tris,
                     // e.g. GhostfacePokemoncard 3.7M) where an uncapped upload would stall the
                     // UI — there the bounded-but-sparse fallback keeps it on-bed and under the
-                    // B131 triangle cap. A solid colour-preserving decimation for huge paint
+                    // B131 triangle cap. Tall painted figures like Chubby Darth Vader can also
+                    // exceed 2M tris, but their preview must stay solid; sparse stride-skip turns
+                    // the body into disconnected dots.
+                    // A solid colour-preserving decimation for huge paint
                     // files (QEM the full manifold mesh + re-derive paint) is a tracked
                     // follow-up; common painted models comfortably fit uncapped.
                     // Keyed on the GLOBAL model triangle total, not this volume's — a
                     // Hueforge file (Ghostface 3.7M) spreads its triangles across many
                     // painted volumes that are each individually small, so a per-volume
                     // threshold would never trip and the model would upload uncapped.
+                    // ALSO gated on flatness so non-flat multi-colour figures don't regress
+                    // back to the scattered-dots failure mode.
                     const int MMU_SOLID_LIMIT = 2000000;
                     const bool mmu_needs_decimation = needs_decimation &&
+                        is_flat_model &&
                         total_tris > MMU_SOLID_LIMIT;
                     const int mmu_stride = mmu_needs_decimation ? stride : 1;
                     struct StateMesh {
