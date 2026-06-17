@@ -1413,6 +1413,7 @@ fun PrepareScreen(
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
+    val anyMixAssigned by viewModel.anyMixAssigned.collectAsState()
     val filaments by viewModel.filaments.collectAsState(initial = emptyList())
     val extruderPresets by viewModel.extruderPresets.collectAsState()
     val copyCount by viewModel.copyCount.collectAsState()
@@ -1443,6 +1444,7 @@ fun PrepareScreen(
     val pendingAddFile by viewModel.pendingAddFile.collectAsState()
     val sessionResumeOffer by viewModel.sessionResumeOffer.collectAsState()
     val silentRestoreInProgress by viewModel.silentRestoreInProgress.collectAsState()
+    val perVolumeExtruders by viewModel.perVolumeExtruders.collectAsState()
     val displayedMixRecipe = resolveImportedMixRecipeDisplaySummary(
         source = mixRecipeSource,
         importedRecipe = importedMixRecipe,
@@ -1563,6 +1565,29 @@ fun PrepareScreen(
                 }
                 if (silentRestoreInProgress) {
                     SilentRestoreIndicator()
+                }
+                if (anyMixAssigned && modelLoaded) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            androidx.compose.material.icons.Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            "Printer slot colors govern this print because a ColorMix is assigned.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
                 }
                 when {
                     state is SlicerViewModel.SlicerState.Idle -> {
@@ -1825,7 +1850,7 @@ fun PrepareScreen(
                             extruderPresets = extruderPresets,
                             filaments = filaments,
                             filamentMaterials = filamentMaterials,
-                            extruderCount = config.extruderCount,
+                            anyMixAssigned = anyMixAssigned,
                             onMappingChange = { newMapping ->
                                 viewModel.applyMultiColorAssignments(newMapping, extruderPresets, filaments)
                             },
@@ -1850,6 +1875,8 @@ fun PrepareScreen(
                                     null -> Unit
                                 }
                             },
+                            hasPerVolumeOverrides = perVolumeExtruders.isNotEmpty(),
+                            onRestoreAllFilamentAssignments = { viewModel.clearAllFilamentAssignments() },
                             // Task 3: Mixes subsection folded into this card.
                             mixSlotsContent = {
                                 PrepareMixSlotsSectionContent(
@@ -4332,9 +4359,9 @@ fun PrintSetupSection(
     // the displayed material + temp so the chip strip matches the slice exactly.
     // Empty for STL / non-canonical files (falls back to slot-preset material).
     filamentMaterials: List<Pair<String, Int>> = emptyList(),
-    extruderCount: Int,
     onMappingChange: (List<Int>) -> Unit,
     onAutoMap: (() -> Unit)? = null,
+    anyMixAssigned: Boolean = false,
     filamentOverrides: Map<Int, SlicerViewModel.FilamentOverride> = emptyMap(),
     onMaterialOverride: (fileIndex: Int, materialType: String?) -> Unit = { _, _ -> },
     onColorOverride: (fileIndex: Int, color: String?) -> Unit = { _, _ -> },
@@ -4346,6 +4373,8 @@ fun PrintSetupSection(
     // card after the filament rows, so both live in one Card. The caller provides
     // the content lambda; null = no Mixes subsection (default, safe for previews).
     mixSlotsContent: (@Composable () -> Unit)? = null,
+    hasPerVolumeOverrides: Boolean = false,
+    onRestoreAllFilamentAssignments: () -> Unit = {},
 ) {
     // Note: onMappingChange / onAutoMap kept in the signature because callers
     // still pass them (they wired the legacy slot-picker path). They're
@@ -4359,10 +4388,6 @@ fun PrintSetupSection(
     // colour 3MFs and STLs — leaving the user with no way to change the slice's
     // filament type from the file's declared default (typically PLA). DC15
     // reported this on a single-colour MakerWorld frog 3MF when they wanted to
-    // print PETG. Now we always render at least one filament row, synthesising
-    // a default from the first extruder preset when the file has no per-filament
-    // metadata. The override flows through to the slicer via `_filamentOverrides[0]`
-    // and the non-canonical override branch in `buildProfileOverrides`.
     if (extruderPresets.isEmpty()) return
     val effectiveDetectedColors: List<String> = if (detectedColors.isNotEmpty()) {
         detectedColors
@@ -4379,6 +4404,21 @@ fun PrintSetupSection(
     var expanded by remember { mutableStateOf(true) }
     var editingMaterialFor by remember { mutableStateOf<Int?>(null) }
     var editingColorFor by remember { mutableStateOf<Int?>(null) }
+    var showSyncDialog by remember { mutableStateOf(false) }
+
+    var hasPromptedSyncForMix by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(anyMixAssigned) {
+        if (anyMixAssigned && !hasPromptedSyncForMix) {
+            // If they haven't explicitly overriden/synced filaments yet, pop up the dialog
+            if (filamentOverrides.isEmpty()) {
+                showSyncDialog = true
+            }
+            hasPromptedSyncForMix = true
+        } else if (!anyMixAssigned) {
+            hasPromptedSyncForMix = false
+        }
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -4414,13 +4454,13 @@ fun PrintSetupSection(
             AnimatedVisibility(visible = expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (importedMixRecipe != null) {
-                com.u1.slicer.ui.ImportedMixRecipeBanner(
-                    recipe = importedMixRecipe,
-                    source = mixRecipeSource,
-                    onViewRecipe = { onViewImportedMixRecipe?.invoke() },
-                    onPrimaryAction = { onPrimaryImportedMixRecipeAction?.invoke() },
-                )
-            }
+                        com.u1.slicer.ui.ImportedMixRecipeBanner(
+                            recipe = importedMixRecipe,
+                            source = mixRecipeSource,
+                            onViewRecipe = { onViewImportedMixRecipe?.invoke() },
+                            onPrimaryAction = { onPrimaryImportedMixRecipeAction?.invoke() },
+                        )
+                    }
                     // Caption explaining where slot picking happens. For multi-colour
                     // files, mention the Map & Print step. For single-filament files,
                     // emphasise the override use case — DC15's exact request.
@@ -4432,29 +4472,18 @@ fun PrintSetupSection(
                     )
                     run {
                         effectiveDetectedColors.forEachIndexed { colorIdx, modelColor ->
-                            // Material type: prefer user override, fall back to the
-                            // auto-suggested slot's ExtruderPreset material.
                             val override = filamentOverrides[colorIdx]
                             val suggestedSlot = mapping.getOrElse(colorIdx) { 0 }
                             val suggestedPreset = extruderPresets.firstOrNull { it.index == suggestedSlot }
                                 ?: extruderPresets.firstOrNull()
-                            // B128: the resolved (material, temp) — computed by the
-                            // same function the slice uses — is authoritative when
-                            // present, so the chip shows the file's declared material
-                            // for a declared multi-colour filament and the slice matches.
-                            // Falls back to the slot-preset path for non-canonical
-                            // files (STL / single-colour with no canonical entry).
+                            
                             val resolved = filamentMaterials.getOrNull(colorIdx)
                             val materialType = resolved?.first
                                 ?: override?.materialType ?: suggestedPreset?.materialType ?: "PLA"
                             val profileId = suggestedPreset?.filamentProfileId
                             val profile = filaments.firstOrNull { it.id == profileId }
                             val isOverridden = override?.materialType != null
-                            // Temp display: prefer the resolver's temp (matches slice).
-                            // For non-canonical fallback: when material is overridden,
-                            // use the material's default temp since the slot's linked
-                            // profile is no longer the source of truth; otherwise prefer
-                            // the linked filament profile's nozzleTemp.
+                            
                             val displayTemp = resolved?.second ?: if (isOverridden) {
                                 com.u1.slicer.nozzleTempDefaultForMaterial(materialType)
                             } else {
@@ -4556,31 +4585,86 @@ fun PrintSetupSection(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                                 )
-                                Spacer(modifier = Modifier.weight(0.01f))
-                                val hasAnyOverride = isOverridden || colorIsOverridden
-                                IconButton(
+                            }
+                        }
+                    }
+
+                    if (filaments.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedButton(
+                                onClick = { showSyncDialog = true },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Icon(Icons.Default.Sync, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Sync filaments from printer", style = MaterialTheme.typography.labelMedium)
+                            }
+                            if (filamentOverrides.isNotEmpty()) {
+                                Spacer(Modifier.width(8.dp))
+                                TextButton(
                                     onClick = {
-                                        if (hasAnyOverride) {
-                                            onColorOverride(colorIdx, null)
-                                            onMaterialOverride(colorIdx, null)
-                                        } else {
-                                            suggestedPreset?.let { preset ->
-                                                onColorOverride(colorIdx, preset.color)
-                                                onMaterialOverride(colorIdx, preset.materialType)
-                                            }
+                                        effectiveDetectedColors.indices.forEach { i ->
+                                            onColorOverride(i, null)
+                                            onMaterialOverride(i, null)
                                         }
+                                        onRestoreAllFilamentAssignments()
                                     },
-                                    modifier = Modifier.size(28.dp)
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
                                 ) {
-                                    Icon(
-                                        imageVector = if (hasAnyOverride) Icons.Default.Restore else Icons.Default.Sync,
-                                        contentDescription = if (hasAnyOverride) "Revert to file default" else "Sync to printer slot",
-                                        tint = if (hasAnyOverride) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                    Text("Restore", style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                         }
+                    }
+
+                    if (showSyncDialog) {
+                        val fileFilaments = effectiveDetectedColors.mapIndexed { colorIdx, color ->
+                            val override = filamentOverrides[colorIdx]
+                            val resolved = filamentMaterials.getOrNull(colorIdx)
+                            val suggestedSlot = mapping.getOrElse(colorIdx) { 0 }
+                            val suggestedPreset = extruderPresets.firstOrNull { it.index == suggestedSlot }
+                            val materialType = resolved?.first ?: override?.materialType ?: suggestedPreset?.materialType ?: "PLA"
+                            com.u1.slicer.data.FilamentEntry(
+                                fileIndex = colorIdx,
+                                color = override?.color ?: color,
+                                materialType = materialType,
+                                source = com.u1.slicer.data.FilamentSource.FILE_COLOUR
+                            )
+                        }
+                        val syncCanonicalList = com.u1.slicer.data.CanonicalFilamentList(filaments = fileFilaments)
+
+                        com.u1.slicer.ui.SyncFilamentsDialog(
+                            canonicalList = syncCanonicalList,
+                            extruderPresets = extruderPresets,
+                            hasActiveOverrides = filamentOverrides.isNotEmpty() || hasPerVolumeOverrides,
+                            promptReason = if (anyMixAssigned) "Because a ColorMix is assigned, the slicer will use the colours loaded on the printer rather than those in the model. Please map the colours below." else null,
+                            onConfirm = { chosenMapping ->
+                                chosenMapping.forEachIndexed { i, slot ->
+                                    val preset = extruderPresets.firstOrNull { it.index == slot } ?: extruderPresets.firstOrNull()
+                                    preset?.let {
+                                        onColorOverride(i, it.color)
+                                        onMaterialOverride(i, it.materialType)
+                                    }
+                                }
+                                showSyncDialog = false
+                            },
+                            onRestoreAll = {
+                                effectiveDetectedColors.indices.forEach { i ->
+                                    onColorOverride(i, null)
+                                    onMaterialOverride(i, null)
+                                }
+                                onRestoreAllFilamentAssignments()
+                                showSyncDialog = false
+                            },
+                            onDismiss = { showSyncDialog = false }
+                        )
                     }
 
                     // (Prime-tower toggle removed from the filament list — it's a slicing

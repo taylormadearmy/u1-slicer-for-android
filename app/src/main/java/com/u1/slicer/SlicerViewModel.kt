@@ -723,6 +723,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         },
     )
 
+
+    /** True if a mix is actively assigned to the model (either via painted mix or object assignment). */
+    val anyMixAssigned: StateFlow<Boolean> = kotlinx.coroutines.flow.combine(
+        mixedFilamentManager.projectMixes,
+        _perVolumeExtruders,
+        _threeMfInfo
+    ) { mixes, extruders, threeMf ->
+        val numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+        val hasActiveMixRows = mixes.isNotEmpty() && mixedFilamentManager.activeOrder(numPhysical).isNotEmpty()
+        val objectMixAssigned = extruders.values.any { it > numPhysical }
+        val paintedMixAssigned = (threeMf?.fullSpectrumPhysicalCount ?: 0) > 0
+        paintedMixAssigned || (hasActiveMixRows && objectMixAssigned)
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(), false)
     /** Create an N-component mix slot (2..4 components, weights summing to 100). */
     fun createMixN(
         components: List<Int>,
@@ -1640,6 +1653,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             _sliceStale.value = true
             invalidatePrepareMeshCache()
         }
+    }
+
+    /** F98/F99: Clears all per-volume extruder overrides to restore the file defaults. */
+    fun clearAllFilamentAssignments() {
+        _perVolumeExtruders.value = emptyMap()
+        refreshMeshSourceExtruders()
+        _sliceStale.value = true
+        invalidatePrepareMeshCache()
     }
 
     /**
@@ -5027,6 +5048,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // wrong object on the post-slice model.
         _selection.value = ObjectSelection()
         slicingJob = viewModelScope.launch(Dispatchers.IO) {
+            val originalVolumeExtruders = mutableMapOf<String, Int>()
+            val restoreOriginalVolumeExtruders = {
+                if (originalVolumeExtruders.isNotEmpty()) {
+                    for ((key, originalSlot) in originalVolumeExtruders) {
+                        val parts = key.split(":")
+                        if (parts.size == 2) {
+                            val o = parts[0].toIntOrNull()
+                            val v = parts[1].toIntOrNull()
+                            if (o != null && v != null) {
+                                val slotToRestore = _perVolumeExtruders.value[key] ?: originalSlot
+                                native.nativeSetVolumeExtruder(o, v, slotToRestore)
+                            }
+                        }
+                    }
+                }
+            }
+
             val context = getApplication<Application>()
             try {
                 when (_state.value) {
@@ -5221,8 +5259,34 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // back to file-declared per-volume extruders and the
                         // user's Parts-panel colour changes have no effect on the
                         // sliced G-code.
-                        if (_perVolumeExtruders.value.isNotEmpty()) {
-                            var replayedCount = 0
+                        val mixDecision = decideSliceMixToolSpace(
+                            numPhysical = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+                            canonicalCount = _canonicalFilamentList.value?.size ?: com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+                            hasActiveMixRows = mixedFilamentManager.activeOrder(com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).isNotEmpty(),
+                            objectMixAssigned = _perVolumeExtruders.value.values.any { it > com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS },
+                            paintedMixAssigned = ((_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.fullSpectrumPhysicalCount ?: 0) > 0,
+                        )
+                        val isMixSpace = mixDecision.mixToolSpace
+                        val hasPaintData = (_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.hasPaintData == true
+
+                        var replayedCount = 0
+                        if (isMixSpace && !hasPaintData) {
+                            val canonicalCount = _canonicalFilamentList.value?.size ?: com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+                            val objectCount = native.nativeGetObjectCount()
+                            for (o in 0 until objectCount) {
+                                val volCount = native.nativeGetVolumeCount(o)
+                                for (v in 0 until volCount) {
+                                    val nativeExtruder = native.nativeGetVolumeExtruder(o, v).coerceAtLeast(1)
+                                    val slot = _perVolumeExtruders.value["$o:$v"] ?: nativeExtruder
+                                    originalVolumeExtruders["$o:$v"] = nativeExtruder
+                                    val engineSlot = if (slot <= canonicalCount) {
+                                        val mapped = _colorMapping.value?.getOrNull(slot - 1) ?: (slot - 1)
+                                        mapped + 1
+                                    } else slot
+                                    if (native.nativeSetVolumeExtruder(o, v, engineSlot)) replayedCount++
+                                }
+                            }
+                        } else if (_perVolumeExtruders.value.isNotEmpty()) {
                             for ((key, slot) in _perVolumeExtruders.value) {
                                 val parts = key.split(":")
                                 if (parts.size == 2) {
@@ -5233,7 +5297,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                     }
                                 }
                             }
-                            Log.i("SlicerVM", "F66: replayed $replayedCount per-volume extruder override(s) after re-embed")
+                        }
+                        if (replayedCount > 0) {
+                            Log.i("SlicerVM", "F66: replayed/mapped $replayedCount per-volume extruder override(s) after re-embed")
                         }
 
                         // Step 4: replay per-object rotation + scale. The
@@ -5926,6 +5992,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 _state.value = SlicerState.Error(clipperUserMessage("Slicing error: $errorMsg"))
             } finally {
+                restoreOriginalVolumeExtruders()
                 diagnostics.clearSliceInProgress()
                 native.progressListener = null
                 LongOpService.stop(context)

@@ -93,7 +93,7 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 
 ```bash
 ./gradlew testDebugUnitTest                        # 1699 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 433 instrumented tests — uses Orchestrator
+./gradlew connectedDebugAndroidTest                # 436 instrumented tests — uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -213,7 +213,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 433 tests across 61 classes
+### Instrumented tests (`app/src/androidTest/`) - 436 tests across 61 classes
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
