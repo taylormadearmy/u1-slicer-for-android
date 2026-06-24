@@ -15,7 +15,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.viewer.MeshData
 import com.u1.slicer.viewer.ModelViewerView
+import com.u1.slicer.viewer.NativePreviewMesh
+import com.u1.slicer.viewer.NativeRenderBatch
 import com.u1.slicer.NativeLibrary
+import com.u1.slicer.bambu.NativePlateState
 import com.u1.slicer.viewer.StlParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
@@ -46,14 +49,87 @@ fun ModelViewerScreen(
                         // idempotent for the same file.
                         val native = NativeLibrary()
                         NativeLibrary.previewMutex.withLock {
-                            if (native.loadModel(file.absolutePath)) {
-                                native.getPreparePreviewMesh()?.apply {
-                                    // F95: tag the trailing modifier/negative block translucent.
-                                    modifierBlockStartTriangle = native.nativeGetPreviewModifierBlockStart()
-                                }?.toMeshData()
-                            } else null
+                            if (!native.loadModel(file.absolutePath)) {
+                                null
+                            } else {
+                                val hasPaintData = runCatching {
+                                    NativePlateState.parseVolumeMapJson(native.nativeGetAllVolumeExtruders()).hasPaintData
+                                }.getOrDefault(false)
+                                val sceneHandle = native.buildPrepareRenderScene()
+                                val batches = mutableListOf<NativeRenderBatch>()
+                                try {
+                                    while (true) {
+                                        val batchCount = native.nativeGetPrepareRenderSceneBatchCount(sceneHandle)
+                                        val isComplete = native.nativeIsPrepareRenderSceneComplete(sceneHandle)
+                                        while (batches.size < batchCount) {
+                                            val i = batches.size
+                                            val triCount = native.nativeGetPrepareRenderSceneTriangleCount(sceneHandle, i)
+                                            val geoBuf = native.nativeGetPrepareRenderSceneGeometryBuffer(sceneHandle, i)
+                                            val matBuf = native.nativeGetPrepareRenderSceneMaterialBuffer(sceneHandle, i)
+                                            if (geoBuf != null && matBuf != null) {
+                                                geoBuf.order(java.nio.ByteOrder.nativeOrder())
+                                                matBuf.order(java.nio.ByteOrder.nativeOrder())
+                                                batches.add(NativeRenderBatch(geoBuf.asFloatBuffer(), matBuf, triCount))
+                                            } else {
+                                                break
+                                            }
+                                        }
+                                        if (batches.isNotEmpty() && mesh == null) {
+                                            var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
+                                            var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+                                            for (b in batches) {
+                                                val buf = b.geometry
+                                                for (v in 0 until b.triangleCount * 3) {
+                                                    val base = v * 10
+                                                    val x = buf.get(base); val y = buf.get(base + 1); val z = buf.get(base + 2)
+                                                    if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z
+                                                    if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z
+                                                }
+                                            }
+                                            mesh = MeshData(
+                                                batches = batches.toList(),
+                                                minX = minX, minY = minY, minZ = minZ,
+                                                maxX = maxX, maxY = maxY, maxZ = maxZ,
+                                                sceneHandle = sceneHandle
+                                            )
+                                        }
+                                        if (isComplete && batches.size == batchCount) break
+                                        kotlinx.coroutines.delay(16)
+                                    }
+                                } catch (e: Exception) {
+                                    native.nativeReleasePrepareRenderScene(sceneHandle)
+                                    throw e
+                                }
+                                
+                                var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
+                                var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+                                for (b in batches) {
+                                    val buf = b.geometry
+                                    for (v in 0 until b.triangleCount * 3) {
+                                        val base = v * 10
+                                        val x = buf.get(base); val y = buf.get(base + 1); val z = buf.get(base + 2)
+                                        if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z
+                                        if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z
+                                    }
+                                }
+                                val modStart = native.nativeGetPreviewModifierBlockStart()
+                                var currentStart = 0
+                                val batchRanges = batches.map { b ->
+                                    val r = currentStart until (currentStart + b.triangleCount)
+                                    currentStart += b.triangleCount
+                                    r
+                                }
+                                MeshData(
+                                    batches = batches.toList(),
+                                    minX = minX, minY = minY, minZ = minZ,
+                                    maxX = maxX, maxY = maxY, maxZ = maxZ,
+                                    batchRanges = batchRanges,
+                                    modifierBlockStartTriangle = if (modStart >= 0) modStart else null,
+                                    sceneHandle = sceneHandle
+                                )
+                            }
                         }
-                    }
+                }
                     else -> null
                 }
                 if (mesh == null) error = "Unsupported file format for 3D preview"

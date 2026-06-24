@@ -219,6 +219,48 @@ class ThreeMfParserTest {
     }
 
     @Test
+    fun `summarizePaintDetection uses per-plate visuals and suppresses file-wide count on multi-plate files`() {
+        val summary = ThreeMfParser.summarizePaintDetection(
+            isMultiPlate = true,
+            visualByPlate = mapOf(
+                1 to ThreeMfParser.PlateVisualInfo(
+                    count = 4,
+                    hasPaint = true,
+                    objectExtruders = setOf(1),
+                    paintExtruderStates = setOf(1, 2)
+                ),
+                2 to ThreeMfParser.PlateVisualInfo(
+                    count = 1,
+                    hasPaint = false,
+                    objectExtruders = setOf(1),
+                    paintExtruderStates = emptySet()
+                )
+            )
+        )
+
+        assertTrue(summary.hasPaintData)
+        assertEquals(0, summary.paintStateCount)
+    }
+
+    @Test
+    fun `summarizePaintDetection returns the plate visual count for single-plate files`() {
+        val summary = ThreeMfParser.summarizePaintDetection(
+            isMultiPlate = false,
+            visualByPlate = mapOf(
+                1 to ThreeMfParser.PlateVisualInfo(
+                    count = 4,
+                    hasPaint = true,
+                    objectExtruders = setOf(1),
+                    paintExtruderStates = setOf(1, 2, 3)
+                )
+            )
+        )
+
+        assertTrue(summary.hasPaintData)
+        assertEquals(4, summary.paintStateCount)
+    }
+
+    @Test
     fun `assessArchiveSizing flags oversized combined component total`() {
         val risk = ThreeMfParser.assessArchiveSizing(
             listOf(

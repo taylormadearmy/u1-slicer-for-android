@@ -11,6 +11,21 @@ import java.io.File
 class MergeThreeMfInfoTest {
 
     @Test
+    fun `shouldDeferPaintDetectionForImport only defers risky archives`() {
+        val risky = com.u1.slicer.bambu.ThreeMfParser.ArchiveSizingRisk(
+            largestComponentEntry = "3D/Objects/huge.model",
+            largestComponentBytes = 300L * 1024L * 1024L,
+            totalComponentBytes = 420L * 1024L * 1024L
+        )
+        assertTrue(
+            SlicerViewModel.shouldDeferPaintDetectionForImport(risky)
+        )
+        assertFalse(
+            SlicerViewModel.shouldDeferPaintDetectionForImport(null)
+        )
+    }
+
+    @Test
     fun `mergeThreeMfInfoForPlate prefers plate objectExtruderMap when non-empty`() {
         val sourceInfo = ThreeMfInfo(
             objects = emptyList(), plates = emptyList(),

@@ -25,8 +25,9 @@ class SplitMeshByObjectsTest {
             }
         }
         buf.rewind()
+        val batch = NativeRenderBatch(buf, null, triCount)
         return MeshData(
-            vertices = buf, vertexCount = vertexCount,
+            batches = listOf(batch),
             minX = 0f, minY = 0f, minZ = 0f,
             maxX = 200f, maxY = 100f, maxZ = 100f
         )

@@ -13,13 +13,13 @@ class LargeModelLoadingMessageTest {
         assertEquals("Loading model.stl…", msg)
     }
 
-    @Test fun `file over 50MB triggers large model message`() {
-        val msg = loadingMessageFor(filename = "big.3mf", fileSizeBytes = 51 * 1024 * 1024L)
+    @Test fun `file over 30MB triggers large model message`() {
+        val msg = loadingMessageFor(filename = "big.3mf", fileSizeBytes = 31 * 1024 * 1024L)
         assertEquals("Large model — this may take a moment…", msg)
     }
 
-    @Test fun `exactly 50MB is not large`() {
-        val msg = loadingMessageFor(filename = "model.stl", fileSizeBytes = 50 * 1024 * 1024L)
+    @Test fun `exactly 30MB is not large`() {
+        val msg = loadingMessageFor(filename = "model.stl", fileSizeBytes = 30 * 1024 * 1024L)
         assertEquals("Loading model.stl…", msg)
     }
 
@@ -31,9 +31,9 @@ class LargeModelLoadingMessageTest {
         assertTrue(isLargeTriangleCount(NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES + 1))
     }
 
-    @Test fun `non painted previews use decimated triangle budget`() {
+    @Test fun `non painted previews use the full kotlin triangle budget`() {
         assertEquals(
-            NativePreviewMesh.MAX_DECIMATED_TRIANGLES,
+            NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES,
             preparePreviewTriangleBudget(hasPaintData = false)
         )
     }

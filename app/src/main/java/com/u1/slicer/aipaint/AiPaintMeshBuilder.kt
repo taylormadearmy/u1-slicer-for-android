@@ -55,12 +55,14 @@ object AiPaintMeshBuilder {
         }
 
         buf.position(0)
+        val matBuf = java.nio.ByteBuffer.allocateDirect(triCount).order(java.nio.ByteOrder.nativeOrder())
+        matBuf.put(triangleKeys)
+        matBuf.rewind()
+        
         return MeshData(
-            vertices = buf,
-            vertexCount = triCount * 3,
+            batches = listOf(com.u1.slicer.viewer.NativeRenderBatch(buf, matBuf, triCount)),
             minX = minX, minY = minY, minZ = minZ,
-            maxX = maxX, maxY = maxY, maxZ = maxZ,
-            extruderIndices = byteIndices
+            maxX = maxX, maxY = maxY, maxZ = maxZ
         )
     }
 

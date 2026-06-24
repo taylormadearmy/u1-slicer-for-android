@@ -168,6 +168,69 @@ class NativePreparePreviewTest {
         )
     }
 
+    @Test
+    fun getPreparePreviewMesh_reportsBatchTriangleCountsThatSumToThePreviewMesh() {
+        // F142 preview-scene follow-up: the native preview cache now keeps per-batch triangle
+        // counts alongside the combined mesh. This is a compatibility bridge for future staged
+        // / progressive preview delivery, so the metadata must stay aligned with the returned
+        // mesh even before Kotlin consumes it.
+        copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val preview = lib.getPreparePreviewMesh()
+        assertNotNull(preview)
+        preview!!
+
+        val batchCounts = lib.nativeGetPreviewBatchTriangleCounts()
+        assertNotNull("Preview batch counts must be populated after a mesh build", batchCounts)
+        batchCounts!!
+        assertTrue("Preview must expose at least one batch", batchCounts.isNotEmpty())
+
+        val totalFromBatches = batchCounts.sum()
+        assertEquals(
+            "Batch triangle counts must sum to the preview mesh triangle count",
+            preview.extruderIndices.size,
+            totalFromBatches
+        )
+    }
+
+    @Test
+    fun getPreparePreviewMesh_sceneHandleStreamsBatchesThatReconstructTheFullPreview() {
+        // The staged scene handle should let Kotlin consume batches as they arrive and still
+        // reconstruct the same final preview mesh as the legacy one-shot API.
+        copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val handle = lib.buildPreparePreviewScene()
+        var combined: NativePreviewMesh? = null
+        var batchesSeen = 0
+        try {
+            while (true) {
+                val batch = lib.nativeGetPreparePreviewSceneNextBatch(handle) ?: break
+                batch.batchRanges = listOf(0 until batch.extruderIndices.size)
+                combined = NativePreviewMesh.append(combined, batch)
+                batchesSeen++
+            }
+        } finally {
+            assertTrue(lib.nativeReleasePreparePreviewScene(handle))
+        }
+
+        assertTrue("Scene handle must yield at least one batch", batchesSeen > 0)
+        assertNotNull(combined)
+        combined!!
+        combined.modifierBlockStartTriangle = lib.nativeGetPreviewModifierBlockStart()
+        val streamedMesh = combined.toMeshData()
+        assertNotNull(streamedMesh)
+
+        val legacy = lib.getPreparePreviewMesh()
+        assertNotNull(legacy)
+        assertEquals(
+            "Streamed scene output must match legacy triangle count",
+            legacy!!.extruderIndices.size,
+            streamedMesh!!.vertexCount / 3
+        )
+    }
+
     /** Axis-aligned span [spanX, spanY, spanZ] of a preview mesh's vertices (mm). */
     private fun previewSpanXYZ(pos: FloatArray): FloatArray {
         var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY

@@ -27,8 +27,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var modelShader: ShaderProgram? = null
     private var gridShader: ShaderProgram? = null
     private var textureShader: ShaderProgram? = null
-    private var modelVAO = 0
-    private var modelVBO = 0
+    private var modelVAOs = IntArray(0)
+    private var modelVBOs = IntArray(0)
+    private var colorVBOs = IntArray(0)
     private var useVertexColorLoc = -1
     private var gridVAO = 0
     private var gridVertexCount = 0
@@ -159,6 +160,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         setupLogoTexture()
         setupBox()
 
+        meshData?.let {
+            uploadMeshBatches(it.batches)
+            updateColorData(it)
+        }
+
         // Initialize camera to plate-centred view immediately so the first frame is correct.
         // Without this, the camera starts at default (azimuth=0, elevation=30) and only snaps
         // to the bed view once the mesh loads, causing a visible flash on first open.
@@ -200,6 +206,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         if (pendingClearMesh) {
             pendingClearMesh = false
+            deleteMeshBuffers()
+            meshData?.release(com.u1.slicer.NativeLibrary())
             meshData = null
             objectMeshRanges = null
             highlightIndex = -1
@@ -212,7 +220,16 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 mesh.recolor(palette)
                 pendingRecolor = null
             }
-            uploadMesh(mesh)
+            if (this.meshData != null && isAppend(this.meshData!!.batches, mesh.batches)) {
+                for (i in this.meshData!!.batches.size until mesh.batches.size) {
+                    appendMeshBatch(mesh.batches[i])
+                }
+            } else {
+                uploadMeshBatches(mesh.batches)
+            }
+            if (mesh.batches.any { it.colorBuffer != null }) {
+                updateColorData(mesh)
+            }
             meshData = mesh
             pendingMesh = null
             if (hasPendingObjectMeshRanges) {
@@ -228,13 +245,20 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // Process pending per-triangle extruder index update BEFORE recolor, so the recolor
         // step picks up the new indices when it looks up palette[index].
         if (pendingExtruderUpdate != null) {
-            meshData?.extruderIndices?.let { existing ->
-                pendingExtruderUpdate?.let { update ->
-                    if (update.size == existing.size) {
-                        System.arraycopy(update, 0, existing, 0, update.size)
+            meshData?.let { mesh ->
+                val update = pendingExtruderUpdate!!
+                val totalTriangles = mesh.batches.sumOf { it.triangleCount }
+                if (update.size == totalTriangles) {
+                    var offset = 0
+                    for (batch in mesh.batches) {
+                        batch.materialIndices?.let { mat ->
+                            mat.position(0)
+                            mat.put(update, offset, batch.triangleCount)
+                        }
+                        offset += batch.triangleCount
                     }
-                    pendingExtruderUpdate = null
                 }
+                pendingExtruderUpdate = null
             }
         }
 
@@ -337,7 +361,6 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             val highlighted = pos != null && highlightIndex == (pos.size / 2)
             drawWipeTower(tower, highlighted)
         }
-
         if (pendingContentReadyDispatch) {
             pendingContentReadyDispatch = false
             onContentReady?.let { callback ->
@@ -346,59 +369,171 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         }
     }
 
-    private fun uploadMesh(mesh: MeshData) {
-        if (modelVAO != 0) {
-            val vaos = intArrayOf(modelVAO)
-            GLES30.glDeleteVertexArrays(1, vaos, 0)
+    private fun deleteMeshBuffers() {
+        if (modelVAOs.isNotEmpty()) {
+            GLES30.glDeleteVertexArrays(modelVAOs.size, modelVAOs, 0)
+            modelVAOs = IntArray(0)
         }
-        if (modelVBO != 0) {
-            val vbos = intArrayOf(modelVBO)
-            GLES30.glDeleteBuffers(1, vbos, 0)
+        if (modelVBOs.isNotEmpty()) {
+            GLES30.glDeleteBuffers(modelVBOs.size, modelVBOs, 0)
+            modelVBOs = IntArray(0)
+        }
+        if (colorVBOs.isNotEmpty()) {
+            GLES30.glDeleteBuffers(colorVBOs.size, colorVBOs, 0)
+            colorVBOs = IntArray(0)
+        }
+    }
+
+    private fun isAppend(oldBatches: List<NativeRenderBatch>, newBatches: List<NativeRenderBatch>): Boolean {
+        if (newBatches.size <= oldBatches.size) return false
+        for (i in oldBatches.indices) {
+            if (oldBatches[i] !== newBatches[i]) return false
+        }
+        return true
+    }
+
+    private fun uploadMeshBatches(batches: List<NativeRenderBatch>) {
+        deleteMeshBuffers()
+
+        val count = batches.size
+        if (count == 0) return
+
+        modelVAOs = IntArray(count)
+        modelVBOs = IntArray(count)
+        colorVBOs = IntArray(count)
+        GLES30.glGenVertexArrays(count, modelVAOs, 0)
+        GLES30.glGenBuffers(count, modelVBOs, 0)
+        GLES30.glGenBuffers(count, colorVBOs, 0)
+
+        for (i in 0 until count) {
+            setupBatchVao(modelVAOs[i], modelVBOs[i], batches[i])
         }
 
-        val vaos = IntArray(1)
-        GLES30.glGenVertexArrays(1, vaos, 0)
-        modelVAO = vaos[0]
-
-        val vbos = IntArray(1)
-        GLES30.glGenBuffers(1, vbos, 0)
-        modelVBO = vbos[0]
-
-        GLES30.glBindVertexArray(modelVAO)
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, modelVBO)
-
-        mesh.vertices.position(0)
-        GLES30.glBufferData(
-            GLES30.GL_ARRAY_BUFFER,
-            mesh.vertexCount * MeshData.BYTES_PER_VERTEX,
-            mesh.vertices,
-            GLES30.GL_DYNAMIC_DRAW
-        )
-
-        // Position: 3 floats at offset 0
-        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 0)
-        GLES30.glEnableVertexAttribArray(0)
-        // Normal: 3 floats at offset 12
-        GLES30.glVertexAttribPointer(1, 3, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 12)
-        GLES30.glEnableVertexAttribArray(1)
-        // Color: 4 floats at offset 24
-        GLES30.glVertexAttribPointer(2, 4, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 24)
-        GLES30.glEnableVertexAttribArray(2)
-
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
         GLES30.glBindVertexArray(0)
     }
 
-    private fun updateColorData(mesh: MeshData) {
-        if (modelVBO == 0) return
-        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, modelVBO)
-        mesh.vertices.position(0)
-        GLES30.glBufferSubData(
-            GLES30.GL_ARRAY_BUFFER,
-            0,
-            mesh.vertexCount * MeshData.BYTES_PER_VERTEX,
-            mesh.vertices
-        )
+    private fun appendMeshBatch(batch: NativeRenderBatch) {
+        val oldSize = modelVAOs.size
+        val newVAOs = IntArray(oldSize + 1)
+        val newVBOs = IntArray(oldSize + 1)
+        val newColorVBOs = IntArray(oldSize + 1)
+        System.arraycopy(modelVAOs, 0, newVAOs, 0, oldSize)
+        System.arraycopy(modelVBOs, 0, newVBOs, 0, oldSize)
+        System.arraycopy(colorVBOs, 0, newColorVBOs, 0, oldSize)
+
+        GLES30.glGenVertexArrays(1, newVAOs, oldSize)
+        GLES30.glGenBuffers(1, newVBOs, oldSize)
+        GLES30.glGenBuffers(1, newColorVBOs, oldSize)
+
+        setupBatchVao(newVAOs[oldSize], newVBOs[oldSize], batch)
+
         GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+        GLES30.glBindVertexArray(0)
+
+        modelVAOs = newVAOs
+        modelVBOs = newVBOs
+        colorVBOs = newColorVBOs
+    }
+
+    private fun setupBatchVao(vao: Int, vbo: Int, batch: NativeRenderBatch) {
+        GLES30.glBindVertexArray(vao)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, vbo)
+
+        val batchBytes = batch.triangleCount * 3 * MeshData.BYTES_PER_VERTEX
+        batch.geometry.position(0)
+        GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, batchBytes, batch.geometry, GLES30.GL_DYNAMIC_DRAW)
+
+        GLES30.glVertexAttribPointer(0, 3, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 0)
+        GLES30.glEnableVertexAttribArray(0)
+        GLES30.glVertexAttribPointer(1, 3, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 12)
+        GLES30.glEnableVertexAttribArray(1)
+        GLES30.glVertexAttribPointer(2, 4, GLES30.GL_FLOAT, false, MeshData.BYTES_PER_VERTEX, 24)
+        GLES30.glEnableVertexAttribArray(2)
+    }
+
+    private fun updateColorData(mesh: MeshData) {
+        if (modelVAOs.isEmpty() || modelVAOs.size != mesh.batches.size) return
+        if (colorVBOs.isEmpty() || colorVBOs.size != mesh.batches.size) return
+        
+        for (i in mesh.batches.indices) {
+            val batch = mesh.batches[i]
+            val cb = batch.colorBuffer ?: continue
+            
+            GLES30.glBindVertexArray(modelVAOs[i])
+            GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, colorVBOs[i])
+            
+            cb.position(0)
+            val batchBytes = batch.triangleCount * 3 * 16
+            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, batchBytes, cb, GLES30.GL_DYNAMIC_DRAW)
+            
+            GLES30.glVertexAttribPointer(2, 4, GLES30.GL_FLOAT, false, 16, 0)
+            GLES30.glEnableVertexAttribArray(2)
+        }
+        GLES30.glBindVertexArray(0)
+        GLES30.glBindBuffer(GLES30.GL_ARRAY_BUFFER, 0)
+    }
+
+    private fun drawTriangleRange(mesh: MeshData, startTriangle: Int, triangleCount: Int) {
+        if (triangleCount <= 0) return
+        var remaining = triangleCount
+        var currentTri = startTriangle
+
+        while (remaining > 0) {
+            var cumTri = 0
+            var batchIdx = -1
+            for (i in mesh.batches.indices) {
+                val c = mesh.batches[i].triangleCount
+                if (currentTri >= cumTri && currentTri < cumTri + c) {
+                    batchIdx = i
+                    break
+                }
+                cumTri += c
+            }
+            if (batchIdx == -1 || batchIdx >= modelVAOs.size) break
+
+            val localTri = currentTri - cumTri
+            val batchCount = mesh.batches[batchIdx].triangleCount
+            val drawCount = minOf(remaining, batchCount - localTri)
+
+            GLES30.glBindVertexArray(modelVAOs[batchIdx])
+            GLES30.glDrawArrays(GLES30.GL_TRIANGLES, localTri * 3, drawCount * 3)
+
+            remaining -= drawCount
+            currentTri += drawCount
+        }
+        GLES30.glBindVertexArray(0)
+    }
+
+    private fun drawTriangleRanges(mesh: MeshData, triangleStart: Int, triangleCount: Int) {
+        if (triangleCount <= 0) return
+        val batchRanges = mesh.batchRanges
+        if (batchRanges.isNullOrEmpty()) {
+            drawTriangleRange(mesh, triangleStart, triangleCount)
+            return
+        }
+
+        val triangleEnd = triangleStart + triangleCount
+        var coalescedStart = -1
+        var coalescedEnd = -1
+        for (range in batchRanges) {
+            val start = maxOf(triangleStart, range.first)
+            val endExclusive = minOf(triangleEnd, range.last + 1)
+            if (endExclusive <= start) continue
+            if (coalescedStart < 0) {
+                coalescedStart = start
+                coalescedEnd = endExclusive
+            } else if (start <= coalescedEnd) {
+                coalescedEnd = maxOf(coalescedEnd, endExclusive)
+            } else {
+                drawTriangleRange(mesh, coalescedStart, coalescedEnd - coalescedStart)
+                coalescedStart = start
+                coalescedEnd = endExclusive
+            }
+        }
+        if (coalescedStart >= 0) {
+            drawTriangleRange(mesh, coalescedStart, coalescedEnd - coalescedStart)
+        }
     }
 
     /**
@@ -432,7 +567,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glDepthMask(false)
         GLES30.glDisable(GLES30.GL_DEPTH_TEST)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, modelPartVtx, count)
+        drawTriangleRanges(mesh, modelPartVtx / 3, count / 3)
         GLES30.glEnable(GLES30.GL_DEPTH_TEST)
         GLES30.glDepthMask(true)
         GLES30.glDisable(GLES30.GL_BLEND)
@@ -464,11 +599,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         // selection; clear the highlight uniform so a previous draw's tint
         // doesn't leak into this one.
         GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
-        GLES30.glBindVertexArray(modelVAO)
         val modelPartVtx = modelPartVertexCount(mesh)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, modelPartVtx)
+        drawTriangleRanges(mesh, 0, modelPartVtx / 3)
         drawModifierTail(mesh, modelPartVtx)
-        GLES30.glBindVertexArray(0)
     }
 
     private fun drawModelAt(mesh: MeshData, x: Float, y: Float,
@@ -497,11 +630,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
         GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
 
-        GLES30.glBindVertexArray(modelVAO)
         val modelPartVtx = modelPartVertexCount(mesh)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, modelPartVtx)
+        drawTriangleRanges(mesh, 0, modelPartVtx / 3)
         drawModifierTail(mesh, modelPartVtx)
-        GLES30.glBindVertexArray(0)
     }
 
     private fun drawObjectRange(
@@ -529,9 +660,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniform4f(shader.getUniformLocation("u_Highlight"), 0f, 0f, 0f, 0f)
         GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
 
-        GLES30.glBindVertexArray(modelVAO)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, range.vertexStart, range.vertexCount)
-        GLES30.glBindVertexArray(0)
+        drawTriangleRanges(mesh, range.vertexStart / 3, range.vertexCount / 3)
     }
 
     /**
@@ -572,9 +701,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniform1f(useVertexColorLoc, 0f)
 
         GLES30.glCullFace(GLES30.GL_FRONT)
-        GLES30.glBindVertexArray(modelVAO)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, range.vertexStart, range.vertexCount)
-        GLES30.glBindVertexArray(0)
+        drawTriangleRanges(mesh, range.vertexStart / 3, range.vertexCount / 3)
         GLES30.glCullFace(GLES30.GL_BACK)
 
         // Clear so subsequent normal draws aren't affected.
@@ -600,9 +727,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniform4fv(shader.getUniformLocation("u_OutlineColor"), 1, OUTLINE_COLOR, 0)
         GLES30.glUniform1f(useVertexColorLoc, 0f)
         GLES30.glCullFace(GLES30.GL_FRONT)
-        GLES30.glBindVertexArray(modelVAO)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, modelPartVertexCount(mesh))
-        GLES30.glBindVertexArray(0)
+        drawTriangleRanges(mesh, 0, modelPartVertexCount(mesh) / 3)
         GLES30.glCullFace(GLES30.GL_BACK)
         GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
     }
@@ -629,9 +754,7 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glUniform4fv(shader.getUniformLocation("u_OutlineColor"), 1, OUTLINE_COLOR, 0)
         GLES30.glUniform1f(useVertexColorLoc, 0f)
         GLES30.glCullFace(GLES30.GL_FRONT)
-        GLES30.glBindVertexArray(modelVAO)
-        GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, modelPartVertexCount(mesh))
-        GLES30.glBindVertexArray(0)
+        drawTriangleRanges(mesh, 0, modelPartVertexCount(mesh) / 3)
         GLES30.glCullFace(GLES30.GL_BACK)
         GLES30.glUniform1f(shader.getUniformLocation("u_OutlineExpand"), 0f)
     }
@@ -1079,34 +1202,39 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             // visual bug during drag). Objects on the bed don't overlap, so AABB containment
             // is unambiguous for the vast majority of triangles.
             val triObjects = IntArray(triCount)
-            for (tri in 0 until triCount) {
-                val b = tri * 3 * fpp
-                val cx = (mesh.vertices.get(b) + mesh.vertices.get(b + fpp) + mesh.vertices.get(b + fpp * 2)) / 3f
-                val cy = (mesh.vertices.get(b + 1) + mesh.vertices.get(b + fpp + 1) + mesh.vertices.get(b + fpp * 2 + 1)) / 3f
+            var globalTri = 0
+            for (batch in mesh.batches) {
+                val buf = batch.geometry
+                for (tri in 0 until batch.triangleCount) {
+                    val b = tri * 3 * fpp
+                    val cx = (buf.get(b) + buf.get(b + fpp) + buf.get(b + fpp * 2)) / 3f
+                    val cy = (buf.get(b + 1) + buf.get(b + fpp + 1) + buf.get(b + fpp * 2 + 1)) / 3f
 
-                // First pass: unambiguous AABB containment
-                var aabbMatch = -1
-                for (i in 0 until objectCount) {
-                    val minX = positions[i * 2]
-                    val minY = positions[i * 2 + 1]
-                    if (cx >= minX && cx <= minX + sizes[i * 3] &&
-                        cy >= minY && cy <= minY + sizes[i * 3 + 1]
-                    ) {
-                        if (aabbMatch == -1) aabbMatch = i
-                        else { aabbMatch = -2; break } // overlapping AABBs — use fallback
+                    // First pass: unambiguous AABB containment
+                    var aabbMatch = -1
+                    for (i in 0 until objectCount) {
+                        val minX = positions[i * 2]
+                        val minY = positions[i * 2 + 1]
+                        if (cx >= minX && cx <= minX + sizes[i * 3] &&
+                            cy >= minY && cy <= minY + sizes[i * 3 + 1]
+                        ) {
+                            if (aabbMatch == -1) aabbMatch = i
+                            else { aabbMatch = -2; break } // overlapping AABBs — use fallback
+                        }
                     }
-                }
-                if (aabbMatch >= 0) { triObjects[tri] = aabbMatch; continue }
+                    if (aabbMatch >= 0) { triObjects[globalTri] = aabbMatch; globalTri++; continue }
 
-                // Fallback: nearest centre (gap triangles or overlapping AABBs)
-                var bestObj = 0; var bestDist = Float.MAX_VALUE
-                for (i in 0 until objectCount) {
-                    val ox = positions[i * 2] + sizes[i * 3] / 2f
-                    val oy = positions[i * 2 + 1] + sizes[i * 3 + 1] / 2f
-                    val d = (cx - ox) * (cx - ox) + (cy - oy) * (cy - oy)
-                    if (d < bestDist) { bestDist = d; bestObj = i }
+                    // Fallback: nearest centre (gap triangles or overlapping AABBs)
+                    var bestObj = 0; var bestDist = Float.MAX_VALUE
+                    for (i in 0 until objectCount) {
+                        val ox = positions[i * 2] + sizes[i * 3] / 2f
+                        val oy = positions[i * 2 + 1] + sizes[i * 3 + 1] / 2f
+                        val d = (cx - ox) * (cx - ox) + (cy - oy) * (cy - oy)
+                        if (d < bestDist) { bestDist = d; bestObj = i }
+                    }
+                    triObjects[globalTri] = bestObj
+                    globalTri++
                 }
-                triObjects[tri] = bestObj
             }
 
             // Group triangle indices by object
@@ -1114,10 +1242,22 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             for (tri in 0 until triCount) triLists[triObjects[tri]].add(tri)
 
             // Build sorted vertex buffer and compute per-object ranges + bounds
-            val newBuf = MeshData.allocateBuffer(triCount)
-            val newExtruderIdx = mesh.extruderIndices?.let { ByteArray(triCount) }
+            val newGeoBuf = java.nio.ByteBuffer.allocateDirect(triCount * 3 * fpp * 4)
+                .order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
+            val newMatBuf = if (mesh.hasPerVertexColor) {
+                java.nio.ByteBuffer.allocateDirect(triCount).order(java.nio.ByteOrder.nativeOrder())
+            } else null
+
             val ranges = mutableListOf<ObjectMeshRange>()
             var destTriIdx = 0
+
+            // Pre-compute cumulative triangle counts for O(log K) batch lookup
+            val batchStarts = IntArray(mesh.batches.size)
+            var cumTri = 0
+            for (b in mesh.batches.indices) {
+                batchStarts[b] = cumTri
+                cumTri += mesh.batches[b].triangleCount
+            }
 
             for (i in 0 until objectCount) {
                 val tris = triLists[i]
@@ -1126,19 +1266,27 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
                 var minZ = Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
 
-                for (tri in tris) {
-                    val srcBase = tri * 3 * fpp
+                for (globalTriIndex in tris) {
+                    // Binary search for the batch containing this global triangle
+                    var batchIdx = java.util.Arrays.binarySearch(batchStarts, globalTriIndex)
+                    if (batchIdx < 0) batchIdx = -(batchIdx + 1) - 1  // insertion point - 1
+                    val batch = mesh.batches[batchIdx]
+                    val localTri = globalTriIndex - batchStarts[batchIdx]
+                    val srcBase = localTri * 3 * fpp
+                    val buf = batch.geometry
                     for (v in 0 until 3) {
                         val vBase = srcBase + v * fpp
-                        val vx = mesh.vertices.get(vBase)
-                        val vy = mesh.vertices.get(vBase + 1)
-                        val vz = mesh.vertices.get(vBase + 2)
+                        val vx = buf.get(vBase)
+                        val vy = buf.get(vBase + 1)
+                        val vz = buf.get(vBase + 2)
                         if (vx < minX) minX = vx; if (vx > maxX) maxX = vx
                         if (vy < minY) minY = vy; if (vy > maxY) maxY = vy
                         if (vz < minZ) minZ = vz; if (vz > maxZ) maxZ = vz
-                        for (f in 0 until fpp) newBuf.put(mesh.vertices.get(vBase + f))
+                        for (f in 0 until fpp) newGeoBuf.put(buf.get(vBase + f))
                     }
-                    newExtruderIdx?.set(destTriIdx, mesh.extruderIndices!![tri])
+                    if (newMatBuf != null && batch.materialIndices != null) {
+                        newMatBuf.put(batch.materialIndices.get(localTri))
+                    }
                     destTriIdx++
                 }
 
@@ -1151,12 +1299,13 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 ranges.add(ObjectMeshRange(rangeStart, tris.size * 3, minX, maxX, minY, maxY, minZ, maxZ))
             }
 
-            newBuf.rewind()
+            newGeoBuf.rewind()
+            newMatBuf?.rewind()
+            val newBatch = com.u1.slicer.viewer.NativeRenderBatch(newGeoBuf, newMatBuf, triCount)
             val sortedMesh = MeshData(
-                vertices = newBuf, vertexCount = mesh.vertexCount,
+                batches = listOf(newBatch),
                 minX = mesh.minX, minY = mesh.minY, minZ = mesh.minZ,
-                maxX = mesh.maxX, maxY = mesh.maxY, maxZ = mesh.maxZ,
-                extruderIndices = newExtruderIdx,
+                maxX = mesh.maxX, maxY = mesh.maxY, maxZ = mesh.maxZ
             )
             return Pair(sortedMesh, ranges)
         }

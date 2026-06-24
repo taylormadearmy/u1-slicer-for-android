@@ -64,12 +64,8 @@ fun bambuCanonicalList(file: File): CanonicalFilamentList? {
             zip.entries().asSequence()
                 .filter { e -> !e.isDirectory && MODEL_ENTRY_REGEX.matches(e.name) }
                 .forEach { e ->
-                    zip.getInputStream(e).bufferedReader().useLines { lines ->
-                        lines.forEach { line ->
-                            extractPaintSpecs(line).forEach { spec ->
-                                paintStates += PaintColorDecoder.decodeStates(spec)
-                            }
-                        }
+                    ThreeMfParser.streamCollectPaintSpecs(zip.getInputStream(e)) { spec ->
+                        paintStates += PaintColorDecoder.decodeStates(spec)
                     }
                 }
             // Drop virtual-mix paint states (state > physicalCount) so mergePaintStates
@@ -181,13 +177,29 @@ private fun JSONArray.optStringOrNull(i: Int): String? {
  * Multiple matches per line are supported (compact 3MFs sometimes pack many
  * triangles onto one line). Empty values are filtered out.
  */
-internal fun extractPaintSpecs(line: String): List<String> =
-    PAINT_SPEC_REGEX.findAll(line)
-        .mapNotNull { it.groupValues[1].takeIf { v -> v.isNotBlank() } }
-        .toList()
+internal fun extractPaintSpecs(line: String): List<String> {
+    var list: MutableList<String>? = null
+    var startIdx = 0
+    while (true) {
+        var idx = line.indexOf("paint_color=\"", startIdx)
+        if (idx == -1) idx = line.indexOf("mmu_segmentation=\"", startIdx)
+        if (idx == -1) break
 
-private val PAINT_SPEC_REGEX =
-    Regex("""(?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)="([^"]+)"""")
+        val quoteStart = line.indexOf('"', idx) + 1
+        val quoteEnd = line.indexOf('"', quoteStart)
+        if (quoteEnd != -1) {
+            val spec = line.substring(quoteStart, quoteEnd)
+            if (spec.isNotBlank()) {
+                if (list == null) list = mutableListOf()
+                list.add(spec)
+            }
+            startIdx = quoteEnd + 1
+        } else {
+            break
+        }
+    }
+    return list ?: emptyList()
+}
 
 /**
  * Visible for unit tests — extracts extruder-index → colour pairs from the

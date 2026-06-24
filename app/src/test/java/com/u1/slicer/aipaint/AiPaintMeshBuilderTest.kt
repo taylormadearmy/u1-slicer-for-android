@@ -13,7 +13,9 @@ class AiPaintMeshBuilderTest {
     @Test
     fun `build encodes per-triangle keys as extruder indices`() {
         val mesh = AiPaintMeshBuilder.build(quad(), byteArrayOf(0, 3))
-        val idx = mesh.extruderIndices!!
+        val matBuf = mesh.batches[0].materialIndices!!
+        val idx = ByteArray(matBuf.remaining())
+        matBuf.get(idx)
         assertEquals(2, idx.size)
         assertEquals(0, idx[0].toInt())
         assertEquals(3, idx[1].toInt())

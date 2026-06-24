@@ -92,6 +92,64 @@ Java_com_u1_slicer_NativeLibrary_getPreparePreviewMesh(JNIEnv* env, jobject, jin
     return sapil::previewMeshToJava(env, mesh);
 }
 
+JNIEXPORT jlong JNICALL
+Java_com_u1_slicer_NativeLibrary_buildPrepareRenderScene(JNIEnv*, jobject, jint maxTriangles) {
+    if (!g_engine) return 0;
+    auto* scene = g_engine->buildPreparePreviewScene(static_cast<int>(maxTriangles));
+    return reinterpret_cast<jlong>(scene);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetPrepareRenderSceneBatchCount(JNIEnv*, jobject, jlong handle) {
+    if (!g_engine || handle == 0) return 0;
+    auto* scene = reinterpret_cast<sapil::PreparePreviewSceneHandle>(handle);
+    return g_engine->getPreparePreviewSceneBatchCount(scene);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeIsPrepareRenderSceneComplete(JNIEnv*, jobject, jlong handle) {
+    if (!g_engine || handle == 0) return JNI_TRUE;
+    auto* scene = reinterpret_cast<sapil::PreparePreviewSceneHandle>(handle);
+    return g_engine->isPreparePreviewSceneComplete(scene) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetPrepareRenderSceneTriangleCount(JNIEnv*, jobject, jlong handle, jint batchIndex) {
+    if (!g_engine || handle == 0) return 0;
+    auto* scene = reinterpret_cast<sapil::PreparePreviewSceneHandle>(handle);
+    return g_engine->getPreparePreviewSceneTriangleCount(scene, batchIndex);
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetPrepareRenderSceneGeometryBuffer(JNIEnv* env, jobject, jlong handle, jint batchIndex) {
+    if (!g_engine || handle == 0) return nullptr;
+    auto* scene = reinterpret_cast<sapil::PreparePreviewSceneHandle>(handle);
+    const float* buf = g_engine->getPreparePreviewSceneGeometryBuffer(scene, batchIndex);
+    if (!buf) return nullptr;
+    int triCount = g_engine->getPreparePreviewSceneTriangleCount(scene, batchIndex);
+    jlong capacityBytes = static_cast<jlong>(triCount) * 30 * sizeof(float);
+    return env->NewDirectByteBuffer(const_cast<float*>(buf), capacityBytes);
+}
+
+JNIEXPORT jobject JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetPrepareRenderSceneMaterialBuffer(JNIEnv* env, jobject, jlong handle, jint batchIndex) {
+    if (!g_engine || handle == 0) return nullptr;
+    auto* scene = reinterpret_cast<sapil::PreparePreviewSceneHandle>(handle);
+    const uint8_t* buf = g_engine->getPreparePreviewSceneMaterialBuffer(scene, batchIndex);
+    if (!buf) return nullptr;
+    int triCount = g_engine->getPreparePreviewSceneTriangleCount(scene, batchIndex);
+    jlong capacityBytes = static_cast<jlong>(triCount) * sizeof(uint8_t);
+    return env->NewDirectByteBuffer(const_cast<uint8_t*>(buf), capacityBytes);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeReleasePrepareRenderScene(JNIEnv*, jobject, jlong handle) {
+    if (!g_engine || handle == 0) return JNI_FALSE;
+    auto* scene = reinterpret_cast<sapil::PreparePreviewSceneHandle>(handle);
+    g_engine->releasePreparePreviewScene(scene);
+    return JNI_TRUE;
+}
+
 // ---- Slicing ----
 JNIEXPORT jobject JNICALL
 Java_com_u1_slicer_NativeLibrary_slice(JNIEnv* env, jobject thiz, jobject jconfig) {

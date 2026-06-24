@@ -65,12 +65,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-internal fun preparePreviewTriangleBudget(hasPaintData: Boolean): Int =
-    if (hasPaintData) {
-        NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES
-    } else {
-        NativePreviewMesh.MAX_DECIMATED_TRIANGLES
-    }
+internal fun preparePreviewTriangleBudget(hasPaintData: Boolean): Int {
+    // Keep the Prepare preview on the higher full-quality budget by default.
+    // The lower native decimation cap is still used by direct native tests and
+    // explicit fallback paths, but the shipped UI should prefer solid geometry
+    // over the older sparse preview contract.
+    return NativePreviewMesh.MAX_KOTLIN_PREVIEW_TRIANGLES
+}
 
 class MainActivity : ComponentActivity() {
     private val diagnostics by lazy { DiagnosticsStore(this) }
@@ -1751,7 +1752,7 @@ fun PrepareScreen(
                                     )
                                     // F81: notify when a large preview mesh finishes
                                     // building so background users know Prepare is ready.
-                                    val tris = (mesh.vertices.limit() / 10 / 3)
+                                    val tris = mesh.vertexCount / 3
                                     viewModel.onPreparePreviewReady(tris)
                                 },
                                 loadTimeInstanceOffsets = loadTimeInstanceOffsets,
@@ -3349,6 +3350,7 @@ fun InlineModelPreview(
     var viewerView by remember { mutableStateOf<com.u1.slicer.viewer.ModelViewerView?>(null) }
     var parseRequestId by remember { mutableIntStateOf(0) }
     var viewerLoading by remember(modelFilePath) { mutableStateOf(true) }
+    var viewerStreaming by remember(modelFilePath) { mutableStateOf(false) }
     val previewTooLarge = remember(modelTriangleCount) {
         com.u1.slicer.viewer.NativePreviewMesh.wouldExceedSafePreviewBudget(modelTriangleCount)
     }
@@ -3584,7 +3586,7 @@ fun InlineModelPreview(
         // For user-initiated rotation changes, wait 300ms for the slider to settle.
         val isInitialFetch = rot.x == 0f && rot.y == 0f && rot.z == 0f
         if (!isInitialFetch) {
-            viewerLoading = true  // show "Preparing preview…" overlay while re-computing
+            viewerStreaming = true  // show "Loading full details..." indicator while re-computing
             kotlinx.coroutines.delay(300)
         }
 
@@ -3597,6 +3599,7 @@ fun InlineModelPreview(
         // The paired stop() in `finally` covers both cancellation and exception paths.
         LongOpService.start(previewPrepContext, "Preparing preview")
         try {
+        android.util.Log.i("LoadTiming", "preparePreview start rot=${rot.x},${rot.y},${rot.z} modelFilePath=$modelFilePath")
         val newMesh = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             NativeLibrary.previewMutex.withLock {
                 try {
@@ -3634,25 +3637,110 @@ fun InlineModelPreview(
                             // Do NOT call setModelInstances — it creates N copies of object 0,
                             // producing phantom duplicates when there are N distinct loaded objects.
                             lib.setObjectPositions(multiPos)
-                        } else {
-                            lib.setModelInstances(loadTimeInstanceOffsets)
+                    } else {
+                        lib.setModelInstances(loadTimeInstanceOffsets)
+                    }
+                }
+                    val previewBudget = preparePreviewTriangleBudget(hasPaintData)
+                    val previewT0 = System.currentTimeMillis()
+                    android.util.Log.i("LoadTiming", "preparePreview buildPreparePreviewScene start budget=$previewBudget")
+                    val sceneHandle = lib.buildPrepareRenderScene()
+                    android.util.Log.i("LoadTiming", "preparePreview buildPreparePreviewScene end sceneHandle=$sceneHandle elapsed=${System.currentTimeMillis() - previewT0}ms")
+                    var firstVisibleMs: Long? = null
+                    var finalMesh: com.u1.slicer.viewer.MeshData? = null
+                    val batches = mutableListOf<com.u1.slicer.viewer.NativeRenderBatch>()
+                    // Track bounds incrementally — avoids a redundant full vertex scan after streaming
+                    var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
+                    var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
+                    // Track batch ranges incrementally
+                    val batchRanges = mutableListOf<IntRange>()
+                    var runningTriStart = 0
+
+                    try {
+                        while (true) {
+                            val batchCount = lib.nativeGetPrepareRenderSceneBatchCount(sceneHandle)
+                            val isComplete = lib.nativeIsPrepareRenderSceneComplete(sceneHandle)
+                            var batchesAdded = false
+
+                            while (batches.size < batchCount) {
+                                val batchIdx = batches.size
+                                val triCount = lib.nativeGetPrepareRenderSceneTriangleCount(sceneHandle, batchIdx)
+                                val geoBuf = lib.nativeGetPrepareRenderSceneGeometryBuffer(sceneHandle, batchIdx)
+                                val matBuf = lib.nativeGetPrepareRenderSceneMaterialBuffer(sceneHandle, batchIdx)
+                                if (geoBuf != null && matBuf != null) {
+                                    geoBuf.order(java.nio.ByteOrder.nativeOrder())
+                                    matBuf.order(java.nio.ByteOrder.nativeOrder())
+                                    val floatBuf = geoBuf.asFloatBuffer()
+                                    batches.add(com.u1.slicer.viewer.NativeRenderBatch(floatBuf, matBuf, triCount))
+                                    // Update bounds incrementally for this batch only
+                                    for (v in 0 until triCount * 3) {
+                                        val base = v * 10
+                                        val x = floatBuf.get(base); val y = floatBuf.get(base + 1); val z = floatBuf.get(base + 2)
+                                        if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z
+                                        if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z
+                                    }
+                                    // Track batch range incrementally
+                                    batchRanges.add(runningTriStart until (runningTriStart + triCount))
+                                    runningTriStart += triCount
+                                    batchesAdded = true
+                                } else {
+                                    break
+                                }
+                            }
+
+                            if (batches.isNotEmpty() && firstVisibleMs == null) {
+                                firstVisibleMs = System.currentTimeMillis() - previewT0
+                                viewerLoading = false
+                                viewerStreaming = true
+                            }
+
+                            if (batchesAdded) {
+                                finalMesh = com.u1.slicer.viewer.MeshData(
+                                    batches = batches.toList(),
+                                    minX = minX, minY = minY, minZ = minZ,
+                                    maxX = maxX, maxY = maxY, maxZ = maxZ,
+                                    sceneHandle = sceneHandle
+                                )
+                                mesh = finalMesh
+                            }
+
+                            if (isComplete && batches.size == batchCount) {
+                                viewerStreaming = false
+                                break
+                            }
+
+                            if (!isComplete && !batchesAdded) {
+                                kotlinx.coroutines.delay(10)
+                            } else {
+                                kotlinx.coroutines.yield()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        viewerStreaming = false
+                        android.util.Log.e("LoadTiming", "Error streaming render scene", e)
+                        throw e
+                    } finally {
+                        if (finalMesh == null) {
+                            lib.nativeReleasePrepareRenderScene(sceneHandle)
                         }
                     }
-                    val previewT0 = System.currentTimeMillis()
-                    val raw = lib.getPreparePreviewMesh(
-                        preparePreviewTriangleBudget(hasPaintData)
+
+                    // Bounds are already fully computed incrementally — no second scan needed.
+                    val modStart = lib.nativeGetPreviewModifierBlockStart()
+
+                    // Build final mesh with full properties (batchRanges, modifier block)
+                    finalMesh = com.u1.slicer.viewer.MeshData(
+                        batches = batches.toList(),
+                        minX = minX, minY = minY, minZ = minZ,
+                        maxX = maxX, maxY = maxY, maxZ = maxZ,
+                        batchRanges = batchRanges.toList(),
+                        modifierBlockStartTriangle = if (modStart >= 0) modStart else null,
+                        sceneHandle = sceneHandle
                     )
-                    // F95: tag the trailing negative/modifier-volume block so toMeshData carries
-                    // the boundary into MeshData and the renderer draws it translucent. Read in
-                    // the same critical section as the mesh build (static is valid post-build).
-                    raw?.modifierBlockStartTriangle = lib.nativeGetPreviewModifierBlockStart()
-                    val jniMs = System.currentTimeMillis() - previewT0
-                    val meshT0 = System.currentTimeMillis()
-                    val mesh = raw?.toMeshData()
-                    val meshMs = System.currentTimeMillis() - meshT0
+                    
                     val previewMs = System.currentTimeMillis() - previewT0
-                    android.util.Log.i("LoadTiming", "preview total=${previewMs}ms jni=${jniMs}ms toMeshData=${meshMs}ms vertexCount=${mesh?.vertexCount ?: 0} initial=$isInitialFetch")
-                    mesh
+                    android.util.Log.i("LoadTiming", "preview total=${previewMs}ms vertexCount=${finalMesh?.vertexCount ?: 0} initial=$isInitialFetch")
+                    finalMesh
                 } catch (_: Throwable) {
                     null
                 }
@@ -3677,8 +3765,9 @@ fun InlineModelPreview(
             onMeshCached?.invoke(mesh!!)  // B49: save to ViewModel cache
             lastSetMesh = null  // force setMesh() on the GL thread
         }
-        if (!isInitialFetch) viewerLoading = false
+        if (!isInitialFetch) viewerStreaming = false
         } finally {
+            if (!isInitialFetch) viewerStreaming = false
             LongOpService.stop(previewPrepContext)
         }
     }
@@ -3997,7 +4086,32 @@ fun InlineModelPreview(
                 )
             }
             if (viewerLoading && !previewTooLarge) {
-                ViewerLoadingOverlay("Preparing preview…")
+                ViewerLoadingOverlay(
+                    label = "Preparing preview…",
+                    body = preparePreviewLoadingBody(modelTriangleCount, hasPaintData)
+                )
+            } else if (viewerStreaming) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(16.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), shape = RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Loading full details...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White
+                        )
+                    }
+                }
             }
             if (previewTooLarge) {
                 LargePreviewFallback(
@@ -5504,7 +5618,10 @@ fun InlineGcodePreview(
                     modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
                 )
                 if (viewerLoading) {
-                    ViewerLoadingOverlay("Preparing preview…")
+                    ViewerLoadingOverlay(
+                        label = "Preparing preview…",
+                        body = "The preview is being prepared while the G-code metadata remains available."
+                    )
                 }
             }
             if (gcodeLayerCount > 1) {
@@ -5652,7 +5769,7 @@ internal fun normalizeGcodePreviewColors(
 }
 
 @Composable
-private fun ViewerLoadingOverlay(label: String) {
+private fun ViewerLoadingOverlay(label: String, body: String) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -5663,19 +5780,29 @@ private fun ViewerLoadingOverlay(label: String) {
             shape = RoundedCornerShape(14.dp),
             color = Color.Black.copy(alpha = 0.58f)
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Column(
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    strokeWidth = 2.5.dp,
-                    color = Color.White
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.5.dp,
+                        color = Color.White
+                    )
+                    Text(
+                        label,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 Text(
-                    label,
-                    color = Color.White,
+                    body,
+                    color = Color.White.copy(alpha = 0.86f),
                     style = MaterialTheme.typography.bodySmall
                 )
             }

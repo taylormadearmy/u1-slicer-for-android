@@ -3,9 +3,14 @@ package com.u1.slicer.bambu
 import android.util.Log
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FilterOutputStream
 import java.io.FileOutputStream
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.util.zip.CRC32
+import java.util.zip.CheckedOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -92,12 +97,13 @@ object BambuSanitizer {
 
         Log.i(TAG, "Bambu file detected, sanitizing...")
         val outputFile = File(outputDir, "sanitized_${inputFile.name}")
+        val processT0 = System.currentTimeMillis()
 
         try {
             ZipFile(inputFile).use { srcZip ->
-                ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->
+                ZipOutputStream(BufferedOutputStream(FileOutputStream(outputFile), 256 * 1024)).use { destZip ->
                     // 3MF requires STORED compression — PrusaSlicer rejects DEFLATED entries
-                    var projectSettingsWritten = false
+                    var projectSettingsContent: ByteArray? = null
                     // objectId → ordered list of (faceCount, extruder) per part, built while processing model_settings.config
                     val bambuObjectParts = mutableMapOf<String, ObjectParts>()
                     // Track the main model entry so we can choose between an in-memory
@@ -115,9 +121,19 @@ object BambuSanitizer {
                     // took the streaming sanitize path — which skips the in-memory compound
                     // restructuring block, so attachCompoundComponentIds never runs.
                     var usedStreamingMainModel = false
+                    var isMultiPlate = false
                     // Buffer model rels file — only dropped when restructuring inlines meshes
                     var modelRelsContent: ByteArray? = null
+                    var modelSettingsParseMs = 0L
+                    var archiveScanMs = 0L
+                    var mainModelReadMs = 0L
+                    var mainModelAnalysisMs = 0L
+                    var mainModelRewriteMs = 0L
+                    var componentCopyMs = 0L
+                    var componentLoadMs = 0L
+                    var configWriteMs = 0L
 
+                    val archiveScanT0 = System.currentTimeMillis()
                     for (entry in srcZip.entries()) {
                         val name = entry.name
 
@@ -145,19 +161,22 @@ object BambuSanitizer {
                         }
 
                         when {
-                            // Read project_settings.config for data but don't write to output
-                            // (Bambu JSON/INI config can confuse PrusaSlicer's 3MF loader)
+                            // Read project_settings.config now and decide later whether to
+                            // write it back. Multi-plate imports must stay on the sanitized
+                            // pre-embed path, while single-plate painted files keep the palette.
                             name == "Metadata/project_settings.config" -> {
-                                projectSettingsWritten = true
+                                projectSettingsContent = srcZip.getInputStream(entry).readBytes()
                             }
 
                             // Read model_settings.config for extruder assignments.
                             // For restructured files: don't write (IDs change).
                             // For multi-plate files (restructuring skipped): buffer for later.
                             name == "Metadata/model_settings.config" -> {
+                                val modelSettingsT0 = System.currentTimeMillis()
                                 val content = srcZip.getInputStream(entry).readBytes()
                                 parseModelSettingsExtruders(content, bambuObjectParts)
                                 modelSettingsContent = content
+                                modelSettingsParseMs += System.currentTimeMillis() - modelSettingsT0
                             }
 
                             // Buffer all .model files — main one for restructuring,
@@ -208,10 +227,16 @@ object BambuSanitizer {
                             }
                         }
                     }
+                    archiveScanMs = System.currentTimeMillis() - archiveScanT0
 
                     // Write (possibly restructured) main model file
                     if (mainModelEntry != null) {
                         val mainModelSize = mainModelEntry!!.size
+                        var hasMultiColorComponents = false
+                        var totalComponentSize = 0L
+                        var safeToInline = false
+                        var needsComponentParsing = false
+                        var usedRewritePath = false
                         if (mainModelSize > MAX_IN_MEMORY_MAIN_MODEL_BYTES) {
                             Log.w(
                                 TAG,
@@ -221,13 +246,16 @@ object BambuSanitizer {
                             copyMainModelEntry(srcZip, mainModelEntry!!, destZip)
                             usedStreamingMainModel = true
                         } else {
+                            val mainModelReadT0 = System.currentTimeMillis()
                             val mainModelContent = srcZip.getInputStream(mainModelEntry!!).readBytes()
+                            mainModelReadMs = System.currentTimeMillis() - mainModelReadT0
                         // Restructure compound multi-color objects into separate build items.
                         // Only consider extruders 1..4 — BambuStudio uses indices 5+ for paint
                         // colour markers that have no corresponding physical extruder slot on the
                         // U1.  Including out-of-range indices (e.g. extruder=5 on single-colour
                         // files) falsely triggers restructuring and causes OOM on large meshes.
-                        val hasMultiColorComponents = bambuObjectParts.values.any { objectInfo ->
+                        val mainModelAnalysisT0 = System.currentTimeMillis()
+                        hasMultiColorComponents = bambuObjectParts.values.any { objectInfo ->
                             objectInfo.parts.filter { it.extruder in 1..4 }.map { it.extruder }.distinct().size > 1
                         }
                         // Guard against OOM and oversized XML: check total component file size
@@ -237,12 +265,12 @@ object BambuSanitizer {
                         // capacity on Android.  Skip restructuring for multi-plate files — each
                         // plate is extracted later by extractPlate() which keeps the per-plate
                         // files small.  OrcaSlicer handles component refs (p:path) natively.
-                        val totalComponentSize = if (hasMultiColorComponents) {
+                        totalComponentSize = if (hasMultiColorComponents) {
                             componentFileNames.sumOf { name -> srcZip.getEntry(name)?.size ?: 0L }
                         } else 0L
                         // Detect multi-plate: check for virtual-position build items (TX>270 or
                         // TY<0) which indicate multiple plates packed into one model.
-                        val isMultiPlate = detectMultiPlateFromBuild(mainModelContent!!)
+                        isMultiPlate = detectMultiPlateFromBuild(mainModelContent!!)
                         if (isMultiPlate && hasMultiColorComponents) {
                             Log.i(TAG, "Multi-plate file detected — skipping restructuring " +
                                 "(${totalComponentSize / 1_000_000}MB components), will restructure per-plate")
@@ -251,7 +279,7 @@ object BambuSanitizer {
                         // For single-plate files: 50MB threshold allows restructuring of large
                         // multi-color models.  For multi-plate files: always skip — inlining all
                         // plates' meshes creates oversized XML that crashes the BBS reader.
-                        val safeToInline = !isMultiPlate && totalComponentSize <= 50_000_000L  // 50 MB
+                        safeToInline = !isMultiPlate && totalComponentSize <= 50_000_000L  // 50 MB
                         if (hasMultiColorComponents && !safeToInline && !isMultiPlate) {
                             Log.w(TAG, "Component files too large to inline " +
                                 "(${totalComponentSize / 1_000_000}MB > 50MB), preserving component refs")
@@ -259,7 +287,15 @@ object BambuSanitizer {
                         val hasModifierVolumes = bambuObjectParts.values.any { objectInfo ->
                             objectInfo.parts.any { it.subtype != "normal_part" }
                         }
-                        val needsComponentParsing = hasMultiColorComponents || hasModifierVolumes
+                        needsComponentParsing = hasMultiColorComponents || hasModifierVolumes
+                        Log.i(
+                            TAG,
+                            "Sanitizer main-model branch: size=${mainModelSize} " +
+                                "multiColor=$hasMultiColorComponents multiPlate=$isMultiPlate " +
+                                "totalComponentSize=${totalComponentSize} safeToInline=$safeToInline " +
+                                "modifierVolumes=$hasModifierVolumes deferredRestructuring=$deferredRestructuring " +
+                                "needsComponentParsing=$needsComponentParsing"
+                        )
                         val objectComponents = if (needsComponentParsing) {
                             mutableMapOf<String, List<ComponentRef>>().also { components ->
                                 parseMainModelStructure(mainModelContent!!, components, mutableMapOf())
@@ -274,8 +310,10 @@ object BambuSanitizer {
                         if (hasModifierVolumes && !hasMultiColorComponents) {
                             attachCompoundComponentIds(bambuObjectParts, objectComponents)
                         }
+                        mainModelAnalysisMs = System.currentTimeMillis() - mainModelAnalysisT0
 
                         // Load component files only when safe to do so
+                        val componentLoadT0 = System.currentTimeMillis()
                         val componentFiles = if (hasMultiColorComponents && safeToInline) {
                             componentFileNames.associateWith { name ->
                                 srcZip.getEntry(name)?.let { srcZip.getInputStream(it).readBytes() } ?: ByteArray(0)
@@ -283,8 +321,11 @@ object BambuSanitizer {
                         } else {
                             emptyMap()
                         }
+                        componentLoadMs = System.currentTimeMillis() - componentLoadT0
 
+                        val mainModelRewriteT0 = System.currentTimeMillis()
                         val (finalModelBytes, newParentParts) = if (hasMultiColorComponents && safeToInline) {
+                            usedRewritePath = true
                             restructureForMultiColor(mainModelContent!!, bambuObjectParts, componentFiles)
                         } else {
                             Pair(convertMmuSegmentation(mainModelContent!!), emptyMap())
@@ -302,6 +343,7 @@ object BambuSanitizer {
                         writeStored(destZip, "3D/3dmodel.model", cleanedModelFinal)
 
                         val wasRestructured = newParentParts.isNotEmpty()
+                        val componentCopyT0 = System.currentTimeMillis()
 
                         // Write component files and rels:
                         // - If restructured (meshes inlined): skip component files + rels entirely
@@ -310,18 +352,7 @@ object BambuSanitizer {
                             // Copy component files — use streaming for large files to avoid OOM
                             for (path in componentFileNames) {
                                 val srcEntry = srcZip.getEntry(path) ?: continue
-                                if (deferredRestructuring) {
-                                    // Multi-plate deferred: raw-copy without XML cleaning.
-                                    // restructurePlateFile() will clean when inlining meshes.
-                                    rawCopyZipEntry(srcZip, srcEntry, destZip)
-                                } else if (srcEntry.size > 10_000_000) {
-                                    // Large file: stream-copy with line-by-line cleaning
-                                    copyZipEntry(srcZip, srcEntry, destZip)
-                                } else {
-                                    // Small file: load into memory and clean fully
-                                    val data = srcZip.getInputStream(srcEntry).readBytes()
-                                    writeStored(destZip, path, cleanModelXmlPreserveComponentRefs(convertMmuSegmentation(data)))
-                                }
+                                rawCopyZipEntry(srcZip, srcEntry, destZip)
                             }
                             // Write the model rels file so PrusaSlicer can discover component files
                             if (modelRelsContent != null) {
@@ -330,6 +361,14 @@ object BambuSanitizer {
                         } else {
                             Log.d(TAG, "Skipping ${componentFileNames.size} component file(s) — meshes inlined")
                         }
+                        componentCopyMs = System.currentTimeMillis() - componentCopyT0
+                        mainModelRewriteMs = System.currentTimeMillis() - mainModelRewriteT0
+                        Log.i(
+                            TAG,
+                            "Sanitizer main-model rewrite: usedRewritePath=$usedRewritePath " +
+                                "restructured=${newParentParts.isNotEmpty()} streamingMainModel=$usedStreamingMainModel " +
+                                "rewriteMs=${mainModelRewriteMs}ms componentCopyMs=${componentCopyMs}ms"
+                        )
 
                         // Override bambuObjectParts with the new per-parent-object part lists
                         if (newParentParts.isNotEmpty()) {
@@ -341,13 +380,20 @@ object BambuSanitizer {
                         }
                     }
 
-                    // If no project_settings.config existed, that's fine
-                    if (!projectSettingsWritten) {
+                    // If no project_settings.config existed, that's fine.
+                    // For single-plate painted files, preserve a sanitized copy so the
+                    // palette survives parse() without carrying Bambu-specific extras.
+                    if (projectSettingsContent == null) {
                         Log.d(TAG, "No project_settings.config found in source")
+                    } else if (!isMultiPlate) {
+                        val sanitizedProjectSettings = sanitizeProjectSettings(String(projectSettingsContent!!))
+                        writeStored(destZip, "Metadata/project_settings.config", sanitizedProjectSettings.toByteArray())
+                        Log.i(TAG, "Preserved sanitized project_settings.config for single-plate import")
                     }
 
                     // Inject Slic3r_PE_model.config so PrusaSlicer sees per-object extruder assignments.
                     // After restructuring, bambuObjectParts contains simple object-level extruder values.
+                    val configWriteT0 = System.currentTimeMillis()
                     val needsModelConfig = bambuObjectParts.values.any { objectInfo ->
                         objectInfo.parts.any { it.extruder > 1 || it.subtype != "normal_part" }
                     }
@@ -427,6 +473,15 @@ object BambuSanitizer {
                             }
                         }
                     }
+                    configWriteMs = System.currentTimeMillis() - configWriteT0
+                    Log.i(
+                        TAG,
+                        "Sanitizer phase timings: scan=${archiveScanMs}ms modelSettingsParse=${modelSettingsParseMs}ms " +
+                            "mainModelRead=${mainModelReadMs}ms mainModelAnalysis=${mainModelAnalysisMs}ms " +
+                            "componentLoad=${componentLoadMs}ms mainModelRewrite=${mainModelRewriteMs}ms " +
+                            "componentCopy=${componentCopyMs}ms " +
+                            "configWrite=${configWriteMs}ms total=${System.currentTimeMillis() - processT0}ms"
+                    )
                 } // ZipOutputStream
             } // ZipFile
 
@@ -1363,61 +1418,52 @@ $componentRefs    </components>
         val bambuNsRegex = Regex("""\s+xmlns:BambuStudio="[^"]*"""")
         val slic3rpeNsRegex = Regex("""\s+xmlns:slic3rpe="[^"]*"""")
         val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
+        val crc = CRC32()
         try {
             // Line-by-line streaming clean to avoid OOM on 100MB+ entries.
             // Fast path: 99.9%+ of lines are mesh data (<vertex>/<triangle>) with no
             // Bambu attributes — skip regex entirely for those lines.
-            tmpFile.bufferedWriter().use { out ->
-                srcZip.getInputStream(srcEntry).bufferedReader().use { reader ->
-                    reader.forEachLine { line ->
-                        // Fast path: mesh data lines contain none of the target patterns
-                        if (!line.contains("p:UUID") && !line.contains("requiredextensions") &&
-                            !line.contains("xmlns:BambuStudio") && !line.contains("xmlns:slic3rpe") &&
-                            !line.contains("<metadata") && !line.contains("mmu_segmentation") &&
-                            !line.contains("type=\"other\"")) {
-                            if (line.isNotBlank()) {
-                                out.write(line)
+            CheckedOutputStream(FileOutputStream(tmpFile).buffered(), crc).use { checkedOut ->
+                OutputStreamWriter(checkedOut, Charsets.UTF_8).buffered().use { out ->
+                    srcZip.getInputStream(srcEntry).bufferedReader(Charsets.UTF_8).use { reader ->
+                        reader.forEachLine { line ->
+                            // Fast path: mesh data lines contain none of the target patterns
+                            if (!line.contains("p:UUID") && !line.contains("requiredextensions") &&
+                                !line.contains("xmlns:BambuStudio") && !line.contains("xmlns:slic3rpe") &&
+                                !line.contains("<metadata") && !line.contains("mmu_segmentation") &&
+                                !line.contains("type=\"other\"")) {
+                                if (line.isNotBlank()) {
+                                    out.write(line)
+                                    out.newLine()
+                                }
+                                return@forEachLine
+                            }
+                            // Slow path: header/footer lines — apply full regex cleaning
+                            var cleaned = line.replace(pUuidRegex, "")
+                            cleaned = cleaned.replace(reqExtRegex, "")
+                            cleaned = cleaned.replace(bambuNsRegex, "")
+                            cleaned = cleaned.replace(slic3rpeNsRegex, "")
+                            cleaned = cleaned.replace(metadataRegex, "")
+                            // Preserve PrusaSlicer SEMM paint: RENAME slic3rpe:mmu_segmentation →
+                            // paint_color (same RLE hex encoding) instead of deleting it. Deleting
+                            // silently dropped all paint on large (streamed) PrusaSlicer component
+                            // meshes — parity with convertMmuSegmentation / embed streamCleanEntry.
+                            cleaned = cleaned.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+                            cleaned = cleaned.replace("""type="other"""", """type="model"""")
+                            if (cleaned.isNotBlank()) {
+                                out.write(cleaned)
                                 out.newLine()
                             }
-                            return@forEachLine
-                        }
-                        // Slow path: header/footer lines — apply full regex cleaning
-                        var cleaned = line.replace(pUuidRegex, "")
-                        cleaned = cleaned.replace(reqExtRegex, "")
-                        cleaned = cleaned.replace(bambuNsRegex, "")
-                        cleaned = cleaned.replace(slic3rpeNsRegex, "")
-                        cleaned = cleaned.replace(metadataRegex, "")
-                        // Preserve PrusaSlicer SEMM paint: RENAME slic3rpe:mmu_segmentation →
-                        // paint_color (same RLE hex encoding) instead of deleting it. Deleting
-                        // silently dropped all paint on large (streamed) PrusaSlicer component
-                        // meshes — parity with convertMmuSegmentation / embed streamCleanEntry.
-                        cleaned = cleaned.replace("slic3rpe:mmu_segmentation=", "paint_color=")
-                        cleaned = cleaned.replace("""type="other"""", """type="model"""")
-                        if (cleaned.isNotBlank()) {
-                            out.write(cleaned)
-                            out.newLine()
                         }
                     }
                 }
             }
 
-            // Pass 2: compute CRC + size from temp file
-            val crc = CRC32()
-            var totalSize = 0L
-            tmpFile.inputStream().use { input ->
-                val buf = ByteArray(8192)
-                var n: Int
-                while (input.read(buf).also { n = it } >= 0) {
-                    crc.update(buf, 0, n)
-                    totalSize += n
-                }
-            }
-
-            // Pass 3: write STORED entry from temp file
+            // Pass 2: write STORED entry from temp file
             val entry = ZipEntry(srcEntry.name)
             entry.method = ZipEntry.STORED
-            entry.size = totalSize
-            entry.compressedSize = totalSize
+            entry.size = tmpFile.length()
+            entry.compressedSize = entry.size
             entry.crc = crc.value
             destZip.putNextEntry(entry)
             tmpFile.inputStream().use { input ->
@@ -1448,16 +1494,18 @@ $componentRefs    </components>
         val bambuNsRegex = Regex("""\s+xmlns:BambuStudio="[^"]*"""")
         val slic3rpeNsRegex = Regex("""\s+xmlns:slic3rpe="[^"]*"""")
         val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
+        val crc = CRC32()
         try {
-            tmpFile.bufferedWriter().use { out ->
-                srcZip.getInputStream(srcEntry).bufferedReader().use { reader ->
+            CheckedOutputStream(BufferedOutputStream(FileOutputStream(tmpFile), 256 * 1024), crc).use { checkedOut ->
+                OutputStreamWriter(checkedOut, Charsets.UTF_8).buffered(256 * 1024).use { out ->
+                srcZip.getInputStream(srcEntry).bufferedReader(Charsets.UTF_8).use { reader ->
                     reader.forEachLine { line ->
                         if (!line.contains("p:UUID") && !line.contains("requiredextensions") &&
                             !line.contains("xmlns:BambuStudio") && !line.contains("xmlns:slic3rpe") &&
                             !line.contains("<metadata") && !line.contains("mmu_segmentation") &&
                             !line.contains("type=\"other\"")) {
-                            if (line.contains("""printable="0"""")) return@forEachLine
                             if (line.isNotBlank()) {
+                                if (line.contains("""printable="0"""")) return@forEachLine
                                 out.write(line)
                                 out.newLine()
                             }
@@ -1485,26 +1533,16 @@ $componentRefs    </components>
                     }
                 }
             }
-
-            val crc = CRC32()
-            var totalSize = 0L
-            tmpFile.inputStream().use { input ->
-                val buf = ByteArray(8192)
-                var n: Int
-                while (input.read(buf).also { n = it } >= 0) {
-                    crc.update(buf, 0, n)
-                    totalSize += n
-                }
             }
 
             val entry = ZipEntry(srcEntry.name)
             entry.method = ZipEntry.STORED
-            entry.size = totalSize
-            entry.compressedSize = totalSize
+            entry.size = tmpFile.length()
+            entry.compressedSize = entry.size
             entry.crc = crc.value
             destZip.putNextEntry(entry)
             tmpFile.inputStream().use { input ->
-                val buf = ByteArray(8192)
+                val buf = ByteArray(64 * 1024)
                 var n: Int
                 while (input.read(buf).also { n = it } >= 0) {
                     destZip.write(buf, 0, n)
@@ -1524,7 +1562,7 @@ $componentRefs    </components>
         entry.crc = srcEntry.crc
         destZip.putNextEntry(entry)
         srcZip.getInputStream(srcEntry).use { input ->
-            val buf = ByteArray(8192)
+            val buf = ByteArray(64 * 1024)
             var n: Int
             while (input.read(buf).also { n = it } >= 0) {
                 destZip.write(buf, 0, n)

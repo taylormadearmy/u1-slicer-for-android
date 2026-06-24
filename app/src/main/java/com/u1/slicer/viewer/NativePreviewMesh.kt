@@ -20,14 +20,14 @@ data class NativePreviewMesh(
      *  disjoint, contiguous, and sum to the triangleCount. Drives the AI Paint cascade's
      *  per-volume branch (B). Excluded from data-class equality (see equals override on the
      *  containing AiPaintResultState; this class itself relies on default reference equality
-     *  via data-class semantics, but volumeRanges is a `var` set once after JNI returns). */
+     *  via data-class semantics, but batchRanges is a `var` set once after JNI returns). */
     @JvmField
-    var volumeRanges: List<IntRange>? = null
+    var batchRanges: List<IntRange>? = null
 
     /** F95: index of the first triangle in the trailing negative/modifier-volume block,
      *  or -1 when the model has no modifier/negative volumes. Set post-construction by
      *  NativeLibrary.getPreparePreviewMesh from the native modifier-block-start accessor,
-     *  mirroring the [volumeRanges] population pattern. Forwarded to MeshData by toMeshData. */
+     *  mirroring the [batchRanges] population pattern. Forwarded to MeshData by toMeshData. */
     @JvmField
     var modifierBlockStartTriangle: Int = -1
 
@@ -118,16 +118,22 @@ data class NativePreviewMesh(
         )
         val logMs = System.currentTimeMillis() - logT0
         Log.i("LoadTiming", "toMeshData breakdown loop=${loopMs}ms log.i=${logMs}ms triangles=$triangleCount")
+        val batch = NativeRenderBatch(
+            triangleCount = triangleCount,
+            geometry = buf,
+            materialIndices = java.nio.ByteBuffer.allocateDirect(previewIndices.size).apply {
+                put(previewIndices)
+                rewind()
+            }
+        )
         return MeshData(
-            vertices = buf,
-            vertexCount = triangleCount * 3,
+            batches = listOf(batch),
             minX = minX,
             minY = minY,
             minZ = minZ,
             maxX = maxX,
             maxY = maxY,
             maxZ = maxZ,
-            extruderIndices = previewIndices,
             modifierBlockStartTriangle = modifierBlockStartTriangle.takeIf { it >= 0 }
         )
     }

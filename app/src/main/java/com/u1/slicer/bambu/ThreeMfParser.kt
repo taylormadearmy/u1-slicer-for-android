@@ -9,6 +9,7 @@ import org.xmlpull.v1.XmlPullParserFactory
 import java.io.File
 import java.io.InputStream
 import java.util.zip.ZipFile
+import kotlin.text.Charsets
 
 /**
  * Parses 3MF files (ZIP archives) to extract object info, plate structure,
@@ -117,6 +118,13 @@ object ThreeMfParser {
                     tx > 270f || ty < 0f || ty > 270f
                 }
                 val isMultiPlate = plateJsonCount > 1 || hasVirtualPlateItems
+                val componentModels = if (!skipPaintDetection) {
+                    zip.entries().toList().filter { e ->
+                        e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
+                    }
+                } else {
+                    emptyList()
+                }
 
                 // Read Bambu model_settings.config for plate names, extruder assignments,
                 // and plate-to-object mappings (which objects belong to which plate).
@@ -149,24 +157,6 @@ object ThreeMfParser {
                     }
                 }
 
-                // Detect paint data — check main model AND all component .model files.
-                // Bambu files that use p:path component refs (e.g. colored_3DBenchy) store
-                // paint_color attributes on triangles in the component files
-                // (3D/Objects/*.model), not in the main 3D/3dmodel.model.
-                val componentModels = zip.entries().toList().filter { e ->
-                    e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
-                }
-                var hasPaintData = if (skipPaintDetection) false else {
-                    val mainHasPaint = zip.getInputStream(modelEntry).use(::streamDetectPaintData)
-                    val componentHasPaint = componentModels.any { e ->
-                        streamDetectPaintData(zip.getInputStream(e))
-                    }
-                    if (!mainHasPaint && !componentHasPaint && componentModels.isNotEmpty()) {
-                        Log.d(TAG, "Byte-scan found no paint_color in main model or ${componentModels.size} component(s): ${componentModels.map { "${it.name} (${it.size}B)" }}")
-                    }
-                    mainHasPaint || componentHasPaint
-                }
-
                 // B57: Detect support painting — single-color Bambu files with paint_supports
                 // attributes require the preserve path in ProfileEmbedder so embedded
                 // enable_support and support_threshold_angle are not discarded.
@@ -178,69 +168,78 @@ object ThreeMfParser {
                         }
                 }
 
-                // Count distinct paint STATES (B44: config files may list fewer colors
-                // than the actual paint states encoded in model triangles).
-                // Each paint spec string encodes a state digit as its first character
-                // (0=none, 1-4=extruders, 5-8=AMS2 folded to 1-4).
-                // We count distinct non-zero first-char states, NOT the number of
-                // unique spec strings (which can be thousands).
-                //
-                // B67: When byte-scan missed paint data on a Bambu file with large
-                // component models (>10MB), run the regex spec scan as fallback.
-                // Only scoped to large components to avoid unnecessary I/O on small
-                // non-painted Bambu files.  sourceConfig values are String or List<String>.
-                val hasLargeComponents = componentModels.any { it.size > 10_000_000L }
-                // B93 phase 2: multi-plate files re-parse per plate via
-                // `parseForPlateSelection()` when the user selects a plate. The
-                // full-file `detectedExtruderCount` is only used as an early
-                // "show plate selector" hint, and the paint state count doesn't
-                // change that decision. Skip the expensive per-component scan
-                // for multi-plate files — on Buzz Lightyear (73 MB, 80+ component
-                // .model entries, 296K paint_color attributes) this loop alone
-                // was ~47s on a Pixel 8a before this skip.
-                val paintStateCount = if (isMultiPlate) {
-                    0
-                } else if (hasPaintData || (!hasPaintData && isBambu && !skipPaintDetection && hasLargeComponents)) {
-                    val states = mutableSetOf<Int>()
-                    val modelFiles = mutableListOf<java.util.zip.ZipEntry>()
-                    if (modelEntry != null) modelFiles.add(modelEntry)
-                    zip.entries().toList().filterTo(modelFiles) { e ->
-                        e.name.endsWith(".model") && e.name != "3D/3dmodel.model"
-                    }
-                    outer@ for (entry in modelFiles) {
-                        streamCollectPaintSpecs(zip.getInputStream(entry)) { spec ->
-                            // B95: Use full bit-packed decoder instead of first-char heuristic.
-                            // Single-leaf simple specs ("4"=state 1, "8"=state 2) decode the same
-                            // way the heuristic did, so AMS1 (1-4) folding still works. Extended
-                            // specs ("8C"=state 11, "3C"=state 6) now decode to their real states
-                            // — previously the first-char heuristic returned 8 and 3 instead.
-                            val decoded = PaintColorDecoder.decodeStates(spec)
-                            for (state in decoded) {
-                                if (state <= 0) continue
-                                // Fold AMS2 states (5-8) back to AMS1 (1-4)
-                                val folded = if (state > 4) ((state - 1) % 4) + 1 else state
-                                states.add(folded)
-                            }
-                            // B93 phase 2: folded state range is 1..4. Once we've
-                            // collected all 4, further reads can't add new states —
-                            // bail to save I/O on files like Buzz Lightyear
-                            // (73 MB, 80+ component .model entries, 296K paint_color
-                            // attributes). Saturation is usually reached in the
-                            // first 1-2 component files; skipping the rest cuts
-                            // multi-plate cold load by another ~20-30s on Pixel 8a.
-                            if (states.size >= 4) throw EarlyExit
-                        }
-                        if (states.size >= 4) break@outer
-                    }
-                    states.size
-                } else 0
-                // B67: If byte-scan missed paint data but regex scan found paint states,
-                // promote hasPaintData to true — the file definitely has paint attributes.
-                if (!hasPaintData && paintStateCount > 0) {
-                    Log.w(TAG, "B67: byte-scan missed paint data but found $paintStateCount paint states via regex — promoting hasPaintData to true")
-                    hasPaintData = true
+                // Detect paint data through the per-plate visual summary when possible.
+                // Single-plate files keep the detailed paint-state decode. Multi-plate
+                // files switch to a cheaper presence-only pass so the import path no
+                // longer spends tens of seconds decoding paint specs that the native
+                // plate-selection path will replace later anyway.
+                val componentPathsByObject = if (!skipPaintDetection && isBambu && modelEntry != null && plateObjectMap.isNotEmpty()) {
+                    zip.getInputStream(modelEntry).use(::parseComponentPaths)
+                } else {
+                    emptyMap()
                 }
-
+                val visualByPlateCache: Map<Int, PlateVisualInfo>
+                val paintSummary: PaintDetectionSummary?
+                val hasPaintData: Boolean
+                if (skipPaintDetection) {
+                    visualByPlateCache = emptyMap()
+                    paintSummary = PaintDetectionSummary(hasPaintData = false, paintStateCount = 0)
+                    hasPaintData = false
+                } else if (isMultiPlate && componentPathsByObject.isNotEmpty()) {
+                    val paintPresenceByPlate = computePaintPresenceByPlate(
+                        zip = zip,
+                        modelEntry = modelEntry,
+                        plateObjectMap = plateObjectMap,
+                        componentPathsByObject = componentPathsByObject
+                    )
+                    hasPaintData = paintPresenceByPlate.values.any { it }
+                    visualByPlateCache = paintPresenceByPlate.mapValues { (plateId, hasPaint) ->
+                        val objectExtruders = plateObjectMap[plateId]
+                            ?.mapNotNull { extruderAssignments[it] }
+                            ?.toSet()
+                            ?: emptySet()
+                        PlateVisualInfo(
+                            count = if (hasPaint) maxOf(1, objectExtruders.size + 1) else objectExtruders.size,
+                            hasPaint = hasPaint,
+                            objectExtruders = objectExtruders,
+                            paintExtruderStates = emptySet()
+                        )
+                    }
+                    paintSummary = summarizePaintDetection(isMultiPlate, visualByPlateCache)
+                } else {
+                    val visual = if (isBambu && modelEntry != null && plateObjectMap.isNotEmpty()) {
+                        computeVisualColorCountByPlate(
+                            zip = zip,
+                            modelEntry = modelEntry,
+                            plateObjectMap = plateObjectMap,
+                            componentPathsByObject = componentPathsByObject,
+                            extruderAssignments = extruderAssignments
+                        )
+                    } else {
+                        emptyMap()
+                    }
+                    visualByPlateCache = visual
+                    paintSummary = if (visual.isNotEmpty()) {
+                        summarizePaintDetection(isMultiPlate, visual)
+                    } else {
+                        null
+                    }
+                    hasPaintData = if (paintSummary != null) {
+                        paintSummary.hasPaintData
+                    } else {
+                        // Fallback for single-plate or degenerate files: a quick byte scan is
+                        // enough to answer the file-level boolean without decoding every paint
+                        // spec string.
+                        val mainHasPaint = zip.getInputStream(modelEntry).use(::streamDetectPaintData)
+                        val componentHasPaint = componentModels.any { e ->
+                            streamDetectPaintData(zip.getInputStream(e))
+                        }
+                        if (!mainHasPaint && !componentHasPaint && componentModels.isNotEmpty()) {
+                            Log.d(TAG, "Byte-scan found no paint_color in main model or ${componentModels.size} component(s): ${componentModels.map { "${it.name} (${it.size}B)" }}")
+                        }
+                        mainHasPaint || componentHasPaint
+                    }
+                }
                 // Detect layer tool changes and any per-layer colors embedded in the
                 // custom_gcode_per_layer.xml metadata.  Hueforge-style files often use
                 // this layer G-code instead of object-level color segmentation.
@@ -332,6 +331,19 @@ object ThreeMfParser {
                     detectedColors.clear()
                     detectedColors.addAll(layerToolColors)
                 }
+                var paintStateCount = when {
+                    skipPaintDetection -> 0
+                    paintSummary != null -> paintSummary.paintStateCount
+                    hasPaintData -> maxOf(1, detectedColors.size)
+                    else -> 0
+                }
+                if (detectedColors.isNotEmpty() && paintStateCount > 0) {
+                    // Use the detected physical palette as the upper bound for the
+                    // file-level paint-state count. Some Bambu files expose extra
+                    // object/extruder metadata on top of the same physical colors;
+                    // the UI needs the palette size, not the object count.
+                    paintStateCount = minOf(paintStateCount, detectedColors.size)
+                }
                 // Sub-plan #2c: compute per-plate paint state so ThreeMfPlate.hasPaintData
                 // carries plate-scoped information. mergeThreeMfInfoForPlate reads this to
                 // decide whether a selected plate is painted — replaces the pre-#2c Kotlin
@@ -349,19 +361,25 @@ object ThreeMfParser {
                 // not object-level metadata). Used by buildSelectedPlateInfo to seed
                 // usedExtruderIndices for plates like slip slide plate 3 (1 object with
                 // 4 paint regions).
-                val visualByPlate: Map<Int, PlateVisualInfo> =
-                    if (hasPaintData && modelEntry != null && plateObjectMap.isNotEmpty()) {
-                        val componentPathsByObject = zip.getInputStream(modelEntry).use(::parseComponentPaths)
-                        computeVisualColorCountByPlate(
-                            zip = zip,
-                            modelEntry = modelEntry,
-                            plateObjectMap = plateObjectMap,
-                            componentPathsByObject = componentPathsByObject,
-                            extruderAssignments = extruderAssignments
+                val visualByPlate: Map<Int, PlateVisualInfo> = if (visualByPlateCache.isNotEmpty()) {
+                    visualByPlateCache
+                } else if (hasPaintData && plateObjectMap.size == 1) {
+                    val plateId = plateObjectMap.keys.first()
+                    val objectExtruders = plateObjectMap[plateId]
+                        ?.mapNotNull { extruderAssignments[it] }
+                        ?.toSet()
+                        ?: emptySet()
+                    mapOf(
+                        plateId to PlateVisualInfo(
+                            count = maxOf(1, paintStateCount),
+                            hasPaint = true,
+                            objectExtruders = objectExtruders,
+                            paintExtruderStates = emptySet()
                         )
-                    } else {
-                        emptyMap()
-                    }
+                    )
+                } else {
+                    emptyMap()
+                }
                 val paintByPlate: Map<Int, Boolean> = visualByPlate.mapValues { it.value.hasPaint }
                 val paintExtruderStatesByPlate: Map<Int, Set<Int>> =
                     visualByPlate.mapValues { it.value.paintExtruderStates }
@@ -636,8 +654,7 @@ object ThreeMfParser {
         var inResources = false
         var currentObjectId: String? = null
         var currentObjectName: String? = null
-        var vertexCount = 0
-        var triangleCount = 0
+        var hasMesh = false
 
         while (parser.eventType != XmlPullParser.END_DOCUMENT) {
             when (parser.eventType) {
@@ -648,21 +665,29 @@ object ThreeMfParser {
                         localName == "object" && inResources -> {
                             currentObjectId = parser.getAttributeValue(null, "id")
                             currentObjectName = parser.getAttributeValue(null, "name")
-                            vertexCount = 0
-                            triangleCount = 0
+                            hasMesh = false
                         }
-                        localName == "vertex" -> vertexCount++
-                        localName == "triangle" -> triangleCount++
+                        localName == "mesh" -> hasMesh = true
+                        localName == "vertices" || localName == "triangles" -> {
+                            // Fast-forward over the millions of children to save parsing overhead
+                            var depth = 1
+                            while (depth > 0 && parser.eventType != XmlPullParser.END_DOCUMENT) {
+                                when (parser.next()) {
+                                    XmlPullParser.START_TAG -> depth++
+                                    XmlPullParser.END_TAG -> depth--
+                                }
+                            }
+                        }
                     }
                 }
                 XmlPullParser.END_TAG -> {
                     if (parser.name == "object" && currentObjectId != null) {
-                        if (vertexCount > 0) {
+                        if (hasMesh) {
                             objects.add(ThreeMfObject(
                                 objectId = currentObjectId!!,
                                 name = currentObjectName ?: "Object_$currentObjectId",
-                                vertices = vertexCount,
-                                triangles = triangleCount
+                                vertices = 0,
+                                triangles = 0
                             ))
                         }
                         currentObjectId = null
@@ -801,15 +826,82 @@ object ThreeMfParser {
      * Skywing's dragon has 162K paint_color attributes and reading them all was
      * blocking the UI for several minutes on plate selection (B91).
      */
-    private inline fun streamCollectPaintSpecs(
+    internal inline fun streamCollectPaintSpecs(
         input: InputStream,
         onSpec: (String) -> Unit
     ) {
+        val n1 = "paint_color=\"".toByteArray()
+        val n2 = "mmu_segmentation=\"".toByteArray()
+        val bufSize = 65536
+        val buf = ByteArray(bufSize)
+        var carry = 0
         try {
-            input.bufferedReader().useLines { lines ->
-                lines.forEach { line ->
-                    extractPaintSpec(line)?.let { spec ->
-                        if (spec.isNotBlank()) onSpec(spec)
+            input.use {
+                while (true) {
+                    val read = it.read(buf, carry, bufSize - carry)
+                    if (read <= 0) break
+                    val total = carry + read
+                    var pos = 0
+                    while (pos < total) {
+                        var matchIdx = -1
+                        var matchLen = 0
+                        var i1 = -1
+                        for (i in pos until total - n1.size + 1) {
+                            if (buf[i] == n1[0]) {
+                                var match = true
+                                for (j in 1 until n1.size) {
+                                    if (buf[i + j] != n1[j]) { match = false; break }
+                                }
+                                if (match) { i1 = i; break }
+                            }
+                        }
+                        var i2 = -1
+                        for (i in pos until total - n2.size + 1) {
+                            if (buf[i] == n2[0]) {
+                                var match = true
+                                for (j in 1 until n2.size) {
+                                    if (buf[i + j] != n2[j]) { match = false; break }
+                                }
+                                if (match) { i2 = i; break }
+                            }
+                        }
+                        
+                        if (i1 != -1 && (i2 == -1 || i1 < i2)) { matchIdx = i1; matchLen = n1.size }
+                        else if (i2 != -1) { matchIdx = i2; matchLen = n2.size }
+
+                        if (matchIdx != -1) {
+                            val vStart = matchIdx + matchLen
+                            var vEnd = -1
+                            for (i in vStart until total) {
+                                if (buf[i] == '"'.code.toByte()) { vEnd = i; break }
+                            }
+                            if (vEnd != -1) {
+                                val spec = String(buf, vStart, vEnd - vStart, Charsets.US_ASCII)
+                                if (spec.isNotBlank()) onSpec(spec)
+                                pos = vEnd + 1
+                                continue
+                            } else {
+                                pos = matchIdx
+                                break
+                            }
+                        } else {
+                            break
+                        }
+                    }
+                    val maxN = maxOf(n1.size, n2.size) + 2048
+                    if (total > maxN && pos < total - maxN) {
+                        System.arraycopy(buf, total - maxN, buf, 0, maxN)
+                        carry = maxN
+                    } else if (pos < total) {
+                        val rem = total - pos
+                        System.arraycopy(buf, pos, buf, 0, rem)
+                        carry = rem
+                    } else {
+                        carry = 0
+                    }
+                    if (bufSize - carry == 0) {
+                        // Safety fallback against pathological carry buildup
+                        carry = 0
                     }
                 }
             }
@@ -825,9 +917,16 @@ object ThreeMfParser {
     private val PAINT_SPEC_REGEX = Regex("""(?:paint_color|mmu_segmentation|slic3rpe:mmu_segmentation)="([^"]+)"""")
 
     private fun extractPaintSpec(line: String): String? {
-        return PAINT_SPEC_REGEX.find(line)
-            ?.groupValues
-            ?.getOrNull(1)
+        var idx = line.indexOf("paint_color=\"")
+        if (idx == -1) idx = line.indexOf("mmu_segmentation=\"")
+        if (idx == -1) return null
+
+        val quoteStart = line.indexOf('"', idx) + 1
+        val quoteEnd = line.indexOf('"', quoteStart)
+        if (quoteEnd != -1) {
+            return line.substring(quoteStart, quoteEnd)
+        }
+        return null
     }
 
     /**
@@ -857,6 +956,62 @@ object ThreeMfParser {
         val objectExtruders: Set<Int>,
         val paintExtruderStates: Set<Int>
     )
+
+    internal data class PaintDetectionSummary(
+        val hasPaintData: Boolean,
+        val paintStateCount: Int
+    )
+
+    internal fun summarizePaintDetection(
+        isMultiPlate: Boolean,
+        visualByPlate: Map<Int, PlateVisualInfo>
+    ): PaintDetectionSummary {
+        val hasPaintData = visualByPlate.values.any { it.hasPaint }
+        val paintStateCount = if (isMultiPlate) 0 else visualByPlate.values.maxOfOrNull { it.count } ?: 0
+        return PaintDetectionSummary(
+            hasPaintData = hasPaintData,
+            paintStateCount = paintStateCount
+        )
+    }
+
+    /** Cheap per-plate paint-presence scan used by the multi-plate import fast path.
+     *  It only answers "does this plate reference any painted component?" and avoids
+     *  decoding individual paint specs, which is the expensive part of the older
+     *  per-plate visual-colour pass. */
+    internal fun computePaintPresenceByPlate(
+        zip: ZipFile,
+        modelEntry: java.util.zip.ZipEntry?,
+        plateObjectMap: Map<Int, List<String>>,
+        componentPathsByObject: Map<String, List<String>>,
+        componentScanner: (String, java.io.InputStream) -> Boolean = { _, input -> streamDetectPaintData(input) }
+    ): Map<Int, Boolean> {
+        val fallbackPlateObjectMap = if (plateObjectMap.isNotEmpty() || modelEntry == null) {
+            plateObjectMap
+        } else {
+            zip.getInputStream(modelEntry).use(::parseBuildItems).mapIndexed { index, item ->
+                (index + 1) to listOf(item.objectId)
+            }.toMap()
+        }
+
+        val componentPresenceCache = mutableMapOf<String, Boolean>()
+        val uniqueComponentPaths = fallbackPlateObjectMap.values
+            .asSequence()
+            .flatMap { it.asSequence() }
+            .flatMap { objectId -> componentPathsByObject[objectId].orEmpty().asSequence() }
+            .toSet()
+        for (path in uniqueComponentPaths) {
+            val entry = zip.getEntry(path) ?: continue
+            componentPresenceCache[path] = componentScanner(path, zip.getInputStream(entry))
+        }
+
+        return fallbackPlateObjectMap.mapValues { (_, objectIds) ->
+            objectIds.any { objectId ->
+                componentPathsByObject[objectId].orEmpty().any { path ->
+                    componentPresenceCache[path] == true
+                }
+            }
+        }
+    }
 
     /** Per-component paint scan result, cached so Buzz-class multi-plate files don't
      *  re-read the same component file once per plate (~9× speedup on the 50 MB / 296K
@@ -949,8 +1104,12 @@ object ThreeMfParser {
                     paintExtruderStates.addAll(info.paintExtruderStates)
                 }
             }
-            // Simple encoding (1 spec per state): include state 0 as a distinct region so
-            // the pre-B81 count is preserved (e.g. slip-slide: 3 specs → count 3 → 1+3=4).
+            // Simple encoding (1 spec per state): include state 0 as a distinct region when
+            // there is only one object extruder on the plate, so the pre-B81 count is
+            // preserved (e.g. slip-slide: 1 object + 3 paint states → 4 colours).
+            // Multi-object painted plates already account for the object palette separately,
+            // so adding paintVisualCount on top would double-count files like colored Benchy
+            // (4 object colours + 4 paint states must still report 4 visible colours).
             // Complex encoding (many specs, few states): use non-zero state count to avoid
             // inflation (e.g. painted flippy: 708 specs, 2 states → count 1 → 1+1=2 — B81).
             val paintVisualCount = if (paintSpecs.size == allPaintStates.size) {
@@ -958,8 +1117,13 @@ object ThreeMfParser {
             } else {
                 paintExtruderStates.size
             }
+            val visualColorCount = if (objectExtruderSet.size <= 1) {
+                objectExtruderSet.size + paintVisualCount
+            } else {
+                maxOf(objectExtruderSet.size, paintVisualCount)
+            }
             PlateVisualInfo(
-                count = objectExtruderSet.size + paintVisualCount,
+                count = visualColorCount,
                 hasPaint = paintExtruderStates.isNotEmpty(),
                 objectExtruders = objectExtruderSet,
                 paintExtruderStates = paintExtruderStates

@@ -88,7 +88,7 @@ import java.util.zip.ZipFile
 import java.util.concurrent.atomic.AtomicLong
 
 internal fun loadingMessageFor(filename: String, fileSizeBytes: Long): String =
-    if (fileSizeBytes > 50 * 1024 * 1024L) "Large model — this may take a moment…"
+    if (fileSizeBytes > 30 * 1024 * 1024L) "Large model — this may take a moment…"
     else "Loading $filename…"
 
 internal fun isLargeTriangleCount(triangleCount: Int): Boolean =
@@ -902,6 +902,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun invalidatePrepareMeshCache() {
+        cachedPrepareMesh?.release(native)
         cachedPrepareMesh = null
         cachedPrepareMeshPath = null
         _rotatedMeshSizeXY.value = null
@@ -3765,6 +3766,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // LaunchedEffect(modelRotation, modelFilePath) to hit the B49 early-return guard and
         // skip getPreparePreviewMesh() for the new model, leaving the spinner indefinitely.
         invalidatePrepareMeshCache()
+        // Cancel any in-flight preview build before waiting on the native lock so a stale
+        // QEM job does not lengthen the next load.
+        native.cancelPreviewMesh()
         // Acquire previewMutex before touching native model — prevents SIGSEGV when
         // getPreparePreviewMesh (on the preview coroutine) is iterating model volumes
         // while we clear+reload here.  Large model QEM decimation can hold the lock for
@@ -3774,6 +3778,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // plateIdx = -1 (the default) preserves the legacy loadModel(path) behaviour.
         val nativeLoadT0 = System.currentTimeMillis()
         val success = NativeLibrary.previewMutex.withLock {
+            Log.i("LoadTiming", "native.loadModel start plateIdx=$plateIdx file=${file.name} sizeBytes=${file.length()}")
             if (plateIdx >= 0) {
                 native.loadModelForPlate(file.absolutePath, plateIdx)
             } else {
@@ -3842,7 +3847,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // color-mapping block below reads it.
             postLoadStateProvider?.invoke()
 
+            Log.i("LoadTiming", "native.getModelInfo start file=${file.name}")
             val info = native.getModelInfo()
+            Log.i("LoadTiming", "native.getModelInfo end file=${file.name} present=${info != null}")
             if (info != null) {
                 lastModelInfo = info
                 _modelInfo.value = info
@@ -4417,8 +4424,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         workspaceDir: File,
         loadGeneration: Long,
     ): PreparedModelArtifacts? {
+        val archiveSizingRisk = ThreeMfParser.inspectArchiveSizing(sourceFile)
         val parseT0 = System.currentTimeMillis()
-        val origInfo = ThreeMfParser.parse(sourceFile)
+        val probeInfo = if (archiveSizingRisk != null) {
+            ThreeMfParser.parse(sourceFile, skipPaintDetection = true)
+        } else {
+            null
+        }
+        val origInfo = if (probeInfo != null) {
+            probeInfo.copy(
+                hasPaintData = probeInfo.detectedColors.size > 1 || probeInfo.hasLayerToolChanges
+            )
+        } else {
+            ThreeMfParser.parse(sourceFile)
+        }
         val parseMs = System.currentTimeMillis() - parseT0
         if (!isCurrentModelLoad(loadGeneration)) return null
         recoveryOrigInfo = origInfo
@@ -4437,7 +4456,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val sanitizeMs = System.currentTimeMillis() - sanitizeT0
         val processedInfo = ThreeMfParser.parse(processed, skipPaintDetection = true)
         val mergedInfo = mergeThreeMfInfo(processedInfo, origInfo)
-        Log.i("LoadTiming", "prepareImportedModelArtifacts parse=${parseMs}ms sanitize=${sanitizeMs}ms file=${sourceFile.name} sizeBytes=${sourceFile.length()}")
+        Log.i(
+            "LoadTiming",
+                "prepareImportedModelArtifacts parse=${parseMs}ms sanitize=${sanitizeMs}ms " +
+                "file=${sourceFile.name} sizeBytes=${sourceFile.length()} " +
+                "deferredPaintDetection=${probeInfo != null}"
+        )
 
         if (!isCurrentModelLoad(loadGeneration)) return null
         _threeMfInfo.value = mergedInfo
@@ -4447,6 +4471,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         sourceModelInfo = processedInfo
         if (origInfo.isMultiPlate) _multiPlateSourceFile = processed
         resetToolRemapState()
+
+        val canonicalForEmbedT0 = System.currentTimeMillis()
+        val canonicalForEmbed = if (origInfo.isBambu && archiveSizingRisk != null) {
+            com.u1.slicer.bambu.bambuFileColourList(sourceFile)
+        } else {
+            null
+        }
+        val canonicalForEmbedMs = System.currentTimeMillis() - canonicalForEmbedT0
+        Log.i(
+            "LoadTiming",
+            "prepareImportedModelArtifacts canonicalForEmbed=${canonicalForEmbedMs}ms " +
+                "fastPath=${canonicalForEmbed != null} file=${sourceFile.name}"
+        )
 
         // B93 phase 1: skip the full-file embedProfile for multi-plate 3MFs.
         // The user must pick a plate next, at which point selectPlate() extracts
@@ -4469,7 +4506,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // via plateId; now the initial load path does too.
             val firstPlateId = if (origInfo.isBambu && mergedInfo.plates.isNotEmpty())
                 mergedInfo.plates.first().plateId else null
-            embedProfile(processed, mergedInfo, workspaceDir, plateId = firstPlateId)
+            embedProfile(
+                processed,
+                mergedInfo,
+                workspaceDir,
+                plateId = firstPlateId,
+                canonicalForEmbed = canonicalForEmbed
+            )
         }
         // F81 (GitHub #120): notify when the Bambu sanitize+embed pipeline
         // finishes — this is the long-running stage distinct from raw load,
@@ -4495,7 +4538,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Build Snapmaker profile config and embed it into the 3MF file.
      * Replaces BambuSanitizer.process() for the OrcaSlicer backend.
      */
-    private fun embedProfile(file: java.io.File, info: ThreeMfInfo, outputDir: java.io.File, plateId: Int? = null): java.io.File {
+    private fun embedProfile(
+        file: java.io.File,
+        info: ThreeMfInfo,
+        outputDir: java.io.File,
+        plateId: Int? = null,
+        canonicalForEmbed: com.u1.slicer.data.CanonicalFilamentList? = null,
+    ): java.io.File {
+        val embedSetupT0 = System.currentTimeMillis()
         val cfg = _config.value
         val slotCount = cfg.extruderCount.coerceAtLeast(1)
         val usedSlots = toolRemapSlots  // e.g. [2,3] for E3+E4; null = identity/single
@@ -4522,8 +4572,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // colours but states up to 10 → canonical size=10 → T0-T9 emitted instead of T0-T3).
         // B95 high-AMS models are handled correctly by computeEmbedTargetCount via
         // maxSourceFilamentIndex — they don't need the canonical size path.
-        val canonicalSize = getCanonicalFilamentList()
-            ?.filaments?.count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
+        val canonicalList = canonicalForEmbed ?: getCanonicalFilamentList()
+        val canonicalSize = canonicalList
+            ?.filaments
+            ?.count { it.source != com.u1.slicer.data.FilamentSource.PAINT_DERIVED }
             ?: 0
         // B125: if the user has overridden support_filament/support_interface_filament to
         // a slot beyond the model's own extruder count, expand targetCount so
@@ -4555,10 +4607,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val sourceConfig = _sourceConfig.value ?: if (info.isBambu) {
             java.util.zip.ZipFile(file).use { profileEmbedder.parseSourceConfig(it) }
         } else null
+        val setupPrepMs = System.currentTimeMillis() - embedSetupT0
         Log.d("SlicerVM", "embedProfile: info.isBambu=${info.isBambu}, info.detectedExtruders=${info.detectedExtruderCount}, " +
             "info.hasToolChanges=${info.hasLayerToolChanges}, info.hasPaint=${info.hasPaintData}, " +
             "info.isMultiPlate=${info.isMultiPlate}, sourceConfig=${sourceConfig != null}, " +
-            "targetCount=$targetCount, extruderRemap=$extruderRemap")
+            "targetCount=$targetCount, extruderRemap=$extruderRemap, setupPrepMs=${setupPrepMs}")
         diagnostics.recordEvent(
             "profile_embedded",
             mapOf(
@@ -4572,11 +4625,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 "detectedExtruders" to info.detectedExtruderCount
             )
         )
+        val activeProcessKeysT0 = System.currentTimeMillis()
         // F87: spill the active imported process profile's keys into the embed config
         // between the bundled Snapmaker process profile (or the preserved Bambu source
         // config) and the user's SlicingOverrides. ProfileEmbedder.buildConfig owns the
         // precedence order.
         val activeProcessKeys: Map<String, Any> = activeProcessProfile.value?.keys ?: emptyMap()
+        val activeProcessKeysMs = System.currentTimeMillis() - activeProcessKeysT0
+        val filamentLibrarySettingsT0 = System.currentTimeMillis()
         // F91: per-slot OrcaSlicer tuning settings sourced from the user's filament library
         // entries (looked up via each slot's preset.filamentProfileId). Only keys with at
         // least one non-null library value are emitted; unset keys leave the bundled
@@ -4587,13 +4643,31 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             presets = extruderPresets.value,
             filaments = filaments.value,
         )
+        val filamentLibrarySettingsMs = System.currentTimeMillis() - filamentLibrarySettingsT0
+        val buildProfileOverridesT0 = System.currentTimeMillis()
+        val profileOverrides = buildProfileOverrides(
+            cfg,
+            targetCount,
+            usedSlots,
+            hasSourceConfig = sourceConfig != null,
+            canonical = canonicalForEmbed
+        )
+        val buildProfileOverridesMs = System.currentTimeMillis() - buildProfileOverridesT0
+        val buildConfigT0 = System.currentTimeMillis()
         val embeddedConfig = profileEmbedder.buildConfig(
             info = info,
             sourceConfig = sourceConfig,
             filamentSettings = filamentLibrarySettings,
-            overrides = buildProfileOverrides(cfg, targetCount, usedSlots, hasSourceConfig = sourceConfig != null),
+            overrides = profileOverrides,
             targetExtruderCount = targetCount,
             processProfileKeys = activeProcessKeys,
+        )
+        val buildConfigMs = System.currentTimeMillis() - buildConfigT0
+        Log.i(
+            "SlicerVM",
+            "embedProfile setup timing: setupPrepMs=${setupPrepMs} activeProcessKeysMs=${activeProcessKeysMs} " +
+                "filamentLibrarySettingsMs=${filamentLibrarySettingsMs} buildProfileOverridesMs=${buildProfileOverridesMs} " +
+                "buildConfigMs=${buildConfigMs} targetCount=$targetCount sourceConfig=${sourceConfig != null}"
         )
         return profileEmbedder.embed(file, embeddedConfig, outputDir, info, extruderRemap, plateId = plateId)
     }
@@ -4603,6 +4677,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         slotCount: Int,
         usedSlots: List<Int>? = null,
         hasSourceConfig: Boolean = false,
+        canonical: com.u1.slicer.data.CanonicalFilamentList? = null,
     ): Map<String, Any> {
         // Phase 2 §4 Step 4 — slice config reads the canonical list (when
         // present) for per-filament types/temps, falling back to the
@@ -4632,8 +4707,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         ).toList()
         val slotTemps = computeFreshSlotTemps(slotCount, usedSlots, originalPresets, filaments.value).toList()
 
-        val canonical = getCanonicalFilamentList()
-        val perFilamentArrays = canonical?.let {
+        val canonicalList = canonical ?: getCanonicalFilamentList()
+        val perFilamentArrays = canonicalList?.let {
             buildPerFilamentTypeAndTemp(it, _filamentOverrides.value, originalPresets)
         }
 
@@ -4646,7 +4721,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val (nonCanonicalTypes, nonCanonicalTemps) = applyNonCanonicalOverride(
             slotTypes = slotTypes,
             slotTemps = slotTemps,
-            override = if (canonical == null) _filamentOverrides.value[0] else null,
+            override = if (canonicalList == null) _filamentOverrides.value[0] else null,
         )
 
         val resolvedTypes = perFilamentArrays?.first ?: nonCanonicalTypes
@@ -7900,6 +7975,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             // Older backups can carry skirt_loops=1 from before the Snapmaker U1
             // default was corrected to 0. Keep imports aligned with SettingsRepository.
             return config.copy(skirtLoops = 0)
+        }
+
+        internal fun shouldDeferPaintDetectionForImport(
+            archiveSizingRisk: ThreeMfParser.ArchiveSizingRisk?,
+        ): Boolean {
+            return archiveSizingRisk != null
         }
 
         /** File extensions accepted by the file picker. */

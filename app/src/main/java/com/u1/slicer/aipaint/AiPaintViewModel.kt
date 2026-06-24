@@ -324,13 +324,13 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     ): SegmentationCascade.Input {
         val perTriPaint = mesh.extruderIndices.takeIf { it.size == triCount } ?: ByteArray(triCount)
 
-        // fix36: populate mesh.volumeRanges from the per-volume triangle counts captured
+        // fix36: populate mesh.batchRanges from the per-volume triangle counts captured
         // during the native preview build. Once populated the cascade's Branch B (per-volume)
         // and Branch C (per-object) become usable on multi-volume Bambu 3MFs.
         // fix37: always emit a range entry per count (even when count is 0) so the index
         // alignment with nativeGetAllVolumeExtruders's volume order stays correct. Empty
         // ranges encode "this volume exists but contributed no preview triangles".
-        if (mesh.volumeRanges == null) {
+        if (mesh.batchRanges == null) {
             val counts = runCatching { native.nativeGetPreviewVolumeTriangleCounts() }.getOrNull()
             if (counts != null && counts.isNotEmpty()) {
                 var cursor = 0
@@ -348,9 +348,9 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
                     cursor += safeC
                 }
                 if (ranges.isNotEmpty()) {
-                    mesh.volumeRanges = ranges
+                    mesh.batchRanges = ranges
                     Log.i("AiPaint",
-                        "fix37 volumeRanges populated: ${ranges.size} ranges, " +
+                        "fix37 batchRanges populated: ${ranges.size} ranges, " +
                         "total tris ${ranges.sumOf { (it.last - it.first + 1).coerceAtLeast(0) }} " +
                         "/ ${triCount}")
                 }
@@ -359,7 +359,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
 
         val volumeJson = runCatching { native.nativeGetAllVolumeExtruders() }.getOrNull()
         val objectJson = runCatching { native.nativeGetObjectExtruderMap() }.getOrNull()
-        val ranges = mesh.volumeRanges ?: emptyList()
+        val ranges = mesh.batchRanges ?: emptyList()
 
         val volumes = parseObjectVolumes(volumeJson, ranges)
         val objects = parseObjectInfos(objectJson, ranges)
@@ -374,12 +374,12 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** Parse the JSON returned by NativeLibrary.nativeGetAllVolumeExtruders() into the cascade
-     *  input shape. Returns empty list when JSON is missing or volumeRanges aren't supplied. */
+     *  input shape. Returns empty list when JSON is missing or batchRanges aren't supplied. */
     private fun parseObjectVolumes(
         json: String?,
-        volumeRanges: List<IntRange>,
+        batchRanges: List<IntRange>,
     ): List<SegmentationCascade.ObjectVolumes> {
-        if (json.isNullOrBlank() || volumeRanges.isEmpty()) return emptyList()
+        if (json.isNullOrBlank() || batchRanges.isEmpty()) return emptyList()
         val arr = runCatching { JSONArray(json) }.getOrNull() ?: return emptyList()
         val out = mutableListOf<SegmentationCascade.ObjectVolumes>()
         var volumeCursor = 0
@@ -392,7 +392,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
             for (v in 0 until volsArr.length()) {
                 val vobj = volsArr.getJSONObject(v)
                 val ext = vobj.optInt("extruder", -1).takeIf { it > 0 }
-                val range = volumeRanges.getOrNull(volumeCursor) ?: continue
+                val range = batchRanges.getOrNull(volumeCursor) ?: continue
                 vols += SegmentationCascade.VolumeInfo(
                     volumeIndex = v,
                     extruder = ext,
@@ -406,12 +406,12 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** Parse the JSON returned by NativeLibrary.nativeGetObjectExtruderMap() into the cascade
-     *  input shape. Pairs each object with its triangle range using volumeRanges as a side-table. */
+     *  input shape. Pairs each object with its triangle range using batchRanges as a side-table. */
     private fun parseObjectInfos(
         json: String?,
-        volumeRanges: List<IntRange>,
+        batchRanges: List<IntRange>,
     ): List<SegmentationCascade.ObjectInfo> {
-        if (json.isNullOrBlank() || volumeRanges.isEmpty()) return emptyList()
+        if (json.isNullOrBlank() || batchRanges.isEmpty()) return emptyList()
         val arr = runCatching { JSONArray(json) }.getOrNull() ?: return emptyList()
         var rangeCursor = 0
         val out = mutableListOf<SegmentationCascade.ObjectInfo>()
@@ -421,7 +421,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
             val name = obj.optString("name", "Object ${o + 1}").ifBlank { "Object ${o + 1}" }
             val extruder = obj.optInt("extruder", -1).takeIf { it > 0 }
             val volumeCount = obj.optInt("volumeCount", 1).coerceAtLeast(1)
-            val objRanges = (0 until volumeCount).mapNotNull { volumeRanges.getOrNull(rangeCursor + it) }
+            val objRanges = (0 until volumeCount).mapNotNull { batchRanges.getOrNull(rangeCursor + it) }
             rangeCursor += volumeCount
             if (objRanges.isEmpty()) continue
             val tris = objRanges.flatMap { (it.first..it.last).toList() }.toIntArray()
@@ -703,7 +703,7 @@ class AiPaintViewModel(application: Application) : AndroidViewModel(application)
  * hangs or OOMs.
  *
  * This helper applies a global stride to the position + extruderIndices arrays,
- * and remaps `volumeRanges` to the subsampled index space. Output triangle count
+ * and remaps `batchRanges` to the subsampled index space. Output triangle count
  * is approximately `targetCount` (within stride rounding).
  *
  * The stride pattern preserves per-state proportion globally (we keep every Nth
@@ -763,7 +763,7 @@ internal fun subsampleMeshForAiPaint(
 
     // Re-map volume ranges from the source's triangle index space into the subsampled
     // one. Each source range [a, b] becomes [ceil(a/stride), b/stride].
-    val newRanges = src.volumeRanges?.map { range ->
+    val newRanges = src.batchRanges?.map { range ->
         val newFirst = (range.first + stride - 1) / stride
         val newLast = range.last / stride
         if (newLast < newFirst) IntRange(0, -1) else IntRange(newFirst, newLast)
@@ -773,7 +773,7 @@ internal fun subsampleMeshForAiPaint(
         trianglePositions = newPositions.copyOf(writeT * 9),
         extruderIndices = newIndices.copyOf(writeT),
     )
-    out.volumeRanges = newRanges
+    out.batchRanges = newRanges
     android.util.Log.i("AiPaint", "fix45 subsample: ${triCount} → ${writeT} tris (stride=${stride})")
     return SubsampledMesh(out, stride)
 }

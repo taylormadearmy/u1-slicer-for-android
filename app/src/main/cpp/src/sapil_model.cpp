@@ -8,6 +8,9 @@
 #include <numeric>
 #include <regex>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <thread>
 
 // PrusaSlicer includes
 #include "libslic3r/Model.hpp"
@@ -51,6 +54,12 @@ static bool g_preview_mesh_valid = false;
 // Drives AI Paint cascade Branch B (per-volume) by giving Kotlin an explicit triangle→volume
 // attribution map.
 static std::vector<int> g_preview_volume_triangle_counts;
+// F142 preview-scene follow-up: triangle counts per native preview batch, in build order.
+// These batches currently align with the existing per-volume append units plus the trailing
+// modifier block, and give Kotlin a stable seam to migrate toward staged/progressive preview
+// uploads without changing the current single-mesh UI contract.
+static std::vector<int> g_preview_batch_triangle_counts;
+static thread_local std::function<void(const PreviewMesh&)> g_prepare_preview_batch_callback;
 // F95: triangle index where the trailing negative/modifier-volume block begins in the cached
 // preview mesh, or -1 when the model has none. Set alongside the cached mesh during
 // getPreparePreviewMesh; consumed by nativeGetPreviewModifierBlockStart so the Android renderer
@@ -398,6 +407,34 @@ static void compactPreviewIndices(PreviewMesh& mesh) {
     }
 }
 
+static PreviewMesh slicePreviewMesh(const PreviewMesh& src, size_t start_triangle, size_t triangle_count) {
+    PreviewMesh slice;
+    if (triangle_count == 0) return slice;
+    const size_t pos_start = start_triangle * 9;
+    const size_t pos_count = triangle_count * 9;
+    const size_t idx_start = start_triangle;
+    const size_t idx_count = triangle_count;
+    if (pos_start + pos_count > src.triangle_positions.size() ||
+        idx_start + idx_count > src.extruder_indices.size()) {
+        return PreviewMesh();
+    }
+    slice.triangle_positions.insert(
+        slice.triangle_positions.end(),
+        src.triangle_positions.begin() + static_cast<std::ptrdiff_t>(pos_start),
+        src.triangle_positions.begin() + static_cast<std::ptrdiff_t>(pos_start + pos_count));
+    slice.extruder_indices.insert(
+        slice.extruder_indices.end(),
+        src.extruder_indices.begin() + static_cast<std::ptrdiff_t>(idx_start),
+        src.extruder_indices.begin() + static_cast<std::ptrdiff_t>(idx_start + idx_count));
+    return slice;
+}
+
+static void emitPreparePreviewBatch(const PreviewMesh& mesh, size_t start_triangle, size_t triangle_count) {
+    if (triangle_count == 0) return;
+    if (!g_prepare_preview_batch_callback) return;
+    g_prepare_preview_batch_callback(slicePreviewMesh(mesh, start_triangle, triangle_count));
+}
+
 PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     PreviewMesh out;
     if (!g_model_loaded) {
@@ -463,6 +500,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     size_t object_index = 0;
     // fix36: reset per-volume triangle-count map; populated as each volume appends.
     std::vector<int> volume_tri_counts;
+    std::vector<int> batch_tri_counts;
     for (const auto* object : g_model.objects) {
         if (object == nullptr || !object->printable) continue;
         if (object->instances.empty()) continue;
@@ -599,6 +637,12 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                             }
                         }
                     }
+                    batch_tri_counts.push_back(
+                        static_cast<int>(out.extruder_indices.size() - pre_append_indices));
+                    emitPreparePreviewBatch(
+                        out,
+                        pre_append_indices,
+                        out.extruder_indices.size() - pre_append_indices);
                 } else {
                     auto its = volume->mesh().its;
                     its_transform(its, volume->get_matrix(), true);
@@ -631,6 +675,12 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     const int vol_stride = (can_qem || !vol_needs_decimation) ? 1 : stride;
                     int tri_counter = 0;
                     appendItsPreviewMesh(out, its, fallback_index, vol_stride, tri_counter);
+                    batch_tri_counts.push_back(
+                        static_cast<int>(out.extruder_indices.size() - pre_append_indices));
+                    emitPreparePreviewBatch(
+                        out,
+                        pre_append_indices,
+                        out.extruder_indices.size() - pre_append_indices);
                 }
                 // fix36: how many output triangles did this volume contribute? Stored in
                 // mesh-build order — Kotlin pairs this with nativeGetAllVolumeExtruders to
@@ -704,6 +754,12 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
         }
         if (out.extruder_indices.size() > model_part_tris) {
             g_preview_modifier_block_start = static_cast<int>(model_part_tris);
+            batch_tri_counts.push_back(
+                static_cast<int>(out.extruder_indices.size() - model_part_tris));
+            emitPreparePreviewBatch(
+                out,
+                model_part_tris,
+                out.extruder_indices.size() - model_part_tris);
             SAPIL_LOGI("getPreparePreviewMesh: appended modifier block start=%zu count=%zu",
                 model_part_tris, out.extruder_indices.size() - model_part_tris);
         }
@@ -715,8 +771,152 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
     // fix36: stash per-volume triangle counts alongside the cached mesh so
     // nativeGetPreviewVolumeTriangleCounts mirrors whatever the most recent build emitted.
     g_preview_volume_triangle_counts = std::move(volume_tri_counts);
+    g_preview_batch_triangle_counts = std::move(batch_tri_counts);
 
     return out;
+}
+
+struct PrepareRenderBatch {
+    std::vector<float> interleaved_geometry;
+    std::vector<uint8_t> material_indices;
+    int triangle_count = 0;
+
+    static std::unique_ptr<PrepareRenderBatch> fromPreviewMesh(const PreviewMesh& mesh) {
+        auto batch = std::make_unique<PrepareRenderBatch>();
+        batch->triangle_count = mesh.extruder_indices.size();
+        batch->material_indices = mesh.extruder_indices;
+        // 10 floats per vertex (x,y,z, nx,ny,nz, r,g,b,a), 3 vertices per triangle = 30 floats
+        batch->interleaved_geometry.reserve(batch->triangle_count * 30);
+
+        for (int tri = 0; tri < batch->triangle_count; ++tri) {
+            int base = tri * 9;
+            float x1 = mesh.triangle_positions[base];
+            float y1 = mesh.triangle_positions[base + 1];
+            float z1 = mesh.triangle_positions[base + 2];
+            float x2 = mesh.triangle_positions[base + 3];
+            float y2 = mesh.triangle_positions[base + 4];
+            float z2 = mesh.triangle_positions[base + 5];
+            float x3 = mesh.triangle_positions[base + 6];
+            float y3 = mesh.triangle_positions[base + 7];
+            float z3 = mesh.triangle_positions[base + 8];
+
+            float ux = x2 - x1;
+            float uy = y2 - y1;
+            float uz = z2 - z1;
+            float vx = x3 - x1;
+            float vy = y3 - y1;
+            float vz = z3 - z1;
+            float nx0 = uy * vz - uz * vy;
+            float ny0 = uz * vx - ux * vz;
+            float nz0 = ux * vy - uy * vx;
+            float len = std::sqrt(nx0 * nx0 + ny0 * ny0 + nz0 * nz0);
+            if (len > 1e-8f) {
+                nx0 /= len; ny0 /= len; nz0 /= len;
+            } else {
+                nx0 = 0.0f; ny0 = 0.0f; nz0 = 1.0f;
+            }
+
+            // v0
+            batch->interleaved_geometry.push_back(x1); batch->interleaved_geometry.push_back(y1); batch->interleaved_geometry.push_back(z1);
+            batch->interleaved_geometry.push_back(nx0); batch->interleaved_geometry.push_back(ny0); batch->interleaved_geometry.push_back(nz0);
+            batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f);
+            
+            // v1
+            batch->interleaved_geometry.push_back(x2); batch->interleaved_geometry.push_back(y2); batch->interleaved_geometry.push_back(z2);
+            batch->interleaved_geometry.push_back(nx0); batch->interleaved_geometry.push_back(ny0); batch->interleaved_geometry.push_back(nz0);
+            batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f);
+            
+            // v2
+            batch->interleaved_geometry.push_back(x3); batch->interleaved_geometry.push_back(y3); batch->interleaved_geometry.push_back(z3);
+            batch->interleaved_geometry.push_back(nx0); batch->interleaved_geometry.push_back(ny0); batch->interleaved_geometry.push_back(nz0);
+            batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f);
+        }
+        return batch;
+    }
+};
+
+struct PreparePreviewScene {
+    std::mutex mutex;
+    std::vector<std::unique_ptr<PrepareRenderBatch>> ready_batches;
+    std::thread worker;
+    std::atomic<bool> is_complete{false};
+
+    ~PreparePreviewScene() {
+        if (worker.joinable()) worker.join();
+    }
+    
+    int getBatchCount() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return ready_batches.size();
+    }
+
+    PrepareRenderBatch* getBatch(int index) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (index < 0 || index >= ready_batches.size()) return nullptr;
+        return ready_batches[index].get();
+    }
+};
+
+PreparePreviewSceneHandle SlicerEngine::buildPreparePreviewScene(int max_triangles) const {
+    auto* scene = new PreparePreviewScene();
+
+    if (g_preview_mesh_valid && !g_cached_preview_mesh.extruder_indices.empty()) {
+        scene->ready_batches.push_back(PrepareRenderBatch::fromPreviewMesh(g_cached_preview_mesh));
+        return scene;
+    }
+
+    scene->worker = std::thread([scene, max_triangles]() {
+        try {
+            g_prepare_preview_batch_callback = [scene](const PreviewMesh& batch) {
+                if (batch.extruder_indices.empty()) return;
+                auto render_batch = PrepareRenderBatch::fromPreviewMesh(batch);
+                std::lock_guard<std::mutex> lock(scene->mutex);
+                scene->ready_batches.push_back(std::move(render_batch));
+            };
+            SlicerEngine engine;
+            engine.getPreparePreviewMesh(max_triangles);
+        } catch (const std::exception& e) {
+            SAPIL_LOGW("buildPreparePreviewScene worker failed: %s", e.what());
+        } catch (...) {
+            SAPIL_LOGW("buildPreparePreviewScene worker failed: unknown exception");
+        }
+        g_prepare_preview_batch_callback = nullptr;
+        scene->is_complete = true;
+    });
+
+    return scene;
+}
+
+int SlicerEngine::getPreparePreviewSceneBatchCount(PreparePreviewSceneHandle scene) const {
+    if (!scene) return 0;
+    return scene->getBatchCount();
+}
+
+bool SlicerEngine::isPreparePreviewSceneComplete(PreparePreviewSceneHandle scene) const {
+    if (!scene) return true;
+    return scene->is_complete.load();
+}
+
+int SlicerEngine::getPreparePreviewSceneTriangleCount(PreparePreviewSceneHandle scene, int batch_index) const {
+    if (!scene) return 0;
+    auto* batch = scene->getBatch(batch_index);
+    return batch ? batch->triangle_count : 0;
+}
+
+const float* SlicerEngine::getPreparePreviewSceneGeometryBuffer(PreparePreviewSceneHandle scene, int batch_index) const {
+    if (!scene) return nullptr;
+    auto* batch = scene->getBatch(batch_index);
+    return batch ? batch->interleaved_geometry.data() : nullptr;
+}
+
+const uint8_t* SlicerEngine::getPreparePreviewSceneMaterialBuffer(PreparePreviewSceneHandle scene, int batch_index) const {
+    if (!scene) return nullptr;
+    auto* batch = scene->getBatch(batch_index);
+    return batch ? batch->material_indices.data() : nullptr;
+}
+
+void SlicerEngine::releasePreparePreviewScene(PreparePreviewSceneHandle scene) const {
+    delete scene;
 }
 
 // fix36: accessor for the per-volume triangle-count map captured during the most recent
@@ -729,6 +929,20 @@ Java_com_u1_slicer_NativeLibrary_nativeGetPreviewVolumeTriangleCounts(
         JNIEnv* env, jobject) {
     if (g_preview_volume_triangle_counts.empty()) return nullptr;
     const auto& counts = g_preview_volume_triangle_counts;
+    jintArray result = env->NewIntArray(static_cast<jsize>(counts.size()));
+    if (result == nullptr) return nullptr;
+    env->SetIntArrayRegion(result, 0, static_cast<jsize>(counts.size()), counts.data());
+    return result;
+}
+
+// F142: triangle counts per preview batch from the most recent getPreparePreviewMesh build.
+// Today these align with the native append units captured during mesh construction, and they
+// provide Kotlin a stable metadata seam for staged/progressive preview delivery.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetPreviewBatchTriangleCounts(
+        JNIEnv* env, jobject) {
+    if (g_preview_batch_triangle_counts.empty()) return nullptr;
+    const auto& counts = g_preview_batch_triangle_counts;
     jintArray result = env->NewIntArray(static_cast<jsize>(counts.size()));
     if (result == nullptr) return nullptr;
     env->SetIntArrayRegion(result, 0, static_cast<jsize>(counts.size()), counts.data());
@@ -751,6 +965,7 @@ std::string getFilesDir() { return g_files_dir; }
 void invalidatePreviewMeshCache() {
     g_preview_mesh_valid = false;
     g_preview_volume_triangle_counts.clear();
+    g_preview_batch_triangle_counts.clear();
     g_preview_modifier_block_start = -1;
 }
 
@@ -832,6 +1047,7 @@ void SlicerEngine::clearModel() {
     g_model_loaded = false;
     g_preview_mesh_valid = false;
     g_cached_preview_mesh = PreviewMesh();
+    g_preview_batch_triangle_counts.clear();
     g_model_preview_extruders.clear();
     g_rotation_base_positions.clear();
     g_rotation_base_rotations.clear();
@@ -915,6 +1131,7 @@ bool SlicerEngine::addModel(const std::string& filepath) {
         { extern void resetLoadTimeScaleFactors(); resetLoadTimeScaleFactors(); }
         g_preview_mesh_valid = false;
         g_cached_preview_mesh = PreviewMesh();
+        g_preview_batch_triangle_counts.clear();
 
         SAPIL_LOGI("addModel: appended %d object(s) from %s, g_model now has %d",
             (int)tmp_model.objects.size(), filepath.c_str(), (int)g_model.objects.size());
@@ -991,6 +1208,7 @@ bool SlicerEngine::addModel(const std::string& filepath, int plate_id) {
         { extern void resetLoadTimeScaleFactors(); resetLoadTimeScaleFactors(); }
         g_preview_mesh_valid = false;
         g_cached_preview_mesh = PreviewMesh();
+        g_preview_batch_triangle_counts.clear();
 
         SAPIL_LOGI("addModel(plate=%d): appended %d object(s) from %s, g_model now has %d",
             plate_id, (int)tmp_model.objects.size(), filepath.c_str(), (int)g_model.objects.size());

@@ -653,7 +653,7 @@ class ProfileEmbedder(private val context: Context) {
                                 } else {
                                     cleaned
                                 }
-                                writeStored(destZip, name, finalBytes)
+                                writeDeflated(destZip, name, finalBytes)
                             }
                         }
 
@@ -671,7 +671,7 @@ class ProfileEmbedder(private val context: Context) {
                                     modelSettings = BambuSanitizer.stripUnreferencedConfigObjects(modelSettings, ids)
                                 }
                             }
-                            writeStored(destZip, "Metadata/model_settings.config", modelSettings.toByteArray())
+                            writeDeflated(destZip, "Metadata/model_settings.config", modelSettings.toByteArray())
                             wroteModelSettings = true
                             Log.i(TAG, "Converted Slic3r_PE_model.config → model_settings.config" +
                                     if (extruderRemap != null) " (remap=$extruderRemap)" else "" +
@@ -704,7 +704,7 @@ class ProfileEmbedder(private val context: Context) {
                                     }
                                     sanitized = stripped.toByteArray()
                                 }
-                                writeStored(destZip, name, sanitized)
+                                writeDeflated(destZip, name, sanitized)
                                 wroteModelSettings = true
                                 Log.i(TAG, "Sanitized model_settings.config" +
                                         (if (extruderRemap != null) " (remap=$extruderRemap)" else "") +
@@ -735,7 +735,7 @@ class ProfileEmbedder(private val context: Context) {
                                     String(content), plateId
                                 )
                                 if (filtered.isNotBlank()) {
-                                    writeStored(destZip, name, filtered.toByteArray())
+                                    writeDeflated(destZip, name, filtered.toByteArray())
                                     Log.i(TAG, "Filtered custom_gcode_per_layer.xml to plate $plateId")
                                 } else {
                                     Log.w(TAG, "filterCustomGcodePerLayer returned blank for plate $plateId; dropping")
@@ -822,14 +822,9 @@ class ProfileEmbedder(private val context: Context) {
         return text.toByteArray()
     }
 
-    private fun writeStored(zip: ZipOutputStream, name: String, data: ByteArray) {
+    private fun writeDeflated(zip: ZipOutputStream, name: String, data: ByteArray) {
         val entry = ZipEntry(name)
-        entry.method = ZipEntry.STORED
-        entry.size = data.size.toLong()
-        entry.compressedSize = data.size.toLong()
-        val crc = CRC32()
-        crc.update(data)
-        entry.crc = crc.value
+        // ZipOutputStream defaults to DEFLATED; no need to pre-compute CRC/size
         zip.putNextEntry(entry)
         zip.write(data)
         zip.closeEntry()
@@ -844,33 +839,84 @@ class ProfileEmbedder(private val context: Context) {
     private fun streamCleanEntry(
         srcZip: ZipFile, srcEntry: ZipEntry, destZip: ZipOutputStream, hasPaintData: Boolean
     ) {
-        val tmpFile = File.createTempFile("embed_component_", ".model")
-        val pUuidRegex = Regex("""\s+p:UUID="[^"]*"""")
-        val reqExtRegex = Regex("""\s+requiredextensions="[^"]*"""")
-        val bambuNsRegex = Regex("""\s+xmlns:BambuStudio="[^"]*"""")
-        val slic3rNsRegex = Regex("""\s+xmlns:slic3rpe="[^"]*"""")
-        val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
-        // SEMM enabled — Bambu paint_color= preserved; PrusaSlicer slic3rpe:mmu_segmentation
-        // is renamed to paint_color= (same RLE hex encoding) so OrcaSlicer can process it.
-        val renameMmu = hasPaintData
+        val t0 = System.currentTimeMillis()
+        val tempFile = java.io.File.createTempFile("streamClean", ".tmp")
         try {
-            tmpFile.bufferedWriter().use { out ->
-                srcZip.getInputStream(srcEntry).bufferedReader().use { reader ->
-                    reader.forEachLine { line ->
-                        // Fast path: mesh data lines without any attributes needing removal
-                        val hasMmu = renameMmu && line.contains("slic3rpe:mmu_segmentation")
-                        if (!line.contains("p:UUID") && !line.contains("requiredextensions") &&
-                            !line.contains("xmlns:BambuStudio") && !line.contains("<metadata") &&
-                            !line.contains("type=\"other\"") && !line.contains("xmlns:slic3rpe") &&
-                            !hasMmu) {
-                            if (line.isNotBlank()) {
-                                out.write(line)
-                                out.newLine()
+            val crc = java.util.zip.CRC32()
+            tempFile.outputStream().use { fos ->
+                val checkedOut = java.util.zip.CheckedOutputStream(fos, crc)
+                val bufferedOut = java.io.BufferedOutputStream(checkedOut, 65536)
+                
+                val pUuidRegex = Regex("""\s+p:UUID="[^"]*"""")
+                val reqExtRegex = Regex("""\s+requiredextensions="[^"]*"""")
+                val bambuNsRegex = Regex("""\s+xmlns:BambuStudio="[^"]*"""")
+                val slic3rNsRegex = Regex("""\s+xmlns:slic3rpe="[^"]*"""")
+                val metadataRegex = Regex("""[ \t]*<metadata name="[^"]*"(?:>[^<]*</metadata>|[^/]*/>) *\r?\n?""")
+                
+                srcZip.getInputStream(srcEntry).use { input ->
+                    val buffer = ByteArray(32768)
+                    var head = 0
+                    var tail = 0
+                    val lineBuf = java.io.ByteArrayOutputStream(256)
+                    
+                    while (true) {
+                        lineBuf.reset()
+                        var foundNewline = false
+                        while (!foundNewline) {
+                            if (head >= tail) {
+                                tail = input.read(buffer)
+                                head = 0
+                                if (tail < 0) break
                             }
-                            return@forEachLine
+                            var i = head
+                            while (i < tail) {
+                                if (buffer[i] == '\n'.code.toByte()) {
+                                    lineBuf.write(buffer, head, i - head + 1)
+                                    head = i + 1
+                                    foundNewline = true
+                                    break
+                                }
+                                i++
+                            }
+                            if (!foundNewline) {
+                                lineBuf.write(buffer, head, tail - head)
+                                head = tail
+                            }
                         }
-                        // Slow path: lines needing cleaning or mmu rename
-                        var cleaned = line
+                        
+                        val lineBytes = lineBuf.toByteArray()
+                        if (lineBytes.isEmpty()) break
+                        
+                        var firstNonSpace = 0
+                        while (firstNonSpace < lineBytes.size && lineBytes[firstNonSpace] <= 32.toByte()) {
+                            firstNonSpace++
+                        }
+                        
+                        var isGeometry = false
+                        if (firstNonSpace + 1 < lineBytes.size && lineBytes[firstNonSpace] == '<'.code.toByte()) {
+                            val c = lineBytes[firstNonSpace + 1].toInt().toChar()
+                            if (c == 'v' || c == 't' || c == '/') {
+                                isGeometry = true
+                            }
+                        }
+                        
+                        if (isGeometry) {
+                            bufferedOut.write(lineBytes)
+                            continue
+                        }
+                        
+                        // Slow path: convert to string to clean attributes
+                        val lineStr = String(lineBytes, Charsets.UTF_8)
+                        val hasMmu = hasPaintData && lineStr.contains("slic3rpe:mmu_segmentation")
+                        if (!lineStr.contains("p:UUID") && !lineStr.contains("requiredextensions") &&
+                            !lineStr.contains("xmlns:BambuStudio") && !lineStr.contains("<metadata") &&
+                            !lineStr.contains("type=\"other\"") && !lineStr.contains("xmlns:slic3rpe") &&
+                            !hasMmu) {
+                            bufferedOut.write(lineBytes)
+                            continue
+                        }
+                        
+                        var cleaned = lineStr
                         if (hasMmu) cleaned = cleaned.replace("slic3rpe:mmu_segmentation=", "paint_color=")
                         cleaned = cleaned.replace(pUuidRegex, "")
                         cleaned = cleaned.replace(reqExtRegex, "")
@@ -879,41 +925,39 @@ class ProfileEmbedder(private val context: Context) {
                         cleaned = cleaned.replace(metadataRegex, "")
                         cleaned = cleaned.replace("""type="other"""", """type="model"""")
                         if (cleaned.isNotBlank()) {
-                            out.write(cleaned)
-                            out.newLine()
+                            bufferedOut.write(cleaned.toByteArray(Charsets.UTF_8))
+                            if (!cleaned.endsWith("\n")) {
+                                bufferedOut.write("\n".toByteArray(Charsets.UTF_8))
+                            }
                         }
                     }
                 }
+                bufferedOut.flush()
             }
-            // Compute CRC + size from temp file
-            val crc = CRC32()
-            var totalSize = 0L
-            tmpFile.inputStream().use { input ->
-                val buf = ByteArray(8192)
-                var n: Int
-                while (input.read(buf).also { n = it } >= 0) {
-                    crc.update(buf, 0, n)
-                    totalSize += n
-                }
-            }
-            // Write STORED entry from temp file
+            
+            val t1 = System.currentTimeMillis()
+            Log.i(TAG, "streamCleanEntry write temp file took ${t1 - t0}ms")
+
             val entry = ZipEntry(srcEntry.name)
             entry.method = ZipEntry.STORED
-            entry.size = totalSize
-            entry.compressedSize = totalSize
+            entry.size = tempFile.length()
+            entry.compressedSize = tempFile.length()
             entry.crc = crc.value
             destZip.putNextEntry(entry)
-            tmpFile.inputStream().use { input ->
-                val buf = ByteArray(8192)
+            
+            tempFile.inputStream().use { input ->
+                val buf = ByteArray(32768)
                 var n: Int
                 while (input.read(buf).also { n = it } >= 0) {
                     destZip.write(buf, 0, n)
                 }
             }
             destZip.closeEntry()
-            Log.i(TAG, "Stream-cleaned ${srcEntry.name} (${totalSize / 1_000_000}MB)")
+            val t2 = System.currentTimeMillis()
+            Log.i(TAG, "streamCleanEntry write dest zip took ${t2 - t1}ms")
+            Log.i(TAG, "Stream-cleaned ${srcEntry.name} via temp file using STORED (size=${tempFile.length()})")
         } finally {
-            tmpFile.delete()
+            tempFile.delete()
         }
     }
 
@@ -940,9 +984,9 @@ class ProfileEmbedder(private val context: Context) {
             }
             destZip.closeEntry()
         } else {
-            // DEFLATED → must decompress and write as STORED
+            // DEFLATED — copy via standard write, letting ZipOutputStream re-compress
             val data = srcZip.getInputStream(srcEntry).readBytes()
-            writeStored(destZip, srcEntry.name, data)
+            writeDeflated(destZip, srcEntry.name, data)
         }
     }
 

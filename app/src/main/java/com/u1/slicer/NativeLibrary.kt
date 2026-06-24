@@ -64,6 +64,13 @@ class NativeLibrary {
     external fun getModelInfo(): ModelInfo?
     // Pass 0 to let native auto-select budget (flat models get 500K, others get 100K).
     external fun getPreparePreviewMesh(maxTriangles: Int = 0): NativePreviewMesh?
+    external fun buildPrepareRenderScene(maxTriangles: Int = 0): Long
+    external fun nativeGetPrepareRenderSceneBatchCount(handle: Long): Int
+    external fun nativeIsPrepareRenderSceneComplete(handle: Long): Boolean
+    external fun nativeGetPrepareRenderSceneTriangleCount(handle: Long, batchIndex: Int): Int
+    external fun nativeGetPrepareRenderSceneGeometryBuffer(handle: Long, batchIndex: Int): java.nio.ByteBuffer?
+    external fun nativeGetPrepareRenderSceneMaterialBuffer(handle: Long, batchIndex: Int): java.nio.ByteBuffer?
+    external fun nativeReleasePrepareRenderScene(handle: Long): Boolean
 
     // ---- Slicing ----
     external fun slice(config: SliceConfig): SliceResult?
@@ -247,6 +254,16 @@ class NativeLibrary {
      * Callers MUST hold [previewMutex].
      */
     external fun nativeGetPreviewVolumeTriangleCounts(): IntArray?
+
+    /**
+     * F142 preview-scene follow-up: triangle counts per native preview batch, in the same
+     * build order as the cached preview mesh. Today these batches align with the native
+     * append units captured during mesh construction and provide a stable seam for staged
+     * / progressive preview delivery later.
+     *
+     * Callers MUST hold [previewMutex].
+     */
+    external fun nativeGetPreviewBatchTriangleCounts(): IntArray?
 
     /**
      * F95: triangle index at which the trailing negative/modifier-volume block begins in the

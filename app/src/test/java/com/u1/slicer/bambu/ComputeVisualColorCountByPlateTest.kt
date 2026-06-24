@@ -238,4 +238,43 @@ class ComputeVisualColorCountByPlateTest {
             assertEquals(setOf(2), plate1.paintExtruderStates)
         }
     }
+
+    @Test
+    fun `computePaintPresenceByPlate deduplicates shared paths and preserves per-plate presence`() {
+        val shared = "3D/Objects/shared.model"
+        val unpainted = "3D/Objects/unpainted.model"
+        makeZipWithEntries(shared, unpainted).use { zip ->
+            val plateObjectMap = mapOf(
+                1 to listOf("A1", "A2"),
+                2 to listOf("B1")
+            )
+            val componentPathsByObject = mapOf(
+                "A1" to listOf(shared),
+                "A2" to listOf(shared),
+                "B1" to listOf(unpainted)
+            )
+            val scanCalls = mutableListOf<String>()
+            val scanner: (String, java.io.InputStream) -> Boolean = { path, input ->
+                input.close()
+                scanCalls.add(path)
+                path == shared
+            }
+
+            val presence = ThreeMfParser.computePaintPresenceByPlate(
+                zip = zip,
+                modelEntry = null,
+                plateObjectMap = plateObjectMap,
+                componentPathsByObject = componentPathsByObject,
+                componentScanner = scanner
+            )
+
+            assertEquals(
+                "shared component must scan once even when two objects reference it",
+                listOf(shared, unpainted),
+                scanCalls.sorted()
+            )
+            assertEquals(true, presence[1])
+            assertEquals(false, presence[2])
+        }
+    }
 }

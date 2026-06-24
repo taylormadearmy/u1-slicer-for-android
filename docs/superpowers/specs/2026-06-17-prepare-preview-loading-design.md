@@ -94,15 +94,21 @@ user-facing loading model yet.
 
 Promote the current ad hoc timing logs into a stable breakdown covering:
 
-- native preview generation time
-- JNI payload size / triangle count
-- `NativePreviewMesh.toMeshData()` time
-- GL upload time
-- recolour time
+- CPU-side preview build timing:
+  - native preview generation time
+  - JNI payload size / triangle count
+  - `NativePreviewMesh.toMeshData()` time
+- presentation timing on the viewer / GL side:
+  - mesh upload time
+  - recolour time
 - cache-hit vs cache-miss path
 
 This should let us answer whether slow loads are mostly native generation, Kotlin buffer expansion,
-GPU upload, or repeated work after the first load.
+GL-thread presentation cost, or repeated work after the first load.
+
+The split is important because the current fetch coroutine naturally sees CPU-side work, while mesh
+upload and colour refresh happen later on the viewer / renderer side. Phase 1 must keep those
+timing families distinct so we do not optimize against misleading numbers.
 
 #### 2. Tighten cache behavior
 
@@ -165,6 +171,11 @@ Progressive loading should be considered for:
 
 Normal STL and ordinary 3MF models that already load quickly should remain one-shot.
 
+Eligibility must be based on the selected plate's resolved preview state, not just coarse file-level
+metadata. In particular, the progressive gate must use the same plate-aware paint / MMU / layer-tool
+signals that currently drive preview quality decisions, so a multi-plate file cannot accidentally
+route the wrong plate through the wrong preview policy.
+
 ### User Experience
 
 The UI should make preview state explicit:
@@ -186,6 +197,15 @@ Kotlin should move from a single-result preview state to a versioned preview ses
 
 This prevents old refinement results from replacing newer model-state requests.
 
+If refinement is cancelled by rotation, plate switch, model reload, or app lifecycle changes, the
+session must explicitly resolve into one of two states:
+
+- keep the currently displayed coarse stage and immediately start a new session for the new model
+  state, with the UI still indicating that refinement was interrupted
+- or bypass progressive mode for that transition and run the existing one-shot final preview path
+
+The design must not silently strand the user on a coarse preview that looks final.
+
 ### Native Contract
 
 Instead of "return one preview mesh for this budget", native should conceptually support:
@@ -196,6 +216,17 @@ Instead of "return one preview mesh for this budget", native should conceptually
 
 The exact API can be synchronous multi-call or a small staged descriptor, but the boundary should
 stay native-first so Kotlin does not hard-code model-specific quality rules.
+
+The contract must also account for the current global `previewMutex` model:
+
+- a quick-stage request must finish quickly enough not to monopolize the native lock
+- refinement work must be cancellable before and during native generation
+- refinement must yield cleanly to higher-priority model mutations or newer preview requests
+- the app must never queue long refinement work that blocks the next user-visible preview update
+
+In practice, this means Phase 2 should treat refinement as opportunistic background work layered on
+top of the current lock discipline, not as a second full-priority preview build that serializes
+behind the same mutex and delays everything else.
 
 ### Quality Policy
 

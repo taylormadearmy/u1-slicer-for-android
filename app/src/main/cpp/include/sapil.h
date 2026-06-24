@@ -142,6 +142,9 @@ struct PreviewMesh {
     std::vector<uint8_t> extruder_indices;   // 0-based per-triangle preview color/extruder index
 };
 
+struct PreparePreviewScene;
+using PreparePreviewSceneHandle = PreparePreviewScene*;
+
 // ---- Slice Result ----
 struct SliceResult {
     bool success = false;
@@ -180,6 +183,13 @@ public:
     ModelInfo getModelInfo() const;
     // Pass 0 (default) to auto-select budget: flat models get 500K, others 100K.
     PreviewMesh getPreparePreviewMesh(int max_triangles = 0) const;
+    PreparePreviewSceneHandle buildPreparePreviewScene(int max_triangles = 0) const;
+    int getPreparePreviewSceneBatchCount(PreparePreviewSceneHandle scene) const;
+    bool isPreparePreviewSceneComplete(PreparePreviewSceneHandle scene) const;
+    int getPreparePreviewSceneTriangleCount(PreparePreviewSceneHandle scene, int batch_index) const;
+    const float* getPreparePreviewSceneGeometryBuffer(PreparePreviewSceneHandle scene, int batch_index) const;
+    const uint8_t* getPreparePreviewSceneMaterialBuffer(PreparePreviewSceneHandle scene, int batch_index) const;
+    void releasePreparePreviewScene(PreparePreviewSceneHandle scene) const;
     void clearModel();
 
     // Cancel an in-progress getPreparePreviewMesh() QEM decimation.

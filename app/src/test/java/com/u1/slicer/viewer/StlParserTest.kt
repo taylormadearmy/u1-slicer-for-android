@@ -189,17 +189,18 @@ class StlParserTest {
         val mesh = StlParser.parse(file)
 
         // Read back: x,y,z,nx,ny,nz,r,g,b,a for first vertex
-        mesh.vertices.position(0)
-        assertEquals(1f, mesh.vertices.get(), 0.001f) // x
-        assertEquals(2f, mesh.vertices.get(), 0.001f) // y
-        assertEquals(3f, mesh.vertices.get(), 0.001f) // z
-        assertEquals(0f, mesh.vertices.get(), 0.001f) // nx
-        assertEquals(0f, mesh.vertices.get(), 0.001f) // ny
-        assertEquals(1f, mesh.vertices.get(), 0.001f) // nz
-        assertEquals(0.7f, mesh.vertices.get(), 0.001f) // r
-        assertEquals(0.7f, mesh.vertices.get(), 0.001f) // g
-        assertEquals(0.7f, mesh.vertices.get(), 0.001f) // b
-        assertEquals(1.0f, mesh.vertices.get(), 0.001f) // a
+        val geometry = mesh.batches[0].geometry
+        geometry.position(0)
+        assertEquals(1f, geometry.get(), 0.001f) // x
+        assertEquals(2f, geometry.get(), 0.001f) // y
+        assertEquals(3f, geometry.get(), 0.001f) // z
+        assertEquals(0f, geometry.get(), 0.001f) // nx
+        assertEquals(0f, geometry.get(), 0.001f) // ny
+        assertEquals(1f, geometry.get(), 0.001f) // nz
+        assertEquals(0.7f, geometry.get(), 0.001f) // r
+        assertEquals(0.7f, geometry.get(), 0.001f) // g
+        assertEquals(0.7f, geometry.get(), 0.001f) // b
+        assertEquals(1.0f, geometry.get(), 0.001f) // a
     }
 
     @Test
@@ -215,7 +216,7 @@ class StlParserTest {
             )
         )
         val binaryMesh = StlParser.parse(binaryFile)
-        assertNull("Binary STL should have null extruderIndices", binaryMesh.extruderIndices)
+        assertNull("Binary STL should have null materialIndices", binaryMesh.batches[0].materialIndices)
         assertFalse(binaryMesh.hasPerVertexColor)
 
         val asciiFile = tempFolder.newFile("ascii.stl")
@@ -231,7 +232,7 @@ class StlParserTest {
             endsolid test
         """.trimIndent())
         val asciiMesh = StlParser.parse(asciiFile)
-        assertNull("ASCII STL should have null extruderIndices", asciiMesh.extruderIndices)
+        assertNull("ASCII STL should have null materialIndices", asciiMesh.batches[0].materialIndices)
         assertFalse(asciiMesh.hasPerVertexColor)
     }
 

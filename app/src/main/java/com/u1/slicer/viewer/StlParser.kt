@@ -64,12 +64,11 @@ object StlParser {
         }
 
         vertexBuf.flip()
+        val batch = NativeRenderBatch(vertexBuf, null, triangleCount)
         return MeshData(
-            vertices = vertexBuf,
-            vertexCount = triangleCount * 3,
+            batches = listOf(batch),
             minX = minX, minY = minY, minZ = minZ,
-            maxX = maxX, maxY = maxY, maxZ = maxZ,
-            extruderIndices = null
+            maxX = maxX, maxY = maxY, maxZ = maxZ
         )
     }
 
@@ -120,12 +119,11 @@ object StlParser {
         }
         vertexBuf.flip()
 
+        val batch = NativeRenderBatch(vertexBuf, null, triangleCount)
         return MeshData(
-            vertices = vertexBuf,
-            vertexCount = vertices.size / 3,
+            batches = listOf(batch),
             minX = minX, minY = minY, minZ = minZ,
-            maxX = maxX, maxY = maxY, maxZ = maxZ,
-            extruderIndices = null
+            maxX = maxX, maxY = maxY, maxZ = maxZ
         )
     }
 }

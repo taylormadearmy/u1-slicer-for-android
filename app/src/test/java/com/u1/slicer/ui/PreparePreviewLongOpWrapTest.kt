@@ -6,26 +6,20 @@ import java.io.File
 
 /**
  * F90 follow-up (v2.7.1): structural guard for the foreground-service wrap around
- * the InlineModelPreview LaunchedEffect that calls `lib.getPreparePreviewMesh(...)`.
+ * the InlineModelPreview LaunchedEffect that starts the preview long-op stage.
  *
  * Why a source-grep test instead of a runtime test:
  *  - The contract is "the wrap is in the right shape", not "the wrap returns X".
  *  - The crash this wrap prevents is `ForegroundServiceDidNotStartInTimeException`,
  *    which only fires under real Android Service lifecycle (no JVM unit-test path).
  *  - The Compose harness is not on the production classpath; the previous F90
- *    structural tests (`InlineModelPreviewRotationKeysTest`) follow this same
- *    source-grep pattern for the same reason.
+ *    structural tests follow this same source-grep pattern for the same reason.
  *
- * What we assert (the contract Kevin's naive attempt violated and that Android
- * 14+ punishes with a hard FATAL):
- *  1. The LaunchedEffect that calls `lib.getPreparePreviewMesh(` must wrap that
- *     call with `LongOpService.start(..., "Preparing preview")` ... `try { ... }
- *     finally { LongOpService.stop(...) }`.
- *  2. The `start(...)` call must come AFTER the 300 ms debounce. Putting it
- *     above the debounce causes Android to throw `ForegroundServiceDidNotStartInTimeException`
- *     under rotation-slider drag, because every cancelled-mid-debounce LaunchedEffect
- *     still fires `startForegroundService` and Android's per-call 5-second watchdog
- *     can't be satisfied during rapid cancel/restart churn.
+ * What we assert:
+ *  1. The LaunchedEffect that starts the preview long-op must wrap the native work
+ *     with `LongOpService.start(..., "Preparing preview")` ... `try { ... } finally {
+ *     LongOpService.stop(...) }`.
+ *  2. The `start(...)` call must come AFTER the 300 ms debounce.
  */
 class PreparePreviewLongOpWrapTest {
 
@@ -41,36 +35,35 @@ class PreparePreviewLongOpWrapTest {
     }
 
     /**
-     * Find the LaunchedEffect body that contains the call to `lib.getPreparePreviewMesh(`.
-     * Anchoring on the explicit native call (not bare `getPreparePreviewMesh`) avoids
-     * grabbing earlier comments / overlay strings that also mention "preview".
+     * Find the LaunchedEffect body that contains the preview-stage LongOpService start.
+     * Anchoring on the explicit start call avoids grabbing earlier comments / overlay
+     * strings that also mention "preview".
      */
     private fun previewMeshLaunchedEffectBody(): String {
         val src = mainActivitySource()
-        val nativeCallAt = src.indexOf("lib.getPreparePreviewMesh(")
-        require(nativeCallAt >= 0) {
-            "lib.getPreparePreviewMesh( not found — InlineModelPreview has been " +
-                "restructured. Find the LaunchedEffect that fetches the native preview " +
-                "mesh and update this test."
+        val stageStartAt = src.indexOf("LongOpService.start(previewPrepContext, \"Preparing preview\")")
+        require(stageStartAt >= 0) {
+            "LongOpService.start(previewPrepContext, \"Preparing preview\") not found â€” " +
+                "InlineModelPreview has been restructured. Re-read the LaunchedEffect " +
+                "that fetches the native preview mesh and update this test."
         }
-        // Walk back to the enclosing LaunchedEffect( ... ) { ... } body.
-        val launchedEffectAt = src.lastIndexOf("LaunchedEffect(", nativeCallAt)
+
+        val launchedEffectAt = src.lastIndexOf("LaunchedEffect(", stageStartAt)
         require(launchedEffectAt >= 0) {
-            "LaunchedEffect( not found before lib.getPreparePreviewMesh( at offset $nativeCallAt"
+            "LaunchedEffect( not found before the preview start at offset $stageStartAt"
         }
-        // Find the opening brace of the body: ") {" after the arg list.
+
         val argsClose = src.indexOf(") {", launchedEffectAt)
-        require(argsClose >= 0 && argsClose < nativeCallAt) {
+        require(argsClose >= 0 && argsClose < stageStartAt) {
             "could not find arg-list close for LaunchedEffect at $launchedEffectAt"
         }
+
         val bodyOpen = argsClose + 2
-        // Brace-match to find the body close.
         var depth = 0
         var i = bodyOpen
         var bodyClose = -1
         while (i < src.length) {
-            val c = src[i]
-            when (c) {
+            when (src[i]) {
                 '{' -> depth++
                 '}' -> {
                     depth--
@@ -113,22 +106,15 @@ class PreparePreviewLongOpWrapTest {
     @Test
     fun previewMeshLaunchedEffect_startIsAfterDebounce() {
         val body = previewMeshLaunchedEffectBody()
-        // The 300ms debounce sits inside the !isInitialFetch branch. The crash Kevin hit
-        // happened because start() was placed BEFORE the delay(300) — so a rotation drag
-        // that cancelled mid-debounce still fired startForegroundService, accumulating
-        // unfulfilled 5-second watchdogs that Android resolves with a FATAL exception.
-        //
-        // Correct order: kotlinx.coroutines.delay(300) appears in the source BEFORE the
-        // LongOpService.start(...) call.
         val delayAt = body.indexOf("kotlinx.coroutines.delay(300)")
         val startAt = body.indexOf("LongOpService.start(")
         require(delayAt >= 0) {
-            "the debounce delay was removed from InlineModelPreview — this test is now " +
+            "the debounce delay was removed from InlineModelPreview â€” this test is now " +
                 "obsolete (or the debounce moved). Re-read the LaunchedEffect and decide " +
                 "what the new ordering contract should be before deleting this assertion."
         }
         require(startAt >= 0) {
-            "LongOpService.start(...) missing — covered by the previous test, but this " +
+            "LongOpService.start(...) missing â€” covered by the previous test, but this " +
                 "test relies on its presence too."
         }
         assertTrue(

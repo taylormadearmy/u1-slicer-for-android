@@ -3,22 +3,28 @@ package com.u1.slicer.viewer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import com.u1.slicer.NativeLibrary
 
 /**
  * Holds interleaved vertex data for OpenGL rendering.
  * Format per vertex: x, y, z, nx, ny, nz, r, g, b, a (10 floats = 40 bytes)
  */
 data class MeshData(
-    val vertices: FloatBuffer,  // Interleaved position + normal + color
-    val vertexCount: Int,
+    val batches: List<NativeRenderBatch>,
     val minX: Float, val minY: Float, val minZ: Float,
     val maxX: Float, val maxY: Float, val maxZ: Float,
-    val extruderIndices: ByteArray? = null,  // Per-triangle extruder index (unsigned byte)
+    // F142: contiguous triangle ranges representing native preview batches. Today these are
+    // metadata only, but the renderer can already consume them as separate draw slices.
+    val batchRanges: List<IntRange>? = null,
     // F95: index of the first triangle in the trailing negative/modifier-volume block.
     // Triangles at or after this index are non-model-part volumes that recolor() paints
     // translucent and the renderer draws in a separate blended pass. null = no modifiers.
-    val modifierBlockStartTriangle: Int? = null
+    val modifierBlockStartTriangle: Int? = null,
+    // Native PreparePreviewSceneHandle. If non-zero, this MeshData owns the DirectByteBuffers
+    // backing the batches. Call release() to free the native memory when done.
+    val sceneHandle: Long = 0L
 ) {
+    val vertexCount: Int = batches.sumOf { it.triangleCount * 3 }
     val centerX get() = (minX + maxX) / 2
     val centerY get() = (minY + maxY) / 2
     val centerZ get() = (minZ + maxZ) / 2
@@ -27,8 +33,15 @@ data class MeshData(
     val sizeZ get() = maxZ - minZ
     val maxDimension get() = maxOf(sizeX, sizeY, sizeZ)
 
+    /** Releases the underlying native scene buffers, if any. */
+    fun release(native: NativeLibrary) {
+        if (sceneHandle != 0L) {
+            native.nativeReleasePrepareRenderScene(sceneHandle)
+        }
+    }
+
     /** True when per-triangle extruder indices are available for coloring. */
-    val hasPerVertexColor get() = extruderIndices != null
+    val hasPerVertexColor get() = batches.any { it.materialIndices != null }
 
     /**
      * Extract a flat per-triangle xyz array suitable for [ModelViewerView.setTrianglePickingPositions].
@@ -38,13 +51,15 @@ data class MeshData(
      */
     fun toPickingPositions(): FloatArray {
         val out = FloatArray(vertexCount * 3)
-        val buf = vertices
-        for (v in 0 until vertexCount) {
-            val srcBase = v * FLOATS_PER_VERTEX
-            val dstBase = v * 3
-            out[dstBase]     = buf.get(srcBase)
-            out[dstBase + 1] = buf.get(srcBase + 1)
-            out[dstBase + 2] = buf.get(srcBase + 2)
+        var outOffset = 0
+        for (batch in batches) {
+            val buf = batch.geometry
+            for (v in 0 until batch.triangleCount * 3) {
+                val srcBase = v * FLOATS_PER_VERTEX
+                out[outOffset++] = buf.get(srcBase)
+                out[outOffset++] = buf.get(srcBase + 1)
+                out[outOffset++] = buf.get(srcBase + 2)
+            }
         }
         return out
     }
@@ -85,7 +100,6 @@ data class MeshData(
         // supported use case yet.
         if (vertexCount > MAX_PICKING_VERTEX_COUNT) return FloatArray(0)
         val out = FloatArray(vertexCount * 3)
-        val buf = vertices
         val sx = modelScale[0]; val sy = modelScale[1]; val sz = modelScale[2]
 
         if (!objectMeshRanges.isNullOrEmpty() && instancePositions != null
@@ -105,12 +119,28 @@ data class MeshData(
                 val oz = -range.minZ - halfD
                 val vStart = range.vertexStart
                 val vEnd = vStart + range.vertexCount
-                for (v in vStart until vEnd) {
-                    val srcBase = v * FLOATS_PER_VERTEX
-                    val dstBase = v * 3
-                    out[dstBase]     = (buf.get(srcBase) + ox) * sx + tx
-                    out[dstBase + 1] = (buf.get(srcBase + 1) + oy) * sy + ty
-                    out[dstBase + 2] = (buf.get(srcBase + 2) + oz) * sz + tz
+                
+                var currentGlobalVertex = 0
+                for (batch in batches) {
+                    val batchVertexCount = batch.triangleCount * 3
+                    val batchStart = currentGlobalVertex
+                    val batchEnd = currentGlobalVertex + batchVertexCount
+                    
+                    val overlapStart = maxOf(vStart, batchStart)
+                    val overlapEnd = minOf(vEnd, batchEnd)
+                    
+                    if (overlapStart < overlapEnd) {
+                        val buf = batch.geometry
+                        for (v in overlapStart until overlapEnd) {
+                            val localV = v - batchStart
+                            val srcBase = localV * FLOATS_PER_VERTEX
+                            val dstBase = v * 3
+                            out[dstBase]     = (buf.get(srcBase) + ox) * sx + tx
+                            out[dstBase + 1] = (buf.get(srcBase + 1) + oy) * sy + ty
+                            out[dstBase + 2] = (buf.get(srcBase + 2) + oz) * sz + tz
+                        }
+                    }
+                    currentGlobalVertex += batchVertexCount
                 }
             }
             return out
@@ -129,12 +159,18 @@ data class MeshData(
         val ox = -minX - halfW
         val oy = -minY - halfH
         val oz = -minZ - halfD
-        for (v in 0 until vertexCount) {
-            val srcBase = v * FLOATS_PER_VERTEX
-            val dstBase = v * 3
-            out[dstBase]     = (buf.get(srcBase) + ox) * sx + tx
-            out[dstBase + 1] = (buf.get(srcBase + 1) + oy) * sy + ty
-            out[dstBase + 2] = (buf.get(srcBase + 2) + oz) * sz + tz
+        
+        var currentGlobalVertex = 0
+        for (batch in batches) {
+            val buf = batch.geometry
+            for (localV in 0 until batch.triangleCount * 3) {
+                val srcBase = localV * FLOATS_PER_VERTEX
+                val dstBase = (currentGlobalVertex + localV) * 3
+                out[dstBase]     = (buf.get(srcBase) + ox) * sx + tx
+                out[dstBase + 1] = (buf.get(srcBase + 1) + oy) * sy + ty
+                out[dstBase + 2] = (buf.get(srcBase + 2) + oz) * sz + tz
+            }
+            currentGlobalVertex += batch.triangleCount * 3
         }
         return out
     }
@@ -147,30 +183,54 @@ data class MeshData(
      * @param colorPalette list of RGBA float arrays (each size 4), indexed by extruder
      */
     fun recolor(colorPalette: List<FloatArray>) {
-        val indices = extruderIndices ?: return
         if (colorPalette.isEmpty()) return
 
         val lastIndex = colorPalette.size - 1
-        val buf = vertices
-        // F95: triangles at/after this boundary are negative/modifier volumes — paint them
-        // the fixed translucent colour rather than a palette entry. null → no modifier block.
-        val modStart = modifierBlockStartTriangle ?: indices.size
-
-        for (tri in indices.indices) {
-            val color = if (tri >= modStart) {
-                MODIFIER_PREVIEW_COLOR
-            } else {
-                colorPalette[(indices[tri].toInt() and 0xFF).coerceAtMost(lastIndex)]
+        val paletteArray = colorPalette.toTypedArray()
+        
+        var maxTris = 0
+        for (batch in batches) {
+            if (batch.triangleCount > maxTris) maxTris = batch.triangleCount
+        }
+        if (maxTris == 0) return
+        
+        val indices = ByteArray(maxTris)
+        
+        var globalTriIndex = 0
+        val modStart = modifierBlockStartTriangle ?: Int.MAX_VALUE
+        
+        for (batch in batches) {
+            val indicesBuffer = batch.materialIndices ?: continue
+            val triCount = batch.triangleCount
+            val floatCount = triCount * 3 * 4
+            
+            if (batch.colorBuffer == null || batch.colorBuffer!!.capacity() < floatCount) {
+                batch.colorBuffer = ByteBuffer.allocateDirect(floatCount * 4)
+                    .order(java.nio.ByteOrder.nativeOrder())
+                    .asFloatBuffer()
             }
-            val r = color[0]; val g = color[1]; val b = color[2]; val a = color[3]
+            val cb = batch.colorBuffer!!
+            cb.position(0)
+            
+            indicesBuffer.position(0)
+            indicesBuffer.get(indices, 0, triCount)
+            
+            for (localTri in 0 until triCount) {
+                val tri = globalTriIndex + localTri
+                val color = if (tri >= modStart) {
+                    MODIFIER_PREVIEW_COLOR
+                } else {
+                    paletteArray[(indices[localTri].toInt() and 0xFF).coerceAtMost(lastIndex)]
+                }
+                val r = color[0]; val g = color[1]; val b = color[2]; val a = color[3]
 
-            for (v in 0 until 3) {
-                val base = (tri * 3 + v) * FLOATS_PER_VERTEX + 6
-                buf.put(base, r)
-                buf.put(base + 1, g)
-                buf.put(base + 2, b)
-                buf.put(base + 3, a)
+                cb.put(r).put(g).put(b).put(a)
+                cb.put(r).put(g).put(b).put(a)
+                cb.put(r).put(g).put(b).put(a)
             }
+            
+            cb.position(0)
+            globalTriIndex += triCount
         }
     }
 
@@ -179,7 +239,7 @@ data class MeshData(
      * Used for Hueforge/layer-tool models where colour changes at specific Z heights.
      *
      * @param segments Ordered list of Z-band boundaries (ascending topZ). The last segment whose
-     *                 topZ ≤ triangle Z centroid determines the extruder. If no segment matches,
+     *                 topZ <= triangle Z centroid determines the extruder. If no segment matches,
      *                 extruder 1 (base colour) is used.
      * @param colorPalette RGBA float arrays indexed by compact palette index (extruderBambu-1).
      */
@@ -188,30 +248,39 @@ data class MeshData(
         colorPalette: List<FloatArray>
     ) {
         if (segments.isEmpty() || colorPalette.isEmpty()) return
-        val buf = vertices
-        val triCount = vertexCount / 3
-        for (tri in 0 until triCount) {
-            val base0 = tri * 3 * FLOATS_PER_VERTEX
-            val z0 = buf.get(base0 + 2)
-            val z1 = buf.get(base0 + FLOATS_PER_VERTEX + 2)
-            val z2 = buf.get(base0 + FLOATS_PER_VERTEX * 2 + 2)
-            val zCentroid = (z0 + z1 + z2) / 3f
-
-            // Last segment whose topZ ≤ zCentroid; if none, default to extruder 1 (base colour)
-            val extruderBambu = segments.lastOrNull { it.topZ <= zCentroid }?.extruderBambu ?: 1
-            // extruderBambu is 1-based index into the layer-tool colour sequence.
-            // Convert directly to compact palette index (extruder 1 → palette[0], extruder 2 → palette[1]).
-            val safeIndex = (extruderBambu - 1).coerceIn(0, colorPalette.size - 1)
-            val color = colorPalette[safeIndex]
-            val r = color[0]; val g = color[1]; val b = color[2]; val a = color[3]
-
-            for (v in 0 until 3) {
-                val vBase = (tri * 3 + v) * FLOATS_PER_VERTEX + 6
-                buf.put(vBase, r)
-                buf.put(vBase + 1, g)
-                buf.put(vBase + 2, b)
-                buf.put(vBase + 3, a)
+        
+        val paletteArray = colorPalette.toTypedArray()
+        for (batch in batches) {
+            val buf = batch.geometry
+            val triCount = batch.triangleCount
+            val floatCount = triCount * 3 * 4
+            
+            if (batch.colorBuffer == null || batch.colorBuffer!!.capacity() < floatCount) {
+                batch.colorBuffer = ByteBuffer.allocateDirect(floatCount * 4)
+                    .order(java.nio.ByteOrder.nativeOrder())
+                    .asFloatBuffer()
             }
+            val cb = batch.colorBuffer!!
+            cb.position(0)
+            
+            for (localTri in 0 until triCount) {
+                val base0 = localTri * 30
+                val z0 = buf.get(base0 + 2)
+                val z1 = buf.get(base0 + 10 + 2)
+                val z2 = buf.get(base0 + 20 + 2)
+                val zCentroid = (z0 + z1 + z2) / 3f
+
+                val extruderBambu = segments.lastOrNull { it.topZ <= zCentroid }?.extruderBambu ?: 1
+                val safeIndex = (extruderBambu - 1).coerceIn(0, paletteArray.size - 1)
+                val color = paletteArray[safeIndex]
+                val r = color[0]; val g = color[1]; val b = color[2]; val a = color[3]
+
+                cb.put(r).put(g).put(b).put(a)
+                cb.put(r).put(g).put(b).put(a)
+                cb.put(r).put(g).put(b).put(a)
+            }
+            
+            cb.position(0)
         }
     }
 
