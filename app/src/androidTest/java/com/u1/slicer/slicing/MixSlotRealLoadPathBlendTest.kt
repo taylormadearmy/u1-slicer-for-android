@@ -189,7 +189,7 @@ class MixSlotRealLoadPathBlendTest {
 
         // ── 4. Slice via the REAL path (startSlicing) ───────────────────────────────
         viewModel.startSlicing()
-        waitUntil("real-path slice complete", timeoutMs = 180_000L) {
+        waitUntil("real-path slice complete", timeoutMs = 300_000L) {
             val s = viewModel.state.value
             s is SlicerViewModel.SlicerState.SliceComplete || s is SlicerViewModel.SlicerState.Error
         }

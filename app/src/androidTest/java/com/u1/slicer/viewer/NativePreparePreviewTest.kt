@@ -1,5 +1,9 @@
 package com.u1.slicer.viewer
 
+import java.nio.ByteBuffer
+import java.nio.FloatBuffer
+import java.nio.ByteOrder
+
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import android.util.Log
@@ -18,6 +22,9 @@ import java.io.File
 import java.util.zip.ZipFile
 
 @RunWith(AndroidJUnit4::class)
+
+
+
 class NativePreparePreviewTest {
 
     private lateinit var lib: NativeLibrary
@@ -201,33 +208,38 @@ class NativePreparePreviewTest {
         copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
         assertTrue(lib.loadModel(modelFile.absolutePath))
 
-        val handle = lib.buildPreparePreviewScene()
-        var combined: NativePreviewMesh? = null
-        var batchesSeen = 0
+        val handle = lib.buildPrepareRenderScene()
+        val batches = mutableListOf<com.u1.slicer.viewer.NativeRenderBatch>()
         try {
-            while (true) {
-                val batch = lib.nativeGetPreparePreviewSceneNextBatch(handle) ?: break
-                batch.batchRanges = listOf(0 until batch.extruderIndices.size)
-                combined = NativePreviewMesh.append(combined, batch)
-                batchesSeen++
+            val batchCount = lib.nativeGetPrepareRenderSceneBatchCount(handle)
+            for (i in 0 until batchCount) {
+                val geom = lib.nativeGetPrepareRenderSceneGeometryBuffer(handle, i)!!
+                val mat = lib.nativeGetPrepareRenderSceneMaterialBuffer(handle, i)
+                val triCount = lib.nativeGetPrepareRenderSceneTriangleCount(handle, i)
+                batches.add(com.u1.slicer.viewer.NativeRenderBatch(geom.order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer(), mat, triCount))
             }
         } finally {
-            assertTrue(lib.nativeReleasePreparePreviewScene(handle))
+            assertTrue(lib.nativeReleasePrepareRenderScene(handle))
         }
 
-        assertTrue("Scene handle must yield at least one batch", batchesSeen > 0)
-        assertNotNull(combined)
-        combined!!
-        combined.modifierBlockStartTriangle = lib.nativeGetPreviewModifierBlockStart()
-        val streamedMesh = combined.toMeshData()
+        assertTrue("Scene handle must yield at least one batch", batches.isNotEmpty())
+        val streamedMesh = com.u1.slicer.viewer.MeshData(
+            batches = batches,
+            minX = 0f, minY = 0f, minZ = 0f,
+            maxX = 100f, maxY = 100f, maxZ = 100f,
+            modifierBlockStartTriangle = lib.nativeGetPreviewModifierBlockStart()
+        )
         assertNotNull(streamedMesh)
 
         val legacy = lib.getPreparePreviewMesh()
         assertNotNull(legacy)
         assertEquals(
-            "Streamed scene output must match legacy triangle count",
+            legacy!!.trianglePositions.size / 9,
+            streamedMesh.vertexCount / 3
+        )
+        assertEquals(
             legacy!!.extruderIndices.size,
-            streamedMesh!!.vertexCount / 3
+            streamedMesh.vertexCount / 3
         )
     }
 
@@ -992,3 +1004,17 @@ class NativePreparePreviewTest {
         )
     }
 }
+
+private val com.u1.slicer.viewer.MeshData.vertices: FloatArray get() {
+    val buf = batches[0].geometry.duplicate()
+    val arr = FloatArray(buf.capacity())
+    buf.get(arr)
+    return arr
+}
+private val com.u1.slicer.viewer.MeshData.extruderIndices: ByteArray get() {
+    val buf = batches[0].materialIndices!!.duplicate()
+    val arr = ByteArray(buf.capacity())
+    buf.get(arr)
+    return arr
+}
+

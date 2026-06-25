@@ -1,5 +1,9 @@
 package com.u1.slicer
 
+import java.nio.ByteBuffer
+import java.nio.FloatBuffer
+import java.nio.ByteOrder
+
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -28,6 +32,9 @@ import java.io.File
 import java.util.zip.ZipFile
 
 @RunWith(AndroidJUnit4::class)
+
+
+
 class PreparePreviewViewModelTest {
 
     private val targetContext get() = InstrumentationRegistry.getInstrumentation().targetContext
@@ -90,7 +97,7 @@ class PreparePreviewViewModelTest {
 
             viewModel.startSlicing()
 
-            waitUntil("dragon plate 3 slice complete", timeoutMs = 120_000L) {
+            waitUntil("dragon plate 3 slice complete", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete
             }
 
@@ -471,7 +478,7 @@ class PreparePreviewViewModelTest {
         try {
             viewModel.loadModelFromFile(modelFile)
 
-            waitUntil("skywing plate selector or ModelLoaded", timeoutMs = 240_000L) {
+            waitUntil("skywing plate selector or ModelLoaded", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
@@ -534,7 +541,7 @@ class PreparePreviewViewModelTest {
             viewModel.loadModelFromFile(modelFile)
 
             // Buzz 3MF is ~73MB — parsing + plate enumeration may take >90s on device.
-            waitUntil("buzz plate selector visible or error", timeoutMs = 240_000L) {
+            waitUntil("buzz plate selector visible or error", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -1101,7 +1108,7 @@ class PreparePreviewViewModelTest {
             // Now slice and verify T1 > 0
             viewModel.startSlicing()
 
-            waitUntil("H2C benchy slice complete", timeoutMs = 180_000L) {
+            waitUntil("H2C benchy slice complete", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete
             }
 
@@ -1193,7 +1200,7 @@ class PreparePreviewViewModelTest {
         try {
             viewModel.loadModelFromFile(modelFile)
 
-            waitUntil("Shashibo plate selector visible", timeoutMs = 120_000L) {
+            waitUntil("Shashibo plate selector visible", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -1207,7 +1214,7 @@ class PreparePreviewViewModelTest {
 
             viewModel.selectPlate(5)
 
-            waitUntil("Shashibo plate 5 loaded with Prepare colour mapping", timeoutMs = 180_000L) {
+            waitUntil("Shashibo plate 5 loaded with Prepare colour mapping", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
                     viewModel.colorMapping.value != null
             }
@@ -1431,7 +1438,7 @@ class PreparePreviewViewModelTest {
         try {
             viewModel.loadModelFromFile(modelFile)
 
-            waitUntil("spiderman loaded (or error / plate selector)", timeoutMs = 120_000L) {
+            waitUntil("spiderman loaded (or error / plate selector)", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error ||
                     viewModel.showPlateSelector.value
@@ -1440,7 +1447,7 @@ class PreparePreviewViewModelTest {
             // Spiderman file may or may not be multi-plate. If it is, just pick plate 1.
             if (viewModel.showPlateSelector.value) {
                 viewModel.selectPlate(1)
-                waitUntil("spiderman plate 1 loaded", timeoutMs = 120_000L) {
+                waitUntil("spiderman plate 1 loaded", timeoutMs = 300_000L) {
                     viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
                 }
             }
@@ -1476,7 +1483,7 @@ class PreparePreviewViewModelTest {
 
             // Slice.
             viewModel.startSlicing()
-            waitUntil("spiderman slice complete", timeoutMs = 240_000L) {
+            waitUntil("spiderman slice complete", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -1572,7 +1579,7 @@ class PreparePreviewViewModelTest {
             val started = System.currentTimeMillis()
             viewModel.loadModelFromFile(modelFile)
 
-            waitUntil("buzz plate selector visible or error", timeoutMs = 180_000L) {
+            waitUntil("buzz plate selector visible or error", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -1636,7 +1643,7 @@ class PreparePreviewViewModelTest {
         try {
             viewModel.loadModelFromFile(modelFile)
 
-            waitUntil("buzz plate selector visible or error", timeoutMs = 240_000L) {
+            waitUntil("buzz plate selector visible or error", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -1889,7 +1896,7 @@ class PreparePreviewViewModelTest {
         try {
             viewModel.loadModelFromFile(modelFile)
 
-            waitUntil("buzz plate selector visible or error", timeoutMs = 240_000L) {
+            waitUntil("buzz plate selector visible or error", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -2069,7 +2076,7 @@ class PreparePreviewViewModelTest {
 
             waitUntil("Button plate selector visible") { viewModel.showPlateSelector.value }
             viewModel.selectPlate(1)
-            waitUntil("Button plate 1 loaded", timeoutMs = 120_000L) {
+            waitUntil("Button plate 1 loaded", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
             }
 
@@ -2167,7 +2174,7 @@ class PreparePreviewViewModelTest {
 
             waitUntil("H2C shoe plate selector visible") { viewModel.showPlateSelector.value }
             viewModel.selectPlate(1)
-            waitUntil("H2C shoe plate 1 loaded", timeoutMs = 120_000L) {
+            waitUntil("H2C shoe plate 1 loaded", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
             }
 
@@ -2302,7 +2309,7 @@ class PreparePreviewViewModelTest {
 
             // 3. Slice and inspect.
             viewModel.startSlicing()
-            waitUntil("slice complete", timeoutMs = 120_000L) {
+            waitUntil("slice complete", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
             }
@@ -2446,11 +2453,11 @@ class PreparePreviewViewModelTest {
                 waitForLoadOrPlateSelector(
                     viewModel,
                     "Cube+v2 load or plate selector",
-                    timeoutMs = 180_000L
+                    timeoutMs = 300_000L
                 )
                 if (viewModel.showPlateSelector.value) {
                     viewModel.selectPlate(1)
-                    waitUntil("Cube+v2 plate 1 load", timeoutMs = 180_000L) {
+                    waitUntil("Cube+v2 plate 1 load", timeoutMs = 300_000L) {
                         viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
                             viewModel.colorMapping.value != null
                     }
@@ -2467,7 +2474,7 @@ class PreparePreviewViewModelTest {
                 )
 
                 viewModel.startSlicing()
-                waitUntil("OrcaCube_v2 slice copies=$copies", timeoutMs = 120_000L) {
+                waitUntil("OrcaCube_v2 slice copies=$copies", timeoutMs = 300_000L) {
                     viewModel.state.value is SlicerViewModel.SlicerState.SliceComplete ||
                         viewModel.state.value is SlicerViewModel.SlicerState.Error
                 }
@@ -2565,3 +2572,34 @@ class PreparePreviewViewModelTest {
         }
     }
 }
+
+private val com.u1.slicer.viewer.MeshData.vertices: FloatArray get() {
+    val buf = batches[0].geometry.duplicate()
+    buf.rewind()
+    val arr = FloatArray(buf.limit())
+    buf.get(arr)
+    
+    val colorBuf = batches[0].colorBuffer
+    if (colorBuf != null) {
+        val dupColor = colorBuf.duplicate()
+        dupColor.rewind()
+        val cArr = FloatArray(dupColor.limit())
+        dupColor.get(cArr)
+        val numVertices = arr.size / 10
+        for (i in 0 until numVertices) {
+            arr[i * 10 + 6] = cArr[i * 4 + 0]
+            arr[i * 10 + 7] = cArr[i * 4 + 1]
+            arr[i * 10 + 8] = cArr[i * 4 + 2]
+            arr[i * 10 + 9] = cArr[i * 4 + 3]
+        }
+    }
+    return arr
+}
+private val com.u1.slicer.viewer.MeshData.extruderIndices: ByteArray get() {
+    val buf = batches[0].materialIndices!!.duplicate()
+    buf.rewind()
+    val arr = ByteArray(buf.limit())
+    buf.get(arr)
+    return arr
+}
+

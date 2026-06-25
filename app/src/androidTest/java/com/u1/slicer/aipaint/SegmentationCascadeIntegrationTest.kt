@@ -41,7 +41,7 @@ class SegmentationCascadeIntegrationTest {
         assertNotNull(mesh)
         val triCount = mesh!!.trianglePositions.size / 9
         val perTriPaint = mesh.extruderIndices.takeIf { it.size == triCount } ?: ByteArray(triCount)
-        val ranges = mesh.volumeRanges ?: emptyList()
+        val ranges = mesh.batchRanges ?: emptyList()
         return SegmentationCascade.run(
             SegmentationCascade.Input(
                 positions = mesh.trianglePositions,

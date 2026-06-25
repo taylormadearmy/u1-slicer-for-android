@@ -1,5 +1,9 @@
 package com.u1.slicer.slicing
 
+import java.nio.ByteBuffer
+import java.nio.FloatBuffer
+import java.nio.ByteOrder
+
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -40,6 +44,9 @@ import java.io.File
  * on its `;TYPE:Top surface` extrusion lines.
  */
 @RunWith(AndroidJUnit4::class)
+
+
+
 class PaintedMixTopSurfaceTest {
 
     private companion object {
@@ -98,14 +105,12 @@ class PaintedMixTopSurfaceTest {
     private fun readTrianglePositions(stl: File): FloatArray {
         val mesh = StlParser.parse(stl)
         val vc = mesh.vertexCount
-        val buf = mesh.vertices.duplicate()
-        buf.rewind()
+        val buf = mesh.vertices
         val out = FloatArray(vc * 3)
-        for (v in 0 until vc) {
-            val base = v * 10
-            out[v * 3] = buf.get(base)
-            out[v * 3 + 1] = buf.get(base + 1)
-            out[v * 3 + 2] = buf.get(base + 2)
+        for (i in 0 until vc) {
+            out[i * 3 + 0] = buf[i * 10 + 0]
+            out[i * 3 + 1] = buf[i * 10 + 1]
+            out[i * 3 + 2] = buf[i * 10 + 2]
         }
         return out
     }
@@ -308,3 +313,17 @@ class PaintedMixTopSurfaceTest {
         )
     }
 }
+
+private val com.u1.slicer.viewer.MeshData.vertices: FloatArray get() {
+    val buf = batches[0].geometry.duplicate()
+    val arr = FloatArray(buf.capacity())
+    buf.get(arr)
+    return arr
+}
+private val com.u1.slicer.viewer.MeshData.extruderIndices: ByteArray get() {
+    val buf = batches[0].materialIndices!!.duplicate()
+    val arr = ByteArray(buf.capacity())
+    buf.get(arr)
+    return arr
+}
+

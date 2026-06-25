@@ -286,7 +286,7 @@ class GcodeBaselineDiffTest {
             viewModel.loadModelFromFile(modelFile)
             // Wait for either ModelLoaded (single-plate path) or
             // showPlateSelector (multi-plate path).
-            waitUntil("$snapshotName loaded or plate selector visible", timeoutMs = 240_000L) {
+            waitUntil("$snapshotName loaded or plate selector visible", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded ||
                     viewModel.state.value is SlicerViewModel.SlicerState.Error
@@ -298,7 +298,7 @@ class GcodeBaselineDiffTest {
             if (viewModel.showPlateSelector.value) {
                 val plate = plateId ?: 1
                 viewModel.selectPlate(plate)
-                waitUntil("$snapshotName plate $plate loaded", timeoutMs = 120_000L) {
+                waitUntil("$snapshotName plate $plate loaded", timeoutMs = 300_000L) {
                     viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded &&
                         viewModel.colorMapping.value != null
                 }

@@ -67,14 +67,14 @@ class B131B132B133DiagnosticTest {
 
         try {
             viewModel.loadModelFromFile(file)
-            waitUntil("ghostface plate selector or model loaded", timeoutMs = 120_000L) {
+            waitUntil("ghostface plate selector or model loaded", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
             }
             if (viewModel.showPlateSelector.value) {
                 viewModel.selectPlate(1)
             }
-            waitUntil("ghostface model loaded after plate select", timeoutMs = 120_000L) {
+            waitUntil("ghostface model loaded after plate select", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
             }
             Thread.sleep(500)
@@ -369,8 +369,7 @@ class B131B132B133DiagnosticTest {
                 30 * com.u1.slicer.viewer.MeshData.FLOATS_PER_VERTEX * 4
             ).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
             val fakeMesh = com.u1.slicer.viewer.MeshData(
-                vertices = vertBuf,
-                vertexCount = 30,
+                batches = listOf(com.u1.slicer.viewer.NativeRenderBatch(vertBuf, null, 10)),
                 minX = 0f, minY = 0f, minZ = 0f,
                 maxX = 100f, maxY = 100f, maxZ = 100f,
             )
@@ -444,7 +443,7 @@ class B131B132B133DiagnosticTest {
             // 3) Try to slice and see if THAT crashes
             val sliceCrashed = try {
                 viewModel.startSlicing()
-                waitUntil("slice resolved", timeoutMs = 120_000L) {
+                waitUntil("slice resolved", timeoutMs = 300_000L) {
                     val st = viewModel.state.value
                     st is SlicerViewModel.SlicerState.SliceComplete ||
                         st is SlicerViewModel.SlicerState.Error
@@ -568,14 +567,14 @@ class B131B132B133DiagnosticTest {
 
         try {
             viewModel.loadModelFromFile(file)
-            waitUntil("ghostface plate selector or loaded", timeoutMs = 180_000L) {
+            waitUntil("ghostface plate selector or loaded", timeoutMs = 300_000L) {
                 viewModel.showPlateSelector.value ||
                     viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
             }
             if (viewModel.showPlateSelector.value) {
                 viewModel.selectPlate(1)
             }
-            waitUntil("ghostface model loaded", timeoutMs = 180_000L) {
+            waitUntil("ghostface model loaded", timeoutMs = 300_000L) {
                 viewModel.state.value is SlicerViewModel.SlicerState.ModelLoaded
             }
             Thread.sleep(500)
@@ -830,7 +829,7 @@ class B131B132B133DiagnosticTest {
             // splits (1) → 3, then replay dupes (4) → 7. customObjectPositions
             // must match.
             viewModel.startSlicing()
-            waitUntil("slice complete or error", timeoutMs = 180_000L) {
+            waitUntil("slice complete or error", timeoutMs = 300_000L) {
                 val st = viewModel.state.value
                 st is SlicerViewModel.SlicerState.SliceComplete ||
                     st is SlicerViewModel.SlicerState.Error

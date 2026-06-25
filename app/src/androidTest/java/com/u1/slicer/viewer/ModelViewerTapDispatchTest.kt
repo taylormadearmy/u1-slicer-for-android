@@ -1,5 +1,9 @@
 package com.u1.slicer.viewer
 
+import java.nio.ByteBuffer
+import java.nio.FloatBuffer
+import java.nio.ByteOrder
+
 import android.os.SystemClock
 import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
@@ -30,6 +34,9 @@ import org.junit.runner.RunWith
  * instrumentation main thread via runOnMainSync.
  */
 @RunWith(AndroidJUnit4::class)
+
+
+
 class ModelViewerTapDispatchTest {
 
     @Test
@@ -184,3 +191,17 @@ class ModelViewerTapDispatchTest {
         m.invoke(target, arg)
     }
 }
+
+private val com.u1.slicer.viewer.MeshData.vertices: FloatArray get() {
+    val buf = batches[0].geometry.duplicate()
+    val arr = FloatArray(buf.capacity())
+    buf.get(arr)
+    return arr
+}
+private val com.u1.slicer.viewer.MeshData.extruderIndices: ByteArray get() {
+    val buf = batches[0].materialIndices!!.duplicate()
+    val arr = ByteArray(buf.capacity())
+    buf.get(arr)
+    return arr
+}
+
