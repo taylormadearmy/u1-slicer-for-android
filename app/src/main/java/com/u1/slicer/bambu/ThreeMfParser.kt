@@ -88,12 +88,13 @@ object ThreeMfParser {
                 val entryNames = zip.entries().toList().map { it.name }.toSet()
                 val isBambu = entryNames.any { it in BAMBU_MARKERS }
 
-                // Parse main model file
+                // Parse main model file in a single pass to save time
                 val modelEntry = zip.getEntry("3D/3dmodel.model")
                     ?: return ThreeMfInfo(emptyList(), emptyList(), isBambu, false)
 
-                val objects = zip.getInputStream(modelEntry).use(::parseObjects)
-                val buildItems = zip.getInputStream(modelEntry).use(::parseBuildItems)
+                val mainModelMetadata = zip.getInputStream(modelEntry).use(::parseMainModelMetadata)
+                val objects = mainModelMetadata.objects
+                val buildItems = mainModelMetadata.buildItems
 
                 // Multi-plate detection: two complementary signals are checked.
                 //
@@ -174,7 +175,7 @@ object ThreeMfParser {
                 // longer spends tens of seconds decoding paint specs that the native
                 // plate-selection path will replace later anyway.
                 val componentPathsByObject = if (!skipPaintDetection && isBambu && modelEntry != null && plateObjectMap.isNotEmpty()) {
-                    zip.getInputStream(modelEntry).use(::parseComponentPaths)
+                    mainModelMetadata.componentPathsByObject
                 } else {
                     emptyMap()
                 }
@@ -536,7 +537,7 @@ object ThreeMfParser {
                 val uniqueExtruders = if (allExtruderValues.isNotEmpty())
                     allExtruderValues else extruderAssignments.values.toSet()
                 val componentPathsByObject = modelEntry
-                    ?.let { entry -> zip.getInputStream(entry).use(::parseComponentPaths) }
+                    ?.let { entry -> zip.getInputStream(entry).use(::parseMainModelMetadata).componentPathsByObject }
                     .orEmpty()
                 val visualColorCountByPlate = computeVisualColorCountByPlate(
                     zip = zip,
@@ -641,17 +642,26 @@ object ThreeMfParser {
         }
     }
 
-    private data class BuildItem(
+    internal data class BuildItem(
         val objectId: String,
         val printable: Boolean,
         val transform: FloatArray
     )
 
-    private fun parseObjects(inputStream: InputStream): List<ThreeMfObject> {
+    internal data class MainModelMetadata(
+        val objects: List<ThreeMfObject>,
+        val buildItems: List<BuildItem>,
+        val componentPathsByObject: Map<String, List<String>>
+    )
+
+    private fun parseMainModelMetadata(inputStream: InputStream): MainModelMetadata {
         val objects = mutableListOf<ThreeMfObject>()
+        val items = mutableListOf<BuildItem>()
+        val componentPaths = mutableMapOf<String, MutableList<String>>()
         val parser = createParser(inputStream)
 
         var inResources = false
+        var inBuild = false
         var currentObjectId: String? = null
         var currentObjectName: String? = null
         var hasMesh = false
@@ -662,12 +672,28 @@ object ThreeMfParser {
                     val localName = parser.name
                     when {
                         localName == "resources" -> inResources = true
+                        localName == "build" -> inBuild = true
                         localName == "object" && inResources -> {
                             currentObjectId = parser.getAttributeValue(null, "id")
                             currentObjectName = parser.getAttributeValue(null, "name")
                             hasMesh = false
                         }
                         localName == "mesh" -> hasMesh = true
+                        localName == "component" -> {
+                            val objectId = currentObjectId
+                            val path = parser.getAttributeValue(null, "p:path")
+                                ?: parser.getAttributeValue(null, "path")
+                            if (objectId != null && !path.isNullOrBlank()) {
+                                componentPaths.getOrPut(objectId) { mutableListOf() }
+                                    .add(path.trimStart('/'))
+                            }
+                        }
+                        localName == "item" && inBuild -> {
+                            val objectId = parser.getAttributeValue(null, "objectid") ?: ""
+                            val printable = parser.getAttributeValue(null, "printable") != "0"
+                            val transformStr = parser.getAttributeValue(null, "transform") ?: ""
+                            items.add(BuildItem(objectId, printable, parseTransform(transformStr)))
+                        }
                         localName == "vertices" || localName == "triangles" -> {
                             // Fast-forward over the millions of children to save parsing overhead
                             var depth = 1
@@ -681,7 +707,8 @@ object ThreeMfParser {
                     }
                 }
                 XmlPullParser.END_TAG -> {
-                    if (parser.name == "object" && currentObjectId != null) {
+                    val localName = parser.name
+                    if (localName == "object" && currentObjectId != null) {
                         if (hasMesh) {
                             objects.add(ThreeMfObject(
                                 objectId = currentObjectId!!,
@@ -693,68 +720,13 @@ object ThreeMfParser {
                         currentObjectId = null
                         currentObjectName = null
                     }
-                    if (parser.name == "resources") inResources = false
+                    if (localName == "resources") inResources = false
+                    if (localName == "build") inBuild = false
                 }
             }
             parser.next()
         }
-        return objects
-    }
-
-    private fun parseBuildItems(inputStream: InputStream): List<BuildItem> {
-        val items = mutableListOf<BuildItem>()
-        val parser = createParser(inputStream)
-
-        var inBuild = false
-        while (parser.eventType != XmlPullParser.END_DOCUMENT) {
-            when (parser.eventType) {
-                XmlPullParser.START_TAG -> {
-                    if (parser.name == "build") inBuild = true
-                    if (parser.name == "item" && inBuild) {
-                        val objectId = parser.getAttributeValue(null, "objectid") ?: ""
-                        val printable = parser.getAttributeValue(null, "printable") != "0"
-                        val transformStr = parser.getAttributeValue(null, "transform") ?: ""
-                        items.add(BuildItem(objectId, printable, parseTransform(transformStr)))
-                    }
-                }
-                XmlPullParser.END_TAG -> {
-                    if (parser.name == "build") inBuild = false
-                }
-            }
-            parser.next()
-        }
-        return items
-    }
-
-    private fun parseComponentPaths(inputStream: InputStream): Map<String, List<String>> {
-        val componentPaths = mutableMapOf<String, MutableList<String>>()
-        val parser = createParser(inputStream)
-        var currentObjectId: String? = null
-
-        while (parser.eventType != XmlPullParser.END_DOCUMENT) {
-            when (parser.eventType) {
-                XmlPullParser.START_TAG -> {
-                    when (parser.name) {
-                        "object" -> currentObjectId = parser.getAttributeValue(null, "id")
-                        "component" -> {
-                            val objectId = currentObjectId
-                            val path = parser.getAttributeValue(null, "p:path")
-                                ?: parser.getAttributeValue(null, "path")
-                            if (objectId != null && !path.isNullOrBlank()) {
-                                componentPaths.getOrPut(objectId) { mutableListOf() }
-                                    .add(path.trimStart('/'))
-                            }
-                        }
-                    }
-                }
-                XmlPullParser.END_TAG -> {
-                    if (parser.name == "object") currentObjectId = null
-                }
-            }
-            parser.next()
-        }
-
-        return componentPaths
+        return MainModelMetadata(objects, items, componentPaths)
     }
 
     /**
@@ -845,29 +817,22 @@ object ThreeMfParser {
                     while (pos < total) {
                         var matchIdx = -1
                         var matchLen = 0
-                        var i1 = -1
-                        for (i in pos until total - n1.size + 1) {
-                            if (buf[i] == n1[0]) {
+                        for (i in pos until total) {
+                            if (i <= total - n1.size && buf[i] == n1[0]) {
                                 var match = true
                                 for (j in 1 until n1.size) {
                                     if (buf[i + j] != n1[j]) { match = false; break }
                                 }
-                                if (match) { i1 = i; break }
+                                if (match) { matchIdx = i; matchLen = n1.size; break }
                             }
-                        }
-                        var i2 = -1
-                        for (i in pos until total - n2.size + 1) {
-                            if (buf[i] == n2[0]) {
+                            if (i <= total - n2.size && buf[i] == n2[0]) {
                                 var match = true
                                 for (j in 1 until n2.size) {
                                     if (buf[i + j] != n2[j]) { match = false; break }
                                 }
-                                if (match) { i2 = i; break }
+                                if (match) { matchIdx = i; matchLen = n2.size; break }
                             }
                         }
-                        
-                        if (i1 != -1 && (i2 == -1 || i1 < i2)) { matchIdx = i1; matchLen = n1.size }
-                        else if (i2 != -1) { matchIdx = i2; matchLen = n2.size }
 
                         if (matchIdx != -1) {
                             val vStart = matchIdx + matchLen
@@ -988,7 +953,7 @@ object ThreeMfParser {
         val fallbackPlateObjectMap = if (plateObjectMap.isNotEmpty() || modelEntry == null) {
             plateObjectMap
         } else {
-            zip.getInputStream(modelEntry).use(::parseBuildItems).mapIndexed { index, item ->
+            zip.getInputStream(modelEntry).use(::parseMainModelMetadata).buildItems.mapIndexed { index, item ->
                 (index + 1) to listOf(item.objectId)
             }.toMap()
         }
@@ -1061,7 +1026,7 @@ object ThreeMfParser {
         val fallbackPlateObjectMap = if (plateObjectMap.isNotEmpty() || modelEntry == null) {
             plateObjectMap
         } else {
-            zip.getInputStream(modelEntry).use(::parseBuildItems).mapIndexed { index, item ->
+            zip.getInputStream(modelEntry).use(::parseMainModelMetadata).buildItems.mapIndexed { index, item ->
                 (index + 1) to listOf(item.objectId)
             }.toMap()
         }

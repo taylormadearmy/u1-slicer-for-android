@@ -135,6 +135,10 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     }
 
     Invoke-Adb logcat -c | Out-Null
+    Invoke-Adb shell am force-stop $AppId | Out-Null
+    Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
+    Start-Sleep -Seconds 8
+
     Invoke-Adb shell "run-as $AppId mkdir -p files" | Out-Null
     Invoke-Adb shell "run-as $AppId sh -c 'rm -rf files/transient files/embedded_*.3mf files/sanitized_*.3mf files/output.gcode'" | Out-Null
     Invoke-Adb push $hostPath "/data/local/tmp/$deviceFile" | Out-Null
@@ -145,9 +149,6 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
         Write-Step "[$Index/$Total] FAIL app-private copy"
         return $false
     }
-    Invoke-Adb shell am force-stop $AppId | Out-Null
-    Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
-    Start-Sleep -Seconds 3
 
     Broadcast "LOAD_FILE" @("--es", "path", $deviceFile)
     $loadLog = Wait-LoadReady $Scenario
@@ -299,3 +300,4 @@ Get-ChildItem $ResultsDir -Filter "*.txt" |
     Set-Content $summary
 
 Write-Step "Batch complete: passed=$passed failed=$failed summary=$summary"
+
