@@ -70,6 +70,7 @@ class NativeLibrary {
     external fun nativeGetPrepareRenderSceneTriangleCount(handle: Long, batchIndex: Int): Int
     external fun nativeGetPrepareRenderSceneGeometryBuffer(handle: Long, batchIndex: Int): java.nio.ByteBuffer?
     external fun nativeGetPrepareRenderSceneMaterialBuffer(handle: Long, batchIndex: Int): java.nio.ByteBuffer?
+    external fun nativeGetPrepareRenderSceneBoundingBox(handle: Long, batchIndex: Int): FloatArray?
     external fun nativeReleasePrepareRenderScene(handle: Long): Boolean
 
     // ---- Slicing ----

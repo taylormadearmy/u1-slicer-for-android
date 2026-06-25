@@ -189,6 +189,7 @@ public:
     int getPreparePreviewSceneTriangleCount(PreparePreviewSceneHandle scene, int batch_index) const;
     const float* getPreparePreviewSceneGeometryBuffer(PreparePreviewSceneHandle scene, int batch_index) const;
     const uint8_t* getPreparePreviewSceneMaterialBuffer(PreparePreviewSceneHandle scene, int batch_index) const;
+    const float* getPreparePreviewSceneBoundingBox(PreparePreviewSceneHandle scene, int batch_index) const;
     void releasePreparePreviewScene(PreparePreviewSceneHandle scene) const;
     void clearModel();
 

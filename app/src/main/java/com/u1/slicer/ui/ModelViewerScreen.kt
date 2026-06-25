@@ -69,7 +69,8 @@ fun ModelViewerScreen(
                                             if (geoBuf != null && matBuf != null) {
                                                 geoBuf.order(java.nio.ByteOrder.nativeOrder())
                                                 matBuf.order(java.nio.ByteOrder.nativeOrder())
-                                                batches.add(NativeRenderBatch(geoBuf.asFloatBuffer(), matBuf, triCount))
+                                                val nativeBounds = native.nativeGetPrepareRenderSceneBoundingBox(sceneHandle, i)
+                                                batches.add(NativeRenderBatch(geoBuf.asFloatBuffer(), matBuf, triCount, nativeBounds))
                                             } else {
                                                 break
                                             }
@@ -78,12 +79,14 @@ fun ModelViewerScreen(
                                             var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
                                             var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE; var maxZ = -Float.MAX_VALUE
                                             for (b in batches) {
-                                                val buf = b.geometry
-                                                for (v in 0 until b.triangleCount * 3) {
-                                                    val base = v * 10
-                                                    val x = buf.get(base); val y = buf.get(base + 1); val z = buf.get(base + 2)
-                                                    if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z
-                                                    if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z
+                                                val nativeBounds = b.bounds
+                                                if (nativeBounds != null && nativeBounds.size == 6) {
+                                                    if (nativeBounds[0] < minX) minX = nativeBounds[0]
+                                                    if (nativeBounds[1] < minY) minY = nativeBounds[1]
+                                                    if (nativeBounds[2] < minZ) minZ = nativeBounds[2]
+                                                    if (nativeBounds[3] > maxX) maxX = nativeBounds[3]
+                                                    if (nativeBounds[4] > maxY) maxY = nativeBounds[4]
+                                                    if (nativeBounds[5] > maxZ) maxZ = nativeBounds[5]
                                                 }
                                             }
                                             mesh = MeshData(

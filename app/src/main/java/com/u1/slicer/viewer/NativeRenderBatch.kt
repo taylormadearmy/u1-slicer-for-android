@@ -10,7 +10,8 @@ import java.nio.FloatBuffer
 class NativeRenderBatch(
     val geometry: FloatBuffer,
     val materialIndices: ByteBuffer?,
-    val triangleCount: Int
+    val triangleCount: Int,
+    val bounds: FloatArray? = null
 ) {
     @Volatile
     var colorBuffer: FloatBuffer? = null

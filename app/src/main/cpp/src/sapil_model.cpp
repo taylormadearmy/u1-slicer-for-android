@@ -25,6 +25,7 @@
 #include "libslic3r/QuadricEdgeCollapse.hpp"
 #include "libslic3r/Semver.hpp"
 #include "libslic3r/Preset.hpp"
+#include <tbb/parallel_for.h>
 
 // miniz for direct ZIP extraction of project_settings.config
 #include "miniz.h"
@@ -779,6 +780,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
 struct PrepareRenderBatch {
     std::vector<float> interleaved_geometry;
     std::vector<uint8_t> material_indices;
+    float bounds[6] = {1e20f, 1e20f, 1e20f, -1e20f, -1e20f, -1e20f};
     int triangle_count = 0;
 
     static std::unique_ptr<PrepareRenderBatch> fromPreviewMesh(const PreviewMesh& mesh) {
@@ -786,51 +788,78 @@ struct PrepareRenderBatch {
         batch->triangle_count = mesh.extruder_indices.size();
         batch->material_indices = mesh.extruder_indices;
         // 10 floats per vertex (x,y,z, nx,ny,nz, r,g,b,a), 3 vertices per triangle = 30 floats
-        batch->interleaved_geometry.reserve(batch->triangle_count * 30);
+        batch->interleaved_geometry.resize(batch->triangle_count * 30);
+        
+        float* geom_data = batch->interleaved_geometry.data();
 
-        for (int tri = 0; tri < batch->triangle_count; ++tri) {
-            int base = tri * 9;
-            float x1 = mesh.triangle_positions[base];
-            float y1 = mesh.triangle_positions[base + 1];
-            float z1 = mesh.triangle_positions[base + 2];
-            float x2 = mesh.triangle_positions[base + 3];
-            float y2 = mesh.triangle_positions[base + 4];
-            float z2 = mesh.triangle_positions[base + 5];
-            float x3 = mesh.triangle_positions[base + 6];
-            float y3 = mesh.triangle_positions[base + 7];
-            float z3 = mesh.triangle_positions[base + 8];
+        tbb::parallel_for(tbb::blocked_range<int>(0, batch->triangle_count), [&](const tbb::blocked_range<int>& range) {
+            for (int tri = range.begin(); tri < range.end(); ++tri) {
+                int base = tri * 9;
+                float x1 = mesh.triangle_positions[base];
+                float y1 = mesh.triangle_positions[base + 1];
+                float z1 = mesh.triangle_positions[base + 2];
+                float x2 = mesh.triangle_positions[base + 3];
+                float y2 = mesh.triangle_positions[base + 4];
+                float z2 = mesh.triangle_positions[base + 5];
+                float x3 = mesh.triangle_positions[base + 6];
+                float y3 = mesh.triangle_positions[base + 7];
+                float z3 = mesh.triangle_positions[base + 8];
 
-            float ux = x2 - x1;
-            float uy = y2 - y1;
-            float uz = z2 - z1;
-            float vx = x3 - x1;
-            float vy = y3 - y1;
-            float vz = z3 - z1;
-            float nx0 = uy * vz - uz * vy;
-            float ny0 = uz * vx - ux * vz;
-            float nz0 = ux * vy - uy * vx;
-            float len = std::sqrt(nx0 * nx0 + ny0 * ny0 + nz0 * nz0);
-            if (len > 1e-8f) {
-                nx0 /= len; ny0 /= len; nz0 /= len;
-            } else {
-                nx0 = 0.0f; ny0 = 0.0f; nz0 = 1.0f;
+                float ux = x2 - x1;
+                float uy = y2 - y1;
+                float uz = z2 - z1;
+                float vx = x3 - x1;
+                float vy = y3 - y1;
+                float vz = z3 - z1;
+                float nx0 = uy * vz - uz * vy;
+                float ny0 = uz * vx - ux * vz;
+                float nz0 = ux * vy - uy * vx;
+                float len = std::sqrt(nx0 * nx0 + ny0 * ny0 + nz0 * nz0);
+                if (len > 1e-8f) {
+                    nx0 /= len; ny0 /= len; nz0 /= len;
+                } else {
+                    nx0 = 0.0f; ny0 = 0.0f; nz0 = 1.0f;
+                }
+
+                int out_base = tri * 30;
+                // v0
+                geom_data[out_base] = x1; geom_data[out_base + 1] = y1; geom_data[out_base + 2] = z1;
+                geom_data[out_base + 3] = nx0; geom_data[out_base + 4] = ny0; geom_data[out_base + 5] = nz0;
+                geom_data[out_base + 6] = 0.0f; geom_data[out_base + 7] = 0.0f; geom_data[out_base + 8] = 0.0f; geom_data[out_base + 9] = 0.0f;
+                
+                // v1
+                geom_data[out_base + 10] = x2; geom_data[out_base + 11] = y2; geom_data[out_base + 12] = z2;
+                geom_data[out_base + 13] = nx0; geom_data[out_base + 14] = ny0; geom_data[out_base + 15] = nz0;
+                geom_data[out_base + 16] = 0.0f; geom_data[out_base + 17] = 0.0f; geom_data[out_base + 18] = 0.0f; geom_data[out_base + 19] = 0.0f;
+                
+                // v2
+                geom_data[out_base + 20] = x3; geom_data[out_base + 21] = y3; geom_data[out_base + 22] = z3;
+                geom_data[out_base + 23] = nx0; geom_data[out_base + 24] = ny0; geom_data[out_base + 25] = nz0;
+                geom_data[out_base + 26] = 0.0f; geom_data[out_base + 27] = 0.0f; geom_data[out_base + 28] = 0.0f; geom_data[out_base + 29] = 0.0f;
             }
-
-            // v0
-            batch->interleaved_geometry.push_back(x1); batch->interleaved_geometry.push_back(y1); batch->interleaved_geometry.push_back(z1);
-            batch->interleaved_geometry.push_back(nx0); batch->interleaved_geometry.push_back(ny0); batch->interleaved_geometry.push_back(nz0);
-            batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f);
-            
-            // v1
-            batch->interleaved_geometry.push_back(x2); batch->interleaved_geometry.push_back(y2); batch->interleaved_geometry.push_back(z2);
-            batch->interleaved_geometry.push_back(nx0); batch->interleaved_geometry.push_back(ny0); batch->interleaved_geometry.push_back(nz0);
-            batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f);
-            
-            // v2
-            batch->interleaved_geometry.push_back(x3); batch->interleaved_geometry.push_back(y3); batch->interleaved_geometry.push_back(z3);
-            batch->interleaved_geometry.push_back(nx0); batch->interleaved_geometry.push_back(ny0); batch->interleaved_geometry.push_back(nz0);
-            batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f); batch->interleaved_geometry.push_back(0.0f);
+        });
+        
+        if (batch->triangle_count > 0) {
+            float minX = 1e20f, minY = 1e20f, minZ = 1e20f;
+            float maxX = -1e20f, maxY = -1e20f, maxZ = -1e20f;
+            for (int tri = 0; tri < batch->triangle_count; ++tri) {
+                int base = tri * 9;
+                for (int v = 0; v < 3; ++v) {
+                    float x = mesh.triangle_positions[base + v*3];
+                    float y = mesh.triangle_positions[base + v*3 + 1];
+                    float z = mesh.triangle_positions[base + v*3 + 2];
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                    if (z < minZ) minZ = z;
+                    if (z > maxZ) maxZ = z;
+                }
+            }
+            batch->bounds[0] = minX; batch->bounds[1] = minY; batch->bounds[2] = minZ;
+            batch->bounds[3] = maxX; batch->bounds[4] = maxY; batch->bounds[5] = maxZ;
         }
+
         return batch;
     }
 };
@@ -913,6 +942,12 @@ const uint8_t* SlicerEngine::getPreparePreviewSceneMaterialBuffer(PreparePreview
     if (!scene) return nullptr;
     auto* batch = scene->getBatch(batch_index);
     return batch ? batch->material_indices.data() : nullptr;
+}
+
+const float* SlicerEngine::getPreparePreviewSceneBoundingBox(PreparePreviewSceneHandle scene, int batch_index) const {
+    if (!scene) return nullptr;
+    auto* batch = scene->getBatch(batch_index);
+    return batch ? batch->bounds : nullptr;
 }
 
 void SlicerEngine::releasePreparePreviewScene(PreparePreviewSceneHandle scene) const {

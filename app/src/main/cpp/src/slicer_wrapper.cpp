@@ -142,6 +142,17 @@ Java_com_u1_slicer_NativeLibrary_nativeGetPrepareRenderSceneMaterialBuffer(JNIEn
     return env->NewDirectByteBuffer(const_cast<uint8_t*>(buf), capacityBytes);
 }
 
+JNIEXPORT jfloatArray JNICALL
+Java_com_u1_slicer_NativeLibrary_nativeGetPrepareRenderSceneBoundingBox(JNIEnv* env, jobject, jlong handle, jint batchIndex) {
+    if (!g_engine || handle == 0) return nullptr;
+    auto* scene = reinterpret_cast<sapil::PreparePreviewSceneHandle>(handle);
+    const float* bounds = g_engine->getPreparePreviewSceneBoundingBox(scene, batchIndex);
+    if (!bounds) return nullptr;
+    jfloatArray result = env->NewFloatArray(6);
+    env->SetFloatArrayRegion(result, 0, 6, bounds);
+    return result;
+}
+
 JNIEXPORT jboolean JNICALL
 Java_com_u1_slicer_NativeLibrary_nativeReleasePrepareRenderScene(JNIEnv*, jobject, jlong handle) {
     if (!g_engine || handle == 0) return JNI_FALSE;

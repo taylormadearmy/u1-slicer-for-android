@@ -3671,13 +3671,16 @@ fun InlineModelPreview(
                                     geoBuf.order(java.nio.ByteOrder.nativeOrder())
                                     matBuf.order(java.nio.ByteOrder.nativeOrder())
                                     val floatBuf = geoBuf.asFloatBuffer()
-                                    batches.add(com.u1.slicer.viewer.NativeRenderBatch(floatBuf, matBuf, triCount))
-                                    // Update bounds incrementally for this batch only
-                                    for (v in 0 until triCount * 3) {
-                                        val base = v * 10
-                                        val x = floatBuf.get(base); val y = floatBuf.get(base + 1); val z = floatBuf.get(base + 2)
-                                        if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z
-                                        if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z
+                                    val nativeBounds = lib.nativeGetPrepareRenderSceneBoundingBox(sceneHandle, batchIdx)
+                                    batches.add(com.u1.slicer.viewer.NativeRenderBatch(floatBuf, matBuf, triCount, nativeBounds))
+                                    // Update bounds incrementally using native bounds
+                                    if (nativeBounds != null && nativeBounds.size == 6) {
+                                        if (nativeBounds[0] < minX) minX = nativeBounds[0]
+                                        if (nativeBounds[1] < minY) minY = nativeBounds[1]
+                                        if (nativeBounds[2] < minZ) minZ = nativeBounds[2]
+                                        if (nativeBounds[3] > maxX) maxX = nativeBounds[3]
+                                        if (nativeBounds[4] > maxY) maxY = nativeBounds[4]
+                                        if (nativeBounds[5] > maxZ) maxZ = nativeBounds[5]
                                     }
                                     // Track batch range incrementally
                                     batchRanges.add(runningTriStart until (runningTriStart + triCount))
