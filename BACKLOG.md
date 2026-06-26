@@ -238,7 +238,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/141
 - **Source**: Discord, 2026-05-18 (Jon).
 
-### B119: Buzz Lightyear cold load is 92–93s — predates F54, perf regression unbisected (GitHub #137) — OPEN
+### B119: Buzz Lightyear cold load is 92–93s — predates F54, perf regression unbisected (GitHub #137) — FIXED, RELEASED v3.3.7 (released 2026-06-26)
 - **Symptom**: `PreparePreviewViewModelTest#buzzLightyear_coldLoad_skipsFullFileEmbedOnMultiPlate` consistently runs 92.5–93.0s on Pixel 8a (43211JEKB16931), well over the original 90s budget. Logcat breakdown shows nearly all of the time is in `BambuSanitizer.process()` + the initial `ThreeMfParser.parse()` of the 73 MB Buzz file (10 plates, 296k paint_color attributes).
 - **Discovered**: v2.2.4 instrumented sweep, 2026-05-17. Test budget caught a slowdown that had been quietly present for many releases.
 - **Bisection**: built worktrees at f639561 (B108, pre-F54) and 435ef9e (v2.2.0 F54 merge). Both run at 92.7–93.2s on the same device today. The slowdown predates F54 — it appeared somewhere between v1.6.11 (where the 42s baseline was set by B93 phase 2, and the 90s budget calibrated with 2x margin) and the B108 era. Native `.so` size between v1.6.11 (20,764,520 bytes) and current (20,809,192 bytes) differs by only 44 KB — small structural difference, large timing difference.
@@ -357,7 +357,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/113
 - **Source**: GitHub #113, 2026-05-01.
 
-### B98: Performance investigation plan for large-model load, preview readiness, and safe native optimisation (GitHub #114) — OPEN
+### B98: Performance investigation plan for large-model load, preview readiness, and safe native optimisation (GitHub #114) — DONE v3.3.7 (released 2026-06-26)
 - **Goal**: Identify and implement user-visible performance wins without weakening stability, colour/material accuracy, Bambu settings fidelity, or device safety.
 - **Plan**: `PERFORMANCE_INVESTIGATION_PLAN.md` on branch `codex/performance-investigation-plan`.
 - **Issue**: https://github.com/taylormadearmy/u1-slicer-for-android/issues/114
