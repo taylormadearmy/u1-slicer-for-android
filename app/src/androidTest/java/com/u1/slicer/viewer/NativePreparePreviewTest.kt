@@ -211,6 +211,9 @@ class NativePreparePreviewTest {
         val handle = lib.buildPrepareRenderScene()
         val batches = mutableListOf<com.u1.slicer.viewer.NativeRenderBatch>()
         try {
+            while (!lib.nativeIsPrepareRenderSceneComplete(handle)) {
+                Thread.sleep(10)
+            }
             val batchCount = lib.nativeGetPrepareRenderSceneBatchCount(handle)
             for (i in 0 until batchCount) {
                 val geom = lib.nativeGetPrepareRenderSceneGeometryBuffer(handle, i)!!
@@ -1006,15 +1009,41 @@ class NativePreparePreviewTest {
 }
 
 private val com.u1.slicer.viewer.MeshData.vertices: FloatArray get() {
-    val buf = batches[0].geometry.duplicate()
-    val arr = FloatArray(buf.capacity())
-    buf.get(arr)
+    val geoBuf = batches[0].geometry.duplicate()
+    geoBuf.position(0)
+    val arr = FloatArray(geoBuf.capacity())
+    geoBuf.get(arr)
+    val colBuf = batches[0].colorBuffer?.duplicate()
+    if (colBuf != null) {
+        colBuf.position(0)
+        var colIdx = 0
+        var arrIdx = 6
+        while (colIdx < colBuf.capacity()) {
+            arr[arrIdx] = colBuf.get(colIdx)
+            arr[arrIdx + 1] = colBuf.get(colIdx + 1)
+            arr[arrIdx + 2] = colBuf.get(colIdx + 2)
+            arr[arrIdx + 3] = colBuf.get(colIdx + 3)
+            colIdx += 4
+            arrIdx += 10
+        }
+    } else {
+        var arrIdx = 6
+        while (arrIdx < arr.size) {
+            arr[arrIdx] = 0.8f
+            arr[arrIdx + 1] = 0.8f
+            arr[arrIdx + 2] = 0.8f
+            arr[arrIdx + 3] = 1f
+            arrIdx += 10
+        }
+    }
     return arr
 }
-private val com.u1.slicer.viewer.MeshData.extruderIndices: ByteArray get() {
-    val buf = batches[0].materialIndices!!.duplicate()
+
+private val com.u1.slicer.viewer.MeshData.extruderIndices: ByteArray? get() {
+    val matBuf = batches[0].materialIndices ?: return null
+    val buf = matBuf.duplicate()
+    buf.position(0)
     val arr = ByteArray(buf.capacity())
     buf.get(arr)
     return arr
 }
-

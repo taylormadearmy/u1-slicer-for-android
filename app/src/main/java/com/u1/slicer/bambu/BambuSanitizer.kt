@@ -296,9 +296,10 @@ object BambuSanitizer {
                                 "modifierVolumes=$hasModifierVolumes deferredRestructuring=$deferredRestructuring " +
                                 "needsComponentParsing=$needsComponentParsing"
                         )
+                        val buildTransforms = mutableMapOf<String, FloatArray>()
                         val objectComponents = if (needsComponentParsing) {
                             mutableMapOf<String, List<ComponentRef>>().also { components ->
-                                parseMainModelStructure(mainModelContent!!, components, mutableMapOf())
+                                parseMainModelStructure(mainModelContent!!, components, buildTransforms)
                             }
                         } else {
                             emptyMap()
@@ -326,7 +327,7 @@ object BambuSanitizer {
                         val mainModelRewriteT0 = System.currentTimeMillis()
                         val (finalModelBytes, newParentParts) = if (hasMultiColorComponents && safeToInline) {
                             usedRewritePath = true
-                            restructureForMultiColor(mainModelContent!!, bambuObjectParts, componentFiles)
+                            restructureForMultiColor(mainModelContent!!, bambuObjectParts, componentFiles, objectComponents, buildTransforms)
                         } else {
                             Pair(convertMmuSegmentation(mainModelContent!!), emptyMap())
                         }
@@ -736,23 +737,28 @@ object BambuSanitizer {
     private fun restructureForMultiColor(
         modelContent: ByteArray,
         objectParts: Map<String, ObjectParts>,
-        componentFiles: Map<String, ByteArray> = emptyMap()
+        componentFiles: Map<String, ByteArray> = emptyMap(),
+        objectComponents: Map<String, List<ComponentRef>>? = null,
+        buildTransforms: Map<String, FloatArray>? = null
     ): Pair<ByteArray, Map<String, ObjectParts>> {
         // Identify compound objects that need splitting
         val splitTargets = objectParts.filter { (_, objectInfo) ->
             objectInfo.parts.map { it.extruder }.distinct().size > 1
         }
+        val modelStr = String(modelContent)
         if (splitTargets.isEmpty()) {
-            return Pair(convertMmuSegmentation(modelContent), emptyMap())
+            return Pair(convertMmuSegmentation(modelStr).toByteArray(), emptyMap())
         }
 
-        val modelStr = String(modelContent)
-        val newParentParts = mutableMapOf<String, ObjectParts>()
+        val parsedComponents = mutableMapOf<String, List<ComponentRef>>()
+        val parsedTransforms = mutableMapOf<String, FloatArray>()
+        if (objectComponents == null || buildTransforms == null) {
+            parseMainModelStructure(modelContent, parsedComponents, parsedTransforms)
+        }
+        val finalComponents = objectComponents ?: parsedComponents
+        val finalTransforms = buildTransforms ?: parsedTransforms
 
-        // Parse component refs and build transforms from the model
-        val objectComponents = mutableMapOf<String, List<ComponentRef>>()
-        val buildTransforms = mutableMapOf<String, FloatArray>()
-        parseMainModelStructure(modelContent, objectComponents, buildTransforms)
+        val newParentParts = mutableMapOf<String, ObjectParts>()
 
         var result = modelStr
         // Use small sequential IDs (starting at 1) — OrcaSlicer's model config
@@ -761,8 +767,8 @@ object BambuSanitizer {
 
         for ((objectId, objectInfo) in splitTargets) {
             val parts = objectInfo.parts
-            val components = objectComponents[objectId]
-            val buildTransform = buildTransforms[objectId]
+            val components = finalComponents[objectId]
+            val buildTransform = finalTransforms[objectId]
             if (components == null || buildTransform == null) {
                 Log.w(TAG, "Cannot restructure object $objectId: missing component/build data")
                 continue
@@ -833,7 +839,7 @@ $componentRefs    </components>
             Log.i(TAG, "Restructured object $objectId into compound object $parentId with ${partInfos.size} component volumes")
         }
 
-        return Pair(convertMmuSegmentation(result.toByteArray()), newParentParts)
+        return Pair(convertMmuSegmentation(result).toByteArray(), newParentParts)
     }
 
     /** Count <triangle> elements in a mesh XML string. */
@@ -1118,15 +1124,31 @@ $componentRefs    </components>
      * process them correctly.
      */
     private fun convertMmuSegmentation(content: ByteArray): ByteArray {
-        var text = String(content)
-        if (!text.contains("slic3rpe:mmu_segmentation")) return content
+        val needle = "slic3rpe:mmu_segmentation".toByteArray()
+        if (content.size < needle.size) return content
+        var found = false
+        for (i in 0..content.size - needle.size) {
+            if (content[i] == needle[0]) {
+                var match = true
+                for (j in 1 until needle.size) {
+                    if (content[i + j] != needle[j]) { match = false; break }
+                }
+                if (match) { found = true; break }
+            }
+        }
+        if (!found) return content
+        return convertMmuSegmentation(String(content)).toByteArray()
+    }
+
+    private fun convertMmuSegmentation(text: String): String {
+        if (!text.contains("slic3rpe:mmu_segmentation")) return text
 
         // Rename slic3rpe:mmu_segmentation → paint_color (same RLE hex encoding)
-        text = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
+        var newText = text.replace("slic3rpe:mmu_segmentation=", "paint_color=")
         // Strip the PrusaSlicer namespace declaration (no longer needed)
-        text = text.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
+        newText = newText.replace(Regex("""\s+xmlns:slic3rpe="[^"]*""""), "")
 
-        return text.toByteArray()
+        return newText
     }
 
     // ---- Multi-plate detection (used by process()) ----
