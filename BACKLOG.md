@@ -758,19 +758,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 
 ## Open Features
 
-### F98: Mix → printer-colour UX — signal slot-space shift + Prepare "Sync colours to printer" (GitHub #180) — OPEN
-- **Problem**: once any mix is assigned, the model's file colours become secondary — the truth shifts to physical printer-slot space (E1–E4). Users aren't told this. B144 put E-labels on the Send dialog as a partial signal, but nothing on the Prepare screen communicates the shift.
-- **Two linked improvements**:
-  1. When a mix is in play, surface a signal on the Prepare screen (banner / inline note) that slot colours govern the print.
-  2. General "Sync colours to printer" action on Prepare: replaces filament colour swatches with the printer's currently loaded filament colours (`extruderPresets`). Makes the 3D preview match what will actually print. Useful for all prints, not just mixes.
-- **Design questions to resolve**: colour-only vs material too; reversibility; sync semantics for mixed parts (blend colour? skip?); per-part vs global.
-- **Not yet designed** — brainstorm session needed before any build. Natural home: F87/phase-2.6 editable Prepare filament list.
-
-### F99: Adaptive Prepare preview quality for large detailed models (GitHub #181 follow-up) — OPEN
-- **Problem**: the current Prepare preview uses a single fixed triangle budget, so large painted models can collapse into scattered dots while smaller previews still need to stay responsive.
-- **Goal**: make preview quality adapt to model size and paint state so detailed models keep a legible high-quality preview without slowing down the common path.
-- **Known follow-up**: Chubby Darth Vader is now fixed by keeping tall painted figures off the sparse fallback, but Ghostface / Hueforge-class flat painted files still use the bounded sparse fallback and therefore still look degraded on Prepare. Fold that case into this FR rather than adding another one-off heuristic.
-- **Design questions to resolve**: when to switch budgets; whether the cutoff should be based on paint presence, triangle count, bounding box, or render-time feedback; how to keep the logic simple enough that the regression does not keep returning.
 ### F96: OpenPrintTag filament library + RFID sync matching (GitHub #176) — DONE v3.2.0-beta (released 2026-06-10)
 - Bundled FFF-only snapshot of the MIT [OpenPrintTag database](https://github.com/OpenPrintTag/openprinttag-database) (12,804 filaments, 112 brands, 1.4 MB asset + NOTICE) as a searchable **Library tab** in the physical-slot colour dialogs (AiPaint slot dialog + PrinterScreen extruder slot editor; CreateMix and Prepare per-file dialogs stay HSV-only by design): search-as-you-type across brand/name/material, material filter chips, favourites (⭐) + recents (DataStore slug lists), pick = slot colour + material type (clears stale `filamentProfileId`).
 - **Opt-in profile import**: "Use + import profile…" previews exactly the fields the entry has (nozzle/bed ranges, density, TD/RI labelled "for future translucency features — not used in slicing") → creates/updates a `FilamentProfile` (dedupe by exact name via `FilamentDao.getByName`, no Room migration) and links it via `ExtruderPreset.filamentProfileId`.
@@ -778,11 +765,6 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - Key files: `data/FilamentLibrary.kt`, `data/FilamentLibraryRepository.kt`, `data/FilamentLibraryImport.kt`, `data/FilamentLibraryMatcher.kt`, `printer/SyncPreview.kt`, `ui/FilamentLibraryPicker.kt`, `tools/openprinttag-convert/` (snapshot refresh is a release-flow step; SHA+date stamped in the JSON header, surfaced in the picker footer + Settings ▸ About attribution row).
 - Tests: converter unittest (5), `FilamentLibraryTest` (11) + asset contract (3), codec/recents (6), import mapping (7), matcher (9), sync preview builder (5), structural guards (7+6+3), instrumented `FilamentLibraryAssetTest` (2).
 - Design: `docs/superpowers/specs/2026-06-10-openprinttag-filament-library-design.md`. Plan: `docs/superpowers/plans/2026-06-10-openprinttag-filament-library.md`.
-
-### F95: Show negative/modifier volumes as translucent objects on the Prepare screen (GitHub #172) — OPEN 2026-06-04
-- **Request**: After the B137 fix, negative/modifier volumes are correctly typed and therefore filtered out of the Prepare 3D preview (`getPreparePreviewMesh` skips non-`is_model_part()` volumes at [sapil_model.cpp:418/478](app/src/main/cpp/src/sapil_model.cpp#L418)). Desktop OrcaSlicer/PrusaSlicer show modifiers/negatives as translucent coloured meshes so the user can see where the cut/modifier sits. Add the same to the Android Prepare preview.
-- **Scope**: small-to-moderate; needs a native `.so` rebuild. Renderer transparency infra already exists (RGBA vertex alpha + `GL_BLEND` SRC_ALPHA/ONE_MINUS_SRC_ALPHA at [ModelRenderer.kt:623,994](app/src/main/java/com/u1/slicer/viewer/ModelRenderer.kt#L623)).
-- **Sketch**: (1) native — in `getPreparePreviewMesh`, emit non-model-part volume triangles as a contiguous trailing block tagged with a reserved extruder index (e.g. 255); expose start-offset accessor; rebuild `.so`. (2) Kotlin — map reserved index → translucent colour (alpha ~0.3) in recolor. (3) renderer — second draw pass for the trailing block with blend on + depth-write off (optionally depth-test off so the modifier shows through the solid body). Add a regression test asserting the preview mesh includes the modifier triangles with the reserved tag.
 
 ### F94: Immediate "Preparing G-code" indicator during large-file send — bridge the silent gap before "Uploading G-code" appears (GitHub #166) — DONE v2.10.14 (released 2026-06-04)
 - **Released 2026-06-04** as v2.10.14. `PrinterViewModel.SendingState.Preparing` + `beginSendPreparing()` set synchronously on the Main thread at all three send-confirm sites in `MainActivity` (UploadOnly, PrintAndUpload, Absent), the instant the user confirms — before any IO. `PrinterScreen` renders a "Preparing G-code…" card (reusing the existing Uploading-card pattern) that the existing Uploading/PrintStarted/UploadComplete arms take over from. A `catch (CancellationException → rethrow) / catch (Throwable → reportSendError via NonCancellable+Main; return@launch)` on each prep block surfaces failures as `SendingState.Error` instead of a stuck banner. Guard: `ui/SendPreparingBannerTest` (4 source-grep cases — no Compose UI harness in project).
@@ -1128,6 +1110,13 @@ The following are candidate options for M5. We'll choose which to build next. Al
 
 ## Closed (recent)
 
+### v3.3.8 (released 2026-06-30)
+- **OOM on compound multi-part files (Plate 4)**: Disabled massive memory-intensive `FaceDetector::detect_exterior_face()` desktop-only operation on Android.
+- **Modifier visibility / memory exhaustion**: Added modifier deduplication in preview rendering and bounding-box intersection checks during split to prevent cloning modifiers across all parts.
+- **Dragon Scale E2E timeout**: Resolved by the above memory/split optimizations (reduced from timeout to < 2 minutes).
+- **Submodule reproducibility**: Committed native fix to `orcaslicer` and updated parent pointer.
+
+- **2026-06-30 backlog/GitHub tidy**: F98 / GitHub #180 is already implemented in the current Prepare UI: a mix-active banner signals that ColorMix uses printer slot colours, the Filaments card exposes "Sync filaments from printer", and the ColorMix auto-popup explains the slot-space shift. F95 / GitHub #172 is already implemented for negative-volume cutters via the native trailing preview block, `nativeGetPreviewModifierBlockStart()`, translucent `MeshData` recolour, and the renderer's blended second pass; generic `modifier_part` overlays remain intentionally out of scope unless a concrete user-visible case appears. F99 is superseded by the v3.3.2/v3.3.4 preview-budget fixes and the later staged/progressive preview work; the remaining huge-flat-painted/Hueforge quality idea belongs under the older F63 long-term colour-preserving decimation track.
 - **v3.3.7 (released 2026-06-26)**: Performance and E2E stabilisation release. Replaced the `O(N^2)` string scanning in `ThreeMfParser` and `BambuSanitizer` with indexed lookups, reducing load times for complex painted models from >3 minutes to <30 seconds. Fixed a race condition in the `run-batch-manual-e2e.ps1` script (added 8s lifecycle delay) that caused spurious test failures. All 27 E2E scenarios now pass deterministically.
 
 **v3.3.5 (released 2026-06-17)** - Auto-popup Sync Dialog Text and Native Volume Mapping Isolation: Added explanatory text when the filament sync dialog automatically pops up for models using ColorMix, to clarify that the printer's colors will override the model's colors. Also fixed a critical state leak where ColorMix native volume extruder assignments could bleed into the canonical file model post-slice. The native volume mappings are now safely restored in a `finally` block after slicing. Fully validated with 436 instrumented tests and 27 E2E tests on device. No issues filed.
