@@ -735,6 +735,7 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
         // same failure mode as B136's MMU dots. These volumes are small (joint-clearance cutters)
         // and are a visual aid only, so keep them solid even when the model parts are decimated.
         const int mod_stride = 1;
+        std::vector<std::pair<const void*, Slic3r::Transform3d>> rendered_modifiers;
         for (const auto* object : g_model.objects) {
             if (object == nullptr || !object->printable) continue;
             if (object->instances.empty()) continue;
@@ -746,6 +747,19 @@ PreviewMesh SlicerEngine::getPreparePreviewMesh(int max_triangles) const {
                     if (!volume->is_negative_volume()) continue;
                     auto its = volume->mesh().its;
                     if (its.indices.empty()) continue;
+                    
+                    Slic3r::Transform3d world_matrix = instance_matrix * volume->get_matrix();
+                    const void* mesh_ptr = (const void*)its.vertices.data();
+                    bool already_rendered = false;
+                    for (const auto& rm : rendered_modifiers) {
+                        if (rm.first == mesh_ptr && rm.second.isApprox(world_matrix, 1e-5)) {
+                            already_rendered = true;
+                            break;
+                        }
+                    }
+                    if (already_rendered) continue;
+                    rendered_modifiers.push_back({mesh_ptr, world_matrix});
+
                     its_transform(its, volume->get_matrix(), true);
                     its_transform(its, instance_matrix, true);
                     int tri_counter = 0;
