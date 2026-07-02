@@ -1110,7 +1110,7 @@ The following are candidate options for M5. We'll choose which to build next. Al
 
 ## Closed (recent)
 
-### v3.3.8 (released 2026-06-30)
+### v3.3.8 / v3.3.9 (released 2026-07-02)
 - **OOM on compound multi-part files (Plate 4)**: Disabled massive memory-intensive `FaceDetector::detect_exterior_face()` desktop-only operation on Android.
 - **Modifier visibility / memory exhaustion**: Added modifier deduplication in preview rendering and bounding-box intersection checks during split to prevent cloning modifiers across all parts.
 - **Dragon Scale E2E timeout**: Resolved by the above memory/split optimizations (reduced from timeout to < 2 minutes).
