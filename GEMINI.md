@@ -11,7 +11,7 @@ Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders
 ```bash
 ./gradlew installDebug          # Build and install on connected device
 ./gradlew assembleDebug         # Build APK only
-./gradlew assembleRelease       # Release APK
+./gradlew clean assembleRelease # Release APK (always clean to avoid Play Protect heuristic flags)
 ```
 
 Use `--no-daemon` if Gradle daemon OOMs. The native `.so` is pre-built — normal builds do not need the NDK.
@@ -74,6 +74,14 @@ Full CMake configure and fresh-build details: see `AGENTS.md §Native Rebuild` o
 - **Native**: OrcaSlicer C++ via JNI — pre-built `.so` in `app/src/main/jniLibs/arm64-v8a/`
 - **3D**: OpenGL ES 3.0 (`GLSurfaceView`, `viewer/` package)
 - Kotlin 1.9.22, compileSdk 34, minSdk 26, JVM 17
+
+---
+
+## Release
+
+> **NEVER create a GitHub release or push a tag without explicit user authorisation.**
+
+- Always use `./gradlew clean assembleRelease` to build. Dirty builds can trigger Google Play Protect to erroneously flag the APK as "Harmful".
 
 ---
 

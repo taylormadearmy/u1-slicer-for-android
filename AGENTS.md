@@ -11,7 +11,7 @@ Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders
 ```bash
 ./gradlew installDebug          # Build and install on connected device
 ./gradlew assembleDebug         # Build APK only
-./gradlew assembleRelease       # Release APK (no signing required for testing)
+./gradlew clean assembleRelease # Release APK (always clean to avoid Play Protect heuristic flags)
 ```
 
 The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal builds do not require the NDK.
@@ -117,6 +117,7 @@ Claude is pre-authorised to rebuild the native `.so` whenever a fix genuinely re
 2. Update test counts in `CLAUDE.md` and `README.md`
 3. Commit, push, build the release APK, rename it to `u1-slicer-orca-v<version>.apk`, upload that APK to the GitHub release, create the release tag, then sync `BACKLOG.md` + close issues — see `CLAUDE.md §Release` for the full checklist.
 4. A release is not complete until the APK asset is attached to the GitHub release page under the branded `u1-slicer-orca-v<version>.apk` filename.
+5. **Play Protect Note**: Always use `clean` when building the release APK (`./gradlew clean assembleRelease`). Dirty builds or intermediate packaging caches can cause Google Play Protect to erroneously flag the APK as "Harmful" upon sideloading.
 
 Never reuse or update a published release — always use a new tag.
 
@@ -173,3 +174,5 @@ Within-layer top-surface colour mixing:
 ## Backlog
 
 Open bugs and features: see [`BACKLOG.md`](BACKLOG.md).
+
+> **GitHub Auth**: Always ensure you are authenticated as `taylormadearmy` via `gh auth switch -u taylormadearmy` before pushing commits or creating releases, as the default `kevinavos` account does not have write access to this repository.
