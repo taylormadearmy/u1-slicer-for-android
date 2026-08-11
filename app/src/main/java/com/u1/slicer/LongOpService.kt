@@ -86,7 +86,7 @@ class LongOpService : Service() {
         val text = if (progress > 0) "$stage... ($progress%)" else "$stage..."
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("U1 Slicer")
+            .setContentTitle("Your One Slicer")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_popup_sync)
             .setProgress(100, progress.coerceIn(0, 100), progress == 0)

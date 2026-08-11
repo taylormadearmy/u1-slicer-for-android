@@ -42,6 +42,7 @@ class SettingsRepository(private val context: Context) {
         val AI_PAINT_PROVIDER = stringPreferencesKey("ai_paint_provider")
         val AI_PAINT_API_KEY = stringPreferencesKey("ai_paint_api_key")
         val AI_NAMING_ENABLED = booleanPreferencesKey("ai_naming_enabled")
+        val BAMBU_BETA_ENABLED = booleanPreferencesKey("bambu_beta_enabled")
         val LIBRARY_MIXES = stringPreferencesKey("library_mixes")
         val PROJECT_MIXES = stringPreferencesKey("project_mixes")
         val FILAMENT_LIBRARY_FAVOURITES = stringPreferencesKey("filament_library_favourites")
@@ -123,6 +124,15 @@ class SettingsRepository(private val context: Context) {
      *  out of the experimental AI path keeps results predictable. */
     val aiNamingEnabled: Flow<Boolean> = context.appDataStore.data.map { prefs ->
         prefs[Keys.AI_NAMING_ENABLED] ?: false
+    }
+
+    /** Bambu support is opt-in because it is still an early beta feature. */
+    val bambuBetaEnabled: Flow<Boolean> = context.appDataStore.data.map { prefs ->
+        prefs[Keys.BAMBU_BETA_ENABLED] ?: false
+    }
+
+    suspend fun saveBambuBetaEnabled(enabled: Boolean) {
+        context.appDataStore.edit { prefs -> prefs[Keys.BAMBU_BETA_ENABLED] = enabled }
     }
 
     suspend fun saveAiNamingEnabled(enabled: Boolean) {

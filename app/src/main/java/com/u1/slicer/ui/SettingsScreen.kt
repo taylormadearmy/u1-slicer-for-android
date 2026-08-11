@@ -56,6 +56,8 @@ import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.BuildConfig
 import com.u1.slicer.GITHUB_URL
 import com.u1.slicer.SlicerViewModel
+import com.u1.slicer.U1SlicerApplication
+import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.network.UpdateChecker
 import kotlinx.coroutines.launch
 import com.u1.slicer.data.OverrideMode
@@ -98,6 +100,8 @@ fun SettingsScreen(
     val currentOverrides by viewModel.slicingOverrides.collectAsState()
     var overrides by remember(currentOverrides) { mutableStateOf(currentOverrides) }
     val plateType by viewModel.plateType.collectAsState()
+    val bambuBetaEnabled by viewModel.bambuBetaEnabled.collectAsState()
+    var showBambuBetaDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -407,32 +411,117 @@ fun SettingsScreen(
             }
 
             // ---- Printer ----
+            SettingsSection("Experimental printer support") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Enable Bambu support", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (bambuBetaEnabled) "Bambu mode is enabled."
+                            else "Off by default; requires explicit beta acknowledgement.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = bambuBetaEnabled,
+                        onCheckedChange = { checked ->
+                            if (checked) showBambuBetaDialog = true
+                            else {
+                                viewModel.setBambuBetaEnabled(false)
+                                printerViewModel?.disableBambuMode()
+                            }
+                        },
+                    )
+                }
+            }
+            if (showBambuBetaDialog) {
+                AlertDialog(
+                    onDismissRequest = { showBambuBetaDialog = false },
+                    title = { Text("Enable Bambu beta support?") },
+                    text = {
+                        Text(
+                            "Bambu support is very early beta software. The developer has only tested " +
+                                "the end-to-end workflow on the Bambu H2D and A1 Mini. Other Bambu models " +
+                                "and printer firmware may behave differently. Enable this only if you accept " +
+                                "that risk.",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.setBambuBetaEnabled(true)
+                            showBambuBetaDialog = false
+                        }) { Text("I understand") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showBambuBetaDialog = false }) { Text("Cancel") }
+                    },
+                )
+            }
             SettingsSection("Printer") {
-                InfoRow("Model", "Snapmaker U1")
-                InfoRow("Build Volume", "270 x 270 x 270 mm")
-                InfoRow("Extruders", "4")
-
                 // F78: multi-printer list with add/edit/delete
                 if (printerViewModel != null) {
                     val printerList by printerViewModel.printerList.collectAsState()
                     val activePrinterId by printerViewModel.activePrinterId.collectAsState()
-
-                    Spacer(Modifier.height(4.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
-                    Spacer(Modifier.height(4.dp))
+                    val visiblePrinters = if (bambuBetaEnabled) printerList else
+                        printerList.filter { it.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN }
 
                     com.u1.slicer.ui.printer.PrintersSettingsCard(
-                        printers = printerList,
+                        printers = visiblePrinters,
                         activeId = activePrinterId,
-                        onAdd = { nick, url -> printerViewModel.addPrinter(nick, url) },
-                        onEdit = { id, nick, url -> printerViewModel.updatePrinter(id, nick, url) },
-                        onDelete = { id -> printerViewModel.deletePrinter(id) },
-                        onTestConnection = { url ->
-                            val client = com.u1.slicer.network.MoonrakerClient().apply {
-                                baseUrl = url
-                            }
-                            client.testConnection()
+                        onAdd = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
+                            printerViewModel.addPrinter(
+                                nick,
+                                kind,
+                                url,
+                                bambuIp,
+                                bambuAccessCode,
+                                bambuSerial,
+                                bambuModel,
+                            )
                         },
+                        onEdit = { id, nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
+                            printerViewModel.updatePrinter(
+                                id,
+                                nick,
+                                kind,
+                                url,
+                                bambuIp,
+                                bambuAccessCode,
+                                bambuSerial,
+                                bambuModel,
+                            )
+                        },
+                        onDelete = { id -> printerViewModel.deletePrinter(id) },
+                        onTestConnection = { kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
+                            when (kind) {
+                                com.u1.slicer.data.PrinterKind.MOONRAKER -> {
+                                    val client = com.u1.slicer.network.MoonrakerClient().apply {
+                                        baseUrl = com.u1.slicer.network.MoonrakerClient.normalizeUrl(url)
+                                    }
+                                    client.testConnection()
+                                }
+                                com.u1.slicer.data.PrinterKind.BAMBU_LAN -> {
+                                    if (bambuIp.isBlank() || bambuAccessCode.isBlank() || bambuSerial.isBlank()) {
+                                        "Enter IP, access code, and serial first"
+                                    } else {
+                                        val app = context.applicationContext as U1SlicerApplication
+                                        app.container.bambuLanClientFactory().testConnection(
+                                            BambuConfig(
+                                                ip = bambuIp.trim(),
+                                                accessCode = bambuAccessCode.trim(),
+                                                serial = bambuSerial.trim(),
+                                                model = bambuModel,
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        bambuEnabled = bambuBetaEnabled,
                     )
                 }
             }
@@ -458,7 +547,7 @@ fun SettingsScreen(
                 Text(
                     "Google sign-in is not supported inside the app browser. " +
                         "Best results come from opening MakerWorld in your browser, then " +
-                        "downloading the 3MF/STL there or sharing the model link back to U1 Slicer.",
+                        "downloading the 3MF/STL there or sharing the model link back to Your One Slicer.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 )
@@ -858,7 +947,7 @@ private fun MakerWorldModeDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to U1 Slicer.",
+                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to Your One Slicer.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 HorizontalDivider()

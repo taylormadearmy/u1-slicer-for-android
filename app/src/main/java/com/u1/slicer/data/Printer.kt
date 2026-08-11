@@ -3,6 +3,33 @@ package com.u1.slicer.data
 import org.json.JSONArray
 import org.json.JSONObject
 
+enum class PrinterKind { MOONRAKER, BAMBU_LAN }
+
+enum class BambuModel { X1C, X1E, P1S, P1P, A1, A1_MINI, H2D }
+
+data class BambuConfig(
+    val ip: String,
+    val accessCode: String,
+    val serial: String,
+    val model: BambuModel,
+) {
+    companion object {
+        fun toJsonObject(cfg: BambuConfig): JSONObject = JSONObject().apply {
+            put("ip", cfg.ip)
+            put("accessCode", cfg.accessCode)
+            put("serial", cfg.serial)
+            put("model", cfg.model.name)
+        }
+
+        fun fromJsonObject(obj: JSONObject): BambuConfig = BambuConfig(
+            ip = obj.getString("ip"),
+            accessCode = obj.getString("accessCode"),
+            serial = obj.getString("serial"),
+            model = BambuModel.valueOf(obj.getString("model")),
+        )
+    }
+}
+
 /**
  * One configured U1 printer. Persisted as part of [PrintersConfig] in DataStore.
  * The id is a stable UUID generated at create time so renames don't break references.
@@ -10,33 +37,72 @@ import org.json.JSONObject
 data class Printer(
     val id: String,
     val nickname: String,
-    val moonrakerUrl: String,
+    val kind: PrinterKind = PrinterKind.MOONRAKER,
+    val moonrakerUrl: String = "",
+    val bambu: BambuConfig? = null,
     val extruderPresets: List<ExtruderPreset> = defaultExtruderPresets(),
 ) {
+    init {
+        when (kind) {
+            PrinterKind.MOONRAKER -> {
+                require(bambu == null) { "Moonraker printer must not have bambu config" }
+            }
+            PrinterKind.BAMBU_LAN -> {
+                require(bambu != null) { "Bambu printer requires bambu config" }
+                require(moonrakerUrl.isBlank()) { "Bambu printer must not have moonrakerUrl" }
+            }
+        }
+    }
+
     companion object {
         fun toJsonObject(p: Printer): JSONObject = JSONObject().apply {
             put("id", p.id)
             put("nickname", p.nickname)
+            put("kind", p.kind.name)
             put("moonrakerUrl", p.moonrakerUrl)
+            if (p.bambu != null) put("bambu", BambuConfig.toJsonObject(p.bambu))
             put("extruderPresets", JSONArray(serializeExtruderPresets(p.extruderPresets)))
         }
 
-        fun fromJsonObject(obj: JSONObject): Printer = Printer(
-            id = obj.getString("id"),
-            nickname = obj.getString("nickname"),
-            moonrakerUrl = obj.getString("moonrakerUrl"),
-            extruderPresets = parseExtruderPresetsExact(
-                obj.optJSONArray("extruderPresets") ?: JSONArray()
-            ),
-        )
+        fun fromJsonObject(obj: JSONObject): Printer {
+            val kind = obj.optString("kind", PrinterKind.MOONRAKER.name)
+                .takeIf { it.isNotBlank() }
+                ?.let { PrinterKind.valueOf(it) }
+                ?: PrinterKind.MOONRAKER
+            val extruderPresets = parsePersistedExtruderPresets(
+                kind = kind,
+                arr = obj.optJSONArray("extruderPresets"),
+            )
+            return Printer(
+                id = obj.getString("id"),
+                nickname = obj.getString("nickname"),
+                kind = kind,
+                moonrakerUrl = obj.optString("moonrakerUrl", ""),
+                bambu = obj.optJSONObject("bambu")?.let(BambuConfig::fromJsonObject),
+                extruderPresets = extruderPresets,
+            )
+        }
 
         /**
          * Deserialise extruder presets exactly as stored — no slot-filling.
          * The fill-to-4 behaviour in [parseExtruderPresets] is a UI concern; [Printer]
          * stores whatever the user configured.
          */
+        private fun parsePersistedExtruderPresets(
+            kind: PrinterKind,
+            arr: JSONArray?,
+        ): List<ExtruderPreset> {
+            if (arr == null) {
+                return if (kind == PrinterKind.MOONRAKER) defaultExtruderPresets() else emptyList()
+            }
+            if (arr.length() == 0 && kind == PrinterKind.MOONRAKER) {
+                return defaultExtruderPresets()
+            }
+            return parseExtruderPresetsExact(arr)
+        }
+
         private fun parseExtruderPresetsExact(arr: JSONArray): List<ExtruderPreset> {
-            if (arr.length() == 0) return defaultExtruderPresets()
+            if (arr.length() == 0) return emptyList()
             return (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 ExtruderPreset(
@@ -80,8 +146,13 @@ data class PrintersConfig(
         fun fromJson(json: String): PrintersConfig {
             val obj = JSONObject(json)
             val arr = obj.getJSONArray("printers")
-            val list = (0 until arr.length()).map { Printer.fromJsonObject(arr.getJSONObject(it)) }
-            return PrintersConfig(printers = list, activeId = obj.getString("activeId"))
+            val list = (0 until arr.length()).mapNotNull { index ->
+                runCatching { Printer.fromJsonObject(arr.getJSONObject(index)) }.getOrNull()
+            }
+            require(list.isNotEmpty()) { "PrintersConfig requires at least one valid printer" }
+            val requestedActiveId = obj.getString("activeId")
+            val resolvedActiveId = requestedActiveId.takeIf { id -> list.any { it.id == id } } ?: list.first().id
+            return PrintersConfig(printers = list, activeId = resolvedActiveId)
         }
     }
 }

@@ -23,6 +23,12 @@ import androidx.compose.ui.window.DialogProperties
 import com.u1.slicer.data.CanonicalFilamentList
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentSource
+import com.u1.slicer.network.NozzleSide
+
+internal fun shouldShowFilamentMappingNickname(
+    showNicknameInTitle: Boolean,
+    activeNickname: String,
+): Boolean = showNicknameInTitle && activeNickname.isNotBlank()
 
 /**
  * Phase 2.4 — print-time **Filament mapping** dialog.
@@ -90,10 +96,18 @@ fun FilamentMappingDialog(
      * and duplicate-slot overlap chip are unchanged.
      */
     physicalSlotSpace: Boolean = false,
+    /** Required H2D nozzle side per visible row. Empty keeps legacy behaviour. */
+    requiredNozzleSides: List<NozzleSide> = emptyList(),
+    /** Live tray-to-nozzle topology keyed by the MQTT/AMS slot index. */
+    slotNozzleRoutes: Map<Int, BambuSlotNozzleRoute> = emptyMap(),
     onConfirm: (List<Int>) -> Unit,
     onDismiss: () -> Unit,
     activeNickname: String = "",
     showNicknameInTitle: Boolean = false,
+    title: String = "Filament mapping",
+    supportingText: String? = null,
+    confirmLabel: String = "Send to Printer",
+    invalidMappingMessage: ((List<Int>) -> String?)? = null,
 ) {
     // M3 from post-Buzz code review (2026-04-30): when [plateFileIndices] is
     // supplied it MUST be the same size as [canonicalList.filaments], because
@@ -104,14 +118,22 @@ fun FilamentMappingDialog(
         "FilamentMappingDialog: plateFileIndices.size (${plateFileIndices?.size}) " +
             "must match canonicalList.size (${canonicalList.size})"
     }
-    val mapping = remember(canonicalList, extruderPresets) {
+    val mapping = remember(canonicalList, extruderPresets, initialMapping, requiredNozzleSides, slotNozzleRoutes) {
         val seed = if (initialMapping != null && initialMapping.size == canonicalList.size) {
             initialMapping
+        } else if (requiredNozzleSides.isNotEmpty()) {
+            autoSuggestSideAwareMapping(
+                canonicalList = canonicalList,
+                extruderPresets = extruderPresets,
+                requiredNozzleSides = requiredNozzleSides,
+                slotNozzleRoutes = slotNozzleRoutes,
+            )
         } else {
             autoSuggestMapping(canonicalList, extruderPresets)
         }
         seed.toMutableStateList()
     }
+    val validationMessage = invalidMappingMessage?.invoke(mapping.toList())
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -129,11 +151,11 @@ fun FilamentMappingDialog(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    "Filament mapping",
+                    title,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                 )
-                if (showNicknameInTitle && activeNickname.isNotBlank()) {
+                if (shouldShowFilamentMappingNickname(showNicknameInTitle, activeNickname)) {
                     Text(
                         "Send to $activeNickname",
                         style = MaterialTheme.typography.bodySmall,
@@ -142,7 +164,9 @@ fun FilamentMappingDialog(
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    when {
+                    supportingText ?: when {
+                        requiredNozzleSides.isNotEmpty() ->
+                            "Map each filament to an AMS or external spool that can feed its H2D nozzle."
                         physicalSlotSpace ->
                             "Map each printed extruder to a physical nozzle."
                         canonicalList.size == 1 ->
@@ -156,7 +180,13 @@ fun FilamentMappingDialog(
                 Spacer(Modifier.height(12.dp))
 
                 LazyColumn(
-                    modifier = Modifier.heightIn(max = 360.dp),
+                    // Keep one- and two-filament H2D mappings compact. The
+                    // previous max-height-only modifier made LazyColumn take
+                    // the full 360dp allowance even when it contained one
+                    // row, leaving a large empty block in the upload dialog.
+                    modifier = Modifier
+                        .wrapContentHeight()
+                        .heightIn(max = 360.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     itemsIndexed(canonicalList.filaments) { idx, entry ->
@@ -201,6 +231,8 @@ fun FilamentMappingDialog(
                             sourceLabel = sourceShortLabel(entry.source),
                             extruderPresets = extruderPresets,
                             selectedSlot = mapping.getOrElse(idx) { 0 },
+                            requiredNozzleSide = requiredNozzleSides.getOrElse(idx) { NozzleSide.UNKNOWN },
+                            slotNozzleRoutes = slotNozzleRoutes,
                             onSlotPicked = { slot ->
                                 if (idx < mapping.size) mapping[idx] = slot
                             },
@@ -249,7 +281,16 @@ fun FilamentMappingDialog(
                 // Auto-suggest reset
                 OutlinedButton(
                     onClick = {
-                        val fresh = autoSuggestMapping(canonicalList, extruderPresets)
+                        val fresh = if (requiredNozzleSides.isNotEmpty()) {
+                            autoSuggestSideAwareMapping(
+                                canonicalList = canonicalList,
+                                extruderPresets = extruderPresets,
+                                requiredNozzleSides = requiredNozzleSides,
+                                slotNozzleRoutes = slotNozzleRoutes,
+                            )
+                        } else {
+                            autoSuggestMapping(canonicalList, extruderPresets)
+                        }
                         mapping.clear()
                         mapping.addAll(fresh)
                     },
@@ -267,11 +308,29 @@ fun FilamentMappingDialog(
 
                 Spacer(Modifier.height(12.dp))
 
+                if (validationMessage != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            validationMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
+
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = { onConfirm(mapping.toList()) }) {
-                        Text("Send to Printer")
+                    Button(
+                        onClick = { onConfirm(mapping.toList()) },
+                        enabled = validationMessage == null,
+                    ) {
+                        Text(confirmLabel)
                     }
                 }
             }
@@ -291,6 +350,8 @@ private fun FilamentMappingRow(
     sourceLabel: String?,
     extruderPresets: List<ExtruderPreset>,
     selectedSlot: Int,
+    requiredNozzleSide: NozzleSide = NozzleSide.UNKNOWN,
+    slotNozzleRoutes: Map<Int, BambuSlotNozzleRoute> = emptyMap(),
     onSlotPicked: (Int) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -313,6 +374,8 @@ private fun FilamentMappingRow(
     val mismatch = slicedWithMaterial != null
         && slotMaterial != null
         && !slicedWithMaterial.equals(slotMaterial, ignoreCase = true)
+    val selectedRoute = slotNozzleRoutes[selectedSlot]
+    val nozzleMismatch = !isBambuSlotCompatibleWithNozzle(requiredNozzleSide, selectedRoute)
 
     Column(
         modifier = Modifier
@@ -338,12 +401,20 @@ private fun FilamentMappingRow(
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
         )
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                // B144: a physical-slot row addresses nozzle E<n>, not a file filament.
-                if (physicalSlotSpace) "E${fileIndex + 1}" else "Filament ${fileIndex + 1}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    // B144: a physical-slot row addresses nozzle E<n>, not a file filament.
+                    if (physicalSlotSpace) "E${fileIndex + 1}" else "Filament ${fileIndex + 1}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (requiredNozzleSide != NozzleSide.UNKNOWN) {
+                    NozzleSidePill(requiredNozzleSide)
+                }
+            }
             Text(
                 fileColor.uppercase(),
                 style = MaterialTheme.typography.bodySmall,
@@ -361,7 +432,15 @@ private fun FilamentMappingRow(
 
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
                 OutlinedTextField(
-                    value = "${selectedPreset?.label ?: "E1"} · ${selectedPreset?.materialType ?: "PLA"}",
+                    value = buildString {
+                        append(selectedPreset?.label ?: "E1")
+                        append(" · ")
+                        append(selectedPreset?.materialType ?: "PLA")
+                        selectedRoute?.takeIf { it.side != NozzleSide.UNKNOWN || it.switchable }?.let { route ->
+                            append(" · ")
+                            append(if (route.switchable) "FTS" else nozzleSideLabel(route.side).removeSuffix(" nozzle"))
+                        }
+                    },
                     onValueChange = {},
                     readOnly = true,
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
@@ -375,12 +454,17 @@ private fun FilamentMappingRow(
                                 )
                         )
                     },
-                    modifier = Modifier.menuAnchor().width(150.dp),
+                    // Share the remaining row width instead of forcing a fixed
+                    // 190dp field; the fixed width made the H2D side labels
+                    // wrap into a narrow vertical column on phone screens.
+                    modifier = Modifier.menuAnchor().weight(1f),
                     textStyle = MaterialTheme.typography.bodySmall,
                     singleLine = true
                 )
                 ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                     extruderPresets.forEach { preset ->
+                        val route = slotNozzleRoutes[preset.index]
+                        val compatible = isBambuSlotCompatibleWithNozzle(requiredNozzleSide, route)
                         DropdownMenuItem(
                             text = {
                                 Row(
@@ -399,12 +483,19 @@ private fun FilamentMappingRow(
                                             )
                                     )
                                     Text(
-                                        "${preset.label} · ${preset.materialType}",
+                                        buildString {
+                                            append("${preset.label} · ${preset.materialType}")
+                                            route?.takeIf { it.side != NozzleSide.UNKNOWN || it.switchable }?.let {
+                                                append(" · ")
+                                                append(if (it.switchable) "FTS" else nozzleSideLabel(it.side).removeSuffix(" nozzle"))
+                                            }
+                                        },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurface,
                                     )
                                 }
                             },
+                            enabled = compatible,
                             onClick = { onSlotPicked(preset.index); expanded = false }
                         )
                     }
@@ -425,6 +516,37 @@ private fun FilamentMappingRow(
                 )
             }
         }
+        if (nozzleMismatch) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(6.dp),
+            ) {
+                Text(
+                    "${selectedPreset?.label ?: "Selected slot"} feeds the " +
+                        "${nozzleSideLabel(selectedRoute?.side ?: NozzleSide.UNKNOWN).lowercase()}; " +
+                        "this filament is assigned to the ${nozzleSideLabel(requiredNozzleSide).lowercase()}.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NozzleSidePill(side: NozzleSide) {
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+        shape = RoundedCornerShape(50),
+    ) {
+        Text(
+            nozzleSideLabel(side),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            fontSize = 9.sp,
+        )
     }
 }
 
@@ -498,8 +620,12 @@ fun UploadConfirmationDialog(
     modelName: String? = null,
     slicedMaterials: List<String>? = null,
     physicalToolSpace: Boolean = false,
+    requiredNozzleSides: List<NozzleSide> = emptyList(),
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    title: String = "Upload to printer",
+    noteText: String? = null,
+    confirmLabel: String = "Upload",
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -514,7 +640,7 @@ fun UploadConfirmationDialog(
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    "Upload to printer",
+                    title,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                 )
@@ -547,11 +673,19 @@ fun UploadConfirmationDialog(
                                     .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
                             )
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    if (physicalToolSpace) "E${displayFileIndex + 1}" else "Filament ${displayFileIndex + 1}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        if (physicalToolSpace) "E${displayFileIndex + 1}" else "Filament ${displayFileIndex + 1}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    requiredNozzleSides.getOrNull(idx)
+                                        ?.takeIf { it != NozzleSide.UNKNOWN }
+                                        ?.let { NozzleSidePill(it) }
+                                }
                                 Text(
                                     // Show what the G-code was sliced with (slot
                                     // preset / override wins), matching the
@@ -573,7 +707,7 @@ fun UploadConfirmationDialog(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        if (physicalToolSpace) {
+                        noteText ?: if (physicalToolSpace) {
                             "This file already contains E-slot tool changes. Keep the printer's filament assignment matched to these slots when starting it from storage."
                         } else {
                             "When you start this print on the printer, it will ask you to assign each colour to a nozzle."
@@ -588,7 +722,7 @@ fun UploadConfirmationDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = onConfirm) { Text("Upload") }
+                    Button(onClick = onConfirm) { Text(confirmLabel) }
                 }
             }
         }

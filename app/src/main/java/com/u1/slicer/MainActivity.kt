@@ -45,22 +45,32 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.core.content.pm.PackageInfoCompat
+import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.ModelInfo
 import com.u1.slicer.data.MixedFilamentDefinitionSource
 import com.u1.slicer.data.MixedFilamentSliceSummary
+import com.u1.slicer.data.Printer
+import com.u1.slicer.data.PrinterKind
 import com.u1.slicer.data.resolveImportedMixRecipeDisplaySummary
+import com.u1.slicer.data.defaultExtruderPresets
 import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.WipeTowerDepthEstimator
+import com.u1.slicer.bambu.resolveTargetedSliceConfig
 import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
+import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.printer.PrinterViewModel
+import com.u1.slicer.slice.SliceArtifact
+import com.u1.slicer.slice.isCompatibleWith
 import com.u1.slicer.ui.JobsScreen
 import com.u1.slicer.ui.PrinterScreen
 import com.u1.slicer.ui.SettingsScreen
 import com.u1.slicer.viewer.MeshData
 import com.u1.slicer.viewer.NativePreviewMesh
+import com.u1.slicer.slice.capabilityProfileFor
+import com.u1.slicer.slice.SlicerTarget
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -155,7 +165,7 @@ class MainActivity : ComponentActivity() {
         val summary = viewModel.buildModelDebugSummary() ?: return
         val clipboard = getSystemService(android.content.ClipboardManager::class.java)
         clipboard.setPrimaryClip(
-            android.content.ClipData.newPlainText("U1 Slicer Model Debug Summary", summary)
+            android.content.ClipData.newPlainText("Your One Slicer Model Debug Summary", summary)
         )
         android.widget.Toast.makeText(this, "Debug summary copied", android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -515,6 +525,9 @@ class MainActivity : ComponentActivity() {
                 var pendingMappingSend by remember {
                     mutableStateOf<PendingMappingSend?>(null)
                 }
+                var pendingBambuSend by remember {
+                    mutableStateOf<PendingBambuSend?>(null)
+                }
                 // Bug fix (2026-05-01): hoist the IO scope used by the
                 // FilamentMappingDialog onConfirm out of the
                 // `pendingMappingSend?.let { ... }` gate. Pre-fix the scope
@@ -533,6 +546,8 @@ class MainActivity : ComponentActivity() {
                 // makes the IO work survive the dialog dismissal.
                 val sendActionScope = rememberCoroutineScope()
                 val appSlicerState by viewModel.state.collectAsState()
+                val previewActivePrinter by printerViewModel.activePrinter.collectAsState()
+                val latestSliceArtifact by viewModel.latestSliceArtifact.collectAsState()
                 // F88: collect model name so Save/Share G-code can suggest a meaningful filename.
                 val currentModelFileName by viewModel.modelFileName.collectAsState()
                 val sharedPreviewModelKey = when (val s = appSlicerState) {
@@ -608,6 +623,7 @@ class MainActivity : ComponentActivity() {
                     prepareContent = {
                         PrepareScreen(
                             viewModel = viewModel,
+                            printerViewModel = printerViewModel,
                             onPickFile = { filePickerLauncher.launch(pickFileMimeTypes) },
                             onAddFileToBed = { addToBedLauncher.launch(pickFileMimeTypes) },
                             onBrowseMakerWorld = { navController.navigate(Routes.MAKERWORLD_BROWSER) },
@@ -637,21 +653,62 @@ class MainActivity : ComponentActivity() {
                     previewContent = {
                         PreviewScreen(
                             viewModel = viewModel,
+                            printerViewModel = printerViewModel,
                             onNavigatePrepare = { navigateTab(Routes.PREPARE) },
                             onNavigatePreview = { },
                             onNavigateSettings = { navigateTab(Routes.SETTINGS) },
                             onNavigatePrinter = { navigateTab(Routes.PRINTER) },
                             onSendToPrinter = { gcodePath ->
-                                pendingMappingSend = PendingMappingSend(
-                                    gcodePath = gcodePath,
-                                    action = PendingMappingSend.Action.PrintAndUpload,
+                                val embeddedProject = viewModel.getEmbeddedBambuGcodeProject()
+                                val bambuProject = resolvePreviewBambuProject(
+                                    latestSliceArtifact = latestSliceArtifact,
+                                    fallbackProject = embeddedProject,
+                                    preferEmbeddedProject = gcodePath.isBlank(),
                                 )
+                                val selectedSliceArtifact = latestSliceArtifact.takeIf {
+                                    bambuProject?.source == PreviewBambuProject.Source.GeneratedSliceArtifact
+                                }
+                                if (!canSendSliceArtifactToPrinter(selectedSliceArtifact, previewActivePrinter)) {
+                                    printerViewModel.reportSendError("This slice was created for a different printer")
+                                } else if (previewActivePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN &&
+                                    bambuProject != null
+                                ) {
+                                    pendingBambuSend = PendingBambuSend(
+                                        project = bambuProject,
+                                        action = PendingBambuSend.Action.PrintAndUpload,
+                                    )
+                                } else {
+                                    pendingMappingSend = PendingMappingSend(
+                                        gcodePath = gcodePath,
+                                        action = PendingMappingSend.Action.PrintAndUpload,
+                                    )
+                                }
                             },
                             onUploadOnly = { gcodePath ->
-                                pendingMappingSend = PendingMappingSend(
-                                    gcodePath = gcodePath,
-                                    action = PendingMappingSend.Action.UploadOnly,
+                                val embeddedProject = viewModel.getEmbeddedBambuGcodeProject()
+                                val bambuProject = resolvePreviewBambuProject(
+                                    latestSliceArtifact = latestSliceArtifact,
+                                    fallbackProject = embeddedProject,
+                                    preferEmbeddedProject = gcodePath.isBlank(),
                                 )
+                                val selectedSliceArtifact = latestSliceArtifact.takeIf {
+                                    bambuProject?.source == PreviewBambuProject.Source.GeneratedSliceArtifact
+                                }
+                                if (!canSendSliceArtifactToPrinter(selectedSliceArtifact, previewActivePrinter)) {
+                                    printerViewModel.reportSendError("This slice was created for a different printer")
+                                } else if (previewActivePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN &&
+                                    bambuProject != null
+                                ) {
+                                    pendingBambuSend = PendingBambuSend(
+                                        project = bambuProject,
+                                        action = PendingBambuSend.Action.UploadOnly,
+                                    )
+                                } else {
+                                    pendingMappingSend = PendingMappingSend(
+                                        gcodePath = gcodePath,
+                                        action = PendingMappingSend.Action.UploadOnly,
+                                    )
+                                }
                             },
                             onNavigateJobs = { navigateTab(Routes.JOBS) },
                             onNavigateGcodeViewer3D = { navController.navigate(Routes.GCODE_VIEWER_3D) },
@@ -731,6 +788,198 @@ class MainActivity : ComponentActivity() {
                 // Phase 2.4 — Filament mapping dialog interposed between
                 // Send and the actual upload. Always shown when the user
                 // taps Send (PrintAndUpload) or Upload Only.
+                pendingBambuSend?.let { pending ->
+                    val canonicalState by produceState<CanonicalLookup>(
+                        initialValue = CanonicalLookup.Loading,
+                        key1 = pending.project.projectFile.absolutePath,
+                        key2 = pending.project.selectedPlateId,
+                    ) {
+                        val list = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            viewModel.getCanonicalFilamentList()
+                        }
+                        value = if (list != null) CanonicalLookup.Present(list) else CanonicalLookup.Absent
+                    }
+                    val overrides by viewModel.filamentOverrides.collectAsState()
+                    val threeMfInfo by viewModel.threeMfInfo.collectAsState()
+                    val extruderPresets by viewModel.extruderPresets.collectAsState()
+                    val activeNickname by printerViewModel.activeNickname.collectAsState()
+                    val printerCount by printerViewModel.printerCount.collectAsState()
+                    val printerFilamentSlots by printerViewModel.printerFilamentSlots.collectAsState()
+                    val livePrinterStatus by printerViewModel.status.collectAsState()
+                    val canonical = remember(canonicalState, overrides) {
+                        (canonicalState as? CanonicalLookup.Present)?.let { p ->
+                            com.u1.slicer.data.applyOverridesToCanonical(
+                                p.list,
+                                overrides.mapValues { (_, ov) ->
+                                    ov.color to ov.materialType
+                                },
+                            )
+                        }
+                    }
+                    val plateNarrowed = remember(canonical, threeMfInfo, pending.project.selectedPlateId, pending.project.sourceFilamentIndices) {
+                        val full = canonical ?: return@remember null
+                        val plateFileIndices = pending.project.sourceFilamentIndices
+                            ?.takeIf { it.isNotEmpty() }
+                            ?: computePlateFileIndices(
+                                threeMfInfo,
+                                pending.project.selectedPlateId,
+                                full.size,
+                                perExtruderFilamentMm = null,
+                            )
+                        when {
+                            plateFileIndices == null || plateFileIndices.size == full.size ->
+                                full to (0 until full.size).toList()
+                            else -> {
+                                val filtered = plateFileIndices.mapNotNull { idx ->
+                                    full.filaments.getOrNull(idx)
+                                }
+                                if (filtered.size == plateFileIndices.size) {
+                                    full.copy(filaments = filtered) to plateFileIndices
+                                } else {
+                                    full to (0 until full.size).toList()
+                                }
+                            }
+                        }
+                    }
+                    val bambuSlotPresets = remember(printerFilamentSlots, extruderPresets) {
+                        buildBambuSlotPresets(printerFilamentSlots, extruderPresets)
+                    }
+                    val bambuSlotNozzleRoutes = remember(printerFilamentSlots) {
+                        buildBambuSlotNozzleRoutes(printerFilamentSlots)
+                    }
+                    when (canonicalState) {
+                        is CanonicalLookup.Loading -> Unit
+                        is CanonicalLookup.Present -> {
+                            if (canonical != null && plateNarrowed != null) {
+                                val (narrowedList, plateFileIndices) = plateNarrowed
+                                val requiredNozzleSides = remember(
+                                    pending.project.target,
+                                    pending.project.filamentNozzleMap,
+                                    narrowedList.size,
+                                    plateFileIndices,
+                                ) {
+                                    if (pending.project.target == SlicerTarget.BambuH2D) {
+                                        h2dRequiredNozzleSides(
+                                            pending.project.filamentNozzleMap,
+                                            narrowedList.size,
+                                            projectFilamentIndices = plateFileIndices.takeIf {
+                                                pending.project.source == PreviewBambuProject.Source.EmbeddedGcodeProject
+                                            },
+                                        )
+                                    } else {
+                                        emptyList()
+                                    }
+                                }
+                                when (pending.action) {
+                                    PendingBambuSend.Action.UploadOnly -> {
+                                        com.u1.slicer.ui.UploadConfirmationDialog(
+                                            canonicalList = narrowedList,
+                                            plateFileIndices = plateFileIndices,
+                                            modelName = pending.project.displayName,
+                                            slicedMaterials = viewModel.sliceTimeMaterials(canonical, null),
+                                            requiredNozzleSides = requiredNozzleSides,
+                                            onConfirm = {
+                                                pendingBambuSend = null
+                                                navigateTab(Routes.PRINTER)
+                                                printerViewModel.beginSendPreparing()
+                                                printerViewModel.sendBambuProjectUploadOnly(
+                                                    projectFile = pending.project.projectFile,
+                                                    modelName = pending.project.displayName,
+                                                )
+                                            },
+                                            onDismiss = { pendingBambuSend = null },
+                                            title = "Upload Pre-sliced Bambu Project",
+                                            noteText = if (requiredNozzleSides.isNotEmpty()) {
+                                                "This uploads without starting a print. The H2D left/right nozzle assignment is embedded in the project."
+                                            } else {
+                                                "This uploads the ready-to-print 3MF to printer storage without starting a print."
+                                            },
+                                            confirmLabel = "Upload 3MF",
+                                        )
+                                    }
+                                    PendingBambuSend.Action.PrintAndUpload -> {
+                                        com.u1.slicer.ui.FilamentMappingDialog(
+                                            canonicalList = narrowedList,
+                                            extruderPresets = bambuSlotPresets,
+                                            plateFileIndices = plateFileIndices,
+                                            requiredNozzleSides = requiredNozzleSides,
+                                            slotNozzleRoutes = bambuSlotNozzleRoutes,
+                                            activeNickname = activeNickname,
+                                            showNicknameInTitle = printerCount > 1,
+                                            onConfirm = { mapping ->
+                                                pendingBambuSend = null
+                                                navigateTab(Routes.PRINTER)
+                                                printerViewModel.beginSendPreparing()
+                                                printerViewModel.sendBambuProjectAndPrint(
+                                                    projectFile = pending.project.projectFile,
+                                                    modelName = pending.project.displayName,
+                                                    plateId = pending.project.selectedPlateId,
+                                                    amsMapping = expandBambuProjectAmsMapping(
+                                                        mapping = mapping,
+                                                        plateFileIndices = plateFileIndices,
+                                                        source = pending.project.source,
+                                                    ),
+                                                    useAms = true,
+                                                )
+                                            },
+                                            onDismiss = { pendingBambuSend = null },
+                                            title = "Bambu AMS Mapping",
+                                            supportingText = if (requiredNozzleSides.isNotEmpty()) {
+                                                "Each filament must use a tray feeding its assigned H2D nozzle. FTS-routed and unknown-topology slots remain selectable."
+                                            } else {
+                                                "This uploads the ready-to-print 3MF and starts plate ${pending.project.selectedPlateId} on the printer."
+                                            },
+                                            confirmLabel = "Upload & Start Print",
+                                            invalidMappingMessage = { mapping ->
+                                                if (pending.project.requiresFilamentTrackSwitch &&
+                                                    !livePrinterStatus.filamentTrackSwitch.installed
+                                                ) {
+                                                    "This project uses dynamic H2D Filament Track Switch routing, " +
+                                                        "but the printer did not report an installed FTS."
+                                                } else if (pending.project.requiresFilamentTrackSwitch &&
+                                                    mapping.any { slot ->
+                                                        bambuSlotNozzleRoutes[slot]?.switchable != true
+                                                    }
+                                                ) {
+                                                    "Dynamic H2D routing must use trays reported through the FTS; " +
+                                                        "external or fixed-side trays cannot serve this project."
+                                                } else {
+                                                    validateBambuAmsMapping(
+                                                        mapping = mapping,
+                                                        extruderPresets = bambuSlotPresets,
+                                                        requiredNozzleSides = requiredNozzleSides,
+                                                        slotNozzleRoutes = bambuSlotNozzleRoutes,
+                                                    )
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        is CanonicalLookup.Absent -> {
+                            when (pending.action) {
+                                PendingBambuSend.Action.UploadOnly -> {
+                                    pendingBambuSend = null
+                                    navigateTab(Routes.PRINTER)
+                                    printerViewModel.beginSendPreparing()
+                                    printerViewModel.sendBambuProjectUploadOnly(
+                                        projectFile = pending.project.projectFile,
+                                        modelName = pending.project.displayName,
+                                    )
+                                }
+                                PendingBambuSend.Action.PrintAndUpload -> {
+                                    pendingBambuSend = null
+                                    navigateTab(Routes.PRINTER)
+                                    printerViewModel.reportSendError(
+                                        "Couldn't read filament data from the Bambu project"
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 pendingMappingSend?.let { pending ->
                     // Phase 2 (2026-04-28, revised after adversarial review)
                     // — three-state canonical lookup. The lookup runs on
@@ -1109,6 +1358,13 @@ internal data class PendingMappingSend(
     enum class Action { PrintAndUpload, UploadOnly }
 }
 
+internal data class PendingBambuSend(
+    val project: PreviewBambuProject,
+    val action: Action,
+) {
+    enum class Action { PrintAndUpload, UploadOnly }
+}
+
 /**
  * Phase 2 (2026-04-28, post-adversarial-review) — three-state canonical
  * filament list lookup for the Send dialog. Distinguishes "IO in flight"
@@ -1122,6 +1378,185 @@ internal sealed class CanonicalLookup {
     object Loading : CanonicalLookup()
     object Absent : CanonicalLookup()
     data class Present(val list: com.u1.slicer.data.CanonicalFilamentList) : CanonicalLookup()
+}
+
+internal fun buildBambuSlotPresets(
+    printerSlots: List<FilamentSlot>,
+    fallbackPresets: List<ExtruderPreset>,
+): List<ExtruderPreset> {
+    val base = if (fallbackPresets.isNotEmpty()) fallbackPresets else defaultExtruderPresets()
+    if (printerSlots.isEmpty()) return base
+    return printerSlots.sortedBy { it.index }.map { slot ->
+        val fallback = base.firstOrNull { it.index == slot.index } ?: ExtruderPreset(
+            index = slot.index,
+            color = ExtruderPreset.DEFAULT_COLORS.getOrElse(slot.index) { "#FFFFFF" },
+        )
+        fallback.copy(
+            color = slot.color.ifBlank { fallback.color },
+            materialType = slot.materialType.ifBlank {
+                if (slot.loaded) fallback.materialType else "Empty"
+            },
+            displayLabel = slot.label,
+        )
+    }
+}
+
+/**
+ * Filament choices used by Prepare's "use printer spools" action.
+ *
+ * Bambu tray route IDs are not slicer tool IDs: they can be sparse and can
+ * extend well beyond four when additional AMS, AMS-HT, or external spools are
+ * present. Keep those live routes out of the slicer's logical tool presets and
+ * expose only currently loaded trays as sources for colour/material overrides.
+ * Moonraker/U1 retains its fixed four-preset behaviour.
+ */
+internal fun buildPrepareSyncPresets(
+    activePrinterKind: PrinterKind?,
+    printerSlots: List<FilamentSlot>,
+    slicerPresets: List<ExtruderPreset>,
+): List<ExtruderPreset> = if (activePrinterKind == PrinterKind.BAMBU_LAN) {
+    val loadedIndices = printerSlots.asSequence()
+        .filter { it.loaded }
+        .map { it.index }
+        .toSet()
+    buildBambuSlotPresets(printerSlots, slicerPresets)
+        .filter { it.index in loadedIndices }
+} else {
+    slicerPresets
+}
+
+internal fun buildBambuSlotNozzleRoutes(
+    printerSlots: List<FilamentSlot>,
+): Map<Int, com.u1.slicer.ui.BambuSlotNozzleRoute> = printerSlots.associate { slot ->
+    slot.index to com.u1.slicer.ui.BambuSlotNozzleRoute(
+        side = slot.nozzleSide,
+        switchable = slot.routing == com.u1.slicer.network.FilamentRouting.SWITCHABLE,
+    )
+}
+
+internal fun h2dRequiredNozzleSides(
+    filamentNozzleMap: List<Int>,
+    visibleFilamentCount: Int,
+    projectFilamentIndices: List<Int>? = null,
+): List<com.u1.slicer.network.NozzleSide> = if (filamentNozzleMap.isEmpty()) {
+    emptyList()
+} else {
+    List(visibleFilamentCount) { index ->
+        val projectIndex = projectFilamentIndices?.getOrNull(index) ?: index
+        com.u1.slicer.ui.h2dAssignmentNozzleSide(filamentNozzleMap.getOrElse(projectIndex) { 0 })
+    }
+}
+
+internal fun canBambuMapAndPrint(
+    hasProjectFile: Boolean,
+    supportsUpload: Boolean,
+    supportsStartProject: Boolean,
+    hasLiveAmsSlots: Boolean,
+): Boolean = hasProjectFile && supportsUpload && supportsStartProject && hasLiveAmsSlots
+
+internal fun canSendSliceArtifactToPrinter(
+    artifact: SliceArtifact?,
+    printer: Printer?,
+): Boolean = artifact == null || artifact.isCompatibleWith(printer)
+
+internal fun validateBambuAmsMapping(
+    mapping: List<Int>,
+    extruderPresets: List<ExtruderPreset>,
+    requiredNozzleSides: List<com.u1.slicer.network.NozzleSide> = emptyList(),
+    slotNozzleRoutes: Map<Int, com.u1.slicer.ui.BambuSlotNozzleRoute> = emptyMap(),
+): String? {
+    val emptyPreset = mapping.mapNotNull { slot ->
+        extruderPresets.firstOrNull { it.index == slot }
+    }.firstOrNull { it.materialType.equals("Empty", ignoreCase = true) }
+    emptyPreset?.let {
+        val slotLabel = it.displayLabel ?: "AMS ${it.index + 1}"
+        return "$slotLabel is empty. Load filament before starting the print."
+    }
+    mapping.forEachIndexed { filamentIndex, slotIndex ->
+        val required = requiredNozzleSides.getOrNull(filamentIndex)
+            ?: com.u1.slicer.network.NozzleSide.UNKNOWN
+        val route = slotNozzleRoutes[slotIndex]
+        if (!com.u1.slicer.ui.isBambuSlotCompatibleWithNozzle(required, route)) {
+            val slotLabel = extruderPresets.firstOrNull { it.index == slotIndex }?.label
+                ?: "AMS ${slotIndex + 1}"
+            return "Filament ${filamentIndex + 1} is assigned to the " +
+                "${com.u1.slicer.ui.nozzleSideLabel(required).lowercase()}, but $slotLabel feeds the " +
+                "${com.u1.slicer.ui.nozzleSideLabel(route?.side ?: com.u1.slicer.network.NozzleSide.UNKNOWN).lowercase()}."
+        }
+    }
+    return null
+}
+
+internal fun expandBambuProjectAmsMapping(
+    mapping: List<Int>,
+    plateFileIndices: List<Int>,
+    source: PreviewBambuProject.Source,
+): List<Int> {
+    if (source != PreviewBambuProject.Source.EmbeddedGcodeProject) return mapping
+    if (mapping.size != plateFileIndices.size || plateFileIndices.any { it < 0 }) return mapping
+    val expanded = MutableList((plateFileIndices.maxOrNull() ?: -1) + 1) { -1 }
+    plateFileIndices.forEachIndexed { compactIndex, projectIndex ->
+        expanded[projectIndex] = mapping[compactIndex]
+    }
+    return expanded
+}
+
+internal data class PreviewBambuProject(
+    val projectFile: java.io.File,
+    val displayName: String,
+    val selectedPlateId: Int,
+    val source: Source,
+    val sourceFilamentIndices: List<Int>? = null,
+    val filamentNozzleMap: List<Int> = emptyList(),
+    val target: SlicerTarget? = null,
+    val requiresFilamentTrackSwitch: Boolean = false,
+) {
+    enum class Source {
+        GeneratedSliceArtifact,
+        EmbeddedGcodeProject,
+    }
+}
+
+internal fun resolvePreviewBambuProject(
+    latestSliceArtifact: SliceArtifact?,
+    fallbackProject: com.u1.slicer.printer.BambuProjectDescriptor?,
+    preferEmbeddedProject: Boolean = false,
+): PreviewBambuProject? {
+    if (preferEmbeddedProject && fallbackProject != null) {
+        return PreviewBambuProject(
+            projectFile = fallbackProject.sourceFile,
+            displayName = fallbackProject.displayName,
+            selectedPlateId = fallbackProject.selectedPlateId,
+            source = PreviewBambuProject.Source.EmbeddedGcodeProject,
+            filamentNozzleMap = fallbackProject.filamentNozzleMap,
+            target = if (fallbackProject.isH2D) SlicerTarget.BambuH2D else null,
+            requiresFilamentTrackSwitch = fallbackProject.requiresFilamentTrackSwitch,
+        )
+    }
+    return when (latestSliceArtifact) {
+    is SliceArtifact.BambuProjectArtifact -> PreviewBambuProject(
+        projectFile = latestSliceArtifact.projectFile,
+        displayName = latestSliceArtifact.sourceModelName.ifBlank {
+            latestSliceArtifact.projectFile.name
+        },
+        selectedPlateId = latestSliceArtifact.plateId,
+        source = PreviewBambuProject.Source.GeneratedSliceArtifact,
+        sourceFilamentIndices = latestSliceArtifact.sourceFilamentIndices,
+        filamentNozzleMap = latestSliceArtifact.filamentNozzleMap,
+        target = latestSliceArtifact.target,
+    )
+    else -> fallbackProject?.let {
+        PreviewBambuProject(
+            projectFile = it.sourceFile,
+            displayName = it.displayName,
+            selectedPlateId = it.selectedPlateId,
+            source = PreviewBambuProject.Source.EmbeddedGcodeProject,
+            filamentNozzleMap = it.filamentNozzleMap,
+            target = if (it.isH2D) SlicerTarget.BambuH2D else null,
+            requiresFilamentTrackSwitch = it.requiresFilamentTrackSwitch,
+        )
+    }
+}
 }
 
 /**
@@ -1384,6 +1819,7 @@ fun RowScope.U1BottomNavItems(
 @Composable
 fun PrepareScreen(
     viewModel: SlicerViewModel,
+    printerViewModel: com.u1.slicer.printer.PrinterViewModel,
     onPickFile: () -> Unit,
     onAddFileToBed: () -> Unit = {},
     onBrowseMakerWorld: () -> Unit = {},
@@ -1414,9 +1850,20 @@ fun PrepareScreen(
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
+    val activePrinter by printerViewModel.activePrinter.collectAsState()
+    val effectiveSliceTarget by viewModel.effectiveSliceTarget.collectAsState()
+    val h2dNozzleAssignments by viewModel.h2dFilamentNozzleAssignments.collectAsState()
     val anyMixAssigned by viewModel.anyMixAssigned.collectAsState()
     val filaments by viewModel.filaments.collectAsState(initial = emptyList())
     val extruderPresets by viewModel.extruderPresets.collectAsState()
+    val printerFilamentSlots by printerViewModel.printerFilamentSlots.collectAsState()
+    val prepareSyncPresets = remember(activePrinter?.kind, printerFilamentSlots, extruderPresets) {
+        buildPrepareSyncPresets(
+            activePrinterKind = activePrinter?.kind,
+            printerSlots = printerFilamentSlots,
+            slicerPresets = extruderPresets,
+        )
+    }
     val copyCount by viewModel.copyCount.collectAsState()
     val copyBedWarning by viewModel.copyBedWarning.collectAsState()
     val modelScale by viewModel.modelScale.collectAsState()
@@ -1453,6 +1900,14 @@ fun PrepareScreen(
         numPhysicalFilaments = extruderPresets.size.coerceAtLeast(4),
     )
     var showImportedRecipeDialog by remember { mutableStateOf(false) }
+    val embeddedGcodeProject = remember(threeMfInfo, currentPlateId, currentModelName) {
+        viewModel.getEmbeddedBambuGcodeProject()
+    }
+    val canUseEmbeddedProject = activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN &&
+        embeddedGcodeProject != null
+    var useEmbeddedProject by remember(embeddedGcodeProject?.sourceFile?.absolutePath, activePrinter?.kind) {
+        mutableStateOf(canUseEmbeddedProject)
+    }
 
     // Plate selector dialogs — mutually exclusive: only one can be shown at a time.
     // If the initial-load selector is open and the user also triggers an add-to-bed
@@ -1495,7 +1950,7 @@ fun PrepareScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("U1 Slicer", fontWeight = FontWeight.Bold)
+                        Text("Your One Slicer", fontWeight = FontWeight.Bold)
                         Text(
                             "☕ Support development",
                             style = MaterialTheme.typography.labelSmall,
@@ -1554,9 +2009,12 @@ fun PrepareScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
                     // Extra top padding when model loaded to make room for the sticky slice button
-                    .padding(top = if (modelLoaded) 72.dp else 16.dp, bottom = 16.dp),
+                .padding(top = if (modelLoaded) 72.dp else 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                    BambuBetaSupportNotice()
+                }
                 if (sessionResumeOffer != null && state is SlicerViewModel.SlicerState.Idle) {
                     SessionResumeBanner(
                         offer = sessionResumeOffer!!,
@@ -1626,6 +2084,14 @@ fun PrepareScreen(
                     }
                     modelLoaded -> {
                         val info = resolvePreparePreviewModelInfo(state, modelInfo)
+                        if (canUseEmbeddedProject) {
+                            BambuProjectModeCard(
+                                selectedEmbeddedProject = useEmbeddedProject,
+                                plateId = embeddedGcodeProject!!.selectedPlateId,
+                                onSelectEmbeddedProject = { useEmbeddedProject = true },
+                                onSelectReslice = { useEmbeddedProject = false },
+                            )
+                        }
                         // Inline 3D model preview
                         val modelPath = viewModel.previewModelPath
                         if (modelPath != null && (
@@ -1694,6 +2160,10 @@ fun PrepareScreen(
                                 val b = f66LoadTimePoses[k] ?: com.u1.slicer.data.PerObjectPose()
                                 v.scaleX != b.scaleX || v.scaleY != b.scaleY || v.scaleZ != b.scaleZ
                             }
+                            val targetMachineConfig = resolveTargetedSliceConfig(
+                                viewModel.effectiveSliceTarget.value,
+                                config,
+                            )
                             InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
@@ -1710,6 +2180,8 @@ fun PrepareScreen(
                                 } else null,
                                 onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
                                     onNavigateModelViewer else ({}),
+                                bedSizeMm = targetMachineConfig.bedSizeX,
+                                bedSizeYMm = targetMachineConfig.bedSizeY,
                                 extruderColors = extruderColors,
                                 extruderMap = viewModel.buildExtruderMap(),
                                 colorMapping = colorMapping,
@@ -1849,6 +2321,8 @@ fun PrepareScreen(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
                             colorMapping = colorMapping,
                             extruderPresets = extruderPresets,
+                            syncFilamentPresets = prepareSyncPresets,
+                            isBambuPrinter = activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN,
                             filaments = filaments,
                             filamentMaterials = filamentMaterials,
                             anyMixAssigned = anyMixAssigned,
@@ -1886,6 +2360,28 @@ fun PrepareScreen(
                                 )
                             },
                         )
+                        if (effectiveSliceTarget == SlicerTarget.BambuH2D) {
+                            val h2dColors = canonicalFilamentList
+                                ?.filaments
+                                ?.map { it.color }
+                                ?.takeIf { it.isNotEmpty() }
+                                ?: threeMfInfo?.detectedColors?.takeIf { it.isNotEmpty() }
+                                ?: listOf(extruderPresets.firstOrNull()?.color ?: "#FFFFFF")
+                            val h2dMaterials = filamentMaterials
+                                .map { it.first }
+                                .takeIf { it.isNotEmpty() }
+                                ?: h2dColors.indices.map { index ->
+                                    val mappedSlot = colorMapping?.getOrNull(index) ?: index
+                                    extruderPresets.firstOrNull { it.index == mappedSlot }?.materialType
+                                        ?: "PLA"
+                                }
+                            com.u1.slicer.ui.H2DNozzleAssignmentCard(
+                                filamentColors = h2dColors,
+                                filamentMaterials = h2dMaterials,
+                                assignments = h2dNozzleAssignments,
+                                onAssignmentsChange = viewModel::setH2DFilamentNozzleAssignments,
+                            )
+                        }
                         // fix35: Smart Paint moved to a top-right overlay icon on InlineModelPreview
                         // (the painted-model inline TextButton previously here is gone).
                         // Scale & copies controls — hidden when an object is selected
@@ -1973,7 +2469,24 @@ fun PrepareScreen(
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                         .align(Alignment.TopCenter)
                 ) {
-                    SliceButton(onClick = {
+                    if (useEmbeddedProject && canUseEmbeddedProject) {
+                        Button(
+                            onClick = onNavigatePreview,
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            shape = RoundedCornerShape(16.dp),
+                        ) {
+                            Icon(Icons.Default.Visibility, null, modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Preview Embedded G-code", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else SliceButton(
+                        enabled = com.u1.slicer.slice.isLocalSliceAvailable(activePrinter),
+                        label = if (com.u1.slicer.slice.isLocalSliceAvailable(activePrinter)) {
+                            "Slice Model"
+                        } else {
+                            "A1 Mini local slicing only"
+                        },
+                        onClick = {
                         val viewer = captureViewer
                         if (viewer != null) {
                             // Navigate only after PixelCopy completes — navigating first can
@@ -1987,7 +2500,8 @@ fun PrepareScreen(
                             viewModel.startSlicing()
                             onNavigatePreview()
                         }
-                    })
+                        },
+                    )
                 }
             }
         }
@@ -2106,7 +2620,7 @@ private fun MakerWorldModeDialog(onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to U1 Slicer.",
+                    "Best for signed-in browsing. Google login works here, and it is the most reliable way to download a 3MF/STL or share a MakerWorld model link back to Your One Slicer.",
                     style = MaterialTheme.typography.bodySmall
                 )
                 HorizontalDivider()
@@ -2130,6 +2644,7 @@ private fun MakerWorldModeDialog(onDismiss: () -> Unit) {
 @Composable
 fun PreviewScreen(
     viewModel: SlicerViewModel,
+    printerViewModel: com.u1.slicer.printer.PrinterViewModel,
     onNavigatePrepare: () -> Unit,
     onNavigatePreview: () -> Unit,
     onNavigateSettings: () -> Unit,
@@ -2153,9 +2668,21 @@ fun PreviewScreen(
     val config by viewModel.config.collectAsState()
     val extruderPresets by viewModel.extruderPresets.collectAsState()
     val sliceStale by viewModel.sliceStale.collectAsState()
+    val activePrinter by printerViewModel.activePrinter.collectAsState()
+    val printerCapabilities by printerViewModel.capabilities.collectAsState()
+    val printerFilamentSlots by printerViewModel.printerFilamentSlots.collectAsState()
+    val effectiveSliceTarget by viewModel.effectiveSliceTarget.collectAsState()
+    val latestSliceArtifact by viewModel.latestSliceArtifact.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
     val previewLayerRange by viewModel.previewLayerRange.collectAsState()
+    val embeddedGcodeProject = remember(activePrinter?.kind, threeMfInfo, viewModel.currentModelPath) {
+        if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+            viewModel.getEmbeddedBambuGcodeProject()
+        } else null
+    }
+    val isBambuEmbeddedGcodePreview = state is SlicerViewModel.SlicerState.ModelLoaded &&
+        embeddedGcodeProject != null
     // B142b: mix slices use physical-slot tool space — palette/summary must follow.
     val sliceMixToolSpace by viewModel.sliceMixToolSpace.collectAsState()
     val slotPaletteWithMixBlends by viewModel.slotPaletteWithMixBlends.collectAsState()
@@ -2165,7 +2692,7 @@ fun PreviewScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("U1 Slicer", fontWeight = FontWeight.Bold)
+                        Text("Your One Slicer", fontWeight = FontWeight.Bold)
                         Text(
                             "☕ Support development",
                             style = MaterialTheme.typography.labelSmall,
@@ -2201,7 +2728,7 @@ fun PreviewScreen(
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         val scrollState = rememberScrollState()
-        val hasPinnedActions = state is SlicerViewModel.SlicerState.SliceComplete
+        val hasPinnedActions = state is SlicerViewModel.SlicerState.SliceComplete || isBambuEmbeddedGcodePreview
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -2212,9 +2739,12 @@ fun PreviewScreen(
                     .fillMaxSize()
                     .verticalScroll(scrollState)
                     .padding(horizontal = 16.dp)
-                    .padding(top = if (hasPinnedActions) 104.dp else 16.dp, bottom = 16.dp),
+                .padding(top = if (hasPinnedActions) 104.dp else 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                    BambuBetaSupportNotice()
+                }
                 when (val s = state) {
                 is SlicerViewModel.SlicerState.Slicing -> {
                     SlicingProgressCard(s.progress, s.stage, onCancel = { viewModel.cancelSlicing() })
@@ -2256,9 +2786,15 @@ fun PreviewScreen(
                         // B142b: mix-assigned slices emit physical-slot tools — no
                         // canonical→slot mapping applies and the palette is slot-space.
                         val gcodeColorMapping = if (isH2c || sliceMixToolSpace) null else colorMapping
+                        val targetMachineConfig = resolveTargetedSliceConfig(
+                            effectiveSliceTarget,
+                            config,
+                        )
                         InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
+                            bedSizeMm = targetMachineConfig.bedSizeX,
+                            bedSizeYMm = targetMachineConfig.bedSizeY,
                             colorMapping = gcodeColorMapping,
                             slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D,
@@ -2335,21 +2871,70 @@ fun PreviewScreen(
                 else -> {
                     // Empty state — no slice results yet, show empty bed
                     val canSlice = state is SlicerViewModel.SlicerState.ModelLoaded
-                    PreviewEmptyState(
-                        modelLoaded = canSlice,
-                        onSliceNow = if (canSlice) {{ viewModel.startSlicing() }} else null
-                    )
+                    if (isBambuEmbeddedGcodePreview) {
+                        BambuEmbeddedGcodePreviewCard(plateId = embeddedGcodeProject!!.selectedPlateId)
+                    } else {
+                        PreviewEmptyState(
+                            modelLoaded = canSlice,
+                            onSliceNow = if (canSlice) {{ viewModel.startSlicing() }} else null
+                        )
+                    }
                 }
             }
             }
-            if (state is SlicerViewModel.SlicerState.SliceComplete) {
+            if (isBambuEmbeddedGcodePreview) {
+                BambuEmbeddedGcodeActionBar(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    canMapAndPrint = printerCapabilities.supportsUpload &&
+                        printerCapabilities.supportsStartProject && printerFilamentSlots.isNotEmpty(),
+                    canUploadOnly = printerCapabilities.supportsUpload,
+                    onSendToPrinter = { onSendToPrinter("") },
+                    onUploadOnly = { onUploadOnly("") },
+                )
+            } else if (state is SlicerViewModel.SlicerState.SliceComplete) {
                 val result = (state as SlicerViewModel.SlicerState.SliceComplete).result
+                val previewBambuProject = resolvePreviewBambuProject(
+                    latestSliceArtifact = latestSliceArtifact,
+                    fallbackProject = viewModel.getEmbeddedBambuGcodeProject(),
+                )
                 SliceCompleteActionBar(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     onShare = onShareGcode,
                     onSave = onSaveGcode,
+                    canMapAndPrint = if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                        canBambuMapAndPrint(
+                            hasProjectFile = previewBambuProject != null,
+                            supportsUpload = printerCapabilities.supportsUpload,
+                            supportsStartProject = printerCapabilities.supportsStartProject,
+                            hasLiveAmsSlots = printerFilamentSlots.isNotEmpty(),
+                        ) && canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter)
+                    } else printerCapabilities.supportsUpload && printerCapabilities.supportsStartJob &&
+                        canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter),
+                    canUploadOnly = if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                        previewBambuProject != null && printerCapabilities.supportsUpload &&
+                            canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter)
+                    } else printerCapabilities.supportsUpload &&
+                        canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter),
+                    betaNotice = when {
+                        activePrinter?.kind != com.u1.slicer.data.PrinterKind.BAMBU_LAN -> null
+                        !canSendSliceArtifactToPrinter(latestSliceArtifact, activePrinter) ->
+                            "This slice was created for a different printer. Slice again for the active printer before sending."
+                        else -> null
+                    },
+                    primaryActionLabel = if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                        "Start Print"
+                    } else {
+                        "Map & Print"
+                    },
+                    secondaryActionLabel = if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                        "Upload 3MF"
+                    } else {
+                        "Upload Only"
+                    },
                     onSendToPrinter = { onSendToPrinter(result.gcodePath) },
                     onUploadOnly = { onUploadOnly(result.gcodePath) }
                 )
@@ -2372,6 +2957,39 @@ fun PreviewScreen(
 // =============================================================================
 // Preview Empty State — empty build plate
 // =============================================================================
+@Composable
+private fun BambuBetaSupportNotice() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.tertiaryContainer)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(
+            Icons.Default.Info,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                "Experimental Bambu support",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                "End-to-end testing currently covers the H2D and A1 Mini. Check the preview and filament mapping before printing.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+        }
+    }
+}
+
 @Composable
 fun PreviewEmptyState(
     modelLoaded: Boolean = false,
@@ -2624,9 +3242,52 @@ fun ConfigTextField(
 }
 
 @Composable
-fun SliceButton(onClick: () -> Unit) {
+@OptIn(ExperimentalMaterial3Api::class)
+private fun BambuProjectModeCard(
+    selectedEmbeddedProject: Boolean,
+    plateId: Int,
+    onSelectEmbeddedProject: () -> Unit,
+    onSelectReslice: () -> Unit,
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Pre-sliced Bambu Project", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = selectedEmbeddedProject,
+                    onClick = onSelectEmbeddedProject,
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    label = { Text("Use embedded G-code", maxLines = 1) },
+                )
+                SegmentedButton(
+                    selected = !selectedEmbeddedProject,
+                    onClick = onSelectReslice,
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    label = { Text("Reslice", maxLines = 1) },
+                )
+            }
+            Text(
+                if (selectedEmbeddedProject) "Ready-to-print embedded G-code, Plate $plateId"
+                else "Create a new A1 Mini slice from this model",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+fun SliceButton(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    label: String = "Slice Model",
+) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier
             .fillMaxWidth()
             .height(56.dp),
@@ -2637,7 +3298,7 @@ fun SliceButton(onClick: () -> Unit) {
     ) {
         Icon(Icons.Default.PlayArrow, null, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(8.dp))
-        Text("Slice Model", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Text(label, fontSize = 18.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -2735,10 +3396,73 @@ fun SlicingProgressCard(progress: Int, stage: String, onCancel: (() -> Unit)? = 
 }
 
 @Composable
+private fun BambuEmbeddedGcodePreviewCard(plateId: Int) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Pre-sliced Bambu Project", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Plate $plateId has ready-to-print embedded G-code.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BambuEmbeddedGcodeActionBar(
+    modifier: Modifier,
+    canMapAndPrint: Boolean,
+    canUploadOnly: Boolean,
+    onSendToPrinter: () -> Unit,
+    onUploadOnly: () -> Unit,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF16361A)),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = onSendToPrinter,
+                enabled = canMapAndPrint,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+            ) {
+                Icon(Icons.Default.Print, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Map & Print", fontSize = 13.sp, maxLines = 1)
+            }
+            OutlinedButton(
+                onClick = onUploadOnly,
+                enabled = canUploadOnly,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+            ) {
+                Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Upload 3MF", fontSize = 13.sp, maxLines = 1)
+            }
+        }
+    }
+}
+
+@Composable
 fun SliceCompleteActionBar(
     modifier: Modifier = Modifier,
     onShare: () -> Unit,
     onSave: () -> Unit,
+    canMapAndPrint: Boolean = true,
+    canUploadOnly: Boolean = true,
+    betaNotice: String? = null,
+    primaryActionLabel: String = "Map & Print",
+    secondaryActionLabel: String = "Upload Only",
     onSendToPrinter: () -> Unit = {},
     onUploadOnly: () -> Unit = {}
 ) {
@@ -2780,6 +3504,7 @@ fun SliceCompleteActionBar(
             ) {
                 Button(
                     onClick = onSendToPrinter,
+                    enabled = canMapAndPrint,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
@@ -2788,7 +3513,7 @@ fun SliceCompleteActionBar(
                     Icon(Icons.Default.Print, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        "Map & Print",
+                        primaryActionLabel,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         maxLines = 1,
@@ -2797,6 +3522,7 @@ fun SliceCompleteActionBar(
                 }
                 OutlinedButton(
                     onClick = onUploadOnly,
+                    enabled = canUploadOnly,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
@@ -2804,13 +3530,20 @@ fun SliceCompleteActionBar(
                     Icon(Icons.Default.CloudUpload, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        "Upload Only",
+                        secondaryActionLabel,
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.sp,
                         maxLines = 1,
                         softWrap = false,
                     )
                 }
+            }
+            if (betaNotice != null) {
+                Text(
+                    betaNotice,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.78f),
+                )
             }
         }
     }
@@ -3277,6 +4010,8 @@ fun InlineModelPreview(
     modelSizeX: Float = 0f,
     modelSizeY: Float = 0f,
     modelSizeZ: Float = 0f,
+    bedSizeMm: Float = 270f,
+    bedSizeYMm: Float = bedSizeMm,
     wipeTowerEnabled: Boolean = false,
     wipeTowerX: Float = 0f,
     wipeTowerY: Float = 0f,
@@ -3648,6 +4383,7 @@ fun InlineModelPreview(
                     android.util.Log.i("LoadTiming", "preparePreview buildPreparePreviewScene end sceneHandle=$sceneHandle elapsed=${System.currentTimeMillis() - previewT0}ms")
                     var firstVisibleMs: Long? = null
                     var finalMesh: com.u1.slicer.viewer.MeshData? = null
+                    var sceneReadyForOwner = false
                     val batches = mutableListOf<com.u1.slicer.viewer.NativeRenderBatch>()
                     // Track bounds incrementally — avoids a redundant full vertex scan after streaming
                     var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var minZ = Float.MAX_VALUE
@@ -3702,13 +4438,17 @@ fun InlineModelPreview(
                                     batches = batches.toList(),
                                     minX = minX, minY = minY, minZ = minZ,
                                     maxX = maxX, maxY = maxY, maxZ = maxZ,
-                                    sceneHandle = sceneHandle
+                                    // Progressive snapshots borrow the native
+                                    // buffers. The final cached mesh below is
+                                    // the sole owner of the scene.
+                                    sceneHandle = 0L,
                                 )
                                 mesh = finalMesh
                             }
 
                             if (isComplete && batches.size == batchCount) {
                                 viewerStreaming = false
+                                sceneReadyForOwner = true
                                 break
                             }
 
@@ -3723,23 +4463,28 @@ fun InlineModelPreview(
                         android.util.Log.e("LoadTiming", "Error streaming render scene", e)
                         throw e
                     } finally {
-                        if (finalMesh == null) {
+                        if (!sceneReadyForOwner) {
                             lib.nativeReleasePrepareRenderScene(sceneHandle)
                         }
                     }
 
                     // Bounds are already fully computed incrementally — no second scan needed.
-                    val modStart = lib.nativeGetPreviewModifierBlockStart()
+                    try {
+                        val modStart = lib.nativeGetPreviewModifierBlockStart()
 
-                    // Build final mesh with full properties (batchRanges, modifier block)
-                    finalMesh = com.u1.slicer.viewer.MeshData(
-                        batches = batches.toList(),
-                        minX = minX, minY = minY, minZ = minZ,
-                        maxX = maxX, maxY = maxY, maxZ = maxZ,
-                        batchRanges = batchRanges.toList(),
-                        modifierBlockStartTriangle = if (modStart >= 0) modStart else null,
-                        sceneHandle = sceneHandle
-                    )
+                        // Build final mesh with full properties (batchRanges, modifier block)
+                        finalMesh = com.u1.slicer.viewer.MeshData(
+                            batches = batches.toList(),
+                            minX = minX, minY = minY, minZ = minZ,
+                            maxX = maxX, maxY = maxY, maxZ = maxZ,
+                            batchRanges = batchRanges.toList(),
+                            modifierBlockStartTriangle = if (modStart >= 0) modStart else null,
+                            sceneHandle = sceneHandle,
+                        )
+                    } catch (error: Throwable) {
+                        lib.nativeReleasePrepareRenderScene(sceneHandle)
+                        throw error
+                    }
                     
                     val previewMs = System.currentTimeMillis() - previewT0
                     android.util.Log.i("LoadTiming", "preview total=${previewMs}ms vertexCount=${finalMesh?.vertexCount ?: 0} initial=$isInitialFetch")
@@ -3763,6 +4508,11 @@ fun InlineModelPreview(
             ) {
                 com.u1.slicer.viewer.ModelRenderer.splitMeshByObjects(newMesh, multiPos, perObjectSizes)
             } else null
+            if (splitResult != null) {
+                // The split mesh owns copied Kotlin buffers, so the discarded
+                // combined mesh can release its native scene immediately.
+                newMesh.release(com.u1.slicer.NativeLibrary())
+            }
             mesh = splitResult?.first ?: newMesh
             objectMeshRanges = splitResult?.second
             onMeshCached?.invoke(mesh!!)  // B49: save to ViewModel cache
@@ -3795,6 +4545,7 @@ fun InlineModelPreview(
         // callback keeps a stale value if the user changes Prime Tower Width or
         // Depth mid-session — same class of bug as the earlier B109 reopen.
         wipeTowerWidth, wipeTowerDepth,
+        bedSizeMm, bedSizeYMm,
         // Multi-object: per-object footprints change when files are added/removed.
         perObjectSizes,
     ) {
@@ -3830,8 +4581,8 @@ fun InlineModelPreview(
                     // by modelScale again (double-apply).
                     val sizeX = if (hasPerObj) perObjectSizes[i * 3] else effPlaceSizeX
                     val sizeY = if (hasPerObj) perObjectSizes[i * 3 + 1] else effPlaceSizeY
-                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, 270f - sizeX))
-                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, 270f - sizeY))
+                    objPositions[i * 2] = (objPositions[i * 2] + dx).coerceIn(0f, maxOf(0f, bedSizeMm - sizeX))
+                    objPositions[i * 2 + 1] = (objPositions[i * 2 + 1] + dy).coerceIn(0f, maxOf(0f, bedSizeYMm - sizeY))
                     v.renderer.instancePositions = objPositions.copyOf()
                     // Multi-object: the combined world-space mesh can't respond to per-object
                     // position updates during drag (mesh re-fetch is async). Batch position
@@ -3841,8 +4592,8 @@ fun InlineModelPreview(
                     }
                 } else {
                     // Move wipe tower
-                    towerX = (towerX + dx).coerceIn(0f, 270f - wipeTowerWidth)
-                    towerY = (towerY + dy).coerceIn(0f, 270f - wipeTowerDepth)
+                    towerX = (towerX + dx).coerceIn(0f, maxOf(0f, bedSizeMm - wipeTowerWidth))
+                    towerY = (towerY + dy).coerceIn(0f, maxOf(0f, bedSizeYMm - wipeTowerDepth))
                     v.renderer.wipeTower = com.u1.slicer.viewer.ModelRenderer.WipeTowerInfo(
                         towerX, towerY, wipeTowerWidth, wipeTowerDepth
                     )
@@ -3888,6 +4639,7 @@ fun InlineModelPreview(
                             onViewerReady?.invoke(view)
                             view.onCameraChanged = onCameraStateChange
                             view.setOnContentReady { viewerLoading = false }
+                            view.setBedSizeMm(bedSizeMm, bedSizeYMm)
                             mesh?.let { view.setMesh(it) }
                             cameraState?.let { view.applyCameraState(it) }
                             // F66: wire tap-to-select on the Prepare viewer. The existing
@@ -3922,6 +4674,7 @@ fun InlineModelPreview(
                         viewerView = view
                         view.onCameraChanged = onCameraStateChange
                         view.setOnContentReady { viewerLoading = false }
+                        view.setBedSizeMm(bedSizeMm, bedSizeYMm)
                         cameraState?.let {
                             if (view.camera.snapshot() != it) {
                                 view.applyCameraState(it)
@@ -3966,6 +4719,7 @@ fun InlineModelPreview(
                         }
                     },
                     onRelease = { view ->
+                        view.renderer.releaseForDetach()
                         if (viewerView === view) { viewerView = null; onViewerReady?.invoke(null) }
                     },
                     modifier = Modifier.fillMaxSize()
@@ -4470,6 +5224,8 @@ fun PrintSetupSection(
     detectedColors: List<String>,
     colorMapping: List<Int>?,
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    syncFilamentPresets: List<com.u1.slicer.data.ExtruderPreset> = extruderPresets,
+    isBambuPrinter: Boolean = false,
     filaments: List<com.u1.slicer.data.FilamentProfile>,
     // B128: per-canonical-filament (materialType, nozzleTemp) resolved by the
     // same slice-time resolver. When present for a row, it is authoritative for
@@ -4525,8 +5281,8 @@ fun PrintSetupSection(
 
     var hasPromptedSyncForMix by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(anyMixAssigned) {
-        if (anyMixAssigned && !hasPromptedSyncForMix) {
+    LaunchedEffect(anyMixAssigned, syncFilamentPresets.isNotEmpty()) {
+        if (anyMixAssigned && syncFilamentPresets.isNotEmpty() && !hasPromptedSyncForMix) {
             // If they haven't explicitly overriden/synced filaments yet, pop up the dialog
             if (filamentOverrides.isEmpty()) {
                 showSyncDialog = true
@@ -4706,7 +5462,13 @@ fun PrintSetupSection(
                         }
                     }
 
-                    if (filaments.isNotEmpty()) {
+                    val showPrinterFilamentAction = if (isBambuPrinter) {
+                        syncFilamentPresets.isNotEmpty()
+                    } else {
+                        // Preserve the existing U1 presentation rule.
+                        filaments.isNotEmpty()
+                    }
+                    if (showPrinterFilamentAction) {
                         Spacer(Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -4720,7 +5482,14 @@ fun PrintSetupSection(
                             ) {
                                 Icon(Icons.Default.Sync, null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Sync filaments from printer", style = MaterialTheme.typography.labelMedium)
+                                Text(
+                                    if (isBambuPrinter) {
+                                        "Use loaded printer spools (${syncFilamentPresets.size})"
+                                    } else {
+                                        "Sync filaments from printer"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
                             }
                             if (filamentOverrides.isNotEmpty()) {
                                 Spacer(Modifier.width(8.dp))
@@ -4739,6 +5508,12 @@ fun PrintSetupSection(
                                 }
                             }
                         }
+                    } else if (isBambuPrinter) {
+                        Text(
+                            "No loaded printer spools are currently reported. Check the printer connection and AMS state.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                        )
                     }
 
                     if (showSyncDialog) {
@@ -4759,12 +5534,21 @@ fun PrintSetupSection(
 
                         com.u1.slicer.ui.SyncFilamentsDialog(
                             canonicalList = syncCanonicalList,
-                            extruderPresets = extruderPresets,
+                            extruderPresets = syncFilamentPresets,
+                            title = if (isBambuPrinter) "Use loaded printer spools" else "Sync filaments from printer",
+                            description = if (isBambuPrinter) {
+                                "Choose a loaded AMS, AMS-HT, or external spool for each model filament. " +
+                                    "This copies its colour and material into the slice; final tray and nozzle routing is confirmed when you send."
+                            } else {
+                                "Override the file's colours and materials to match the physical loaded extruders."
+                            },
+                            confirmLabel = if (isBambuPrinter) "Apply details" else "Sync",
                             hasActiveOverrides = filamentOverrides.isNotEmpty() || hasPerVolumeOverrides,
                             promptReason = if (anyMixAssigned) "Because a ColorMix is assigned, the slicer will use the colours loaded on the printer rather than those in the model. Please map the colours below." else null,
                             onConfirm = { chosenMapping ->
                                 chosenMapping.forEachIndexed { i, slot ->
-                                    val preset = extruderPresets.firstOrNull { it.index == slot } ?: extruderPresets.firstOrNull()
+                                    val preset = syncFilamentPresets.firstOrNull { it.index == slot }
+                                        ?: syncFilamentPresets.firstOrNull()
                                     preset?.let {
                                         onColorOverride(i, it.color)
                                         onMaterialOverride(i, it.materialType)
@@ -5483,6 +6267,8 @@ private fun PrepareMixSlotRow(
 fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
+    bedSizeMm: Float = 270f,
+    bedSizeYMm: Float = bedSizeMm,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     onExpand: () -> Unit,
@@ -5524,9 +6310,10 @@ fun InlineGcodePreview(
         normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
     }
 
-    LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState) {
+    LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState, bedSizeMm, bedSizeYMm) {
         val v = viewerView ?: return@LaunchedEffect
         viewerLoading = true
+        v.setBedSizeMm(bedSizeMm, bedSizeYMm)
         if (previewColors.isNotEmpty()) {
             v.setExtruderColors(previewColors)
         }
@@ -5568,6 +6355,7 @@ fun InlineGcodePreview(
                             viewerView = view
                             view.onCameraChanged = onCameraStateChange
                             view.setOnContentReady { viewerLoading = false }
+                            view.setBedSizeMm(bedSizeMm, bedSizeYMm)
                             cameraState?.let { view.applyCameraState(it) }
                         }
                     },
@@ -5575,6 +6363,7 @@ fun InlineGcodePreview(
                         viewerView = view
                         view.onCameraChanged = onCameraStateChange
                         view.setOnContentReady { viewerLoading = false }
+                        view.setBedSizeMm(bedSizeMm, bedSizeYMm)
                         cameraState?.let {
                             if (view.camera.snapshot() != it) {
                                 view.applyCameraState(it)

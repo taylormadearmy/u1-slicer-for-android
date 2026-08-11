@@ -1,12 +1,12 @@
-# U1 Slicer for Android
+# Your One Slicer for Android
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders), powered by [Snapmaker Orca 2.2.4](https://github.com/Snapmaker/OrcaSlicer) (OrcaSlicer fork).
+Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders), with opt-in early-beta LAN support for selected Bambu Lab printers, powered by [Snapmaker Orca 2.2.4](https://github.com/Snapmaker/OrcaSlicer) (OrcaSlicer fork).
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v3.3.4` (`versionCode 334`)
+Current release: `v4.0.0` (`versionCode 400`)
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -17,7 +17,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 ## Features
 
 - **STL and 3MF slicing** — single-color, multi-color (up to 4 extruders), and paint-based (SEMM)
-- **Bambu 3MF support** — multi-plate extraction, profile embedding, sanitization pipeline
+- **Bambu support (early beta, opt-in)** — native slicing, monitoring, camera, upload and print flows for A1 Mini, A1, P1P, P1S, X1C, X1E and H2D; imported safe process/filament settings are preserved while target-owned machine and protocol fields are replaced
 - **Smart Paint** — one-tap multi-colour segmentation via a 6-stage cascade with optional AI-driven region naming (see [below](#smart-paint))
 - **3D model viewer** — OpenGL ES 3.0, drag-to-place models on bed, scale, copies
 - **3D G-code viewer** — per-layer toolpath rendering with Gouraud shading; feature-type color mode (outer wall, infill, support, etc.)
@@ -31,6 +31,10 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 - **Background slicing** — foreground service keeps slicing alive when app is backgrounded
 - **Auto-resume** (v2.6.0): If Android closes the app while you have a model loaded, sliced, or being edited, a "Resume <name>?" banner appears on next launch to restore your session. Sliced sessions resume on the Preview tab instantly; the model loads in the background for editing.
 - **ColorMix** — blend 2–4 physical extruder filaments into a single virtual mix slot. The top surface splits per printed line across the mix components for visible colour mixing. Three top-surface modes per mix: Stripes (per-line round-robin), Proportional (weighted within-line boundary), and Dither (1.5 mm Bayer halftone dashes). Optional fine-line mode (nozzle/2 line width) and ironing glaze (force-ironing pass split across components). Works with both object/part assignment and Smart Paint. Wipe-tower-safe.
+
+### Bambu support
+
+Bambu support is disabled by default. Enable it in Settings and explicitly accept the early-beta warning before adding or selecting a Bambu printer. Real-hardware print validation has been completed on H2D and A1 Mini; the other supported targets have configuration, protocol, native slicing, artifact and regression coverage but have not been physically tested by the developer. Firmware and LAN-mode requirements vary by printer generation.
 
 ### Smart Paint
 
@@ -89,11 +93,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 1699 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 442 instrumented tests (ARM64 device required)
+./gradlew testDebugUnitTest              # 1949 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 443 instrumented tests (ARM64 device required)
 ```
 
-**2141 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, slicing integration, profile embedding, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament list, ColorMix top-surface mixing, and more.
+**2392 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

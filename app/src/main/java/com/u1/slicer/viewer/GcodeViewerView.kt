@@ -20,6 +20,11 @@ class GcodeViewerView(context: Context) : BaseGLViewerView(context) {
         requestRender()
     }
 
+    fun setBedSizeMm(sizeXmm: Float, sizeYmm: Float = sizeXmm) {
+        renderer.pendingBedSizeMm = sizeXmm to sizeYmm
+        requestRender()
+    }
+
     fun setExtruderColors(hexColors: List<String>) {
         renderer.pendingExtruderColors = hexColors
         requestRender()

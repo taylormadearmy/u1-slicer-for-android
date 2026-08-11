@@ -34,6 +34,7 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var segmentShader: ShaderProgram? = null
     private var toolpathShader: ShaderProgram? = null
     private val bed = BedDrawable(context)
+    @Volatile var pendingBedSizeMm: Pair<Float, Float>? = null
 
     // Segment template: 24 vertex IDs for 8 triangles (created once)
     private var templateVAO = 0
@@ -210,6 +211,10 @@ class GcodeRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        pendingBedSizeMm?.let { (width, depth) ->
+            pendingBedSizeMm = null
+            bed.setBedSizeMm(width, depth)
+        }
         pendingExtruderColors?.let { colors ->
             setExtruderColors(colors)
             pendingExtruderColors = null

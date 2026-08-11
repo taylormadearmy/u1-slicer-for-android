@@ -6,6 +6,48 @@ import org.junit.Test
 class CopyArrangeCalculatorTest {
 
     @Test
+    fun `a1 mini single copy and prime tower stay inside the 180mm bed`() {
+        val positions = CopyArrangeCalculator.calculate(
+            objectSizeX = 40f,
+            objectSizeY = 30f,
+            copyCount = 1,
+            bedSizeX = 180f,
+            bedSizeY = 180f,
+        )
+        assertEquals(70f, positions[0], 0.01f)
+        assertEquals(75f, positions[1], 0.01f)
+
+        val (towerX, towerY) = CopyArrangeCalculator.computeWipeTowerPosition(
+            objectPositions = positions,
+            objectSizeX = 40f,
+            objectSizeY = 30f,
+            towerWidth = 60f,
+            towerDepth = 60f,
+            bedSizeX = 180f,
+            bedSizeY = 180f,
+        )
+        assertTrue("towerX=$towerX", towerX >= 0f && towerX + 60f <= 180f)
+        assertTrue("towerY=$towerY", towerY >= 0f && towerY + 60f <= 180f)
+    }
+
+    @Test
+    fun `auto arrange respects a rectangular bed's shorter Y edge`() {
+        val result = CopyArrangeCalculator.autoArrange(
+            boxes = floatArrayOf(60f, 45f, 10f, 60f, 45f, 10f),
+            reservedRect = null,
+            incoming = floatArrayOf(0f, 0f, 0f, 0f),
+            bedSize = 180f,
+            bedSizeY = 100f,
+        )
+
+        assertEquals(0, result.overflowCount)
+        for (i in result.positions.indices step 2) {
+            assertTrue(result.positions[i] >= 0f && result.positions[i] + 60f <= 180f)
+            assertTrue(result.positions[i + 1] >= 0f && result.positions[i + 1] + 45f <= 100f)
+        }
+    }
+
+    @Test
     fun `single copy returns centered position on bed`() {
         val positions = CopyArrangeCalculator.calculate(20f, 20f, 1)
         assertEquals(2, positions.size)

@@ -12,8 +12,8 @@ android {
         applicationId "com.u1.slicer.orca"
         minSdk 26
         targetSdk 34
-        versionCode 338
-        versionName "3.3.8"
+        versionCode 400
+        versionName "4.0.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -108,6 +108,13 @@ dependencies {
 
     // HTTP Client (Moonraker API)
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // H2D/X1-family cameras use authenticated RTSP rather than the JPEG
+    // chamber-image protocol used by A1/P1. Keep the RTSP module isolated so
+    // the existing bitmap camera path remains unchanged.
+    implementation 'androidx.media3:media3-exoplayer:1.4.0'
+    implementation 'androidx.media3:media3-exoplayer-rtsp:1.4.0'
+    implementation 'androidx.media3:media3-ui:1.4.0'
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5'
 
     // Room (filament library + job history)
     implementation 'androidx.room:room-runtime:2.6.1'

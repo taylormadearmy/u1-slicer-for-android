@@ -5,6 +5,8 @@
 **Status:** Approved for implementation planning
 **Builds on:** [`2026-07-02-bambu-printer-branch-design.md`](D:/projects/u1-slicer-for-android/.worktrees/bambu-support/docs/superpowers/specs/2026-07-02-bambu-printer-branch-design.md:1)
 
+> Historical design record. The v4.0.0 implementation expanded the supported target set to A1 Mini, A1, P1P, P1S, X1C, X1E and H2D. Physical validation was subsequently completed on both A1 Mini and H2D; statements below describing A1 Mini as the sole validation target capture the original milestone, not the final release state.
+
 ## Goal
 
 Turn Bambu support from a passthrough beta lane into a true first-class slicing target in the app.
@@ -30,7 +32,33 @@ That means the app must eventually support:
 - generating a Bambu-native job artifact
 - delivering that artifact through the Bambu transport stack
 
-The current original-3MF passthrough beta remains useful as an interim lane, but it is not the final architecture.
+The current pre-sliced-project upload beta remains useful as an advanced lane, but it is not the final architecture.
+
+### MakerWorld Routing Clarification (2026-07-13)
+
+A normal MakerWorld 3MF download is a source project: it carries model geometry and print settings, not the ready-to-print G-code dispatched by Bambu Handy. Bambu Handy obtains that G-code through Bambu's cloud slicing service, so U1 Slicer must never present a normal MakerWorld download as a no-slice shortcut.
+
+The product routes are therefore:
+
+- **Normal Bambu route:** select the A1 Mini target, slice locally, then upload or map and print the generated Bambu project.
+- **Advanced pre-sliced route:** upload without re-slicing only when the archive contains `Metadata/plate_N.gcode`. This covers explicit pre-sliced exports and jobs retrieved from printer storage/cache.
+
+Keeping the advanced route is worthwhile, but it is deliberately not marketed as a MakerWorld import path. A future printer-cache importer can make that route easier to discover without broadening the normal flow.
+
+## Target and Printer Relationship
+
+The app must treat **slice target** and **connected printer** as separate but compatible concepts.
+
+- **Slice target** answers: "What machine family and model am I generating a job for?"
+- **Connected printer** answers: "What physical device am I monitoring or sending to right now?"
+
+For the first implementation wave, the runtime rule should be strict:
+
+- a Bambu-targeted artifact may only be uploaded/started through a compatible Bambu printer entry
+- a Moonraker-targeted artifact may only be uploaded/started through a Moonraker printer entry
+- the UI should block or explicitly reroute mismatched combinations rather than attempting silent conversion
+
+This avoids a dangerous gray area where the app slices for one target family and then tries to "adapt" the output at send time for another.
 
 ## Scope
 
@@ -160,13 +188,13 @@ Features to evaluate case by case include:
 - top-surface mixing behaviors
 - any send/start semantics that differ from Moonraker
 
-## Relationship to Existing Bambu Passthrough Beta
+## Relationship to Existing Bambu Pre-sliced Project Beta
 
 The current branch already supports:
 
 - Bambu printer entries
 - Bambu status/camera/AMS work
-- original sliced Bambu 3MF passthrough upload/start beta
+- pre-sliced Bambu 3MF upload/start beta, validated by the presence of embedded plate G-code
 
 That work remains valuable, but it becomes an interim lane and validation tool rather than the final architecture for Bambu slicing.
 
@@ -202,6 +230,8 @@ Implementation should proceed in stages that preserve releasability of the stabl
 
 - connect true Bambu artifacts to upload/start
 - validate on A1 Mini
+
+For the first full-loop milestone, A1 Mini is the only target that must be proven end to end. The architecture remains generic, but no other Bambu model should be presented to the user as equally validated until real evidence exists.
 
 ### Stage 6: Parity passes
 

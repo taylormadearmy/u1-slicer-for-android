@@ -66,4 +66,74 @@ class SyncPreviewBuilderTest {
         assertEquals("#111111", entries[0].currentColor)
         assertEquals("Prusament PLA Prusa Galaxy Black", entries[1].matchedName)
     }
+
+    @Test
+    fun `bambu empty tray keeps its AMS label and is not library matched`() {
+        val emptyAmsSlot = FilamentSlot(
+            index = 0,
+            label = "AMS 1",
+            color = "#808080",
+            loaded = false,
+            materialType = "Empty",
+            manufacturer = "Prusament",
+        )
+
+        val entry = buildSyncPreviewEntries(presets, listOf(emptyAmsSlot), lib).first()
+
+        assertEquals("AMS 1", entry.label)
+        assertEquals("Empty", entry.newType)
+        assertEquals("#808080", entry.newColor)
+        assertNull(entry.matchedName)
+        assertNull(entry.matchedSlug)
+    }
+
+    @Test
+    fun `Bambu preview includes all sparse live routes and matches presets by id`() {
+        val sparsePresets = listOf(
+            ExtruderPreset(index = 128, color = "#AABBCC", materialType = "PA-CF"),
+            ExtruderPreset(index = 0, color = "#010101", materialType = "PLA"),
+        )
+        val liveSlots = listOf(
+            slot(0, "Bambu Lab"),
+            FilamentSlot(4, "AMS 2 Tray 1", "#222222", true, "PETG"),
+            FilamentSlot(128, "AMS-HT 1", "#333333", true, "PA-CF"),
+            FilamentSlot(254, "External spool", "#444444", true, "TPU"),
+        )
+
+        val entries = buildSyncPreviewEntries(
+            presets = sparsePresets,
+            slots = liveSlots,
+            library = null,
+            includeAllPrinterSlots = true,
+        )
+
+        assertEquals(listOf(0, 4, 128, 254), entries.map { it.slotIndex })
+        assertEquals(listOf("E1", "AMS 2 Tray 1", "AMS-HT 1", "External spool"), entries.map { it.label })
+        assertEquals("#AABBCC", entries.first { it.slotIndex == 128 }.currentColor)
+        assertEquals("PA-CF", entries.first { it.slotIndex == 128 }.currentType)
+    }
+
+    @Test
+    fun `applying Bambu sync adds missing sparse route presets`() {
+        val entries = buildSyncPreviewEntries(
+            presets = emptyList(),
+            slots = listOf(
+                FilamentSlot(4, "AMS 2 Tray 1", "#222222", true, "PETG"),
+                FilamentSlot(254, "External spool", "#444444", true, "TPU"),
+            ),
+            library = null,
+            includeAllPrinterSlots = true,
+        )
+
+        val applied = applySyncPreviewEntries(
+            presets = emptyList(),
+            entries = entries,
+            applyColors = true,
+            applyTypes = true,
+        )
+
+        assertEquals(listOf(4, 254), applied.map { it.index })
+        assertEquals(listOf("PETG", "TPU"), applied.map { it.materialType })
+        assertEquals(listOf("AMS 2 Tray 1", "External spool"), applied.map { it.label })
+    }
 }

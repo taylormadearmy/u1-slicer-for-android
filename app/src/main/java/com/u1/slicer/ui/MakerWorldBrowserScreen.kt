@@ -136,7 +136,7 @@ fun MakerWorldBrowserScreen(
                 Text(
                     "Google blocks sign-in inside embedded app browsers like this one. " +
                         "Open MakerWorld in your browser instead, then download the 3MF/STL " +
-                        "there or share the model link back to U1 Slicer. Browser login will " +
+                        "there or share the model link back to Your One Slicer. Browser login will " +
                         "not automatically sign the in-app browser in."
                 )
             },

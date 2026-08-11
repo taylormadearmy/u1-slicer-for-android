@@ -22,8 +22,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
     val camera = Camera()
     private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile
     var meshData: MeshData? = null
         private set
+    private val meshOwnershipLock = Any()
+    @Volatile private var detached = false
     private var modelShader: ShaderProgram? = null
     private var gridShader: ShaderProgram? = null
     private var textureShader: ShaderProgram? = null
@@ -42,6 +45,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var logoTexture = 0
     private var boxVAO = 0
     private var boxVertexCount = 0
+    private var bedSizeXmm = 270f
+    private var bedSizeYmm = 270f
+
+    @Volatile
+    var pendingBedSizeMm: Pair<Float, Float>? = null
 
     // Model color (orange) — used when no per-instance colors are set
     private val modelColorDefault = floatArrayOf(0.91f, 0.48f, 0f, 1f)
@@ -172,8 +180,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     internal fun resetCameraToDefaultView() {
-        camera.setTarget(135.0, 135.0, 0.0)
-        camera.distance = 500.0
+        camera.setTarget(bedSizeXmm / 2.0, bedSizeYmm / 2.0, 0.0)
+        camera.distance = maxOf(350.0, maxOf(bedSizeXmm, bedSizeYmm) * 1.85)
         camera.elevation = 62.0
         camera.azimuth = -90.0
     }
@@ -198,7 +206,18 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     @Volatile
     var pendingCameraState: CameraViewState? = null
 
-    override fun onDrawFrame(gl: GL10?) {
+    override fun onDrawFrame(gl: GL10?) = synchronized(meshOwnershipLock) {
+        pendingBedSizeMm?.let { (requestedWidth, requestedDepth) ->
+            pendingBedSizeMm = null
+            if (requestedWidth != bedSizeXmm || requestedDepth != bedSizeYmm) {
+                bedSizeXmm = requestedWidth
+                bedSizeYmm = requestedDepth
+                setupBedMesh()
+                setupGrid()
+                setupLogoTexture()
+                resetCameraToDefaultView()
+            }
+        }
         pendingCameraState?.let { state ->
             camera.restore(state)
             pendingCameraState = null
@@ -207,21 +226,35 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         if (pendingClearMesh) {
             pendingClearMesh = false
             deleteMeshBuffers()
-            meshData?.release(com.u1.slicer.NativeLibrary())
-            meshData = null
+            releaseOwnedNativeMesh()
             objectMeshRanges = null
             highlightIndex = -1
         }
 
         pendingMesh?.let { mesh ->
+            if (detached) {
+                pendingMesh = null
+                return@let
+            }
+            val previousMesh = this.meshData
+            val rendererAlreadyOwnsMesh = previousMesh === mesh
+            val retainedForRenderer = rendererAlreadyOwnsMesh ||
+                mesh.sceneHandle == 0L || mesh.retainNativeScene()
+            if (!retainedForRenderer) {
+                // The cache invalidated and released this native scene before
+                // the GL thread consumed the pending update. Never dereference
+                // its stale DirectByteBuffers.
+                pendingMesh = null
+                return@let
+            }
             // B48: recolor BEFORE uploading when both arrive on the same frame,
             // so the initial glBufferData gets the recolored vertex data.
             pendingRecolor?.let { palette ->
                 mesh.recolor(palette)
                 pendingRecolor = null
             }
-            if (this.meshData != null && isAppend(this.meshData!!.batches, mesh.batches)) {
-                for (i in this.meshData!!.batches.size until mesh.batches.size) {
+            if (previousMesh != null && isAppend(previousMesh.batches, mesh.batches)) {
+                for (i in previousMesh.batches.size until mesh.batches.size) {
                     appendMeshBatch(mesh.batches[i])
                 }
             } else {
@@ -230,8 +263,25 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             if (mesh.batches.any { it.colorBuffer != null }) {
                 updateColorData(mesh)
             }
-            meshData = mesh
+            var accepted = false
+            val replacedMesh = synchronized(meshOwnershipLock) {
+                if (detached) {
+                    null
+                } else {
+                    accepted = true
+                    val old = meshData
+                    meshData = mesh
+                    old
+                }
+            }
             pendingMesh = null
+            if (!accepted) {
+                if (!rendererAlreadyOwnsMesh) mesh.release(com.u1.slicer.NativeLibrary())
+                return@let
+            }
+            if (replacedMesh !== mesh) {
+                replacedMesh?.release(com.u1.slicer.NativeLibrary())
+            }
             if (hasPendingObjectMeshRanges) {
                 objectMeshRanges = pendingObjectMeshRanges
                 pendingObjectMeshRanges = null
@@ -367,6 +417,27 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 mainHandler.post { callback() }
             }
         }
+    }
+
+    /**
+     * Deterministic native-scene handoff for AndroidView/GLSurfaceView teardown.
+     * A detached surface is not guaranteed another frame, so a pending clear is
+     * insufficient. No GLES calls are made here; GL objects remain owned by the
+     * context while the native DirectByteBuffer lease is released exactly once.
+     */
+    fun releaseForDetach() {
+        detached = true
+        pendingMesh = null
+        releaseOwnedNativeMesh()
+    }
+
+    private fun releaseOwnedNativeMesh() {
+        val owned = synchronized(meshOwnershipLock) {
+            val current = meshData
+            meshData = null
+            current
+        }
+        owned?.release(com.u1.slicer.NativeLibrary())
     }
 
     private fun deleteMeshBuffers() {
@@ -963,8 +1034,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 repeat(triCount) {
                     buf.position(buf.position() + 12) // skip normal
                     repeat(3) {
-                        val x = buf.float + 135f
-                        val y = buf.float + 135f
+                        val x = (buf.float + 135f) * (bedSizeXmm / 270f)
+                        val y = (buf.float + 135f) * (bedSizeYmm / 270f)
                         buf.float // discard original Z — flatten to Z=0
                         verts.add(x); verts.add(y); verts.add(0f)
                     }
@@ -973,8 +1044,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
             }
         } catch (e: Exception) {
             // Fallback: simple quad if STL fails to load
-            verts.addAll(listOf(0f,0f,0f, 270f,0f,0f, 270f,270f,0f,
-                                0f,0f,0f, 270f,270f,0f, 0f,270f,0f))
+            verts.addAll(listOf(0f,0f,0f, bedSizeXmm,0f,0f, bedSizeXmm,bedSizeYmm,0f,
+                                0f,0f,0f, bedSizeXmm,bedSizeYmm,0f, 0f,bedSizeYmm,0f))
         }
 
         bedFillVertexCount = verts.size / 3
@@ -1017,8 +1088,11 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         bitmap.recycle()
 
         // Logo quad: 150mm wide × 37mm tall, centered on bed at (135, 135), Z=0
-        val lx = 135f - 75f; val rx = 135f + 75f
-        val ly = 135f - 18.5f; val ry = 135f + 18.5f
+        val scale = minOf(bedSizeXmm, bedSizeYmm) / 270f
+        val centerX = bedSizeXmm / 2f
+        val centerY = bedSizeYmm / 2f
+        val lx = centerX - 75f * scale; val rx = centerX + 75f * scale
+        val ly = centerY - 18.5f * scale; val ry = centerY + 18.5f * scale
         val z = 0f
         // position (xyz) + texcoord (uv) — stride 20 bytes
         val verts = floatArrayOf(
@@ -1043,8 +1117,8 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     }
 
     private fun setupGrid() {
-        val bedW = 270f
-        val bedH = 270f
+        val bedW = bedSizeXmm
+        val bedH = bedSizeYmm
 
         // Minor grid lines every 10mm — all at Z=0 (polygon offset pushes bed behind)
         val minorLines = mutableListOf<Float>()
@@ -1075,9 +1149,15 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
 
         // Major grid lines every 50mm — also Z=0
         val majorLines = mutableListOf<Float>()
-        for (v in listOf(0f, 50f, 100f, 150f, 200f, 250f, 270f)) {
-            majorLines.addAll(listOf(v, 0f, 0f, v, bedH, 0f))
-            majorLines.addAll(listOf(0f, v, 0f, bedW, v, 0f))
+        var major = 0f
+        while (major <= bedW) {
+            majorLines.addAll(listOf(major, 0f, 0f, major, bedH, 0f))
+            majorLines.addAll(listOf(0f, major, 0f, bedW, major, 0f))
+            major += 50f
+        }
+        if ((major - 50f) != bedW) {
+            majorLines.addAll(listOf(bedW, 0f, 0f, bedW, bedH, 0f))
+            majorLines.addAll(listOf(0f, bedH, 0f, bedW, bedH, 0f))
         }
         majorGridVertexCount = majorLines.size / 3
 

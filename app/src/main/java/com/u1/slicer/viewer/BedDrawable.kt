@@ -12,6 +12,17 @@ import java.nio.ByteOrder
  */
 class BedDrawable(private val context: Context) {
 
+    private var bedSizeXmm = 270f
+    private var bedSizeYmm = 270f
+
+    fun setBedSizeMm(sizeXmm: Float, sizeYmm: Float = sizeXmm) {
+        if (sizeXmm == bedSizeXmm && sizeYmm == bedSizeYmm) return
+        bedSizeXmm = sizeXmm
+        bedSizeYmm = sizeYmm
+        setupBedMesh(context)
+        setupGrid()
+    }
+
     private var gridShader: ShaderProgram? = null
 
     private var bedFillVAO = 0
@@ -80,8 +91,8 @@ class BedDrawable(private val context: Context) {
         repeat(triCount) {
             buf.position(buf.position() + 12) // skip normal
             repeat(3) {
-                val x = buf.float + 135f
-                val y = buf.float + 135f
+                val x = (buf.float + 135f) * (bedSizeXmm / 270f)
+                val y = (buf.float + 135f) * (bedSizeYmm / 270f)
                 buf.float // Z — flatten to 0
                 verts.add(x); verts.add(y); verts.add(0f)
             }
@@ -104,7 +115,7 @@ class BedDrawable(private val context: Context) {
     }
 
     private fun setupGrid() {
-        val bedW = 270f; val bedH = 270f
+        val bedW = bedSizeXmm; val bedH = bedSizeYmm
 
         fun makeLineVao(step: Float): Pair<Int, Int> {
             val lines = mutableListOf<Float>()

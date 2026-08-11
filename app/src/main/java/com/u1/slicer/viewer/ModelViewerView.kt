@@ -152,7 +152,15 @@ class ModelViewerView(context: Context) : BaseGLViewerView(context) {
     }
 
     fun clearMesh() {
+        // A pending mesh has not been retained by the renderer yet; dropping
+        // it here leaves its cache/local owner responsible for release.
+        renderer.pendingMesh = null
         renderer.pendingClearMesh = true
+        requestRender()
+    }
+
+    fun setBedSizeMm(sizeXmm: Float, sizeYmm: Float = sizeXmm) {
+        renderer.pendingBedSizeMm = sizeXmm to sizeYmm
         requestRender()
     }
 

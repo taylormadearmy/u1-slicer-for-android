@@ -6,6 +6,10 @@ param(
     [string]$ArtifactDir = "",
     [int]$StartAt = 1,
     [int]$EndAt = 0,
+    [ValidateSet('U1', 'Bambu', 'Both')]
+    [string]$Suite = 'U1',
+    [ValidateSet('A1_MINI', 'A1', 'P1P', 'P1S', 'X1C', 'X1E', 'H2D')]
+    [string]$BambuTarget = 'H2D',
     [switch]$KeepExistingResults,
     [switch]$NoInstall
 )
@@ -113,7 +117,25 @@ function Get-GcodeChecks([string]$GcodePath) {
     }
     $checks["filament_type"] = ((Invoke-Adb shell run-as $AppId awk /filament_type/ $GcodePath) -join " | ")
     $checks["filament_used"] = ((Invoke-Adb shell run-as $AppId grep filament.used $GcodePath) -join " | ")
+    $checks["printer_model"] = ((Invoke-Adb shell run-as $AppId grep printer_model $GcodePath) -join " | ")
+    $foreignMacros = 0
+    foreach ($pattern in @('__U1_SLICER', 'Snapmaker.*U1', 'PRINT_START', 'PRINT_END')) {
+        $countOutput = @(Invoke-Adb shell run-as $AppId grep -c $pattern $GcodePath)
+        $count = if ($countOutput.Count -gt 0) { ([string]$countOutput[0]).Trim() } else { "0" }
+        if ($count -match '^\d+$') { $foreignMacros += [int]$count }
+    }
+    $checks["foreign_machine_macros"] = "$foreignMacros"
     return $checks
+}
+
+$bambuPrinterModels = @{
+    A1_MINI = 'Bambu Lab A1 mini'
+    A1      = 'Bambu Lab A1'
+    P1P     = 'Bambu Lab P1P'
+    P1S     = 'Bambu Lab P1S'
+    X1C     = 'Bambu Lab X1 Carbon'
+    X1E     = 'Bambu Lab X1E'
+    H2D     = 'Bambu Lab H2D'
 }
 
 function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
@@ -138,6 +160,14 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
     Invoke-Adb shell am force-stop $AppId | Out-Null
     Invoke-Adb shell am start -n "$AppId/com.u1.slicer.MainActivity" | Out-Null
     Start-Sleep -Seconds 8
+
+    if ($Scenario.Suite -eq 'Bambu') {
+        Broadcast "SET_BAMBU_TARGET" @("--es", "model", $Scenario.Target)
+        Start-Sleep -Seconds 2
+    } elseif ($Scenario.Suite -eq 'U1') {
+        Broadcast "SET_U1_TARGET"
+        Start-Sleep -Seconds 2
+    }
 
     Invoke-Adb shell "run-as $AppId mkdir -p files" | Out-Null
     Invoke-Adb shell "run-as $AppId sh -c 'rm -rf files/transient files/embedded_*.3mf files/sanitized_*.3mf files/output.gcode'" | Out-Null
@@ -194,11 +224,28 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
 
     (Get-TestCmdLog 260) | Set-Content $logFile
 
-    $status = if ($loadOk -and ($Scenario.Kind -ne "slice" -or ($sliceOk -and $gcodeChecks -ne $null -and $gcodeChecks["T4_T9"] -eq "0"))) { "PASS" } else { "FAIL" }
+    $targetOk = $true
+    $machineMacrosOk = $true
+    if ($Scenario.Suite -eq 'Bambu' -and $gcodeChecks -ne $null) {
+        $targetOk = $gcodeChecks["printer_model"] -match [regex]::Escape($bambuPrinterModels[$Scenario.Target])
+        $machineMacrosOk = [int]$gcodeChecks["foreign_machine_macros"] -eq 0
+    }
+    $toolRangeOk = if ($Scenario.Suite -eq 'Bambu') {
+        # Bambu H2D and multi-material profiles legitimately emit extended
+        # tool slots; the U1 smoke corpus requires the legacy T0..T3 range.
+        $true
+    } else {
+        $gcodeChecks -ne $null -and $gcodeChecks["T4_T9"] -eq "0"
+    }
+    $sliceChecksOk = $sliceOk -and $gcodeChecks -ne $null -and
+        $toolRangeOk -and $targetOk -and $machineMacrosOk
+    $status = if ($loadOk -and ($Scenario.Kind -ne "slice" -or $sliceChecksOk)) { "PASS" } else { "FAIL" }
     $lines = @(
         "SCENARIO: $($Scenario.Name)",
         "DATE: $(Get-Date -Format s)",
         "FILE: $file",
+        "SUITE: $($Scenario.Suite)",
+        "BAMBU_TARGET: $($Scenario.Target)",
         "PLATE: $($Scenario.Plate)",
         "KIND: $($Scenario.Kind)",
         "PREPARE_SCREENSHOT: $prepareShot",
@@ -208,6 +255,8 @@ function Run-Scenario($Scenario, [int]$Index, [int]$Total) {
         "load: $(if ($loadOk) { 'PASS' } else { 'FAIL' })",
         "plateSelect: $(if ($Scenario.Plate -eq $null) { 'N/A' } elseif ($plateOk) { 'PASS' } else { 'FAIL' })",
         "slice: $(if ($Scenario.Kind -ne 'slice') { 'N/A' } elseif ($sliceOk) { 'PASS' } else { 'FAIL' })",
+        "targetIdentity: $(if ($Scenario.Suite -ne 'Bambu' -or $targetOk) { 'PASS' } else { 'FAIL' })",
+        "foreignMachineMacros: $(if ($Scenario.Suite -ne 'Bambu' -or $machineMacrosOk) { 'PASS' } else { 'FAIL' })",
         "rawGcodePath: $gcodePath",
         "exportGcodePath: $exportPath"
     )
@@ -271,7 +320,21 @@ $scenarios = @(
     @{ Name="F1 calendar"; File="2026+F1+CALENDAR+-+DATES+&+TRACK+NAMES+(P_X+SERIES).3mf"; Plate=1; Kind="slice"; LoadTimeoutSeconds=900; SliceTimeoutSeconds=7200 }
 )
 
-Write-Step "Batch manual E2E starting: $($scenarios.Count) scenarios, artifacts=$ArtifactDir"
+$scenarios | ForEach-Object { $_.Suite = 'U1'; $_.Target = '' }
+$bambuScenarios = @($scenarios[0..6] | ForEach-Object {
+    $copy = $_.Clone()
+    $copy.Name = "Bambu $BambuTarget - $($_.Name)"
+    $copy.Suite = 'Bambu'
+    $copy.Target = $BambuTarget
+    $copy
+})
+$runScenarios = switch ($Suite) {
+    'U1'    { $scenarios }
+    'Bambu' { $bambuScenarios }
+    'Both'  { @($scenarios + $bambuScenarios) }
+}
+
+Write-Step "Batch manual E2E starting: suite=$Suite target=$BambuTarget scenarios=$($runScenarios.Count), artifacts=$ArtifactDir"
 Invoke-Adb get-state | Out-Host
 Invoke-Adb shell getprop ro.product.model | Out-Host
 
@@ -286,9 +349,9 @@ Invoke-Adb shell pm grant $AppId android.permission.POST_NOTIFICATIONS 2>$null
 
 $passed = 0
 $failed = 0
-$last = if ($EndAt -gt 0) { [Math]::Min($EndAt, $scenarios.Count) } else { $scenarios.Count }
+$last = if ($EndAt -gt 0) { [Math]::Min($EndAt, $runScenarios.Count) } else { $runScenarios.Count }
 for ($i = $StartAt; $i -le $last; $i++) {
-    $ok = Run-Scenario $scenarios[$i - 1] $i $scenarios.Count
+    $ok = Run-Scenario $runScenarios[$i - 1] $i $runScenarios.Count
     if ($ok) { $passed++ } else { $failed++ }
 }
 

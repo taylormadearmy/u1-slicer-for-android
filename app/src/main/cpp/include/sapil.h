@@ -98,6 +98,9 @@ struct SliceConfig {
     // template expressions at G-code generation time.
     std::string machine_start_gcode;
     std::string machine_end_gcode;
+    std::string machine_change_filament_gcode;
+    std::string machine_target = "SNAPMAKER_U1";
+    std::string bambu_explicit_overrides;
 
     // F91 (2026-05-25): per-extruder filament tuning sourced from the user's filament
     // library on the Kotlin side at slice time. Empty vector = "user has not set this

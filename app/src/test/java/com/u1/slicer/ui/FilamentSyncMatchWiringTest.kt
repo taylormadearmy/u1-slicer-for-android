@@ -25,4 +25,11 @@ class FilamentSyncMatchWiringTest {
         val s = File("src/main/java/com/u1/slicer/printer/PrinterViewModel.kt").readText()
         assertTrue(s.contains("recordRecent"))
     }
+
+    @Test
+    fun `switching active printer clears the previous transport before the next sync can run`() {
+        val s = File("src/main/java/com/u1/slicer/printer/PrinterViewModel.kt").readText()
+        assertTrue(s.contains("printerRepo.prepareForActivePrinterSwitch()"))
+        assertTrue(s.contains("printersRepo.setActive(id)"))
+    }
 }

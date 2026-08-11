@@ -31,11 +31,14 @@ fun SyncFilamentsDialog(
     initialMapping: List<Int>? = null,
     hasActiveOverrides: Boolean = false,
     promptReason: String? = null,
+    title: String = "Sync filaments from printer",
+    description: String = "Override the file's colours and materials to match the physical loaded extruders.",
+    confirmLabel: String = "Sync",
     onConfirm: (List<Int>) -> Unit,
     onRestoreAll: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val mapping = remember(initialMapping, canonicalList.size) {
+    val mapping = remember(initialMapping, canonicalList.size, extruderPresets) {
         mutableStateListOf<Int>().apply {
             if (initialMapping != null && initialMapping.size == canonicalList.size) {
                 addAll(initialMapping)
@@ -57,7 +60,7 @@ fun SyncFilamentsDialog(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
             Column(modifier = Modifier.padding(20.dp)) {
-                Text("Sync filaments from printer", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
                 if (promptReason != null) {
                     Text(
@@ -69,7 +72,7 @@ fun SyncFilamentsDialog(
                     Spacer(Modifier.height(4.dp))
                 }
                 Text(
-                    "Override the file's colours and materials to match the physical loaded extruders.",
+                    description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -125,7 +128,7 @@ fun SyncFilamentsDialog(
                     }
                     Spacer(Modifier.weight(1f))
                     Button(onClick = { onConfirm(mapping.toList()) }) {
-                        Text("Sync")
+                        Text(confirmLabel)
                     }
                 }
             }

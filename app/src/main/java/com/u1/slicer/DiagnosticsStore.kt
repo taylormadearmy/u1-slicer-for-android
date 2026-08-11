@@ -25,6 +25,8 @@ class DiagnosticsStore(private val context: Context) {
         private const val KEY_SLICE_IN_PROGRESS = "slice_in_progress"
         private const val KEY_CLIPPER_RECOVERY_PENDING = "clipper_recovery_pending"
         private const val MAX_HISTORY_LINES = 200
+        private const val MAX_BAMBU_TIMELINE_LINES = 100
+        private val historyLock = Any()
 
         @Volatile
         private var sessionIdCache: String? = null
@@ -56,6 +58,41 @@ class DiagnosticsStore(private val context: Context) {
                 "same_process_or_unknown"
             }
         }
+
+        internal fun bambuTimelineLines(historyLines: List<String>): List<String> = historyLines.mapNotNull { line ->
+            val obj = runCatching { JSONObject(line) }.getOrNull() ?: return@mapNotNull null
+            val type = obj.optString("type")
+            if (!type.startsWith("bambu_")) return@mapNotNull null
+            val timestamp = obj.optLong("timestampMs", 0L).takeIf { it > 0L }
+                ?.let { java.time.Instant.ofEpochMilli(it).toString() }
+                ?: "unknown-time"
+            val summaryKeys = listOf(
+                "model", "printerId", "serialSuffix", "stage", "result", "state",
+                "progressPercent", "slotCount", "extruderCount", "ftsInstalled",
+                "installedNozzles", "amsHtSlotCount", "externalSlotCount", "switchableSlotCount",
+                "firmwareVersion", "developerMode", "projectId", "plateId",
+                "projectFilamentCount", "mapping", "useAms", "dataMode",
+                "bytes", "protocol", "playbackState", "errorType", "errorCategory",
+                "errorMessage",
+            )
+            val summary = summaryKeys.mapNotNull { key ->
+                if (!obj.has(key) || obj.isNull(key)) null else "$key=${obj.opt(key)}"
+            }.toMutableList().apply {
+                if (type == "bambu_config_provenance") {
+                    val payload = obj.optJSONObject("payload")
+                    listOf(
+                        "target", "sourceValueCount", "safeSourceKeysApplied",
+                        "targetReplacementCount", "explicitOverrideCount",
+                    ).forEach { key ->
+                        val owner = if (obj.has(key)) obj else payload
+                        if (owner != null && owner.has(key) && !owner.isNull(key)) {
+                            add("$key=${owner.opt(key)}")
+                        }
+                    }
+                }
+            }.joinToString(" ")
+            "$timestamp $type${if (summary.isBlank()) "" else " $summary"}"
+        }.takeLast(MAX_BAMBU_TIMELINE_LINES)
 
     }
 
@@ -169,7 +206,6 @@ class DiagnosticsStore(private val context: Context) {
         return pending
     }
 
-    @Synchronized
     fun recordEvent(type: String, details: Map<String, Any?> = emptyMap()) {
         diagnosticsDir.mkdirs()
         val obj = JSONObject()
@@ -182,8 +218,10 @@ class DiagnosticsStore(private val context: Context) {
         obj.put("apkLastUpdateTime", packageInfo.lastUpdateTime)
         obj.put("buildType", if (BuildConfig.DEBUG) "debug" else "release")
         details.forEach { (key, value) -> obj.put(key, toJsonValue(value)) }
-        historyFile.appendText(obj.toString() + "\n")
-        trimHistory()
+        synchronized(historyLock) {
+            historyFile.appendText(obj.toString() + "\n")
+            trimHistory()
+        }
     }
 
     fun markUpgradeRestartRequested(trigger: String, nativeStateJson: String?): Boolean {
@@ -268,10 +306,13 @@ class DiagnosticsStore(private val context: Context) {
     fun buildBundle(latestError: String? = null): File {
         diagnosticsDir.mkdirs()
         val pendingRestart = prefs.getString(KEY_PENDING_RESTART, null)
-        val historyLines = if (historyFile.exists()) historyFile.readLines() else emptyList()
+        val historyLines = synchronized(historyLock) {
+            if (historyFile.exists()) historyFile.readLines() else emptyList()
+        }
         val timelineLines = buildTimelineLines(historyLines)
+        val bambuTimelineLines = Companion.bambuTimelineLines(historyLines)
         val out = buildString {
-            appendLine("U1 Slicer Clipper Investigation Bundle")
+            appendLine("Your One Slicer Diagnostics Bundle")
             appendLine("sessionId=$sessionId")
             appendLine("pid=${Process.myPid()}")
             appendLine("appVersion=${BuildConfig.VERSION_NAME}")
@@ -284,6 +325,11 @@ class DiagnosticsStore(private val context: Context) {
                 appendLine()
                 appendLine("Timeline:")
                 timelineLines.forEach { appendLine(it) }
+            }
+            if (bambuTimelineLines.isNotEmpty()) {
+                appendLine()
+                appendLine("Bambu LAN timeline (redacted):")
+                bambuTimelineLines.forEach { appendLine(it) }
             }
             appendLine()
             appendLine("Recent events:")

@@ -12,6 +12,8 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.u1.slicer.bambu.BambuSanitizer
+import com.u1.slicer.bambu.BambuImportedConfigComposer
+import com.u1.slicer.bambu.resolveTargetedSliceConfig
 import com.u1.slicer.bambu.NativePlateState
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfInfo
@@ -56,6 +58,14 @@ import com.u1.slicer.gcode.gcodeToolSpaceToDb
 import com.u1.slicer.gcode.parseExcludeObjects
 import com.u1.slicer.gcode.resolveExportMappingForToolSpace
 import com.u1.slicer.model.CopyArrangeCalculator
+import com.u1.slicer.printer.BambuProjectDescriptor
+import com.u1.slicer.printer.BambuProjectFileInspector
+import com.u1.slicer.slice.SliceTargetFamily
+import com.u1.slicer.slice.SliceArtifact
+import com.u1.slicer.slice.SlicerTarget
+import com.u1.slicer.slice.buildSliceArtifact
+import com.u1.slicer.slice.buildSliceArtifactWithTimings
+import com.u1.slicer.slice.resolveDefaultSliceTarget
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -111,6 +121,106 @@ internal fun resolveWipeTowerDepth(modelHeightMm: Float, overrides: com.u1.slice
 internal fun resolveWipeTowerWidth(config: com.u1.slicer.data.SliceConfig, overrides: com.u1.slicer.data.SlicingOverrides): Float {
     val ov = overrides.primeTowerWidth
     return if (ov.mode == com.u1.slicer.data.OverrideMode.OVERRIDE && ov.value != null) ov.value else config.wipeTowerWidth
+}
+
+/** Select only settings the user explicitly changed for Bambu precedence layer 4. */
+internal fun buildExplicitBambuProfileOverrides(
+    profileOverrides: Map<String, Any>,
+    overrides: SlicingOverrides,
+    hasFilamentOverrides: Boolean,
+): Map<String, Any> {
+    val keys = linkedSetOf<String>()
+    fun include(mode: OverrideMode, vararg names: String) {
+        if (mode != OverrideMode.USE_FILE) keys.addAll(names)
+    }
+    include(overrides.layerHeight.mode, "layer_height")
+    include(overrides.infillDensity.mode, "sparse_infill_density")
+    include(overrides.wallCount.mode, "wall_loops")
+    include(overrides.infillPattern.mode, "sparse_infill_pattern")
+    include(overrides.topShellLayers.mode, "top_shell_layers")
+    include(overrides.bottomShellLayers.mode, "bottom_shell_layers")
+    include(overrides.topSurfacePattern.mode, "top_surface_pattern")
+    include(overrides.bottomSurfacePattern.mode, "bottom_surface_pattern")
+    include(overrides.sparseInfillSpeed.mode, "sparse_infill_speed")
+    include(overrides.reduceInfillRetraction.mode, "reduce_infill_retraction")
+    include(overrides.wallGenerator.mode, "wall_generator")
+    include(overrides.seamPosition.mode, "seam_position")
+    include(overrides.supports.mode, "enable_support")
+    include(overrides.supportType.mode, "support_type")
+    include(overrides.supportAngle.mode, "support_threshold_angle")
+    include(overrides.supportBuildPlateOnly.mode, "support_on_build_plate_only")
+    include(overrides.supportPattern.mode, "support_base_pattern")
+    include(overrides.supportPatternSpacing.mode, "support_base_pattern_spacing")
+    include(overrides.supportInterfaceTopLayers.mode, "support_interface_top_layers")
+    include(overrides.supportInterfaceBottomLayers.mode, "support_interface_bottom_layers")
+    include(overrides.supportFilament.mode, "support_filament")
+    include(overrides.supportInterfaceFilament.mode, "support_interface_filament")
+    include(overrides.supportXyDistance.mode, "support_object_xy_distance")
+    include(overrides.supportInterfacePattern.mode, "support_interface_pattern")
+    include(overrides.supportInterfaceSpacing.mode, "support_interface_spacing")
+    include(overrides.supportSpeed.mode, "support_speed")
+    include(overrides.treeSupportBranchAngle.mode, "tree_support_branch_angle")
+    include(overrides.treeSupportBranchDistance.mode, "tree_support_branch_distance")
+    include(overrides.treeSupportBranchDiameter.mode, "tree_support_branch_diameter")
+    include(overrides.brimWidth.mode, "brim_width", "brim_type")
+    include(overrides.skirtLoops.mode, "skirt_loops", "skirt_height")
+    include(overrides.primeTower.mode, "enable_prime_tower")
+    include(overrides.primeVolume.mode, "prime_volume")
+    include(overrides.primeTowerWidth.mode, "prime_tower_width")
+    include(overrides.primeTowerBrimWidth.mode, "prime_tower_brim_width")
+    include(overrides.primeTowerBrimChamfer.mode, "prime_tower_brim_chamfer")
+    include(overrides.primeTowerChamferMaxWidth.mode, "prime_tower_brim_chamfer_max_width")
+    include(overrides.wipeTowerRotationAngle.mode, "wipe_tower_rotation_angle")
+    if (hasFilamentOverrides) {
+        keys.addAll(
+            listOf(
+                "filament_type", "filament_colour", "nozzle_temperature",
+                "nozzle_temperature_initial_layer",
+            )
+        )
+    }
+
+    val result = profileOverrides.filterKeys { it in keys }.toMutableMap()
+    if (overrides.bedTemp.mode != OverrideMode.USE_FILE) {
+        val value = profileOverrides["bed_temperature"] ?: return result
+        result["hot_plate_temp"] = value
+        result["hot_plate_temp_initial_layer"] = value
+        result["textured_plate_temp"] = value
+        result["textured_plate_temp_initial_layer"] = value
+        result["cool_plate_temp"] = value
+        result["cool_plate_temp_initial_layer"] = value
+    }
+    return result
+}
+
+private fun bambuConfigProvenanceDiagnostics(
+    target: SlicerTarget,
+    result: BambuImportedConfigComposer.Result,
+): Map<String, Any?> {
+    fun safeValue(key: String, value: Any?): Any? {
+        if (value == null) return null
+        return if (key.contains("gcode", ignoreCase = true)) {
+            val text = value.toString()
+            "<redacted machine code: ${text.length} chars>"
+        } else value
+    }
+    val entries = result.provenance.mapValues { (key, p) ->
+        mapOf(
+            "sourceValue" to safeValue(key, p.sourceValue),
+            "targetReplacement" to safeValue(key, p.targetReplacement),
+            "explicitOverride" to safeValue(key, p.explicitOverride),
+            "finalValue" to safeValue(key, p.finalValue),
+            "disposition" to p.disposition.name,
+        )
+    }
+    return mapOf(
+        "target" to target.name,
+        "sourceValueCount" to result.provenance.values.count { it.sourceValue != null },
+        "targetReplacementCount" to result.provenance.values.count { it.targetReplacement != null },
+        "explicitOverrideCount" to result.provenance.values.count { it.explicitOverride != null },
+        "entries" to entries,
+        "finalGeneratedValues" to result.config.mapValues { (key, value) -> safeValue(key, value) },
+    )
 }
 
 /**
@@ -252,6 +362,46 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val _config = MutableStateFlow(SliceConfig())
     val config: StateFlow<SliceConfig> = _config.asStateFlow()
 
+    /**
+     * H2D source-filament to physical-nozzle preference. Values deliberately
+     * match Bambu's one-based hotend map: 0 = reach-aware automatic choice,
+     * 1 = left nozzle, 2 = right nozzle. This state is H2D-only; the normal
+     * U1 and single-nozzle Bambu slice paths never consult it.
+     */
+    private val _h2dFilamentNozzleAssignments = MutableStateFlow<List<Int>>(emptyList())
+    val h2dFilamentNozzleAssignments: StateFlow<List<Int>> =
+        _h2dFilamentNozzleAssignments.asStateFlow()
+
+    fun setH2DFilamentNozzleAssignments(assignments: List<Int>) {
+        require(assignments.all { it in 0..2 }) {
+            "H2D nozzle assignments must be 0 (auto), 1 (left), or 2 (right)"
+        }
+        if (_h2dFilamentNozzleAssignments.value == assignments) return
+        _h2dFilamentNozzleAssignments.value = assignments.toList()
+        if (_state.value is SlicerState.SliceComplete) _sliceStale.value = true
+        markSessionDirty()
+    }
+    private val activePrinterForSlicing = printersRepo.activePrinter.stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        null,
+    )
+    /**
+     * The active printer is the sole source of the slice target.  Changing
+     * printers happens on the Printer screen, never from a preview-only
+     * override, so the generated artifact always matches that printer.
+     */
+    val effectiveSliceTarget: StateFlow<SlicerTarget> = printersRepo.activePrinter
+        .map(::resolveDefaultSliceTarget)
+        .stateIn(
+        viewModelScope,
+        SharingStarted.Eagerly,
+        resolveDefaultSliceTarget(null),
+    )
+
+    private val _latestSliceArtifact = MutableStateFlow<SliceArtifact?>(null)
+    val latestSliceArtifact: StateFlow<SliceArtifact?> = _latestSliceArtifact.asStateFlow()
+
     private val _gcodePreview = MutableStateFlow("")
     val gcodePreview: StateFlow<String> = _gcodePreview.asStateFlow()
 
@@ -357,6 +507,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val generation = modelLoadGeneration.incrementAndGet()
         _canonicalFilamentList.value = null
         _sliceMixToolSpace.value = false
+        _h2dFilamentNozzleAssignments.value = emptyList()
         canonicalCacheSourcePath = null
         _filamentOverrides.value = emptyMap()
         _copyCount.value = 1
@@ -1069,8 +1220,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Target lower-left of the combined AABB so it sits centred on the bed.
         // If combined > 270 in either axis the group genuinely doesn't fit and
         // we clamp the lower-left to 0 — the user can scale or remove pieces.
-        val targetMinX = ((270f - combinedW) / 2f).coerceAtLeast(0f)
-        val targetMinY = ((270f - combinedH) / 2f).coerceAtLeast(0f)
+        val (bedSizeX, bedSizeY) = activeBedDimensions()
+        val targetMinX = ((bedSizeX - combinedW) / 2f).coerceAtLeast(0f)
+        val targetMinY = ((bedSizeY - combinedH) / 2f).coerceAtLeast(0f)
         val dx = targetMinX - combinedMinX
         val dy = targetMinY - combinedMinY
         val centered = FloatArray(worldMins.size)
@@ -1393,10 +1545,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
                 _objectBoundingBoxes.value = boxes
                 if (boxes.size >= 3) {
+                    val (bedSizeX, bedSizeY) = activeBedDimensions()
                     val existing = customObjectPositions
-                        ?: com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+                        ?: com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(
+                            boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                        )
                     val positions = com.u1.slicer.model.CopyArrangeCalculator
-                        .placeAdditionalObject(existing, boxes)
+                        .placeAdditionalObject(
+                            existing, boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                        )
                     native.setObjectPositions(positions)
                     customObjectPositions = positions
                     _multiObjectPositions.value = positions
@@ -1542,7 +1699,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             } else null
 
             val incoming = customObjectPositions ?: getPlacementPositions()
-            val result = com.u1.slicer.model.CopyArrangeCalculator.autoArrange(boxes, reserved, incoming)
+            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            val result = com.u1.slicer.model.CopyArrangeCalculator.autoArrange(
+                boxes, reserved, incoming, bedSize = bedSizeX, bedSizeY = bedSizeY,
+            )
 
             applyPlacementPositions(result.positions, towerPos)
             _sliceStale.value = true
@@ -2202,6 +2362,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val aiNamingEnabled: StateFlow<Boolean> = settingsRepo.aiNamingEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
+    val bambuBetaEnabled: StateFlow<Boolean> = settingsRepo.bambuBetaEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setBambuBetaEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveBambuBetaEnabled(enabled) }
+    }
+
     fun saveAiNamingEnabled(enabled: Boolean) {
         viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveAiNamingEnabled(enabled) }
     }
@@ -2434,6 +2601,23 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         wireSessionPersistence()
         configureNativeDiagnosticsIfAvailable()
         libraryRepo.ensureLoaded(viewModelScope)
+        effectiveSliceTarget
+            .drop(1)
+            .onEach { reflowPlacementForActiveTarget() }
+            .launchIn(viewModelScope)
+
+        // Printer selection is the only way to change a slice target.  A
+        // completed toolpath belongs to the previously active printer even
+        // when both printers share the same target family (for example, two
+        // U1s), so invalidate it on every active-printer change.
+        printersRepo.activePrinter
+            .drop(1)
+            .onEach {
+                if (_state.value is SlicerState.SliceComplete) {
+                    _sliceStale.value = true
+                }
+            }
+            .launchIn(viewModelScope)
 
         viewModelScope.launch {
             val saved = settingsRepo.sliceConfig.first()
@@ -2615,7 +2799,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (designId == null) {
             _state.value = SlicerState.Error(
                 "Unsupported shared link.\n\n" +
-                    "Share a MakerWorld model page link, or send a downloaded 3MF/STL file to U1 Slicer."
+                    "Share a MakerWorld model page link, or send a downloaded 3MF/STL file to Your One Slicer."
             )
             return
         }
@@ -3301,10 +3485,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val boxes = runCatching { native.getObjectBoundingBoxes() }.getOrDefault(floatArrayOf())
             _objectBoundingBoxes.value = boxes
 
+            val (bedSizeX, bedSizeY) = activeBedDimensions()
             val positions = if (existingPos != null) {
-                com.u1.slicer.model.CopyArrangeCalculator.placeAdditionalObject(existingPos, boxes)
+                com.u1.slicer.model.CopyArrangeCalculator.placeAdditionalObject(
+                    existingPos, boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                )
             } else {
-                com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(boxes)
+                com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(
+                    boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                )
             }
             native.setObjectPositions(positions)
             customObjectPositions = positions
@@ -3316,7 +3505,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val tw = resolveWipeTowerWidth(_config.value, slicingOverrides.value)
                 val td = resolveWipeTowerDepth(lastModelInfo?.sizeZ ?: 0f, slicingOverrides.value)
                 customWipeTowerPos = com.u1.slicer.model.CopyArrangeCalculator
-                    .computeWipeTowerPositionForObjects(positions, boxes, towerWidth = tw, towerDepth = td)
+                    .computeWipeTowerPositionForObjects(
+                        positions, boxes, towerWidth = tw, towerDepth = td,
+                        bedSizeX = bedSizeX, bedSizeY = bedSizeY,
+                    )
             }
 
             invalidatePrepareMeshCache()
@@ -3838,7 +4030,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 Log.i("SlicerVM", "B78: snapshotted load-time instance offsets: ${_loadTimeInstanceOffsets.value.toList()}")
             } else {
-                _loadTimeInstanceOffsets.value = floatArrayOf(135f, 135f)
+                val (bedSizeX, bedSizeY) = activeBedDimensions()
+                _loadTimeInstanceOffsets.value = floatArrayOf(bedSizeX / 2f, bedSizeY / 2f)
             }
             _nativeSliceStateDirty.value = false
 
@@ -3888,12 +4081,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val identityMapping = (0 until slotCount).toList()
                     _colorMapping.value = identityMapping
                     _layerToolOnly.value = false
-                    val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
+                    val (bedSizeX, bedSizeY) = activeBedDimensions()
+                    val positions = CopyArrangeCalculator.calculate(
+                        info.sizeX, info.sizeY, _copyCount.value, bedSizeX, bedSizeY,
+                    )
                     val estimatedTowerDepth = WipeTowerDepthEstimator.estimateDepth(info.sizeZ)
                     val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
                         positions, info.sizeX, info.sizeY,
                         towerWidth = _config.value.wipeTowerWidth,
-                        towerDepth = estimatedTowerDepth
+                        towerDepth = estimatedTowerDepth,
+                        bedSizeX = bedSizeX,
+                        bedSizeY = bedSizeY,
                     )
                     _config.value = _config.value.copy(
                         extruderCount = slotCount,
@@ -3954,12 +4152,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         // N-extruder and G-code post-processing remaps T-commands to physical slots.
                         val slotCount = mfInfo.detectedExtruderCount.coerceIn(1, 4)
                         // Compute tower position that avoids the model
-                        val positions = CopyArrangeCalculator.calculate(info.sizeX, info.sizeY, _copyCount.value)
+                        val (bedSizeX, bedSizeY) = activeBedDimensions()
+                        val positions = CopyArrangeCalculator.calculate(
+                            info.sizeX, info.sizeY, _copyCount.value, bedSizeX, bedSizeY,
+                        )
                         val estimatedTowerDepth = WipeTowerDepthEstimator.estimateDepth(info.sizeZ)
                         val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
                             positions, info.sizeX, info.sizeY,
                             towerWidth = _config.value.wipeTowerWidth,
-                            towerDepth = estimatedTowerDepth
+                            towerDepth = estimatedTowerDepth,
+                            bedSizeX = bedSizeX,
+                            bedSizeY = bedSizeY,
                         )
                         _config.value = _config.value.copy(
                             extruderCount = slotCount,
@@ -4080,9 +4283,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // Recompute wipe tower position if multi-extruder (unless user already placed it)
         val mi = lastModelInfo
         if (slotCount > 1 && mi != null && mi.sizeX > 0f && customWipeTowerPos == null) {
-            val objPos = CopyArrangeCalculator.calculate(mi.sizeX, mi.sizeY, _copyCount.value)
+            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            val objPos = CopyArrangeCalculator.calculate(
+                mi.sizeX, mi.sizeY, _copyCount.value, bedSizeX, bedSizeY,
+            )
             val towerPos = CopyArrangeCalculator.computeWipeTowerPosition(
-                objPos, mi.sizeX, mi.sizeY, _config.value.wipeTowerWidth
+                objPos, mi.sizeX, mi.sizeY, _config.value.wipeTowerWidth,
+                bedSizeX = bedSizeX, bedSizeY = bedSizeY,
             )
             val filamentLabel = resolveFilamentTypeLabelFromMapping(modelColorToExtruder, extruderPresets)
             _config.value = _config.value.copy(
@@ -4265,7 +4472,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun refreshCopyBedWarning() {
         val footprint = currentCopyFootprint()
         _copyBedWarning.value = if (footprint != null) {
-            CopyArrangeCalculator.copyBedWarning(footprint.first, footprint.second, _copyCount.value)
+            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            CopyArrangeCalculator.copyBedWarning(
+                footprint.first, footprint.second, _copyCount.value, bedSizeX, bedSizeY,
+            )
         } else null
     }
 
@@ -4351,9 +4561,67 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      *  function with the refined bounds. */
     fun getPlacementPositions(): FloatArray {
         customObjectPositions?.let { return it }
-        if (lastModelInfo == null) return floatArrayOf(135f, 135f)
-        val (effW, effH) = currentCopyFootprint() ?: return floatArrayOf(135f, 135f)
-        return CopyArrangeCalculator.calculate(effW, effH, _copyCount.value)
+        val (bedSizeX, bedSizeY) = activeBedDimensions()
+        if (lastModelInfo == null) return floatArrayOf(bedSizeX / 2f, bedSizeY / 2f)
+        val (effW, effH) = currentCopyFootprint()
+            ?: return floatArrayOf(bedSizeX / 2f, bedSizeY / 2f)
+        return CopyArrangeCalculator.calculate(effW, effH, _copyCount.value, bedSizeX, bedSizeY)
+    }
+
+    private fun activeBedDimensions(): Pair<Float, Float> {
+        val targetConfig = resolveTargetedSliceConfig(effectiveSliceTarget.value, _config.value)
+        return targetConfig.bedSizeX to targetConfig.bedSizeY
+    }
+
+    /** Rebuild automatic placement when the active target has a different bed size. */
+    private fun reflowPlacementForActiveTarget() {
+        val info = lastModelInfo ?: return
+        if (_state.value is SlicerState.Slicing || _state.value is SlicerState.Cancelling) return
+
+        val (bedSizeX, bedSizeY) = activeBedDimensions()
+        val cfg = _config.value
+        val towerWidth = resolveWipeTowerWidth(cfg, slicingOverrides.value)
+        val towerDepth = resolveWipeTowerDepth(info.sizeZ, slicingOverrides.value)
+
+        if (hasMultipleDistinctObjectsVar && _objectBoundingBoxes.value.size >= 3) {
+            val boxes = _objectBoundingBoxes.value
+            val positions = CopyArrangeCalculator.buildMultiObjectPositions(
+                boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+            )
+            val tower = if (cfg.wipeTowerEnabled) {
+                CopyArrangeCalculator.computeWipeTowerPositionForObjects(
+                    positions, boxes, towerWidth, towerDepth, bedSizeX, bedSizeY,
+                )
+            } else null
+            customObjectPositions = positions
+            _multiObjectPositions.value = positions
+            customWipeTowerPos = tower
+            if (tower != null) _config.value = cfg.copy(wipeTowerX = tower.first, wipeTowerY = tower.second)
+            viewModelScope.launch(Dispatchers.IO) {
+                NativeLibrary.previewMutex.withLock { native.setObjectPositions(positions) }
+                invalidatePrepareMeshCache()
+            }
+        } else {
+            // A single model is placed lazily by getPlacementPositions. Clearing an old custom
+            // position prevents a U1-coordinate placement from leaking onto a smaller bed.
+            customObjectPositions = null
+            _multiObjectPositions.value = null
+            val footprint = currentCopyFootprint()
+            val tower = if (cfg.wipeTowerEnabled && footprint != null) {
+                val positions = CopyArrangeCalculator.calculate(
+                    footprint.first, footprint.second, _copyCount.value, bedSizeX, bedSizeY,
+                )
+                CopyArrangeCalculator.computeWipeTowerPosition(
+                    positions, footprint.first, footprint.second,
+                    towerWidth, towerDepth, bedSizeX, bedSizeY,
+                )
+            } else null
+            customWipeTowerPos = tower
+            if (tower != null) _config.value = cfg.copy(wipeTowerX = tower.first, wipeTowerY = tower.second)
+            invalidatePrepareMeshCache()
+        }
+        refreshCopyBedWarning()
+        _sliceStale.value = true
     }
 
     fun updateConfig(updater: (SliceConfig) -> SliceConfig) {
@@ -4654,14 +4922,46 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         )
         val buildProfileOverridesMs = System.currentTimeMillis() - buildProfileOverridesT0
         val buildConfigT0 = System.currentTimeMillis()
-        val embeddedConfig = profileEmbedder.buildConfig(
-            info = info,
-            sourceConfig = sourceConfig,
-            filamentSettings = filamentLibrarySettings,
-            overrides = profileOverrides,
-            targetExtruderCount = targetCount,
-            processProfileKeys = activeProcessKeys,
-        )
+        val sliceTarget = effectiveSliceTarget.value
+        val bambuComposeResult = if (sliceTarget != SlicerTarget.SnapmakerU1) {
+            val targeted = resolveTargetedSliceConfig(sliceTarget, cfg)
+            // Do not leak the active U1/process profile or automatically selected
+            // slot-library values into Bambu precedence layer 4. Only controls
+            // the user explicitly changed on Prepare are overrides; otherwise an
+            // imported project's process and filament tuning must survive.
+            val explicitBambuOverrides = buildExplicitBambuProfileOverrides(
+                profileOverrides = profileOverrides,
+                overrides = slicingOverrides.value,
+                hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+            )
+            BambuImportedConfigComposer.compose(
+                target = sliceTarget,
+                sourceConfig = sourceConfig,
+                targetAdaptationOverrides = mapOf(
+                    "wipe_tower_x" to targeted.wipeTowerX.toString(),
+                    "wipe_tower_y" to targeted.wipeTowerY.toString(),
+                    "wipe_tower_width" to targeted.wipeTowerWidth.toString(),
+                ),
+                explicitOverrides = explicitBambuOverrides,
+            )
+        } else {
+            null
+        }
+        val embeddedConfig = bambuComposeResult?.config?.toMutableMap()
+            ?: profileEmbedder.buildConfig(
+                info = info,
+                sourceConfig = sourceConfig,
+                filamentSettings = filamentLibrarySettings,
+                overrides = profileOverrides,
+                targetExtruderCount = targetCount,
+                processProfileKeys = activeProcessKeys,
+            )
+        if (bambuComposeResult != null) {
+            diagnostics.recordEvent(
+                "bambu_config_provenance",
+                bambuConfigProvenanceDiagnostics(sliceTarget, bambuComposeResult)
+            )
+        }
         val buildConfigMs = System.currentTimeMillis() - buildConfigT0
         Log.i(
             "SlicerVM",
@@ -5112,10 +5412,22 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startSlicing() {
+        if (!com.u1.slicer.slice.isLocalSliceAvailable(
+                activePrinter = activePrinterForSlicing.value,
+            )
+        ) {
+            _state.value = SlicerState.Error(
+                "Local Bambu slicing is currently available for A1 Mini only. Use a pre-sliced project for this printer.",
+            )
+            return
+        }
         // Consume the bitmap atomically before launching so it is cleared even if slicing
         // fails early or throws — avoids leaking a full-resolution screen-capture Bitmap.
         val capturedBitmap = pendingThumbnailBitmap.also { pendingThumbnailBitmap = null }
         _sliceStale.value = false
+        // Clear synchronously so a fast second tap cannot upload the previous
+        // artifact before the IO coroutine reaches its first state update.
+        _latestSliceArtifact.value = null
         // F66 — close the Edit panel and clear the selection highlight before
         // slicing. The re-embed/clearModel+loadModel inside the slice path
         // can invalidate object indices; the Edit panel would otherwise point
@@ -5460,15 +5772,24 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 val copies = _copyCount.value
                 val custom = customObjectPositions
                 val mi = lastModelInfo
+                val target = effectiveSliceTarget.value
+                val artifactFilamentColours = extruderPresets.value
+                    .sortedBy { it.index }
+                    .map { it.color }
+                    .ifEmpty { listOf("#FFFFFF") }
+                val targetMachineConfig = resolveTargetedSliceConfig(target, _config.value)
+                val targetBedSizeX = targetMachineConfig.bedSizeX
+                val targetBedSizeY = targetMachineConfig.bedSizeY
 
                 // SAFETY CHECK: refuse to slice if model is larger than the bed.
                 // A combined bounding box > 270mm means objects from multiple plates were loaded,
                 // or the model genuinely doesn't fit. Slicing would produce off-bed toolpaths
                 // that could crash the printhead into the frame.
-                if (mi != null && mi.sizeX > 270f && mi.sizeY > 270f && custom == null) {
+                if (mi != null && (mi.sizeX > targetBedSizeX || mi.sizeY > targetBedSizeY) && custom == null) {
                     Log.e("SlicerVM", "Model too large for bed: ${mi.sizeX}×${mi.sizeY}mm — aborting slice")
                     _state.value = SlicerState.Error(
-                        "Model bounding box (${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm) exceeds the 270×270mm bed.\n" +
+                        "Model bounding box (${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm) exceeds the " +
+                            "${targetBedSizeX.toInt()}×${targetBedSizeY.toInt()}mm bed.\n" +
                         "This usually means a multi-plate 3MF still contains all plates. " +
                         "Try reloading and reselecting the plate."
                     )
@@ -5487,11 +5808,14 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         val maxFit = CopyArrangeCalculator.maxCopies(
                             objectSizeX = effW,
                             objectSizeY = effH,
+                            bedSizeX = targetBedSizeX,
+                            bedSizeY = targetBedSizeY,
                         )
                         if (maxFit < copies) {
                             Log.e("SlicerVM", "Copies don't fit on bed: requested=$copies, maxFit=$maxFit, model=${mi.sizeX}×${mi.sizeY}mm")
                             _state.value = SlicerState.Error(
-                                "Only $maxFit copy of this model fits on the 270×270mm bed " +
+                                "Only $maxFit copy of this model fits on the " +
+                                    "${targetBedSizeX.toInt()}×${targetBedSizeY.toInt()}mm bed " +
                                     "(model footprint ${mi.sizeX.toInt()}×${mi.sizeY.toInt()}mm).\n" +
                                     "Either reduce Copies to $maxFit or scale the model down."
                             )
@@ -5550,7 +5874,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // USE_FILE passthrough: base values from _config.value are used as-is.
                 // We use a local copy — _config.value (the UI state) is never mutated here.
                 val ov = slicingOverrides.value
-                val resolvedSliceConfig = ov.resolveInto(_config.value).let { cfg ->
+                val resolvedSliceConfig = resolveTargetedSliceConfig(target, ov.resolveInto(_config.value)).let { cfg ->
                     // Clamp wipe tower to bed bounds — an out-of-bounds tower can produce
                     // degenerate geometry that overflows Clipper2's int64 coordinate range.
                     if (cfg.wipeTowerEnabled) {
@@ -5643,16 +5967,20 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         filaments = filaments.value
                     ))
                 }
+                val targetAwareSliceConfig = resolveTargetedSliceConfig(
+                    target = target,
+                    base = sliceConfig,
+                )
                 val profileOverrides = buildProfileOverrides(
-                    sliceConfig,
-                    sliceConfig.extruderCount,
+                    targetAwareSliceConfig,
+                    targetAwareSliceConfig.extruderCount,
                     toolRemapSlots,
                     hasSourceConfig = _sourceConfig.value != null
                 )
                 diagnostics.recordEvent(
                     "slice_started",
                     sliceDiagnosticsMap(
-                        sliceConfig = sliceConfig,
+                        sliceConfig = targetAwareSliceConfig,
                         profileOverrides = profileOverrides,
                         firstSliceThisLaunch = firstSliceThisLaunch
                     )
@@ -5660,7 +5988,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 diagnostics.recordEvent(
                     "slice_geometry_snapshot",
                     sliceGeometrySnapshot(
-                        sliceConfig = sliceConfig,
+                        sliceConfig = targetAwareSliceConfig,
                         profileOverrides = profileOverrides,
                         firstSliceThisLaunch = firstSliceThisLaunch,
                         mi = mi,
@@ -5691,11 +6019,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         "rawInputPath" to rawInputFile?.absolutePath
                     )
                 )
-                Log.i("SlicerVM", "Resolved slice config: layer=${sliceConfig.layerHeight} " +
-                    "infill=${sliceConfig.fillDensity} walls=${sliceConfig.perimeters} " +
-                    "support=${sliceConfig.supportEnabled} speed=${sliceConfig.printSpeed} " +
-                    "extruders=${sliceConfig.extruderCount} wipeTower=${sliceConfig.wipeTowerEnabled} " +
-                    "wipeTowerXY=(${sliceConfig.wipeTowerX},${sliceConfig.wipeTowerY})")
+                Log.i("SlicerVM", "Resolved slice config: layer=${targetAwareSliceConfig.layerHeight} " +
+                    "infill=${targetAwareSliceConfig.fillDensity} walls=${targetAwareSliceConfig.perimeters} " +
+                    "support=${targetAwareSliceConfig.supportEnabled} speed=${targetAwareSliceConfig.printSpeed} " +
+                    "extruders=${targetAwareSliceConfig.extruderCount} wipeTower=${targetAwareSliceConfig.wipeTowerEnabled} " +
+                    "wipeTowerXY=(${targetAwareSliceConfig.wipeTowerX},${targetAwareSliceConfig.wipeTowerY})")
 
                 diagnostics.markSliceInProgress(currentModelFile!!.name)
 
@@ -5710,7 +6038,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // Pass the machine G-code templates from assets so applyConfigToPrusa injects
                 // them when has_embedded_profile=false. 3MF files (sourceModelFile != null)
                 // already embed the profile via ProfileEmbedder — pass empty to avoid overriding it.
-                val (b106StartGcode, b106EndGcode) = if (sourceModelFile == null) {
+                val usesSnapmakerMachineGcode =
+                    sourceModelFile == null && target == SlicerTarget.SnapmakerU1
+                val (b106StartGcode, b106EndGcode) = if (usesSnapmakerMachineGcode) {
                     readPrinterMachineGcode()
                 } else {
                     "" to ""
@@ -5720,7 +6050,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // ProfileEmbedder (raw STL). buildFilamentLibraryArrays inspects the active
                 // printer's extruder presets and looks up each linked FilamentProfile.
                 val filamentArrays = buildFilamentLibraryArrays(
-                    slotCount = sliceConfig.extruderCount.coerceAtLeast(1),
+                    slotCount = targetAwareSliceConfig.extruderCount.coerceAtLeast(1),
                     usedSlots = toolRemapSlots,
                     presets = extruderPresets.value,
                     filaments = filaments.value,
@@ -5729,11 +6059,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 // serialize() is cheap (iterates a small in-memory list) and must run here —
                 // immediately before native.slice() — so it captures any row added after
                 // the last config change.
-                val jniSliceConfig = sliceConfig.copy(
+                val jniSliceConfig = targetAwareSliceConfig.copy(
                     layerHeight = if (ov.layerHeight.mode == OverrideMode.OVERRIDE)
-                        sliceConfig.layerHeight else 0.0f,
-                    machineStartGcode = b106StartGcode,
-                    machineEndGcode = b106EndGcode,
+                        targetAwareSliceConfig.layerHeight else 0.0f,
+                    machineStartGcode = b106StartGcode.ifBlank { targetAwareSliceConfig.machineStartGcode },
+                    machineEndGcode = b106EndGcode.ifBlank { targetAwareSliceConfig.machineEndGcode },
                     filamentFlowRatios = filamentArrays.flowRatios,
                     filamentMaxVolumetricSpeeds = filamentArrays.maxVolumetricSpeeds,
                     filamentFanMinSpeeds = filamentArrays.fanMinSpeeds,
@@ -5763,6 +6093,15 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // see the C-1 part-B concern in the branch report re: the native engine
                     // deriving num_physical from filament_diameter.size() (= 4 + nMix).
                     mixedFilamentDefinitions = mixedFilamentDefinitions,
+                    bambuExplicitOverrides = if (target != SlicerTarget.SnapmakerU1) {
+                        buildExplicitBambuProfileOverrides(
+                            profileOverrides = profileOverrides,
+                            overrides = ov,
+                            hasFilamentOverrides = _filamentOverrides.value.isNotEmpty(),
+                        ).keys.joinToString(separator = "|", prefix = "|", postfix = "|")
+                    } else {
+                        ""
+                    },
                 )
                 val result = native.slice(jniSliceConfig)
                 ensureActive()
@@ -5951,10 +6290,71 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         Log.w("SlicerVM", "Thumbnail injection failed (non-fatal): ${e.message}")
                     }
 
-                    _state.value = SlicerState.SliceComplete(result)
                     _gcodePreview.value = native.getGcodePreview(50)
                     setParsedGcodeWithRangeReset(outputValidation.parsedGcode)
                     settingsRepo.saveSliceConfig(_config.value)
+                    // A Bambu project must be fully closed and atomically published before
+                    // Preview exposes upload actions. Previously SliceComplete was emitted
+                    // first, allowing FTPS to read output.gcode.3mf while this block
+                    // truncated and rewrote it for the new slice.
+                    val preparedBambuArtifact = if (
+                        target.family == SliceTargetFamily.BAMBU && target.supportsLocalSlicing
+                    ) {
+                        _state.value = SlicerState.Slicing(maxPct, "Packaging Bambu project...")
+                        LongOpService.update(context, maxPct, "Packaging Bambu project...")
+                        val packagingStartedNs = System.nanoTime()
+                        val packagingTimings = linkedMapOf<String, Any?>()
+                        try {
+                            val artifact = buildSliceArtifactWithTimings(
+                                target = target,
+                                sourceModelName = currentModelName.ifEmpty { "Unknown" },
+                                gcodeFile = File(result.gcodePath),
+                                workingDir = context.cacheDir,
+                                plateId = recoveryPlateId.takeIf { it > 0 } ?: 1,
+                                filamentColours = artifactFilamentColours,
+                                filamentTypes = targetAwareSliceConfig.filamentTypes
+                                    .toList()
+                                    .ifEmpty { listOf(targetAwareSliceConfig.filamentType) },
+                                filamentNozzleAssignments = if (target == SlicerTarget.BambuH2D) {
+                                    _h2dFilamentNozzleAssignments.value
+                                } else {
+                                    emptyList()
+                                },
+                                onPackagingStage = { stage, elapsedMs ->
+                                    packagingTimings["${stage}Ms"] = elapsedMs
+                                },
+                            )
+                            diagnostics.recordEvent(
+                                "bambu_project_packaging_completed",
+                                mapOf(
+                                    "target" to target.name,
+                                    "totalMs" to (System.nanoTime() - packagingStartedNs) / 1_000_000L,
+                                    "projectBytes" to
+                                        (artifact as? SliceArtifact.BambuProjectArtifact)?.projectFile?.length(),
+                                    "gcodeBytes" to File(result.gcodePath).length(),
+                                ) + packagingTimings,
+                            )
+                            artifact
+                        } catch (error: Exception) {
+                            diagnostics.recordEvent(
+                                "bambu_project_packaging_failed",
+                                mapOf(
+                                    "target" to target.name,
+                                    "totalMs" to (System.nanoTime() - packagingStartedNs) / 1_000_000L,
+                                    "errorClass" to error.javaClass.simpleName,
+                                    "errorMessage" to (error.message ?: "unknown"),
+                                ) + packagingTimings,
+                            )
+                            throw IllegalStateException(
+                                "Could not prepare the Bambu print project: ${error.message ?: error.javaClass.simpleName}",
+                                error,
+                            )
+                        }
+                    } else {
+                        null
+                    }
+                    _latestSliceArtifact.value = preparedBambuArtifact
+                    _state.value = SlicerState.SliceComplete(result)
                     // Save job to history. Copy source model to durable storage so it can be
                     // re-opened from the Jobs tab even after the transient workspace is cleared.
                     val cfg = _config.value
@@ -6030,6 +6430,27 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val durableSource = copySourceToDurableJobDir(jobId, rawInputFile ?: sourceModelFile ?: currentModelFile)
                     if (durableSource != null) {
                         sliceJobDao.updateSourcePath(jobId, durableSource.absolutePath)
+                    }
+                    val finalGcodeFile = durableGcode ?: File(result.gcodePath)
+                    if (preparedBambuArtifact == null) {
+                        _latestSliceArtifact.value = runCatching {
+                            buildSliceArtifact(
+                                target = target,
+                                sourceModelName = currentModelName.ifEmpty { "Unknown" },
+                                gcodeFile = finalGcodeFile,
+                                workingDir = context.cacheDir,
+                                plateId = recoveryPlateId.takeIf { it > 0 } ?: 1,
+                                filamentColours = artifactFilamentColours,
+                                filamentTypes = targetAwareSliceConfig.filamentTypes
+                                    .toList()
+                                    .ifEmpty { listOf(targetAwareSliceConfig.filamentType) },
+                                filamentNozzleAssignments = if (target == SlicerTarget.BambuH2D) {
+                                    _h2dFilamentNozzleAssignments.value
+                                } else {
+                                    emptyList()
+                                },
+                            )
+                        }.getOrNull()
                     }
                 } else {
                     val errorMsg = result?.errorMessage ?: "Slicing failed"
@@ -7214,8 +7635,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         clipperRetryAttempted = false
         _state.value = SlicerState.Idle
         _sliceMixToolSpace.value = false
+        _h2dFilamentNozzleAssignments.value = emptyList()
         _gcodePreview.value = ""
         setParsedGcodeWithRangeReset(null)
+        _latestSliceArtifact.value = null
         _lastSliceResult = null
         _excludeObjects.value = emptyList()
         _activeExtruderColors.value = emptyList()
@@ -7599,6 +8022,19 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         return ModelExportArtifacts.suggestedFilename(artifacts.sourceDisplayName, kind)
     }
 
+    fun getEmbeddedBambuGcodeProject(): BambuProjectDescriptor? =
+        BambuProjectFileInspector.describe(
+            rawInputFile = rawInputFile,
+            sourceDisplayName = currentModelName,
+            selectedPlateId = recoveryPlateId.takeIf { it >= 1 },
+            info = _fileThreeMfInfo ?: _threeMfInfo.value,
+        )
+
+    fun hasEmbeddedBambuPlateGcode(): Boolean = BambuProjectFileInspector.hasEmbeddedPlateGcode(
+        rawInputFile = rawInputFile,
+        info = _fileThreeMfInfo ?: _threeMfInfo.value,
+    )
+
     fun exportArtifactTo(
         kind: ExportArtifactKind,
         targetUri: Uri,
@@ -7654,7 +8090,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         val ext = filename.substringAfterLast('.', "")
         _state.value = SlicerState.Error(
             "Unsupported file type: .$ext\n\n" +
-                "Please open a 3MF, STL, OBJ, or STEP model file in U1 Slicer."
+                "Please open a 3MF, STL, OBJ, or STEP model file in Your One Slicer."
         )
     }
 

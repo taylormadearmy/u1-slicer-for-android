@@ -166,7 +166,220 @@ std::string SlicerEngine::getCoreVersion() const {
 
 // Map SliceConfig to OrcaSlicer DynamicPrintConfig
 // Key names differ from PrusaSlicer 2.8 — use OrcaSlicer names throughout.
+// Bambu jobs deliberately have a separate configuration boundary.  Do not move
+// settings from applyConfigToPrusa() into this routine: that function is the
+// released U1 path, and its hardware defaults are unsafe ownership for a Bambu
+// target.  The caller has already copied only safe process/filament keys from
+// the imported project before this runs.
+static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config,
+                                    bool has_embedded_profile) {
+    const std::string& target = config.machine_target;
+    double bed_x = 256.0, bed_y = 256.0, bed_z = 250.0;
+    std::string model = "Bambu Lab X1 Carbon";
+    std::string settings = "Bambu Lab X1 Carbon 0.4 nozzle";
+    bool front_left_exclusion = true;
+    bool bed_slinger = false;
+    bool h2d = false;
+    if (target == "BAMBU_X1E") { model = "Bambu Lab X1E"; settings = "Bambu Lab X1E 0.4 nozzle"; }
+    else if (target == "BAMBU_P1S") { model = "Bambu Lab P1S"; settings = "Bambu Lab P1S 0.4 nozzle"; }
+    else if (target == "BAMBU_P1P") { model = "Bambu Lab P1P"; settings = "Bambu Lab P1P 0.4 nozzle"; }
+    else if (target == "BAMBU_A1") { model = "Bambu Lab A1"; settings = "Bambu Lab A1 0.4 nozzle"; bed_z = 256.0; front_left_exclusion = false; bed_slinger = true; }
+    else if (target == "BAMBU_A1_MINI") { model = "Bambu Lab A1 mini"; settings = "Bambu Lab A1 mini 0.4 nozzle"; bed_x = bed_y = bed_z = 180.0; front_left_exclusion = false; bed_slinger = true; }
+    else if (target == "BAMBU_H2D") { model = "Bambu Lab H2D"; settings = "Bambu Lab H2D 0.4 nozzle"; bed_x = 350.0; bed_y = 320.0; bed_z = 325.0; front_left_exclusion = false; h2d = true; }
+
+    // Target-owned machine identity, geometry and kinematics.  These always
+    // replace a source project so foreign printer geometry/macros cannot leak.
+    dpc.set_key_value("printable_area", new Slic3r::ConfigOptionPoints({{0, 0}, {bed_x, 0}, {bed_x, bed_y}, {0, bed_y}}));
+    dpc.set_key_value("printable_height", new Slic3r::ConfigOptionFloat(bed_z));
+    dpc.set_key_value("printer_model", new Slic3r::ConfigOptionString(model));
+    dpc.set_key_value("printer_settings_id", new Slic3r::ConfigOptionString(settings));
+    dpc.set_key_value("printer_variant", new Slic3r::ConfigOptionString("0.4"));
+    dpc.set_key_value("gcode_flavor", new Slic3r::ConfigOptionEnum<Slic3r::GCodeFlavor>(Slic3r::gcfMarlinLegacy));
+    if (front_left_exclusion) {
+        dpc.set_key_value("bed_exclude_area", new Slic3r::ConfigOptionPoints({{0, 0}, {18, 0}, {18, 28}, {0, 28}}));
+    }
+
+    const int n_ext = std::max(h2d ? 2 : 1, config.extruder_count);
+
+    // Plain geometry has no project_settings.config. Seed it from the Bambu
+    // 0.20 mm / PLA baseline instead of falling through to Orca's generic or
+    // the app's U1 defaults. Imported projects skip this block and retain the
+    // whitelisted source process/filament settings applied by the caller.
+    if (!has_embedded_profile) {
+        dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(0.20));
+        dpc.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(0.20));
+        dpc.set_key_value("elefant_foot_compensation", new Slic3r::ConfigOptionFloat(0.15));
+        dpc.set_key_value("wall_loops", new Slic3r::ConfigOptionInt(2));
+        dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(15.0));
+        dpc.set_key_value("sparse_infill_pattern",
+            new Slic3r::ConfigOptionEnum<Slic3r::InfillPattern>(Slic3r::ipGrid));
+        dpc.set_key_value("curr_bed_type",
+            new Slic3r::ConfigOptionEnum<Slic3r::BedType>(Slic3r::btPTE));
+        dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 220)));
+        dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 220)));
+        dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 55)));
+        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 55)));
+        dpc.set_key_value("textured_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 55)));
+        dpc.set_key_value("textured_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 55)));
+        dpc.set_key_value("filament_flow_ratio", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 0.98)));
+        dpc.set_key_value("fan_min_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+        dpc.set_key_value("fan_max_speed", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+        dpc.set_key_value("reduce_fan_stop_start_freq", new Slic3r::ConfigOptionBools(std::vector<unsigned char>(n_ext, 1)));
+        dpc.set_key_value("fan_cooling_layer_time", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, 100.0)));
+        dpc.set_key_value("close_fan_the_first_x_layers", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 1)));
+        dpc.set_key_value("full_fan_speed_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, 0)));
+    }
+
+    dpc.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.nozzle_diameter)));
+    dpc.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.filament_diameter)));
+    dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
+    dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(!h2d));
+    // H2D's two physical nozzles must remain addressable even for a one-colour
+    // plate.  Make the per-filament safety arrays valid before Print applies it.
+    if (n_ext > 1) {
+        auto* colours = dpc.option<Slic3r::ConfigOptionStrings>("filament_colour");
+        if (!colours) {
+            dpc.set_key_value("filament_colour", new Slic3r::ConfigOptionStrings(std::vector<std::string>(n_ext, "#FFFFFF")));
+        } else if ((int)colours->values.size() < n_ext) {
+            auto values = colours->values;
+            values.resize(n_ext, values.empty() ? "#FFFFFF" : values.back());
+            dpc.set_key_value("filament_colour", new Slic3r::ConfigOptionStrings(std::move(values)));
+        }
+        auto* matrix = dpc.option<Slic3r::ConfigOptionFloats>("flush_volumes_matrix");
+        if (!matrix) {
+            dpc.set_key_value("flush_volumes_matrix", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext * n_ext, 140.0)));
+        } else if ((int)matrix->values.size() < n_ext * n_ext) {
+            auto values = matrix->values;
+            values.resize(n_ext * n_ext, values.empty() ? 140.0 : values.back());
+            dpc.set_key_value("flush_volumes_matrix", new Slic3r::ConfigOptionFloats(std::move(values)));
+        }
+    }
+    dpc.set_key_value("machine_max_speed_x", new Slic3r::ConfigOptionFloats({500.0, 500.0}));
+    dpc.set_key_value("machine_max_speed_y", new Slic3r::ConfigOptionFloats({500.0, 500.0}));
+    dpc.set_key_value("machine_max_speed_z", new Slic3r::ConfigOptionFloats(bed_slinger ? std::vector<double>{30.0, 30.0} : std::vector<double>{20.0, 20.0}));
+    dpc.set_key_value("machine_max_speed_e", new Slic3r::ConfigOptionFloats(std::vector<double>{30.0, 30.0}));
+    dpc.set_key_value("machine_max_acceleration_x", new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
+    dpc.set_key_value("machine_max_acceleration_y", new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
+    dpc.set_key_value("machine_max_acceleration_z", new Slic3r::ConfigOptionFloats(bed_slinger ? std::vector<double>{1500.0, 1500.0} : std::vector<double>{500.0, 500.0}));
+    dpc.set_key_value("machine_max_acceleration_e", new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
+    dpc.set_key_value("machine_max_acceleration_extruding", new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
+    dpc.set_key_value("machine_max_acceleration_retracting", new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
+    dpc.set_key_value("machine_max_acceleration_travel", new Slic3r::ConfigOptionFloats({9000.0, 9000.0}));
+
+    // Bambu templates only arrive through the target resolver in SliceConfig;
+    // source project macros are never copied into dpc by the Bambu whitelist.
+    if (!config.machine_start_gcode.empty()) dpc.set_key_value("machine_start_gcode", new Slic3r::ConfigOptionString(config.machine_start_gcode));
+    if (!config.machine_end_gcode.empty()) dpc.set_key_value("machine_end_gcode", new Slic3r::ConfigOptionString(config.machine_end_gcode));
+    if (!config.machine_change_filament_gcode.empty()) dpc.set_key_value("change_filament_gcode", new Slic3r::ConfigOptionString(config.machine_change_filament_gcode));
+
+    // Empty JNI vectors mean no explicit override; imported Bambu filament
+    // values survive.  Non-empty vectors are the existing explicit user path.
+    auto apply_floats = [&](const char* key, const std::vector<float>& values) {
+        if (values.empty()) return;
+        std::vector<double> v(values.begin(), values.end());
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value(key, new Slic3r::ConfigOptionFloats(std::move(v)));
+    };
+    auto apply_ints = [&](const char* key, const std::vector<int>& values) {
+        if (values.empty()) return;
+        std::vector<int> v(values);
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value(key, new Slic3r::ConfigOptionInts(std::move(v)));
+    };
+    auto apply_ints_as_floats = [&](const char* key, const std::vector<int>& values) {
+        if (values.empty()) return;
+        std::vector<double> v(values.begin(), values.end());
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value(key, new Slic3r::ConfigOptionFloats(std::move(v)));
+    };
+    auto apply_bools = [&](const char* key, const std::vector<int>& values) {
+        if (values.empty()) return;
+        std::vector<unsigned char> v;
+        v.reserve(std::max(n_ext, (int)values.size()));
+        for (int value : values) v.push_back(value != 0 ? 1 : 0);
+        while ((int)v.size() < n_ext) v.push_back(v.back());
+        dpc.set_key_value(key, new Slic3r::ConfigOptionBools(std::move(v)));
+    };
+    apply_floats("filament_flow_ratio", config.filament_flow_ratios);
+    apply_floats("filament_max_volumetric_speed", config.filament_max_volumetric_speeds);
+    apply_ints_as_floats("fan_min_speed", config.filament_fan_min_speeds);
+    apply_ints_as_floats("fan_max_speed", config.filament_fan_max_speeds);
+    apply_ints("overhang_fan_speed", config.filament_overhang_fan_speeds);
+    apply_ints("additional_cooling_fan_speed", config.filament_additional_cooling_fan_speeds);
+    apply_floats("slow_down_layer_time", config.filament_slow_down_layer_times);
+    apply_floats("slow_down_min_speed", config.filament_slow_down_min_speeds);
+    apply_ints("close_fan_the_first_x_layers", config.filament_close_fan_first_layers);
+    apply_ints("full_fan_speed_layer", config.filament_full_fan_speed_layers);
+    apply_bools("enable_pressure_advance", config.filament_enable_pressure_advance);
+    apply_floats("pressure_advance", config.filament_pressure_advances);
+    apply_floats("filament_minimal_purge_on_wipe_tower", config.filament_minimal_purge_on_wipe_tower);
+    apply_ints("nozzle_temperature_initial_layer", config.filament_nozzle_temp_initial_layers);
+    apply_ints("hot_plate_temp_initial_layer", config.filament_bed_temp_initial_layers);
+    apply_floats("filament_cost", config.filament_costs);
+
+    const std::string explicit_keys = "|" + config.bambu_explicit_overrides + "|";
+    auto explicitly_overrides = [&](const char* key) {
+        return explicit_keys.find("|" + std::string(key) + "|") != std::string::npos;
+    };
+    Slic3r::ConfigSubstitutionContext bambu_substitutions{
+        Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
+    if (explicitly_overrides("layer_height") && config.layer_height > 0.0f)
+        dpc.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(config.layer_height));
+    if (explicitly_overrides("wall_loops"))
+        dpc.set_key_value("wall_loops", new Slic3r::ConfigOptionInt(config.perimeters));
+    if (explicitly_overrides("top_shell_layers"))
+        dpc.set_key_value("top_shell_layers", new Slic3r::ConfigOptionInt(config.top_solid_layers));
+    if (explicitly_overrides("bottom_shell_layers"))
+        dpc.set_key_value("bottom_shell_layers", new Slic3r::ConfigOptionInt(config.bottom_solid_layers));
+    if (explicitly_overrides("sparse_infill_density"))
+        dpc.set_key_value("sparse_infill_density", new Slic3r::ConfigOptionPercent(config.fill_density * 100.0));
+    if (explicitly_overrides("sparse_infill_pattern"))
+        dpc.set_deserialize("sparse_infill_pattern", config.fill_pattern, bambu_substitutions);
+    if (explicitly_overrides("enable_support"))
+        dpc.set_key_value("enable_support", new Slic3r::ConfigOptionBool(config.support_enabled));
+    if (explicitly_overrides("support_type"))
+        dpc.set_deserialize("support_type", config.support_type, bambu_substitutions);
+    if (explicitly_overrides("support_threshold_angle"))
+        dpc.set_key_value("support_threshold_angle", new Slic3r::ConfigOptionFloat(config.support_angle));
+    if (explicitly_overrides("support_filament"))
+        dpc.set_key_value("support_filament", new Slic3r::ConfigOptionInt(config.support_filament));
+    if (explicitly_overrides("support_interface_filament"))
+        dpc.set_key_value("support_interface_filament", new Slic3r::ConfigOptionInt(config.support_interface_filament));
+    if (explicitly_overrides("brim_width"))
+        dpc.set_key_value("brim_width", new Slic3r::ConfigOptionFloat(config.brim_width));
+    if (explicitly_overrides("skirt_loops"))
+        dpc.set_key_value("skirt_loops", new Slic3r::ConfigOptionInt(config.skirt_loops));
+    if (explicitly_overrides("hot_plate_temp") || explicitly_overrides("textured_plate_temp")) {
+        dpc.set_key_value("hot_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
+        dpc.set_key_value("hot_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
+        dpc.set_key_value("textured_plate_temp", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
+        dpc.set_key_value("textured_plate_temp_initial_layer", new Slic3r::ConfigOptionInts(std::vector<int>(n_ext, config.bed_temp)));
+    }
+    if (explicitly_overrides("nozzle_temperature") && !config.extruder_temps.empty()) {
+        std::vector<int> values = config.extruder_temps;
+        while ((int)values.size() < n_ext) values.push_back(values.back());
+        dpc.set_key_value("nozzle_temperature", new Slic3r::ConfigOptionInts(values));
+        dpc.set_key_value("nozzle_temperature_initial_layer", new Slic3r::ConfigOptionInts(std::move(values)));
+    }
+
+    // The target may supply a corrected tower location through SliceConfig.
+    // Do not overwrite imported enable/shape settings unless the user enabled it.
+    if (explicitly_overrides("enable_prime_tower")) {
+        dpc.set_key_value("enable_prime_tower", new Slic3r::ConfigOptionBool(config.wipe_tower_enabled));
+    }
+    if (config.wipe_tower_enabled) {
+        dpc.set_key_value("wipe_tower_x", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.wipe_tower_x)));
+        dpc.set_key_value("wipe_tower_y", new Slic3r::ConfigOptionFloats(std::vector<double>(n_ext, config.wipe_tower_y)));
+        dpc.set_key_value("prime_tower_width", new Slic3r::ConfigOptionFloat(config.wipe_tower_width));
+    }
+}
+
 static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config, bool has_embedded_profile = false) {
+    const bool is_bambu_target = config.machine_target.rfind("BAMBU_", 0) == 0;
+    if (is_bambu_target) {
+        applyBambuConfigToPrusa(dpc, config, has_embedded_profile);
+        return;
+    }
     // Layer settings (OrcaSlicer keys)
     // layer_height: 0.0f sentinel means "let profile_keys[] value (or OrcaSlicer default) stand".
     // USE_FILE and ORCA_DEFAULT modes pass 0.0f from Kotlin; OVERRIDE passes the explicit value.
@@ -763,6 +976,16 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 is_snapmaker_profile = true;
             }
         }
+        // Imported 3MFs currently pass through the U1 profile embedder. The explicit
+        // target wins so Bambu slices never inherit U1 templates or machine limits.
+        if (config.machine_target.rfind("BAMBU_", 0) == 0) {
+            is_snapmaker_profile = false;
+        }
+        // A non-empty project config is the import payload for a Bambu target.
+        // It is intentionally distinct from the U1 marker above: Bambu profile
+        // values are admitted through a much narrower, non-machine whitelist.
+        const bool is_bambu_embedded_profile =
+            config.machine_target.rfind("BAMBU_", 0) == 0 && !model_config.empty();
 
         // Step 1: Apply whitelisted keys from the embedded profile.
         // Only apply G-code templates that were embedded by our ProfileEmbedder
@@ -772,7 +995,55 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // or template macros that conflict with our minimal Print pipeline.
         int applied = 0;
         if (!model_config.empty()) {
-            if (is_snapmaker_profile) {
+            if (is_bambu_embedded_profile) {
+                // Process and filament settings only.  In particular this list
+                // must never acquire machine geometry, machine_*, nozzle topology
+                // or any G-code/template key: those belong to the selected target.
+                static const char* bambu_safe_profile_keys[] = {
+                    "curr_bed_type", "layer_height", "initial_layer_print_height",
+                    "elefant_foot_compensation", "elephant_foot_compensation",
+                    "wall_loops", "top_shell_layers", "bottom_shell_layers",
+                    "sparse_infill_density", "sparse_infill_pattern", "wall_generator",
+                    "top_surface_pattern", "bottom_surface_pattern", "reduce_infill_retraction",
+                    "line_width", "outer_wall_line_width", "inner_wall_line_width",
+                    "top_surface_line_width", "sparse_infill_line_width", "initial_layer_line_width",
+                    "outer_wall_speed", "inner_wall_speed", "sparse_infill_speed",
+                    "internal_solid_infill_speed", "top_surface_speed", "initial_layer_speed",
+                    "initial_layer_infill_speed", "bridge_speed", "gap_infill_speed", "travel_speed",
+                    "default_acceleration", "outer_wall_acceleration", "inner_wall_acceleration",
+                    "top_surface_acceleration", "travel_acceleration", "initial_layer_acceleration",
+                    "enable_support", "support_type", "support_threshold_angle",
+                    "support_on_build_plate_only", "support_object_xy_distance",
+                    "support_interface_top_layers", "support_interface_bottom_layers",
+                    "support_base_pattern", "support_base_pattern_spacing", "support_interface_pattern",
+                    "support_interface_spacing", "support_speed", "support_interface_speed",
+                    "support_filament", "support_interface_filament", "tree_support_branch_angle",
+                    "tree_support_branch_distance", "tree_support_branch_diameter", "tree_support_wall_count",
+                    "brim_type", "brim_width", "brim_object_gap", "skirt_loops", "skirt_distance", "skirt_height",
+                    "seam_position", "ironing_type", "ironing_speed", "ironing_flow", "ironing_spacing",
+                    "enable_prime_tower", "prime_tower_width", "prime_volume", "prime_tower_brim_width",
+                    "prime_tower_brim_chamfer", "prime_tower_brim_chamfer_max_width",
+                    "wipe_tower_x", "wipe_tower_y", "wipe_tower_rotation_angle",
+                    "filament_colour", "filament_type", "filament_flow_ratio", "filament_density",
+                    "filament_cost", "filament_max_volumetric_speed", "nozzle_temperature",
+                    "nozzle_temperature_initial_layer", "hot_plate_temp", "hot_plate_temp_initial_layer",
+                    "cool_plate_temp", "cool_plate_temp_initial_layer", "textured_plate_temp",
+                    "textured_plate_temp_initial_layer", "fan_min_speed", "fan_max_speed",
+                    "overhang_fan_speed", "additional_cooling_fan_speed", "fan_cooling_layer_time",
+                    "reduce_fan_stop_start_freq", "close_fan_the_first_x_layers", "full_fan_speed_layer",
+                    "slow_down_layer_time", "slow_down_min_speed", "enable_pressure_advance",
+                    "pressure_advance", "flush_volumes_matrix", "flush_volumes_vector",
+                    "filament_minimal_purge_on_wipe_tower", "purge_in_prime_tower",
+                    nullptr
+                };
+                for (const char** k = bambu_safe_profile_keys; *k; ++k) {
+                    if (auto* opt = model_config.option(*k)) {
+                        dpc.set_key_value(*k, opt->clone());
+                        applied++;
+                    }
+                }
+                SAPIL_LOGI("Applied %d safe keys from imported Bambu config", applied);
+            } else if (is_snapmaker_profile) {
                 // Keys safe to apply from the embedded Snapmaker profile.
                 // G-code templates: must come from our profile (not Bambu defaults).
                 // Machine limits + per-feature accelerations: these encode the U1's actual
@@ -1056,11 +1327,55 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             }
         }
 
-        // Step 2: Apply Snapmaker hardware defaults + JNI user settings.
+        // Step 2: Apply target hardware defaults + JNI user settings.  The
+        // Bambu branch is isolated inside applyConfigToPrusa; U1 retains its
+        // established ordering and implementation unchanged.
         // Runs AFTER profile_keys so that user-controllable settings (wipe tower,
         // temperatures, layer height, speeds) from the JNI config override the
         // embedded profile's values.
-        applyConfigToPrusa(dpc, config, is_snapmaker_profile);
+        applyConfigToPrusa(dpc, config, is_snapmaker_profile || is_bambu_embedded_profile);
+
+        if (is_bambu_embedded_profile) {
+            // Exported alongside the normal diagnostics trace.  Keep this compact
+            // and structured: source keys are the safe whitelist count, target
+            // replacement ownership is explicit, and vector presence denotes the
+            // existing JNI explicit-override surface.
+            std::ostringstream provenance;
+            const char* diagnostic_keys[] = {
+                "elefant_foot_compensation", "initial_layer_print_height", "curr_bed_type",
+                "hot_plate_temp", "filament_flow_ratio", "reduce_fan_stop_start_freq",
+                "fan_cooling_layer_time", nullptr
+            };
+            provenance << "{\"target\":\"" << jsonEscape(config.machine_target) << "\""
+                << ",\"safeSourceKeysApplied\":" << applied
+                << ",\"targetReplacements\":[\"geometry\",\"identity\",\"gcode_flavor\",\"machine_limits\",\"nozzle_topology\",\"machine_gcode\"]"
+                << ",\"explicitOverrides\":{\"filamentFlow\":" << (!config.filament_flow_ratios.empty() ? "true" : "false")
+                << ",\"filamentCooling\":" << ((!config.filament_fan_min_speeds.empty() || !config.filament_fan_max_speeds.empty()) ? "true" : "false")
+                << ",\"primeTower\":" << (config.wipe_tower_enabled ? "true" : "false") << "}"
+                << ",\"final\":{\"bedX\":" << (config.machine_target == "BAMBU_H2D" ? 350 : config.machine_target == "BAMBU_A1_MINI" ? 180 : 256)
+                << ",\"bedY\":" << (config.machine_target == "BAMBU_H2D" ? 320 : config.machine_target == "BAMBU_A1_MINI" ? 180 : 256)
+                << ",\"singleExtruderMultiMaterial\":" << (config.machine_target == "BAMBU_H2D" ? "false" : "true") << "}"
+                << ",\"sourceValues\":{";
+            bool first = true;
+            for (const char** key = diagnostic_keys; *key; ++key) {
+                if (auto* opt = model_config.option(*key)) {
+                    if (!first) provenance << ",";
+                    provenance << "\"" << *key << "\":\"" << jsonEscape(opt->serialize()) << "\"";
+                    first = false;
+                }
+            }
+            provenance << "},\"finalValues\":{";
+            first = true;
+            for (const char** key = diagnostic_keys; *key; ++key) {
+                if (auto* opt = dpc.option(*key)) {
+                    if (!first) provenance << ",";
+                    provenance << "\"" << *key << "\":\"" << jsonEscape(opt->serialize()) << "\"";
+                    first = false;
+                }
+            }
+            provenance << "}}";
+            diagnostics_record_native_event("bambu_config_provenance", provenance.str());
+        }
 
         // Step 3: B48 — if the embedded profile set filament_colour to more entries
         // than config.extruder_count (SEMM models with virtual extruder count > physical),
@@ -1069,7 +1384,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // extruder IDs beyond the original n_ext.
         {
             auto* fc = dpc.option<Slic3r::ConfigOptionStrings>("filament_colour");
-            int n_ext = std::max(1, config.extruder_count);
+            int n_ext = std::max(
+                config.machine_target == "BAMBU_H2D" ? 2 : 1,
+                config.extruder_count);
             if (fc && (int)fc->values.size() > n_ext) {
                 int virtual_ext = (int)fc->values.size();
                 SAPIL_LOGI("B48: filament_colour has %d entries (n_ext=%d) — padding per-extruder arrays", virtual_ext, n_ext);
