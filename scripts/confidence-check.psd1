@@ -24,5 +24,7 @@
         'Add `NativeObjectExtruderMapTest` when touching object/extruder routing or any object-count / map derivation path.'
         'Add `MixSlotObjectAssignBlendGateTest` when touching whole-model mix-slot assignment, setModelFilament, or blend-gated routing.'
         'Add `MatchAColourE2ETest` / mix-specific tests when touching ColorMix or filament-mapping behaviour.'
+        'Manual E2E suites: `scripts/run-batch-manual-e2e.ps1 -Suite U1` (default), `-Suite Bambu -BambuTarget H2D`, or `-Suite Both -BambuTarget H2D`.'
+        'BambuTarget accepts A1_MINI, A1, P1P, P1S, X1C, X1E, or H2D; Bambu mode uses the seven Smoke-7 model files and creates an offline test target.'
     )
 }

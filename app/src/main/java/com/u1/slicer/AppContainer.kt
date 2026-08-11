@@ -6,22 +6,34 @@ import com.u1.slicer.data.FilamentLibraryRepository
 import com.u1.slicer.data.PrintersRepository
 import com.u1.slicer.data.ProcessProfilesRepository
 import com.u1.slicer.data.SettingsRepository
-import com.u1.slicer.network.MoonrakerClient
+import com.u1.slicer.printer.DefaultPrinterTransportFactory
+import com.u1.slicer.printer.BambuDiagnostics
 import com.u1.slicer.printer.PrinterRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class AppContainer(context: Context) {
+    private val diagnosticsStore = DiagnosticsStore(context.applicationContext)
+    init {
+        BambuDiagnostics.install { event, details -> diagnosticsStore.recordEvent(event, details) }
+    }
     val settingsRepository = SettingsRepository(context)
     val filamentLibraryRepository = FilamentLibraryRepository(context, settingsRepository)
-    val moonrakerClient = MoonrakerClient()
+    val bambuLanClientFactory: () -> com.u1.slicer.printer.BambuLanClient = {
+        com.u1.slicer.printer.DefaultBambuLanClient(
+            com.u1.slicer.printer.PahoBambuMqttSessionFactory()
+        )
+    }
     val printersRepository = PrintersRepository(context.applicationContext)
     val processProfilesRepository = ProcessProfilesRepository(context.applicationContext)
+    val printerTransportFactory = DefaultPrinterTransportFactory(
+        bambuClientFactory = bambuLanClientFactory,
+    )
     val printerRepository = PrinterRepository(
         context.applicationContext,
-        moonrakerClient,
         printersRepository,
+        printerTransportFactory,
     )
 
     val database = AppDatabase.getInstance(context)

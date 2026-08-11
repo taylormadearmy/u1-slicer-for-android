@@ -56,6 +56,18 @@ class GcodeToolRemapperTest {
     }
 
     @Test
+    fun `bambu ams commands remap filament indices but not sentinel slots`() {
+        val compact = mapOf(1 to 0)
+        assertEquals("M620 S0A", GcodeToolRemapper.remapLine("M620 S1A", compact))
+        assertEquals("M621 S0A", GcodeToolRemapper.remapLine("M621 S1A", compact))
+        assertEquals(
+            "M620.11 S1 I0 E-18 F1200",
+            GcodeToolRemapper.remapLine("M620.11 S1 I1 E-18 F1200", compact),
+        )
+        assertEquals("M620 S255A", GcodeToolRemapper.remapLine("M620 S255A", compact))
+    }
+
+    @Test
     fun `unrelated line not modified`() {
         val line = "G1 X10 Y20 E1.5 F3000"
         assertEquals(line, GcodeToolRemapper.remapLine(line, shift2))

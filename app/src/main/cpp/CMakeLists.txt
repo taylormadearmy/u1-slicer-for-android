@@ -17,7 +17,9 @@ message(STATUS "SLICER_BACKEND=${SLICER_BACKEND}")
 # =============================================================================
 # Path Setup
 # =============================================================================
-set(EXTERN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern")
+# Allow a git worktree to reuse the repository's ignored/prebuilt Android
+# dependency bundle while compiling the worktree's own native sources.
+set(EXTERN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern" CACHE PATH "Prebuilt Android dependency root")
 set(ABI_DIR "${ANDROID_ABI}")
 
 if(SLICER_BACKEND STREQUAL "orca")

@@ -1,6 +1,11 @@
 package com.u1.slicer.printer
 
+import com.u1.slicer.data.BambuConfig
+import com.u1.slicer.data.BambuModel
+import com.u1.slicer.data.Printer
+import com.u1.slicer.data.PrinterKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -34,6 +39,26 @@ class PrinterRepositoryTest {
         assertEquals("Jumping_frog_1.gcode", frog)
         assertEquals("Dragon_Scale_infinity_2.gcode", dragon)
         assertEquals("3DBenchy_3.gcode", benchy)
+    }
+
+    @Test
+    fun buildBambuProjectUploadFilename_usesBambuSlicedProjectExtension() {
+        val project = PrinterRepository.buildBambuProjectUploadFilename(
+            "Dragon Scale infinity.3mf",
+            nowMillis = 42L,
+        )
+
+        assertEquals("Dragon_Scale_infinity_42.gcode.3mf", project)
+    }
+
+    @Test
+    fun buildBambuProjectUploadFilename_doesNotDuplicateGeneratedProjectSuffix() {
+        val project = PrinterRepository.buildBambuProjectUploadFilename(
+            "3DBenchy_100.gcode.3mf",
+            nowMillis = 42L,
+        )
+
+        assertEquals("3DBenchy_100_42.gcode.3mf", project)
     }
 
     @Test
@@ -71,5 +96,51 @@ class PrinterRepositoryTest {
         )
         val full = PrinterRepository.buildPrinterUploadFilename(base, nowMillis = 42L)
         assertEquals("Dragon_Scale_infinity_42.gcode", full)
+    }
+
+    @Test
+    fun shouldRecreateTransport_ignores_metadata_only_moonraker_edits() {
+        val current = Printer(
+            id = "moonraker-1",
+            nickname = "Workshop",
+            kind = PrinterKind.MOONRAKER,
+            moonrakerUrl = "http://printer.local:7125",
+        )
+        val updated = current.copy(
+            nickname = "Workshop renamed",
+            extruderPresets = emptyList(),
+        )
+
+        assertFalse(PrinterRepository.shouldRecreateTransport(current, updated))
+    }
+
+    @Test
+    fun shouldRecreateTransport_detects_provider_connection_changes() {
+        val moonraker = Printer(
+            id = "moonraker-1",
+            nickname = "Workshop",
+            kind = PrinterKind.MOONRAKER,
+            moonrakerUrl = "http://printer.local:7125",
+        )
+        val moonrakerUrlChanged = moonraker.copy(moonrakerUrl = "http://other.local:7125")
+        val bambu = Printer(
+            id = "bambu-1",
+            nickname = "P1S",
+            kind = PrinterKind.BAMBU_LAN,
+            bambu = BambuConfig(
+                ip = "192.168.1.88",
+                accessCode = "12345678",
+                serial = "P1S123ABC",
+                model = BambuModel.P1S,
+            ),
+            extruderPresets = emptyList(),
+        )
+        val bambuIpChanged = bambu.copy(
+            bambu = bambu.bambu!!.copy(ip = "192.168.1.90")
+        )
+
+        assertTrue(PrinterRepository.shouldRecreateTransport(moonraker, moonrakerUrlChanged))
+        assertTrue(PrinterRepository.shouldRecreateTransport(moonraker, bambu))
+        assertTrue(PrinterRepository.shouldRecreateTransport(bambu, bambuIpChanged))
     }
 }

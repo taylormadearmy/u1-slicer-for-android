@@ -14,6 +14,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.U1SlicerApplication
+import com.u1.slicer.bambu.resolveTargetedSliceConfig
 import com.u1.slicer.printer.PrinterViewModel
 import com.u1.slicer.ui.AiPaintResultScreen
 import com.u1.slicer.ui.CreateMixSlotDialog
@@ -106,6 +107,9 @@ fun U1NavGraph(
             )
         }
         composable(Routes.GCODE_VIEWER_3D) {
+            val sliceConfig by viewModel.config.collectAsState()
+            val sliceTarget by viewModel.effectiveSliceTarget.collectAsState()
+            val targetMachineConfig = resolveTargetedSliceConfig(sliceTarget, sliceConfig)
             val parsedGcode by viewModel.parsedGcode.collectAsState()
             val extruderColors by viewModel.activeExtruderColors.collectAsState()
             val colorMapping by viewModel.colorMapping.collectAsState()
@@ -129,6 +133,8 @@ fun U1NavGraph(
                 GcodeViewer3DScreen(
                     parsedGcode = parsedGcode!!,
                     extruderColors = extruderColors,
+                    bedSizeXmm = targetMachineConfig.bedSizeX,
+                    bedSizeYmm = targetMachineConfig.bedSizeY,
                     colorMapping = gcodeColorMapping,
                     slicerLayerCount = slicerLayerCount,
                     // Bug 1 class sibling fix (post-v2.0.0-validation):
@@ -151,10 +157,15 @@ fun U1NavGraph(
             }
         }
         composable(Routes.MODEL_VIEWER) {
+            val sliceConfig by viewModel.config.collectAsState()
+            val sliceTarget by viewModel.effectiveSliceTarget.collectAsState()
+            val targetMachineConfig = resolveTargetedSliceConfig(sliceTarget, sliceConfig)
             val modelPath = viewModel.currentModelPath
             if (modelPath != null) {
                 ModelViewerScreen(
                     modelFilePath = modelPath,
+                    bedSizeXmm = targetMachineConfig.bedSizeX,
+                    bedSizeYmm = targetMachineConfig.bedSizeY,
                     onBack = { navController.popBackStack() }
                 )
             }

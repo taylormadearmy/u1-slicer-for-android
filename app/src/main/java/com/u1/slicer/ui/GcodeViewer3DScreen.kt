@@ -30,6 +30,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 fun GcodeViewer3DScreen(
     parsedGcode: ParsedGcode,
     extruderColors: List<String> = emptyList(),
+    bedSizeXmm: Float = 270f,
+    bedSizeYmm: Float = bedSizeXmm,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     // Phase 2 §4 Step 7 (Preview side) — file-derived per-filament colours
@@ -64,9 +66,10 @@ fun GcodeViewer3DScreen(
         normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
     }
 
-    LaunchedEffect(parsedGcode, previewColors, viewerView) {
+    LaunchedEffect(parsedGcode, previewColors, viewerView, bedSizeXmm, bedSizeYmm) {
         val v = viewerView ?: return@LaunchedEffect
         isLoading = true
+        v.setBedSizeMm(bedSizeXmm, bedSizeYmm)
         val colors = previewColors
         val gcode = parsedGcode
         suspendCancellableCoroutine { cont ->
@@ -136,8 +139,12 @@ fun GcodeViewer3DScreen(
                     IconButton(onClick = {
                         val v = viewerView ?: return@IconButton
                         v.renderer.camera.apply {
-                            setTarget(135.0, 135.0, (parsedGcode.layers.lastOrNull()?.z?.div(2) ?: 0f).toDouble())
-                            distance = 400.0
+                            setTarget(
+                                bedSizeXmm / 2.0,
+                                bedSizeYmm / 2.0,
+                                (parsedGcode.layers.lastOrNull()?.z?.div(2) ?: 0f).toDouble(),
+                            )
+                            distance = maxOf(bedSizeXmm, bedSizeYmm).toDouble() * 1.5
                             elevation = 35.0
                             azimuth = -45.0
                             panX = 0.0
@@ -163,6 +170,7 @@ fun GcodeViewer3DScreen(
                     factory = { ctx ->
                         GcodeViewerView(ctx).also { view ->
                             viewerView = view
+                            view.setBedSizeMm(bedSizeXmm, bedSizeYmm)
                             // Don't upload gcode here — the LaunchedEffect handles both
                             // colors and gcode atomically to avoid a race where VBOs are
                             // built with default colors before the real colors are set.

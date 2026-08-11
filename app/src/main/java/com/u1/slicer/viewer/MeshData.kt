@@ -3,6 +3,7 @@ package com.u1.slicer.viewer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.concurrent.atomic.AtomicInteger
 import com.u1.slicer.NativeLibrary
 
 /**
@@ -22,7 +23,10 @@ data class MeshData(
     val modifierBlockStartTriangle: Int? = null,
     // Native PreparePreviewSceneHandle. If non-zero, this MeshData owns the DirectByteBuffers
     // backing the batches. Call release() to free the native memory when done.
-    val sceneHandle: Long = 0L
+    val sceneHandle: Long = 0L,
+    // Data-class copies share this lease. The ViewModel cache owns the initial
+    // reference and the GL renderer retains its own while drawing.
+    private val sceneLease: NativeSceneLease = NativeSceneLease(sceneHandle),
 ) {
     val vertexCount: Int = batches.sumOf { it.triangleCount * 3 }
     val centerX get() = (minX + maxX) / 2
@@ -35,10 +39,14 @@ data class MeshData(
 
     /** Releases the underlying native scene buffers, if any. */
     fun release(native: NativeLibrary) {
-        if (sceneHandle != 0L) {
+        if (releaseNativeSceneReference()) {
             native.nativeReleasePrepareRenderScene(sceneHandle)
         }
     }
+
+    internal fun retainNativeScene(): Boolean = sceneLease.retain()
+
+    internal fun releaseNativeSceneReference(): Boolean = sceneLease.release()
 
     /** True when per-triangle extruder indices are available for coloring. */
     val hasPerVertexColor get() = batches.any { it.materialIndices != null }
@@ -312,6 +320,28 @@ data class MeshData(
             return ByteBuffer.allocateDirect(floatCount * 4)
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer()
+        }
+    }
+}
+
+class NativeSceneLease internal constructor(handle: Long) {
+    private val references = AtomicInteger(if (handle == 0L) 0 else 1)
+
+    fun retain(): Boolean {
+        if (references.get() == 0) return false
+        while (true) {
+            val current = references.get()
+            if (current == 0) return false
+            if (references.compareAndSet(current, current + 1)) return true
+        }
+    }
+
+    /** Returns true exactly once, when the final owner releases the scene. */
+    fun release(): Boolean {
+        while (true) {
+            val current = references.get()
+            if (current == 0) return false
+            if (references.compareAndSet(current, current - 1)) return current == 1
         }
     }
 }

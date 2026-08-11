@@ -13,12 +13,15 @@ import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.bambu.parseLayerToolSegments
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipFile
 
 @RunWith(AndroidJUnit4::class)
@@ -244,6 +247,38 @@ class NativePreparePreviewTest {
             legacy!!.extruderIndices.size,
             streamedMesh.vertexCount / 3
         )
+    }
+
+    @Test
+    fun preparePreviewScene_duplicateReleaseIsRejected() {
+        copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+
+        val handle = lib.buildPrepareRenderScene()
+        assertTrue(handle != 0L)
+        assertTrue(lib.nativeReleasePrepareRenderScene(handle))
+        assertFalse(lib.nativeReleasePrepareRenderScene(handle))
+    }
+
+    @Test
+    fun preparePreviewScene_concurrentReleaseDeletesExactlyOnce() {
+        copyAssetToModelFile("calib-cube-10-dual-colour-merged.3mf")
+        assertTrue(lib.loadModel(modelFile.absolutePath))
+        val handle = lib.buildPrepareRenderScene()
+        assertTrue(handle != 0L)
+        val start = CountDownLatch(1)
+        val successCount = AtomicInteger(0)
+        val threads = List(2) {
+            Thread {
+                start.await()
+                if (lib.nativeReleasePrepareRenderScene(handle)) successCount.incrementAndGet()
+            }.apply { start() }
+        }
+
+        start.countDown()
+        threads.forEach { it.join() }
+
+        assertEquals(1, successCount.get())
     }
 
     /** Axis-aligned span [spanX, spanY, spanZ] of a preview mesh's vertices (mm). */

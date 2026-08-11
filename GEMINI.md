@@ -23,11 +23,11 @@ Use `--no-daemon` if Gradle daemon OOMs. The native `.so` is pre-built — norma
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest                        # 1699 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 433 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 1949 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 443 instrumented tests — uses Orchestrator
 ```
 
-**2132 total tests.** Requires ARM64 Android device. Set target with `ANDROID_SERIAL=<device-id>`. See `AGENTS.local.md` or `CLAUDE.local.md` for local device IDs — never deploy to the NF22E1 (`NE12442001324`) or the user's personal Pixel 9a.
+**2392 total tests.** Requires ARM64 Android device. Set target with `ANDROID_SERIAL=<device-id>`. See `AGENTS.local.md` or `CLAUDE.local.md` for local device IDs — never deploy to the NF22E1 (`NE12442001324`) or the user's personal Pixel 9a.
 
 Single-test run:
 ```bash

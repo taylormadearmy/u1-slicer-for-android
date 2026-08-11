@@ -199,4 +199,18 @@ class SessionStateTest {
         val old = SessionState.fromJson(stripped)!!
         assertNull(old.gcodeToolSpace)
     }
+
+    @Test
+    fun sliceTargetId_roundTripsAndDefaultsToNullForOldJson() {
+        val src = sampleSession().copy(sliceTargetId = "BambuA1Mini")
+        val json = SessionState.toJson(src)
+        val parsed = SessionState.fromJson(json)!!
+        assertEquals("BambuA1Mini", parsed.sliceTargetId)
+
+        val stripped = org.json.JSONObject(json)
+            .apply { remove("sliceTargetId") }
+            .toString()
+        val old = SessionState.fromJson(stripped)!!
+        assertNull(old.sliceTargetId)
+    }
 }

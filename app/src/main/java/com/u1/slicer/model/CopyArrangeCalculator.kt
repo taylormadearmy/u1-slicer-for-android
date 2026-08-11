@@ -376,11 +376,12 @@ object CopyArrangeCalculator {
         currentPositions: FloatArray,
         boxes: FloatArray,
         bedSize: Float = 270f,
+        bedSizeY: Float = bedSize,
         margin: Float = 5f,
     ): FloatArray {
         val objectCount = boxes.size / 3
         if (objectCount <= 1) return currentPositions.copyOf().takeIf { it.size >= 2 }
-            ?: floatArrayOf(maxOf(0f, (bedSize - boxes[0]) / 2f), maxOf(0f, (bedSize - boxes[1]) / 2f))
+            ?: floatArrayOf(maxOf(0f, (bedSize - boxes[0]) / 2f), maxOf(0f, (bedSizeY - boxes[1]) / 2f))
         val existingCount = currentPositions.size / 2
         val newIdx = objectCount - 1
         val newSizeX = boxes[newIdx * 3]
@@ -412,14 +413,17 @@ object CopyArrangeCalculator {
             val bottom = result[i * 2 + 1] + boxes[i * 3 + 1]
             if (bottom > maxBottom) { maxBottom = bottom; leftX = result[i * 2] }
         }
-        result[newIdx * 2] = leftX
-        result[newIdx * 2 + 1] = maxBottom + margin
+        result[newIdx * 2] = leftX.coerceIn(margin, maxOf(margin, bedSize - newSizeX - margin))
+        result[newIdx * 2 + 1] = (maxBottom + margin).coerceAtMost(
+            maxOf(margin, bedSizeY - newSizeY - margin),
+        )
         return result
     }
 
     fun buildMultiObjectPositions(
         boxes: FloatArray,
         bedSize: Float = 270f,
+        bedSizeY: Float = bedSize,
         margin: Float = 5f,
     ): FloatArray {
         val count = boxes.size / 3
@@ -436,8 +440,8 @@ object CopyArrangeCalculator {
                 curY += rowMaxY + margin
                 rowMaxY = 0f
             }
-            positions[i * 2] = curX
-            positions[i * 2 + 1] = curY
+            positions[i * 2] = curX.coerceAtMost(maxOf(margin, bedSize - sizeX - margin))
+            positions[i * 2 + 1] = curY.coerceAtMost(maxOf(margin, bedSizeY - sizeY - margin))
             curX += sizeX + margin
             if (sizeY > rowMaxY) rowMaxY = sizeY
         }
@@ -474,6 +478,7 @@ object CopyArrangeCalculator {
         reservedRect: FloatArray?,
         incoming: FloatArray,
         bedSize: Float = 270f,
+        bedSizeY: Float = bedSize,
         margin: Float = 5f,
     ): ArrangeResult {
         val n = boxes.size / 3
@@ -486,11 +491,12 @@ object CopyArrangeCalculator {
             positions[i * 2 + 1] = incoming.getOrElse(i * 2 + 1) { margin }
         }
 
-        val maxEdge = bedSize - margin
+        val maxEdgeX = bedSize - margin
+        val maxEdgeY = bedSizeY - margin
         // Next-fit-decreasing shelf packer: objects are placed left-to-right on the current shelf
         // and wrap to a new shelf when the row overflows. Earlier shelves are never backfilled —
         // non-optimal but keeps keep-out skip logic simple and placement fully predictable.
-        val maxIters = (bedSize / maxOf(margin, 1f)).toInt() * 3 + 16 // generous worst-case bound: a few wraps + reserved-skips per object; the guard can never spin
+        val maxIters = (maxOf(bedSize, bedSizeY) / maxOf(margin, 1f)).toInt() * 3 + 16 // generous worst-case bound: a few wraps + reserved-skips per object; the guard can never spin
         // Largest-area-first for tighter packing; stable on ties via index.
         val order = (0 until n).sortedWith(
             compareByDescending<Int> { boxes[it * 3] * boxes[it * 3 + 1] }.thenBy { it }
@@ -505,19 +511,19 @@ object CopyArrangeCalculator {
             val sx = boxes[idx * 3]
             val sy = boxes[idx * 3 + 1]
             // Physically too large to ever fit on the bed.
-            if (sx > bedSize - 2 * margin || sy > bedSize - 2 * margin) { overflow++; continue }
+            if (sx > bedSize - 2 * margin || sy > bedSizeY - 2 * margin) { overflow++; continue }
 
             var placed = false
             var guard = 0
             while (guard++ < maxIters) {
                 // Wrap to next shelf if this object overflows the row width.
-                if (curX + sx > maxEdge) {
+                if (curX + sx > maxEdgeX) {
                     curX = margin
                     curY += rowMaxY + margin
                     rowMaxY = 0f
                 }
                 // Out of vertical space on the bed.
-                if (curY + sy > maxEdge) break
+                if (curY + sy > maxEdgeY) break
                 val cMaxX = curX + sx
                 val cMaxY = curY + sy
                 if (reservedRect != null &&

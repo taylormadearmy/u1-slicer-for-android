@@ -1,10 +1,14 @@
 #include "../include/sapil.h"
 #include "sapil_diagnostics.h"
+#include <mutex>
+#include <unordered_set>
 // =============================================================================
 // slicer_wrapper.cpp — Main JNI entry points
 // =============================================================================
 
 static sapil::SlicerEngine* g_engine = nullptr;
+static std::mutex g_prepare_scene_handles_mutex;
+static std::unordered_set<sapil::PreparePreviewSceneHandle> g_prepare_scene_handles;
 
 extern "C" {
 
@@ -96,6 +100,10 @@ JNIEXPORT jlong JNICALL
 Java_com_u1_slicer_NativeLibrary_buildPrepareRenderScene(JNIEnv*, jobject, jint maxTriangles) {
     if (!g_engine) return 0;
     auto* scene = g_engine->buildPreparePreviewScene(static_cast<int>(maxTriangles));
+    if (scene) {
+        std::lock_guard<std::mutex> lock(g_prepare_scene_handles_mutex);
+        g_prepare_scene_handles.insert(scene);
+    }
     return reinterpret_cast<jlong>(scene);
 }
 
@@ -157,6 +165,15 @@ JNIEXPORT jboolean JNICALL
 Java_com_u1_slicer_NativeLibrary_nativeReleasePrepareRenderScene(JNIEnv*, jobject, jlong handle) {
     if (!g_engine || handle == 0) return JNI_FALSE;
     auto* scene = reinterpret_cast<sapil::PreparePreviewSceneHandle>(handle);
+    {
+        std::lock_guard<std::mutex> lock(g_prepare_scene_handles_mutex);
+        if (g_prepare_scene_handles.erase(scene) == 0) {
+            SAPIL_LOGW(
+                "Ignoring duplicate or unknown PreparePreviewScene release: %p",
+                static_cast<void*>(scene));
+            return JNI_FALSE;
+        }
+    }
     g_engine->releasePreparePreviewScene(scene);
     return JNI_TRUE;
 }

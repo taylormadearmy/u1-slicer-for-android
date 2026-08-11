@@ -62,10 +62,10 @@ object MakerWorldUtils {
     fun classifyDownloadError(httpCode: Int, responseBody: String?): String {
         return when {
             responseBody?.contains("captcha", ignoreCase = true) == true ->
-                "MakerWorld requires CAPTCHA verification. Open makerworld.com in your browser first, then download the 3MF/STL there or share the model link back to U1 Slicer."
+                "MakerWorld requires CAPTCHA verification. Open makerworld.com in your browser first, then download the 3MF/STL there or share the model link back to Your One Slicer."
             responseBody?.contains("log in", ignoreCase = true) == true || responseBody?.contains("unlogged", ignoreCase = true) == true ->
-                "MakerWorld requires login for this download. Open MakerWorld in your browser, then share the model link or downloaded file back to U1 Slicer."
-            httpCode == 403 -> "MakerWorld requires login. Open MakerWorld in your browser, then share the model link or downloaded file back to U1 Slicer."
+                "MakerWorld requires login for this download. Open MakerWorld in your browser, then share the model link or downloaded file back to Your One Slicer."
+            httpCode == 403 -> "MakerWorld requires login. Open MakerWorld in your browser, then share the model link or downloaded file back to Your One Slicer."
             httpCode == 429 -> "MakerWorld rate limit. Wait a minute and try again."
             else -> "Download failed: HTTP $httpCode"
         }
@@ -77,12 +77,12 @@ object MakerWorldUtils {
     fun classifyNonZipResponse(preview: String, fileSize: Long): String {
         return when {
             preview.contains("login", ignoreCase = true) || preview.contains("sign in", ignoreCase = true) ->
-                "MakerWorld returned a sign-in page instead of a model file. Open the model in your browser, then share the link or downloaded 3MF/STL back to U1 Slicer."
+                "MakerWorld returned a sign-in page instead of a model file. Open the model in your browser, then share the link or downloaded 3MF/STL back to Your One Slicer."
             preview.contains("captcha", ignoreCase = true) ->
-                "MakerWorld returned a CAPTCHA challenge. Open the model in your browser first, then try sharing the link or downloaded file back to U1 Slicer."
+                "MakerWorld returned a CAPTCHA challenge. Open the model in your browser first, then try sharing the link or downloaded file back to Your One Slicer."
             preview.contains("rate limit", ignoreCase = true) || preview.contains("429") ->
                 "Rate limited by MakerWorld. Try again in a few minutes."
-            else -> "MakerWorld returned an unexpected response ($fileSize bytes). Open the model in your browser, then share the link or downloaded file back to U1 Slicer."
+            else -> "MakerWorld returned an unexpected response ($fileSize bytes). Open the model in your browser, then share the link or downloaded file back to Your One Slicer."
         }
     }
 

@@ -120,7 +120,9 @@ class PrintersRepositoryTest {
         )
         assertEquals(1, cfg.printers.size)
         assertEquals("Printer 1", cfg.printers[0].nickname)
+        assertEquals(PrinterKind.MOONRAKER, cfg.printers[0].kind)
         assertEquals(legacyUrl, cfg.printers[0].moonrakerUrl)
+        assertNull(cfg.printers[0].bambu)
         assertEquals("#FFAA00", cfg.printers[0].extruderPresets[0].color)
         assertEquals("fixed-uuid-1", cfg.printers[0].id)
         assertEquals("fixed-uuid-1", cfg.activeId)
@@ -135,6 +137,7 @@ class PrintersRepositoryTest {
         )
         assertEquals(1, cfg.printers.size)
         assertEquals("", cfg.printers[0].moonrakerUrl)
+        assertEquals(PrinterKind.MOONRAKER, cfg.printers[0].kind)
         // defaultExtruderPresets() always returns 4 slots
         assertEquals(4, cfg.printers[0].extruderPresets.size)
     }
@@ -149,5 +152,7 @@ class PrintersRepositoryTest {
         assertEquals(1, cfg.printers.size)
         assertEquals("Printer 1", cfg.printers[0].nickname)
         assertEquals("", cfg.printers[0].moonrakerUrl)
+        assertEquals(PrinterKind.MOONRAKER, cfg.printers[0].kind)
+        assertNull(cfg.printers[0].bambu)
     }
 }

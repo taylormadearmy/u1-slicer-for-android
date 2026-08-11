@@ -70,6 +70,14 @@ data class SliceConfig(
     // time. Empty string = use OrcaSlicer's built-in default (bare G28 for STL).
     @JvmField var machineStartGcode: String = "",
     @JvmField var machineEndGcode: String = "",
+    @JvmField var machineChangeFilamentGcode: String = "",
+
+    // Explicit native machine policy. Existing callers remain on the released U1 path.
+    @JvmField var machineTarget: String = "SNAPMAKER_U1",
+    // Pipe-delimited Orca keys changed explicitly by the user. Bambu native
+    // slicing uses this to distinguish UI intent from inherited U1-shaped
+    // scalar defaults, especially for geometry-only STL input.
+    @JvmField var bambuExplicitOverrides: String = "",
 
     // F91 (2026-05-25): per-extruder filament tuning sourced from the user's filament
     // library at slice time. Empty array = "user hasn't set this — let the

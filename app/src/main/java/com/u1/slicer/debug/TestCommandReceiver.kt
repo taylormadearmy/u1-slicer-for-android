@@ -12,6 +12,7 @@ import android.content.pm.ApplicationInfo
 import com.u1.slicer.SlicerViewModel
 import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.printer.PrinterViewModel
+import com.u1.slicer.slice.SliceArtifact
 import java.io.File
 
 /**
@@ -59,6 +60,10 @@ import java.io.File
  * # Export print-ready G-code through the same remap boundary used by Save/Share
  * adb -s SERIAL shell am broadcast -a com.u1.slicer.orca.EXPORT_GCODE
  *
+ * # Upload a Bambu project file without starting a print
+ * adb -s SERIAL shell am broadcast -a com.u1.slicer.orca.UPLOAD_BAMBU_PROJECT \
+ *     --es path "test_project.3mf" --es modelName "test_project.3mf"
+ *
  * # Dump the embedded model_settings.config from the last embedded 3MF
  * adb -s SERIAL shell am broadcast -a com.u1.slicer.orca.DUMP_EMBEDDED_CONFIG
  * ```
@@ -86,6 +91,8 @@ class TestCommandReceiver(
 
         const val ACTION_LOAD_FILE = "${PREFIX}LOAD_FILE"
         const val ACTION_SET_PRINTER = "${PREFIX}SET_PRINTER"
+        const val ACTION_SET_BAMBU_TARGET = "${PREFIX}SET_BAMBU_TARGET"
+        const val ACTION_SET_U1_TARGET = "${PREFIX}SET_U1_TARGET"
         const val ACTION_SYNC_FILAMENTS = "${PREFIX}SYNC_FILAMENTS"
         const val ACTION_SET_COLORS = "${PREFIX}SET_COLORS"
         const val ACTION_SET_COPY_COUNT = "${PREFIX}SET_COPY_COUNT"
@@ -97,6 +104,7 @@ class TestCommandReceiver(
         const val ACTION_DUMP_EMBEDDED_CONFIG = "${PREFIX}DUMP_EMBEDDED_CONFIG"
         const val ACTION_IMPORT_BACKUP = "${PREFIX}IMPORT_BACKUP"
         const val ACTION_EXPORT_GCODE = "${PREFIX}EXPORT_GCODE"
+        const val ACTION_UPLOAD_BAMBU_PROJECT = "${PREFIX}UPLOAD_BAMBU_PROJECT"
         const val ACTION_ADD_FILE = "${PREFIX}ADD_FILE"
         const val ACTION_ADD_FILE_FOR_PLATE = "${PREFIX}ADD_FILE_FOR_PLATE"
         const val ACTION_CREATE_MIX = "${PREFIX}CREATE_MIX"
@@ -105,6 +113,8 @@ class TestCommandReceiver(
         fun intentFilter(): IntentFilter = IntentFilter().apply {
             addAction(ACTION_LOAD_FILE)
             addAction(ACTION_SET_PRINTER)
+            addAction(ACTION_SET_BAMBU_TARGET)
+            addAction(ACTION_SET_U1_TARGET)
             addAction(ACTION_SYNC_FILAMENTS)
             addAction(ACTION_SET_COLORS)
             addAction(ACTION_SET_COPY_COUNT)
@@ -116,6 +126,7 @@ class TestCommandReceiver(
             addAction(ACTION_DUMP_EMBEDDED_CONFIG)
             addAction(ACTION_IMPORT_BACKUP)
             addAction(ACTION_EXPORT_GCODE)
+            addAction(ACTION_UPLOAD_BAMBU_PROJECT)
             addAction(ACTION_ADD_FILE)
             addAction(ACTION_ADD_FILE_FOR_PLATE)
             addAction(ACTION_CREATE_MIX)
@@ -138,6 +149,8 @@ class TestCommandReceiver(
         when (action) {
             ACTION_LOAD_FILE -> handleLoadFile(context, intent)
             ACTION_SET_PRINTER -> handleSetPrinter(intent)
+            ACTION_SET_BAMBU_TARGET -> handleSetBambuTarget(intent)
+            ACTION_SET_U1_TARGET -> handleSetU1Target()
             ACTION_SYNC_FILAMENTS -> handleSyncFilaments()
             ACTION_SET_COLORS -> handleSetColors(intent)
             ACTION_SET_COPY_COUNT -> handleSetCopyCount(intent)
@@ -149,6 +162,7 @@ class TestCommandReceiver(
             ACTION_DUMP_EMBEDDED_CONFIG -> handleDumpEmbeddedConfig(context)
             ACTION_IMPORT_BACKUP -> handleImportBackup(context, intent)
             ACTION_EXPORT_GCODE -> handleExportGcode()
+            ACTION_UPLOAD_BAMBU_PROJECT -> handleUploadBambuProject(context, intent)
             ACTION_ADD_FILE -> handleAddFile(context, intent)
             ACTION_ADD_FILE_FOR_PLATE -> handleAddFileForPlate(context, intent)
             ACTION_CREATE_MIX -> handleCreateMix(intent)
@@ -252,6 +266,21 @@ class TestCommandReceiver(
         printerViewModel.updateUrl(url)
     }
 
+    private fun handleSetBambuTarget(intent: Intent) {
+        val model = intent.getStringExtra("model")
+        if (model.isNullOrBlank()) {
+            Log.e(TAG, "SET_BAMBU_TARGET: missing --es model (A1_MINI, A1, P1P, P1S, X1C, X1E, H2D)")
+            return
+        }
+        Log.i(TAG, "SET_BAMBU_TARGET: configuring $model with reserved offline address")
+        printerViewModel.setBambuE2ETarget(model)
+    }
+
+    private fun handleSetU1Target() {
+        Log.i(TAG, "SET_U1_TARGET: configuring reserved offline U1 target")
+        printerViewModel.setU1E2ETarget()
+    }
+
     private fun handleSyncFilaments() {
         Log.i(TAG, "SYNC_FILAMENTS: starting sync")
         printerViewModel.syncFilaments()
@@ -314,9 +343,29 @@ class TestCommandReceiver(
         val state = slicerViewModel.state.value
         val info = slicerViewModel.threeMfInfo.value
         val presets = slicerViewModel.extruderPresets.value
+        val latestSliceArtifact = slicerViewModel.latestSliceArtifact.value
+        val printerStatus = printerViewModel.status.value
+        val sendingState = printerViewModel.sendingState.value
+        val printerUrl = printerViewModel.printerUrl.value
+        val activePrinterId = printerViewModel.activePrinterId.value
+        val activePrinter = printerViewModel.activePrinter.value
+        val printerList = printerViewModel.printerList.value
+        val capabilities = printerViewModel.capabilities.value
+        val cameraState = printerViewModel.cameraState.value
+        val filamentSlots = printerViewModel.printerFilamentSlots.value
         Log.i(TAG, "=== DUMP_STATE ===")
         Log.i(TAG, "State: $state")
+        Log.i(TAG, "PrinterStatus: $printerStatus")
+        Log.i(TAG, "SendingState: $sendingState")
+        Log.i(TAG, "PrinterUrl: $printerUrl")
+        Log.i(TAG, "ActivePrinterId: $activePrinterId")
+        Log.i(TAG, "ActivePrinter: $activePrinter")
+        Log.i(TAG, "PrinterList: ${printerList.map { "${it.nickname}:${it.kind}" }}")
+        Log.i(TAG, "Capabilities: $capabilities")
+        Log.i(TAG, "CameraState: $cameraState")
+        Log.i(TAG, "FilamentSlots: count=${filamentSlots.size} slots=$filamentSlots")
         Log.i(TAG, "ThreeMfInfo: $info")
+        Log.i(TAG, "LatestSliceArtifact: $latestSliceArtifact")
         Log.i(TAG, "  detectedColors: ${info?.detectedColors}")
         Log.i(TAG, "  detectedExtruderCount: ${info?.detectedExtruderCount}")
         Log.i(TAG, "  hasPaintData: ${info?.hasPaintData}")
@@ -331,6 +380,10 @@ class TestCommandReceiver(
         val filesDir = context.filesDir
         filesDir.listFiles()?.sortedBy { it.name }?.forEach { f ->
             Log.i(TAG, "  file: ${f.name} (${f.length() / 1024}KB)")
+        }
+        val cacheDir = context.cacheDir
+        cacheDir.listFiles()?.sortedByDescending { it.lastModified() }?.take(10)?.forEach { f ->
+            Log.i(TAG, "  cache: ${f.name} (${f.length() / 1024}KB)")
         }
         Log.i(TAG, "=== END DUMP_STATE ===")
     }
@@ -380,6 +433,41 @@ class TestCommandReceiver(
                 Log.e(TAG, "EXPORT_GCODE: failed source=${source.absolutePath}")
             }
         }.start()
+    }
+
+    private fun handleUploadBambuProject(context: Context, intent: Intent) {
+        val path = intent.getStringExtra("path")
+        val modelName = intent.getStringExtra("modelName")
+        val artifactFile = if (path.isNullOrBlank()) {
+            (slicerViewModel.latestSliceArtifact.value as? SliceArtifact.BambuProjectArtifact)?.projectFile
+                ?.takeIf { it.exists() && it.canRead() }
+        } else {
+            if (File(path).isAbsolute) {
+                File(path).takeIf { it.canRead() }
+            } else {
+                File(context.filesDir, path).takeIf { it.canRead() }
+            }
+        }
+        if (artifactFile == null || !artifactFile.exists()) {
+            Log.e(
+                TAG,
+                if (path.isNullOrBlank()) {
+                    "UPLOAD_BAMBU_PROJECT: no latest generated Bambu project artifact is available"
+                } else {
+                    "UPLOAD_BAMBU_PROJECT: cannot read file at '$path'"
+                }
+            )
+            return
+        }
+        Log.i(
+            TAG,
+            "UPLOAD_BAMBU_PROJECT: uploading ${artifactFile.absolutePath} (${artifactFile.length() / 1024}KB) " +
+                "modelName=${modelName ?: artifactFile.name}"
+        )
+        mainHandler.post {
+            printerViewModel.beginSendPreparing()
+            printerViewModel.sendBambuProjectUploadOnly(artifactFile, modelName ?: artifactFile.name)
+        }
     }
 
     private fun handleDumpEmbeddedConfig(context: Context) {

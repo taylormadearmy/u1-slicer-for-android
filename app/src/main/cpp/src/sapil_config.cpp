@@ -137,6 +137,9 @@ SliceConfig configFromJava(JNIEnv* env, jobject jconfig) {
     // B106: machine G-code templates for STL files (no embedded Snapmaker profile).
     config.machine_start_gcode = getString("machineStartGcode");
     config.machine_end_gcode = getString("machineEndGcode");
+    config.machine_change_filament_gcode = getString("machineChangeFilamentGcode");
+    config.machine_target = getString("machineTarget");
+    config.bambu_explicit_overrides = getString("bambuExplicitOverrides");
 
     // F91: per-extruder filament tuning from the user's filament library.
     config.filament_flow_ratios = getFloatArray("filamentFlowRatios");
@@ -271,6 +274,9 @@ jobject configToJava(JNIEnv* env, const SliceConfig& config) {
     setFloat("wipeTowerWidth", config.wipe_tower_width);
     setString("machineStartGcode", config.machine_start_gcode);
     setString("machineEndGcode", config.machine_end_gcode);
+    setString("machineChangeFilamentGcode", config.machine_change_filament_gcode);
+    setString("machineTarget", config.machine_target);
+    setString("bambuExplicitOverrides", config.bambu_explicit_overrides);
 
     env->DeleteLocalRef(cls);
     return obj;

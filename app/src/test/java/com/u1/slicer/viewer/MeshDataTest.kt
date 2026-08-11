@@ -12,7 +12,8 @@ class MeshDataTest {
 
     private fun makeMesh(
         triangleCount: Int,
-        extruderIndices: ByteArray? = ByteArray(triangleCount) { 0 }
+        extruderIndices: ByteArray? = ByteArray(triangleCount) { 0 },
+        sceneHandle: Long = 0L,
     ): MeshData {
         val buf = MeshData.allocateBuffer(triangleCount)
         // Fill geometry with some dummy data so it's not all zeros
@@ -31,7 +32,8 @@ class MeshDataTest {
         return MeshData(
             batches = listOf(batch),
             minX = 0f, minY = 0f, minZ = 0f,
-            maxX = 1f, maxY = 1f, maxZ = 1f
+            maxX = 1f, maxY = 1f, maxZ = 1f,
+            sceneHandle = sceneHandle,
         )
     }
 
@@ -77,6 +79,25 @@ class MeshDataTest {
 
         val without = makeMesh(1, null)
         assertFalse(without.hasPerVertexColor)
+    }
+
+    @Test
+    fun `native scene lease waits for cache and renderer owners across copies`() {
+        val mesh = makeMesh(1, sceneHandle = 123L)
+        val copy = mesh.copy()
+
+        assertTrue(mesh.retainNativeScene())
+        assertFalse(mesh.releaseNativeSceneReference())
+        assertTrue(copy.releaseNativeSceneReference())
+        assertFalse(mesh.releaseNativeSceneReference())
+    }
+
+    @Test
+    fun `heap backed mesh has no native scene lease`() {
+        val mesh = makeMesh(1)
+
+        assertFalse(mesh.retainNativeScene())
+        assertFalse(mesh.releaseNativeSceneReference())
     }
 
     @Test

@@ -29,12 +29,19 @@ import java.io.File
 @Composable
 fun ModelViewerScreen(
     modelFilePath: String,
+    bedSizeXmm: Float = 270f,
+    bedSizeYmm: Float = bedSizeXmm,
     onBack: () -> Unit
 ) {
     var mesh by remember { mutableStateOf<MeshData?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     var viewerView by remember { mutableStateOf<ModelViewerView?>(null) }
+
+    DisposableEffect(mesh) {
+        val ownedMesh = mesh
+        onDispose { ownedMesh?.release(NativeLibrary()) }
+    }
 
     // Parse mesh on background thread
     LaunchedEffect(modelFilePath) {
@@ -93,7 +100,10 @@ fun ModelViewerScreen(
                                                 batches = batches.toList(),
                                                 minX = minX, minY = minY, minZ = minZ,
                                                 maxX = maxX, maxY = maxY, maxZ = maxZ,
-                                                sceneHandle = sceneHandle
+                                                // Progressive snapshots borrow
+                                                // the scene. The final mesh
+                                                // below owns its native buffers.
+                                                sceneHandle = 0L,
                                             )
                                         }
                                         if (isComplete && batches.size == batchCount) break
@@ -145,10 +155,11 @@ fun ModelViewerScreen(
     }
 
     // Send mesh to GL view when ready
-    LaunchedEffect(mesh, viewerView) {
+    LaunchedEffect(mesh, viewerView, bedSizeXmm, bedSizeYmm) {
         val m = mesh
         val v = viewerView
         if (m != null && v != null) {
+            v.setBedSizeMm(bedSizeXmm, bedSizeYmm)
             v.setMesh(m)
         }
     }
@@ -211,8 +222,13 @@ fun ModelViewerScreen(
                     factory = { ctx ->
                         ModelViewerView(ctx).also { view ->
                             viewerView = view
+                            view.setBedSizeMm(bedSizeXmm, bedSizeYmm)
                             mesh?.let { view.setMesh(it) }
                         }
+                    },
+                    onRelease = { view ->
+                        view.renderer.releaseForDetach()
+                        if (viewerView === view) viewerView = null
                     },
                     modifier = Modifier.fillMaxSize()
                 )

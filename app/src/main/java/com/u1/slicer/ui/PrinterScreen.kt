@@ -17,7 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -38,10 +38,13 @@ import com.u1.slicer.data.ExtruderPreset
 import com.u1.slicer.data.FilamentLibraryEntry
 import com.u1.slicer.data.FilamentProfile
 import com.u1.slicer.data.LibraryState
+import com.u1.slicer.data.Printer
+import com.u1.slicer.printer.CameraState
 import com.u1.slicer.printer.PrinterViewModel
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -50,6 +53,7 @@ import okhttp3.Request
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
@@ -58,7 +62,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import com.u1.slicer.buildBambuSlotPresets
 import com.u1.slicer.gcode.ExcludeObjectInfo
+import com.u1.slicer.ui.printer.buildPrinterSubtitle
+import com.u1.slicer.ui.printer.shouldShowActivePrinterSelector
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -82,11 +89,20 @@ fun PrinterScreen(
     val context = LocalContext.current
     val skippedObjects by viewModel.skippedObjects.collectAsState()
     var showSkipSheet by remember { mutableStateOf(false) }
-    val activeNickname by viewModel.activeNickname.collectAsState()
     val printerCount by viewModel.printerCount.collectAsState()
     val printerList by viewModel.printerList.collectAsState()
     val activePrinterId by viewModel.activePrinterId.collectAsState()
-    var showSwitcher by remember { mutableStateOf(false) }
+    val activePrinter by viewModel.activePrinter.collectAsState()
+    val capabilities by viewModel.capabilities.collectAsState()
+    val printerFilamentSlots by viewModel.printerFilamentSlots.collectAsState()
+    val cameraState by viewModel.cameraState.collectAsState()
+    val displayPresets = remember(activePrinter?.kind, printerFilamentSlots, extruderPresets) {
+        if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+            buildBambuSlotPresets(printerFilamentSlots, extruderPresets)
+        } else {
+            extruderPresets
+        }
+    }
 
     // Task 7: OpenPrintTag filament library state for the slot editor's "Library" tab.
     val libraryState by viewModel.libraryState.collectAsState()
@@ -141,6 +157,21 @@ fun PrinterScreen(
         }
     }
 
+    LaunchedEffect(cameraState) {
+        when (val state = cameraState) {
+            is CameraState.Streaming -> {
+                cameraFrame = null
+                state.frames.collect { frame -> cameraFrame = frame }
+            }
+            is CameraState.Rtsp -> {
+                cameraFrame = null
+            }
+            is CameraState.Disabled, is CameraState.Connecting, is CameraState.Error -> {
+                if (webcamCandidates.isEmpty()) cameraFrame = null
+            }
+        }
+    }
+
     DisposableEffect(Unit) {
         viewModel.startCameraKeepalive()
         onDispose { viewModel.stopCameraKeepalive() }
@@ -155,23 +186,14 @@ fun PrinterScreen(
         )
     }
 
-    if (showSwitcher) {
-        com.u1.slicer.ui.printer.PrinterSwitcherSheet(
-            printers = printerList,
-            activeId = activePrinterId,
-            activePrintingFilename = if (status.isPrinting) status.filename else null,
-            onSelect = { selected -> viewModel.switchActivePrinter(selected.id) },
-            onDismiss = { showSwitcher = false },
-        )
-    }
-
     // Sync preview dialog
     if (syncState is PrinterViewModel.SyncState.Preview) {
+        val preview = syncState as PrinterViewModel.SyncState.Preview
         FilamentSyncDialog(
-            entries = (syncState as PrinterViewModel.SyncState.Preview).entries,
+            entries = preview.entries,
             onConfirm = { applyColors, applyTypes ->
                 viewModel.applySyncResult(
-                    (syncState as PrinterViewModel.SyncState.Preview).entries,
+                    preview,
                     applyColors, applyTypes
                 )
             },
@@ -184,13 +206,8 @@ fun PrinterScreen(
             TopAppBar(
                 title = { Text("Printer", fontWeight = FontWeight.Bold) },
                 actions = {
-                    com.u1.slicer.ui.printer.ActivePrinterChip(
-                        activeNickname = activeNickname,
-                        printerCount = printerCount,
-                        onClick = { showSwitcher = true },
-                    )
                     val isLightOn by viewModel.isLightOn.collectAsState()
-                    if (status.isConnected) {
+                    if (status.isConnected && capabilities.supportsLightControl) {
                         IconButton(onClick = { viewModel.toggleLight() }) {
                             Icon(
                                 Icons.Default.Lightbulb,
@@ -224,9 +241,40 @@ fun PrinterScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+            .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (shouldShowActivePrinterSelector(printerCount)) {
+                ActivePrinterSelector(
+                    printers = printerList,
+                    activeId = activePrinterId,
+                    onSelect = { printer -> viewModel.switchActivePrinter(printer.id) },
+                )
+            }
+            if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            "Bambu LAN",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        Text(
+                            "Monitoring and limited controls are available. Some Moonraker-only controls are intentionally unavailable.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f),
+                        )
+                    }
+                }
+            }
 
             // ── Upload / Send status ────────────────────────────────────────
             when (val s = sendingState) {
@@ -239,8 +287,20 @@ fun PrinterScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
                         Column {
-                            Text("Preparing G-code\u2026", fontWeight = FontWeight.Medium)
-                            Text("Getting your file ready to send",
+                            Text(
+                                if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                                    "Preparing Bambu project\u2026"
+                                } else {
+                                    "Preparing G-code\u2026"
+                                },
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                                    "Checking the original 3MF before upload"
+                                } else {
+                                    "Getting your file ready to send"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         }
@@ -255,8 +315,20 @@ fun PrinterScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
                         Column {
-                            Text("Uploading G-code\u2026", fontWeight = FontWeight.Medium)
-                            Text("This may take a moment for large files",
+                            Text(
+                                if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                                    "Uploading Bambu project\u2026"
+                                } else {
+                                    "Uploading G-code\u2026"
+                                },
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                                    "This may take a moment while the original 3MF is copied to printer storage"
+                                } else {
+                                    "This may take a moment for large files"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         }
@@ -270,7 +342,15 @@ fun PrinterScreen(
                     Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4CAF50))
-                        Text("Print started!", color = Color(0xFF81C784), fontWeight = FontWeight.Bold)
+                        Text(
+                            if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                                "Print request sent - waiting for printer"
+                            } else {
+                                "Print started!"
+                            },
+                            color = Color(0xFF81C784),
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                 }
                 is PrinterViewModel.SendingState.UploadComplete -> Card(
@@ -285,7 +365,11 @@ fun PrinterScreen(
                             Text("Uploaded successfully!", color = Color(0xFF81C784), fontWeight = FontWeight.Bold)
                         }
                         Text(
-                            "To print, tap Print on the Preview screen or select the file on your printer.",
+                            if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                                "Open the project from the printer screen if you want to start it later."
+                            } else {
+                                "To print, tap Print on the Preview screen or select the file on your printer."
+                            },
                             color = Color(0xFF81C784).copy(alpha = 0.75f),
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -306,7 +390,7 @@ fun PrinterScreen(
             }
 
             // ── Camera feed ─────────────────────────────────────────────────
-            if (status.isConnected) {
+            if (status.isConnected && capabilities.supportsCamera) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF0D0D1A)),
@@ -319,7 +403,21 @@ fun PrinterScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         val frame = cameraFrame
-                        if (frame != null) {
+                        if (cameraState is CameraState.Rtsp) {
+                            val uri = (cameraState as CameraState.Rtsp).uri
+                            AndroidView(
+                                factory = { context ->
+                                    com.u1.slicer.printer.BambuRtspPlayerView(context).also {
+                                        it.setStreamUri(uri)
+                                    }
+                                },
+                                update = { it.setStreamUri(uri) },
+                                onRelease = { it.release() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(220.dp),
+                            )
+                        } else if (frame != null) {
                             Box {
                                 Image(
                                     bitmap = frame.asImageBitmap(),
@@ -346,6 +444,14 @@ fun PrinterScreen(
                                 }
                             }
                         } else {
+                            val cameraMessage = when (val state = cameraState) {
+                                is CameraState.Error -> state.message
+                                is CameraState.Streaming, is CameraState.Connecting ->
+                                    "Connecting to camera\u2026"
+                                is CameraState.Rtsp -> "Connecting to camera\u2026"
+                                is CameraState.Disabled ->
+                                    if (webcamCandidates.isEmpty()) "No camera found" else "Connecting to camera\u2026"
+                            }
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -355,7 +461,7 @@ fun PrinterScreen(
                                     tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f),
                                     modifier = Modifier.size(40.dp))
                                 Text(
-                                    if (webcamCandidates.isEmpty()) "No camera found" else "Connecting to camera\u2026",
+                                    cameraMessage,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
                                     style = MaterialTheme.typography.bodySmall
                                 )
@@ -406,7 +512,7 @@ fun PrinterScreen(
             }
 
             // ── Remote Screen (paxx12 extended firmware) ─────────────────────
-            if (status.isConnected && remoteScreenAvailable) {
+            if (status.isConnected && capabilities.supportsRemoteScreen && remoteScreenAvailable) {
                 val screenUrl = viewModel.remoteScreenUrl()
                 if (screenUrl != null) {
                     OutlinedButton(
@@ -483,7 +589,7 @@ fun PrinterScreen(
                             }
                             if (status.isPrinting || status.isPaused) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    if (status.isPrinting) {
+                                    if (status.isPrinting && capabilities.supportsPause) {
                                         Button(
                                             onClick = { viewModel.pausePrint() },
                                             modifier = Modifier.weight(1f),
@@ -495,7 +601,7 @@ fun PrinterScreen(
                                             Text("Pause")
                                         }
                                     }
-                                    if (status.isPaused) {
+                                    if (status.isPaused && capabilities.supportsResume) {
                                         Button(
                                             onClick = { viewModel.resumePrint() },
                                             modifier = Modifier.weight(1f),
@@ -507,18 +613,20 @@ fun PrinterScreen(
                                             Text("Resume")
                                         }
                                     }
-                                    Button(
-                                        onClick = { viewModel.cancelPrint() },
-                                        modifier = Modifier.weight(1f),
-                                        shape = RoundedCornerShape(12.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                                    ) {
-                                        Icon(Icons.Default.Stop, null)
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Cancel")
+                                    if (capabilities.supportsCancel) {
+                                        Button(
+                                            onClick = { viewModel.cancelPrint() },
+                                            modifier = Modifier.weight(1f),
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                                        ) {
+                                            Icon(Icons.Default.Stop, null)
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Cancel")
+                                        }
                                     }
                                 }
-                                if (excludeObjects.isNotEmpty()) {
+                                    if (capabilities.supportsSkipObjects && excludeObjects.isNotEmpty()) {
                                     Spacer(Modifier.height(8.dp))
                                     OutlinedButton(
                                         onClick = { showSkipSheet = true },
@@ -544,7 +652,7 @@ fun PrinterScreen(
                 }
 
                 // ── Temperatures ────────────────────────────────────────────
-                Card(
+                if (capabilities.supportsHeaterControl) Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     shape = RoundedCornerShape(16.dp)
@@ -616,7 +724,7 @@ fun PrinterScreen(
                 // Tighter gate than "!isPrinting && !isPaused": `isIdle` excludes
                 // error/disconnected, where freeform G-code would either be
                 // rejected by Klipper or surprise the user.
-                if (status.isConnected && status.isIdle) {
+                if (capabilities.supportsCustomGcode && status.isConnected && status.isIdle) {
                     var customGcode by remember { mutableStateOf("") }
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -674,10 +782,17 @@ fun PrinterScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Extruder Slots", fontWeight = FontWeight.Bold, fontSize = 18.sp,
+                        Text(
+                            if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                                "AMS Slots"
+                            } else {
+                                "Extruder Slots"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
                             color = MaterialTheme.colorScheme.primary)
 
-                        if (status.isConnected) {
+                        if (status.isConnected && capabilities.supportsFilamentSync) {
                             TextButton(
                                 onClick = { viewModel.syncFilaments() },
                                 enabled = syncState !is PrinterViewModel.SyncState.Loading
@@ -702,9 +817,18 @@ fun PrinterScreen(
                         )
                     }
 
-                    extruderPresets.forEach { preset ->
+                    if (activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN) {
+                        Text(
+                            "Live AMS tray state appears here when the printer reports it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        )
+                    }
+
+                    displayPresets.forEach { preset ->
                         ExtruderSlotRow(
                             preset = preset,
+                            label = preset.label,
                             filaments = filaments,
                             onUpdate = { viewModel.updateExtruderPreset(it) },
                             libraryState = libraryState,
@@ -751,8 +875,63 @@ fun PrinterScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun ActivePrinterSelector(
+    printers: List<Printer>,
+    activeId: String?,
+    onSelect: (Printer) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Active printer", fontWeight = FontWeight.Bold)
+            Text(
+                "Choose which printer to monitor. Switching does not interrupt a running print.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                printers.forEach { printer ->
+                    val selected = printer.id == activeId
+                    FilterChip(
+                        selected = selected,
+                        onClick = { if (!selected) onSelect(printer) },
+                        label = {
+                            Column {
+                                Text(printer.nickname.ifBlank { "Printer" })
+                                Text(
+                                    buildPrinterSubtitle(printer),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                )
+                            }
+                        },
+                        leadingIcon = if (selected) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        } else {
+                            { Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ExtruderSlotRow(
     preset: ExtruderPreset,
+    label: String = preset.label,
     filaments: List<FilamentProfile> = emptyList(),
     onUpdate: (ExtruderPreset) -> Unit,
     libraryState: LibraryState = LibraryState.Loading,
@@ -791,7 +970,7 @@ private fun ExtruderSlotRow(
         Box(modifier = Modifier.size(36.dp).clip(CircleShape).background(slotColor)
             .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
         Column(modifier = Modifier.weight(1f)) {
-            Text(preset.label, fontWeight = FontWeight.Medium)
+            Text(label, fontWeight = FontWeight.Medium)
             val profileName = filaments.firstOrNull { it.id == preset.filamentProfileId }?.name
             Text(profileName ?: preset.materialType, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1154,7 +1333,7 @@ private fun FilamentSyncDialog(
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("Sync from Printer", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
-                Text("Review changes per extruder slot.", style = MaterialTheme.typography.bodySmall,
+                Text("Review printer-to-app changes per slot.", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
 
@@ -1167,12 +1346,12 @@ private fun FilamentSyncDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = applyColors, onCheckedChange = { applyColors = it })
                     Spacer(Modifier.width(4.dp))
-                    Text("Apply colors")
+                    Text("Update app colors")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = applyTypes, onCheckedChange = { applyTypes = it })
                     Spacer(Modifier.width(4.dp))
-                    Text("Apply material types")
+                    Text("Update app material types")
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -1180,7 +1359,7 @@ private fun FilamentSyncDialog(
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Spacer(Modifier.width(8.dp))
                     Button(onClick = { onConfirm(applyColors, applyTypes) },
-                        enabled = applyColors || applyTypes) { Text("Apply") }
+                        enabled = applyColors || applyTypes) { Text("Update app") }
                 }
             }
         }
@@ -1207,14 +1386,14 @@ private fun SyncEntryRow(entry: PrinterViewModel.SyncPreviewEntry, applyColors: 
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(entry.label, fontWeight = FontWeight.Medium, modifier = Modifier.width(28.dp))
+            Text(entry.label, fontWeight = FontWeight.Medium, modifier = Modifier.widthIn(min = 48.dp, max = 56.dp))
             Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(currentColor)
                 .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape))
             Text(entry.currentType, style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.width(48.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             if (newColor != null) {
-                Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(14.dp),
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, modifier = Modifier.size(14.dp),
                     tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
                 Box(modifier = Modifier.size(24.dp).clip(CircleShape)
                     .background(if (applyColors) newColor else currentColor)

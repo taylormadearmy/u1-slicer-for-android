@@ -965,21 +965,20 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
 - **Remaining (low priority):** painted models >500K tris still use stride; could route through native path long-term
 - Track: [`#29`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/29)
 
-### F45: Bambu printer support (GitHub #16)
-- Add support for Bambu Lab printers (communication protocol differs from Moonraker)
-- Consider allowing upload of arbitrary OrcaSlicer printer configs
-- Backburner: Bambu's 2025 auth changes appear to block third-party LAN print-start on secured firmware unless the printer is put into `Developer Mode`
-- Likely viable scope is only `LAN + Developer Mode`; stock secured firmware support is probably not realistic for this Android app
-- Monitoring-only support may be possible without Developer Mode, but direct send/start is the critical blocker
-- Significant scope — needs investigation of Bambu MQTT/cloud protocol and an explicit product decision on whether `Developer Mode` is acceptable
+### F45: Bambu printer support (GitHub #16) — DONE v4.0.0 (released 2026-08-11)
+- Shipped as an opt-in early-beta lane, disabled by default behind an explicit acknowledgement. Supports A1 Mini, A1, P1P, P1S, X1C, X1E and H2D for native slicing, monitoring, camera, FTPS project upload and LAN print commands.
+- Official target defaults are composed with safe imported process/filament settings, target adaptations, explicit user overrides and mandatory firmware metadata. Foreign machine geometry, machine G-code/macros, protocol commands, kinematic limits and nozzle topology cannot survive retargeting.
+- Physical print validation passed on A1 Mini (pre-lockdown 01.04.00.00 firmware using the restored legacy A-series project payload) and H2D. All seven targets passed Smoke-7 manual E2E; unavailable hardware targets remain explicitly unverified in the beta warning and docs.
+- A1 Mini/H2D protocol paths, H2D dual-nozzle metadata/reach/prime-tower/AMS mapping, sparse filament IDs, imported Dragon Scale settings, plain-STL Bambu defaults and exact U1 behavior have golden regression coverage.
+- Secured Bambu firmware can still require LAN-only Developer Mode. Off-LAN/cloud operation and additional Bambu models remain future scope.
 - **2026-05-24 design drafted**: decomposed into six sub-projects A→F. Inspired by [bambuddy](https://github.com/maziggy/bambuddy) (Python+TS daemon) — used as wire-protocol reference, not embedded. Scope: LAN + Developer Mode only (matches earlier viability note); off-LAN via optional bambuddy relay (sub-project F).
   - **A** — printer transport abstraction (refactor only, no user-visible change)
   - **B** — Bambu LAN read-only (MQTT-TLS push reports, AMS inventory, in-app MJPEG camera). Designed together with A.
-  - **C** — Bambu LAN passthrough send (FTPS upload + MQTT print command; "Send original to Bambu" button, source must be Bambu 3MF)
+  - **C** — Bambu LAN pre-sliced-project send (FTPS upload + MQTT print command; source must be a Bambu 3MF containing `Metadata/plate_N.gcode`, such as a generated slice artifact or a retrieved printer-cache job)
   - **D** — SSDP discovery in add-printer dialog
   - **E** — Slice-for-Bambu (bundle Bambu machine profiles into native engine; "Slice for Bambu & Send" button)
   - **F** — Optional bambuddy relay for off-LAN access
-- **External release blocked** until at least C ships — A+B alone don't deliver enough user value to justify the new surface area.
+- **Release gate completed:** pre-sliced send and first-class native Bambu slicing both shipped in v4.0.0.
 - Specs:
   - Roadmap: [`docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md`](docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md)
   - A+B design: [`docs/superpowers/specs/2026-05-24-bambu-ab-design.md`](docs/superpowers/specs/2026-05-24-bambu-ab-design.md)
@@ -1109,6 +1108,8 @@ The following are candidate options for M5. We'll choose which to build next. Al
 - Useful for both routine Snapmaker Orca updates and the eventual FullSpectrum fork evaluation (F14)
 
 ## Closed (recent)
+
+- **v4.0.0 (released 2026-08-11)**: Your One Slicer branding and opt-in early-beta Bambu support for A1 Mini, A1, P1P, P1S, X1C, X1E and H2D. Added first-class target configuration and project artifacts, safe imported-profile preservation, FTPS/MQTT/camera integration, H2D dual-nozzle and AMS routing, legacy A-series firmware compatibility, provenance diagnostics, separate U1/Bambu manual E2E suites, and preview-scene lifecycle hardening. Full validation: 1,949 JVM + 443 Pixel instrumented + 78/78 manual E2E; user-initiated physical prints passed on A1 Mini and H2D.
 
 ### v3.3.8 / v3.3.9 (released 2026-07-02)
 - **OOM on compound multi-part files (Plate 4)**: Disabled massive memory-intensive `FaceDetector::detect_exterior_face()` desktop-only operation on Android.
