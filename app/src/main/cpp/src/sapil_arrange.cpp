@@ -568,7 +568,13 @@ static bool f66_volIdxValid(int objIdx, int volIdx) {
 bool SlicerEngine::isObjectSplittable(int objIdx) const {
     if (!f66_objIdxValid(objIdx)) return false;
     auto* obj = getGlobalModel().objects[objIdx];
-    return obj->parts_count() > 1;
+    if (obj->parts_count() > 1) return true;
+    for (const auto& vol : obj->volumes) {
+        if (vol->type() == Slic3r::ModelVolumeType::MODEL_PART && vol->is_splittable()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool SlicerEngine::isVolumeSplittable(int objIdx, int volIdx) const {
@@ -591,7 +597,7 @@ std::optional<SlicerEngine::SplitResult> SlicerEngine::splitObject(int objIdx) {
     model.objects[objIdx]->split(&new_objects);
     const size_t added = new_objects.size();
 
-    if (added <= 1) {
+    if (added == 0 || added == 1) {
         // Undo the trivial copy split() appended (if any) and report no-split.
         // The appended objects sit at indices [before_size .. before_size + added).
         for (size_t i = 0; i < added; ++i) {

@@ -91,6 +91,7 @@ private fun ObjectScopedEditSection(
     val loadTime by viewModel.loadTimePoses.collectAsState()
     val modelVersion by viewModel.modelAddVersion.collectAsState()
     val pose = poses[objIdx] ?: PerObjectPose()
+    val coroutineScope = rememberCoroutineScope()
     val baseline = loadTime[objIdx] ?: PerObjectPose()
     // F66 — re-key on modelAddVersion (bumped by every structural mutation
     // and every per-object pose change) so a split that changes object 5's
@@ -172,7 +173,7 @@ private fun ObjectScopedEditSection(
                 modifier = Modifier.weight(1f),
             ) { Text("Auto-orient") }
             FilledTonalButton(
-                onClick = { viewModel.splitObject(objIdx) },
+                onClick = { coroutineScope.launch { viewModel.splitObject(objIdx) } },
                 enabled = isSplittable,
                 modifier = Modifier.weight(1f),
             ) { Text("Split to Objects") }
@@ -200,7 +201,9 @@ private fun ObjectScopedEditSection(
                     val target = (0 until volumeCount).firstOrNull {
                         viewModel.isVolumeSplittable(objIdx, it)
                     }
-                    if (target != null) viewModel.splitVolume(objIdx, target)
+                    if (target != null) {
+                        coroutineScope.launch { viewModel.splitVolume(objIdx, target) }
+                    }
                 },
                 enabled = anyVolumeSplittable,
                 modifier = Modifier.fillMaxWidth(),

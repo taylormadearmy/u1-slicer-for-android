@@ -902,7 +902,6 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun invalidatePrepareMeshCache() {
-        cachedPrepareMesh?.release(native)
         cachedPrepareMesh = null
         cachedPrepareMeshPath = null
         _rotatedMeshSizeXY.value = null
@@ -1200,7 +1199,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Returns `true` if the object was actually split, `false` otherwise
      * (single-island object — native returned null without mutating).
      */
-    fun splitObject(objIdx: Int): Boolean {
+    suspend fun splitObject(objIdx: Int): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        com.u1.slicer.NativeLibrary.previewMutex.withLock {
         // v2.10.13: warn if the user is splitting AFTER having duplicated.
         // The slice-path replay applies splits BEFORE duplicates so dupes
         // inherit post-pose transforms, but a duplicate's recorded source
@@ -1246,7 +1246,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             "drawnAnchor=($drawnAnchorX, $drawnAnchorY) " +
             "combinedShift=($combinedShiftX, $combinedShiftY)")
 
-        val res = native.nativeSplitObject(objIdx) ?: return false
+        val res = native.nativeSplitObject(objIdx) ?: return@withLock false
         val removedIdx = res[0]
         val addedCount = res[1]
         Log.d("SplitDebug", "AFTER nativeSplitObject: removedIdx=$removedIdx, addedCount=$addedCount, " +
@@ -1356,7 +1356,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
         _sliceStale.value = true
         invalidatePrepareMeshCache()
-        return true
+        true
+        }
     }
 
     /**
@@ -1417,14 +1418,16 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * F66 — split one volume within an object into multiple volumes.
      * Returns the new volume count, or `-1` on failure.
      */
-    fun splitVolume(objIdx: Int, volIdx: Int): Int {
-        val newCount = native.nativeSplitVolume(objIdx, volIdx)
-        if (newCount > 0) {
-            _splitVolumeOps.value = _splitVolumeOps.value + "$objIdx:$volIdx"
-            _sliceStale.value = true
-            invalidatePrepareMeshCache()
+    suspend fun splitVolume(objIdx: Int, volIdx: Int): Int = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        com.u1.slicer.NativeLibrary.previewMutex.withLock {
+            val newCount = native.nativeSplitVolume(objIdx, volIdx)
+            if (newCount > 0) {
+                _splitVolumeOps.value = _splitVolumeOps.value + "$objIdx:$volIdx"
+                _sliceStale.value = true
+                invalidatePrepareMeshCache()
+            }
+            newCount
         }
-        return newCount
     }
 
     /**

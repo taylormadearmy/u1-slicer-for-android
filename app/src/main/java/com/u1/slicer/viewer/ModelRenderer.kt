@@ -226,6 +226,9 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
                 }
             } else {
                 uploadMeshBatches(mesh.batches)
+                if (this.meshData != null && this.meshData !== mesh) {
+                    this.meshData!!.release(com.u1.slicer.NativeLibrary())
+                }
             }
             if (mesh.batches.any { it.colorBuffer != null }) {
                 updateColorData(mesh)

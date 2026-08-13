@@ -7,6 +7,7 @@ import org.junit.Assert.*
 import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlinx.coroutines.runBlocking
 import java.io.File
 
 /**
@@ -249,7 +250,7 @@ class B131B132B133DiagnosticTest {
             var splitOk = false
             var splitIdx = -1
             for (i in 0 until objCountBeforeSplit) {
-                splitOk = viewModel.splitObject(i)
+                splitOk = runBlocking { viewModel.splitObject(i) }
                 if (splitOk) { splitIdx = i; break }
             }
             Thread.sleep(500)
@@ -331,7 +332,7 @@ class B131B132B133DiagnosticTest {
             val lib = NativeLibrary()
             var splitOk = false
             for (i in 0 until lib.nativeGetObjectCount()) {
-                splitOk = viewModel.splitObject(i)
+                splitOk = runBlocking { viewModel.splitObject(i) }
                 if (splitOk) break
             }
             Thread.sleep(500)
@@ -414,7 +415,7 @@ class B131B132B133DiagnosticTest {
             val objCountBeforeSplit = lib.nativeGetObjectCount()
             var splitOk = false
             for (i in 0 until objCountBeforeSplit) {
-                splitOk = viewModel.splitObject(i)
+                splitOk = runBlocking { viewModel.splitObject(i) }
                 if (splitOk) break
             }
             Thread.sleep(500)
@@ -805,7 +806,7 @@ class B131B132B133DiagnosticTest {
 
             val lib = NativeLibrary()
             // 1) Split object 0 → 3 objects
-            assertTrue("split must succeed", viewModel.splitObject(0))
+            assertTrue("split must succeed", runBlocking { viewModel.splitObject(0) })
             Thread.sleep(500)
             val afterSplit = lib.nativeGetObjectCount()
             assertEquals("3 objects after split", 3, afterSplit)

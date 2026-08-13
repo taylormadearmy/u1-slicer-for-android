@@ -349,7 +349,7 @@ class F66BehaviouralTest {
         val before = vm.modelAddVersion.value
         var splitResult: Boolean? = null
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            splitResult = vm.splitObject(0)
+            splitResult = runBlocking { vm.splitObject(0) }
         }
         Thread.sleep(100)
         assertEquals("Benchy is single-island; splitObject should return false", false, splitResult)
