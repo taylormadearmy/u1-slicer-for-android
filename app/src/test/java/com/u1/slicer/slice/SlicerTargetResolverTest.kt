@@ -47,8 +47,8 @@ class SlicerTargetResolverTest {
     }
 
     @Test
-    fun `every bambu model defaults to its matching local target`() {
-        BambuModel.entries.forEach { model ->
+    fun `every locally sliceable bambu model defaults to its matching local target`() {
+        BambuModel.entries.filter { SlicerTarget.forBambuModel(it).supportsLocalSlicing }.forEach { model ->
             val printer = Printer(
                 id = model.name,
                 nickname = model.name,
@@ -64,6 +64,22 @@ class SlicerTargetResolverTest {
             assertEquals(SlicerTarget.forBambuModel(model), resolveDefaultSliceTarget(printer))
             assertTrue(isLocalSliceAvailable(printer))
         }
+    }
+
+    @Test
+    fun `p2s selects its matching local target rather than a p1 fallback`() {
+        val printer = Printer(
+            id = "p2s",
+            nickname = "P2S",
+            kind = PrinterKind.BAMBU_LAN,
+            bambu = BambuConfig("192.168.1.9", "12345678", "P2S123", BambuModel.P2S),
+        )
+
+        assertEquals(SlicerTarget.BambuP2S, SlicerTarget.forBambuModel(BambuModel.P2S))
+        assertTrue(SlicerTarget.BambuP2S.isCompatibleWith(PrinterKind.BAMBU_LAN, BambuModel.P2S))
+        assertTrue(SlicerTarget.BambuP2S.supportsLocalSlicing)
+        assertEquals(SlicerTarget.BambuP2S, resolveDefaultSliceTarget(printer))
+        assertTrue(isLocalSliceAvailable(printer))
     }
 
     @Test

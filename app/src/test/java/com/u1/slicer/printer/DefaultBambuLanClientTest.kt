@@ -6,6 +6,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -215,6 +216,27 @@ class DefaultBambuLanClientTest {
         assertEquals(0, amsMapping2.getJSONObject(0).getInt("slot_id"))
         assertEquals(0, amsMapping2.getJSONObject(1).getInt("ams_id"))
         assertEquals(3, amsMapping2.getJSONObject(1).getInt("slot_id"))
+    }
+
+    @Test
+    fun `p2s project payload keeps the cache route and skips unsupported vibration calibration`() {
+        val print = JSONObject(
+            DefaultBambuLanClient.projectFileCommandPayload(
+                sequenceId = 7,
+                remoteName = "p2s.gcode.3mf",
+                plateId = 1,
+                amsMapping = listOf(4),
+                useAms = true,
+                subtaskName = "p2s",
+                model = BambuModel.P2S,
+            ),
+        ).getJSONObject("print")
+
+        assertEquals("file:///sdcard/cache/p2s.gcode.3mf", print.getString("url"))
+        assertFalse(print.getBoolean("vibration_cali"))
+        assertEquals(JSONArray(listOf(4)).toString(), print.getJSONArray("ams_mapping").toString())
+        assertEquals(1, print.getJSONArray("ams_mapping2").getJSONObject(0).getInt("ams_id"))
+        assertEquals(0, print.getJSONArray("ams_mapping2").getJSONObject(0).getInt("slot_id"))
     }
 
     @Test

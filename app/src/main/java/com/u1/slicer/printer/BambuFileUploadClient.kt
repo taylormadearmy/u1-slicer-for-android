@@ -37,8 +37,9 @@ enum class BambuFtpsDataMode { PROTECTED, CLEAR }
 /**
  * The data connection has been flushed and closed after every byte was copied,
  * but the printer did not send the final 226/250 reply before the control
- * socket timed out. H2D firmware is known to do this while it finishes
- * processing an otherwise complete upload.
+ * socket timed out. H2D firmware, and some P2S firmware revisions (which can
+ * reply 426 after a complete transfer), do this while processing an otherwise
+ * complete upload. The caller verifies remote size before declaring success.
  */
 internal class BambuFtpsTransferConfirmationTimeout(
     val expectedBytes: Long,

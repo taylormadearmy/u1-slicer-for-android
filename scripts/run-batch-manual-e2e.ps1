@@ -8,7 +8,7 @@ param(
     [int]$EndAt = 0,
     [ValidateSet('U1', 'Bambu', 'Both')]
     [string]$Suite = 'U1',
-    [ValidateSet('A1_MINI', 'A1', 'P1P', 'P1S', 'X1C', 'X1E', 'H2D')]
+    [ValidateSet('A1_MINI', 'A1', 'P1P', 'P1S', 'P2S', 'X1C', 'X1E', 'H2D')]
     [string]$BambuTarget = 'H2D',
     [switch]$KeepExistingResults,
     [switch]$NoInstall
@@ -133,6 +133,7 @@ $bambuPrinterModels = @{
     A1      = 'Bambu Lab A1'
     P1P     = 'Bambu Lab P1P'
     P1S     = 'Bambu Lab P1S'
+    P2S     = 'Bambu Lab P2S'
     X1C     = 'Bambu Lab X1 Carbon'
     X1E     = 'Bambu Lab X1E'
     H2D     = 'Bambu Lab H2D'

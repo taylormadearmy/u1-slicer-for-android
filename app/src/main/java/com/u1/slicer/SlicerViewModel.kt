@@ -5417,7 +5417,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             )
         ) {
             _state.value = SlicerState.Error(
-                "Local Bambu slicing is currently available for A1 Mini only. Use a pre-sliced project for this printer.",
+                "Local slicing is not yet available for this Bambu model. Use a project sliced for the active printer in Bambu Studio.",
             )
             return
         }

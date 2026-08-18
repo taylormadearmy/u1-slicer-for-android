@@ -23,6 +23,7 @@ class BambuProjectWriterTest {
             SlicerTarget.BambuX1E to Triple("C13", "Bambu Lab X1E", "Bambu PLA Basic @BBL X1C"),
             SlicerTarget.BambuP1S to Triple("C12", "Bambu Lab P1S", "Bambu PLA Basic @BBL X1C"),
             SlicerTarget.BambuP1P to Triple("C11", "Bambu Lab P1P", "Bambu PLA Basic @BBL X1"),
+            SlicerTarget.BambuP2S to Triple("GM049", "Bambu Lab P2S", "Bambu PLA Basic @BBL P2S"),
             SlicerTarget.BambuA1 to Triple("N2S", "Bambu Lab A1", "Bambu PLA Basic @BBL A1"),
             SlicerTarget.BambuA1Mini to Triple("N1", "Bambu Lab A1 mini", "Bambu PLA Basic @BBL A1M"),
             SlicerTarget.BambuH2D to Triple("O1D", "Bambu Lab H2D", "Bambu PLA Basic @BBL H2D"),

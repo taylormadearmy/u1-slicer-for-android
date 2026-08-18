@@ -38,6 +38,12 @@ enum class SlicerTarget(
         beta = true,
         supportsLocalSlicing = true,
     ),
+    /** P2S uses its own backported official 0.4 mm machine templates. */
+    BambuP2S(
+        family = SliceTargetFamily.BAMBU,
+        beta = true,
+        supportsLocalSlicing = true,
+    ),
     BambuA1(
         family = SliceTargetFamily.BAMBU,
         beta = true,
@@ -63,6 +69,7 @@ enum class SlicerTarget(
         BambuX1E -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.X1E
         BambuP1S -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.P1S
         BambuP1P -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.P1P
+        BambuP2S -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.P2S
         BambuA1 -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.A1
         BambuA1Mini -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.A1_MINI
         BambuH2D -> kind == PrinterKind.BAMBU_LAN && bambuModel == BambuModel.H2D
@@ -74,6 +81,7 @@ enum class SlicerTarget(
             BambuModel.X1E -> BambuX1E
             BambuModel.P1S -> BambuP1S
             BambuModel.P1P -> BambuP1P
+            BambuModel.P2S -> BambuP2S
             BambuModel.A1 -> BambuA1
             BambuModel.A1_MINI -> BambuA1Mini
             BambuModel.H2D -> BambuH2D

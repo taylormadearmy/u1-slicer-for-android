@@ -180,9 +180,11 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     bool front_left_exclusion = true;
     bool bed_slinger = false;
     bool h2d = false;
+    bool p2s = false;
     if (target == "BAMBU_X1E") { model = "Bambu Lab X1E"; settings = "Bambu Lab X1E 0.4 nozzle"; }
     else if (target == "BAMBU_P1S") { model = "Bambu Lab P1S"; settings = "Bambu Lab P1S 0.4 nozzle"; }
     else if (target == "BAMBU_P1P") { model = "Bambu Lab P1P"; settings = "Bambu Lab P1P 0.4 nozzle"; }
+    else if (target == "BAMBU_P2S") { model = "Bambu Lab P2S"; settings = "Bambu Lab P2S 0.4 nozzle"; bed_z = 256.0; front_left_exclusion = false; p2s = true; }
     else if (target == "BAMBU_A1") { model = "Bambu Lab A1"; settings = "Bambu Lab A1 0.4 nozzle"; bed_z = 256.0; front_left_exclusion = false; bed_slinger = true; }
     else if (target == "BAMBU_A1_MINI") { model = "Bambu Lab A1 mini"; settings = "Bambu Lab A1 mini 0.4 nozzle"; bed_x = bed_y = bed_z = 180.0; front_left_exclusion = false; bed_slinger = true; }
     else if (target == "BAMBU_H2D") { model = "Bambu Lab H2D"; settings = "Bambu Lab H2D 0.4 nozzle"; bed_x = 350.0; bed_y = 320.0; bed_z = 325.0; front_left_exclusion = false; h2d = true; }
@@ -256,11 +258,13 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     }
     dpc.set_key_value("machine_max_speed_x", new Slic3r::ConfigOptionFloats({500.0, 500.0}));
     dpc.set_key_value("machine_max_speed_y", new Slic3r::ConfigOptionFloats({500.0, 500.0}));
-    dpc.set_key_value("machine_max_speed_z", new Slic3r::ConfigOptionFloats(bed_slinger ? std::vector<double>{30.0, 30.0} : std::vector<double>{20.0, 20.0}));
+    dpc.set_key_value("machine_max_speed_z", new Slic3r::ConfigOptionFloats(
+        bed_slinger ? std::vector<double>{30.0, 30.0} : p2s ? std::vector<double>{20.0, 20.0, 20.0} : std::vector<double>{20.0, 20.0}));
     dpc.set_key_value("machine_max_speed_e", new Slic3r::ConfigOptionFloats(std::vector<double>{30.0, 30.0}));
     dpc.set_key_value("machine_max_acceleration_x", new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
     dpc.set_key_value("machine_max_acceleration_y", new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
-    dpc.set_key_value("machine_max_acceleration_z", new Slic3r::ConfigOptionFloats(bed_slinger ? std::vector<double>{1500.0, 1500.0} : std::vector<double>{500.0, 500.0}));
+    dpc.set_key_value("machine_max_acceleration_z", new Slic3r::ConfigOptionFloats(
+        bed_slinger ? std::vector<double>{1500.0, 1500.0} : p2s ? std::vector<double>{500.0, 500.0, 500.0} : std::vector<double>{500.0, 500.0}));
     dpc.set_key_value("machine_max_acceleration_e", new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));
     dpc.set_key_value("machine_max_acceleration_extruding", new Slic3r::ConfigOptionFloats({20000.0, 20000.0}));
     dpc.set_key_value("machine_max_acceleration_retracting", new Slic3r::ConfigOptionFloats({5000.0, 5000.0}));

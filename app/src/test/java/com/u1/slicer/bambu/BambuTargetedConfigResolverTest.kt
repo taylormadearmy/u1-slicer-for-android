@@ -5,17 +5,51 @@ import com.u1.slicer.data.BambuModel
 import com.u1.slicer.slice.SlicerTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BambuTargetedConfigResolverTest {
 
     @Test
-    fun `every supported bambu model has a matching slicer target and machine profile`() {
-        BambuModel.entries.forEach { model ->
+    fun `every locally sliceable bambu model has a matching slicer target and machine profile`() {
+        BambuModel.entries.filter { SlicerTarget.forBambuModel(it).supportsLocalSlicing }.forEach { model ->
             val target = SlicerTarget.forBambuModel(model)
             assertTrue("Missing machine profile for $model", target in BAMBU_MACHINE_PROFILES)
         }
+    }
+
+    @Test
+    fun `p2s has its own official identity and macro payload`() {
+        val profile = BAMBU_MACHINE_PROFILES.getValue(SlicerTarget.BambuP2S)
+        val p2s = resolveTargetedSliceConfig(SlicerTarget.BambuP2S, SliceConfig())
+        val p1s = resolveTargetedSliceConfig(SlicerTarget.BambuP1S, SliceConfig())
+
+        assertTrue(SlicerTarget.BambuP2S.supportsLocalSlicing)
+        assertEquals("GM049", profile.printerModelId)
+        assertEquals("Bambu Lab P2S", profile.printerModel)
+        assertEquals(256f, profile.maxPrintHeight)
+        assertEquals("BAMBU_P2S", p2s.machineTarget)
+        assertTrue(p2s.machineStartGcode.isNotBlank())
+        assertFalse(p2s.machineStartGcode.contains("min_vitrification_temperature"))
+        assertFalse(p2s.machineStartGcode.contains("initial_no_support_filament_id"))
+        assertFalse(p2s.machineStartGcode.contains("flush_volumetric_speeds"))
+        assertFalse(p2s.machineStartGcode.contains("flush_temperatures"))
+        assertFalse(p2s.machineStartGcode.contains("hold_chamber_temp_for_flat_print"))
+        assertTrue(p2s.machineStartGcode.contains("P2S obstacle scan omitted"))
+        assertTrue(p2s.machineStartGcode.contains("bed_temperature_initial_layer_single <= 50"))
+        assertTrue(p2s.machineEndGcode.isNotBlank())
+        assertTrue(p2s.machineChangeFilamentGcode.contains("M620"))
+        assertTrue(p2s.machineChangeFilamentGcode.contains("M621"))
+        assertFalse(p2s.machineChangeFilamentGcode.contains("filament_cooling_before_tower"))
+        assertTrue(p2s.machineChangeFilamentGcode.contains("M620.15 C{new_filament_temp}"))
+        assertFalse(p2s.machineChangeFilamentGcode.contains("ceil("))
+        assertTrue(p2s.machineChangeFilamentGcode.contains("SYNC T{max(flush_length / 16 + 5, 5)}"))
+        assertFalse(p2s.machineChangeFilamentGcode.contains("filament_map["))
+        assertTrue(p2s.machineChangeFilamentGcode.contains("retract_length_toolchange[next_extruder]"))
+        assertFalse(p2s.machineChangeFilamentGcode.contains("close_additional_fan_first_x_layers"))
+        assertTrue(p2s.machineChangeFilamentGcode.contains("P2S per-filament auxiliary fan transition omitted"))
+        assertNotEquals(p1s.machineStartGcode, p2s.machineStartGcode)
     }
 
     @Test
@@ -50,6 +84,7 @@ class BambuTargetedConfigResolverTest {
             SlicerTarget.BambuX1E to "C13",
             SlicerTarget.BambuP1S to "C12",
             SlicerTarget.BambuP1P to "C11",
+            SlicerTarget.BambuP2S to "GM049",
             SlicerTarget.BambuA1 to "N2S",
             SlicerTarget.BambuA1Mini to "N1",
             SlicerTarget.BambuH2D to "O1D",
@@ -72,7 +107,7 @@ class BambuTargetedConfigResolverTest {
     }
 
     @Test
-    fun `x and p targets use official 250 millimetre printable height`() {
+    fun `x and legacy p targets use official 250 millimetre printable height`() {
         listOf(
             SlicerTarget.BambuX1C,
             SlicerTarget.BambuX1E,
@@ -83,6 +118,7 @@ class BambuTargetedConfigResolverTest {
             assertEquals(250f, resolveTargetedSliceConfig(target, SliceConfig()).maxPrintHeight)
         }
         assertEquals(256f, BAMBU_MACHINE_PROFILES.getValue(SlicerTarget.BambuA1).maxPrintHeight)
+        assertEquals(256f, BAMBU_MACHINE_PROFILES.getValue(SlicerTarget.BambuP2S).maxPrintHeight)
     }
 
     @Test

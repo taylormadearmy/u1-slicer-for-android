@@ -361,8 +361,14 @@ class PreparePreviewViewModelTest {
         )
         runBlocking {
             val printersRepo = application.container.printersRepository
-            val cfg = printersRepo.config.first() ?: return@runBlocking
+            // AppContainer seeds the active printer asynchronously on a fresh
+            // Orchestrator process. Do not silently skip this fixture write
+            // while that migration is still in flight.
+            val cfg = printersRepo.config.first { it != null }!!
             printersRepo.update(cfg.active.copy(extruderPresets = userPresets))
+            printersRepo.config.first {
+                it?.active?.extruderPresets == userPresets
+            }
         }
 
         val viewModel = SlicerViewModel(application)

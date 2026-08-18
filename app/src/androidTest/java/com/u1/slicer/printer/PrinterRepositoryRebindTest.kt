@@ -37,31 +37,35 @@ class PrinterRepositoryRebindTest {
     )
 
     @Before
-    fun setUp() = runBlocking {
-        val context = targetContext.applicationContext
-        printersRepo = PrintersRepository(context)
-        printerRepo = PrinterRepository(
-            context,
-            printersRepo,
-            DefaultPrinterTransportFactory(
-                moonrakerClientFactory = { MoonrakerClient().also(clients::add) },
-            ),
-        )
-        printersRepo.replace(
-            PrintersConfig(printers = listOf(printerA, printerB), activeId = printerA.id),
-        )
-        printersRepo.config.first { it?.activeId == printerA.id }
-        waitForClient(urlFor(printerA))
+    fun setUp() {
+        runBlocking {
+            val context = targetContext.applicationContext
+            printersRepo = PrintersRepository(context)
+            printerRepo = PrinterRepository(
+                context,
+                printersRepo,
+                DefaultPrinterTransportFactory(
+                    moonrakerClientFactory = { MoonrakerClient().also(clients::add) },
+                ),
+            )
+            printersRepo.replace(
+                PrintersConfig(printers = listOf(printerA, printerB), activeId = printerA.id),
+            )
+            printersRepo.config.first { it?.activeId == printerA.id }
+            waitForClient(urlFor(printerA))
+        }
     }
 
     @After
-    fun tearDown() = runBlocking {
-        printersRepo.replace(
-            PrintersConfig(
-                printers = listOf(Printer(id = "cleanup", nickname = "Cleanup", moonrakerUrl = "")),
-                activeId = "cleanup",
-            ),
-        )
+    fun tearDown() {
+        runBlocking {
+            printersRepo.replace(
+                PrintersConfig(
+                    printers = listOf(Printer(id = "cleanup", nickname = "Cleanup", moonrakerUrl = "")),
+                    activeId = "cleanup",
+                ),
+            )
+        }
     }
 
     @Test
@@ -85,7 +89,7 @@ class PrinterRepositoryRebindTest {
 
         printerRepo.updateActiveUrl(updatedUrl)
 
-        val updatedClient = waitForClient(updatedUrl, after = initialClient)
+        val updatedClient = waitForClient(updatedUrl, excluding = setOf(initialClient))
         assertNotSame(initialClient, updatedClient)
         assertEquals(urlFor(printerA), initialClient.baseUrl)
         assertEquals(updatedUrl, updatedClient.baseUrl)
@@ -98,7 +102,7 @@ class PrinterRepositoryRebindTest {
         printersRepo.setActive(printerB.id)
         val clientB = waitForClient(urlFor(printerB))
         printersRepo.setActive(printerA.id)
-        val secondClientA = waitForClient(urlFor(printerA), after = clientB)
+        val secondClientA = waitForClient(urlFor(printerA), excluding = setOf(firstClientA, clientB))
 
         assertNotSame(firstClientA, clientB)
         assertNotSame(firstClientA, secondClientA)
@@ -111,12 +115,12 @@ class PrinterRepositoryRebindTest {
 
     private fun waitForClient(
         expectedUrl: String,
-        after: MoonrakerClient? = null,
+        excluding: Set<MoonrakerClient> = emptySet(),
         timeoutMs: Long = 30_000L,
     ): MoonrakerClient {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            clients.firstOrNull { it !== after && it.baseUrl == expectedUrl }?.let { return it }
+            clients.firstOrNull { it !in excluding && it.baseUrl == expectedUrl }?.let { return it }
             Thread.sleep(50)
         }
         throw AssertionError(

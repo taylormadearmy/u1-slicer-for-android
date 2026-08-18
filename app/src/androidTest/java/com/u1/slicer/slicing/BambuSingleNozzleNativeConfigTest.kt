@@ -81,6 +81,15 @@ class BambuSingleNozzleNativeConfigTest {
                 zAcceleration = "500,500",
             ),
             MachineExpectation(
+                SlicerTarget.BambuP2S,
+                "Bambu Lab P2S",
+                "Bambu Lab P2S 0.4 nozzle",
+                hasFrontLeftExclusion = false,
+                printableHeight = "256",
+                zSpeed = "20,20,20",
+                zAcceleration = "500,500,500",
+            ),
+            MachineExpectation(
                 SlicerTarget.BambuA1,
                 "Bambu Lab A1",
                 "Bambu Lab A1 0.4 nozzle",
@@ -105,7 +114,10 @@ class BambuSingleNozzleNativeConfigTest {
             val gcode = File(result.gcodePath).readText()
 
             assertTrue(gcode.contains("; printable_area = 0x0,256x0,256x256,0x256"))
-            assertTrue(gcode.contains("; printable_height = ${expected.printableHeight}"))
+            assertTrue(
+                "${expected.target}: ${gcode.lineSequence().firstOrNull { it.startsWith("; printable_height =") }}",
+                gcode.contains("; printable_height = ${expected.printableHeight}"),
+            )
             assertTrue(gcode.contains("; printer_model = ${expected.model}"))
             assertTrue(gcode.contains("; printer_settings_id = ${expected.settingsId}"))
             assertTrue(gcode.contains("; machine_max_speed_z = ${expected.zSpeed}"))

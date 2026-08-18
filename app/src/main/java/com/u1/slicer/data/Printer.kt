@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 enum class PrinterKind { MOONRAKER, BAMBU_LAN }
 
-enum class BambuModel { X1C, X1E, P1S, P1P, A1, A1_MINI, H2D }
+enum class BambuModel { X1C, X1E, P1S, P1P, P2S, A1, A1_MINI, H2D }
 
 data class BambuConfig(
     val ip: String,

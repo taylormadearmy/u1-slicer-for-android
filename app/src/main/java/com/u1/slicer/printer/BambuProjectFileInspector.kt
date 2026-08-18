@@ -495,6 +495,7 @@ object BambuProjectFileInspector {
             BambuModel.A1 -> Regex("\\ba1\\b").containsMatchIn(normalized) && "mini" !in normalized
             BambuModel.P1P -> "p1p" in normalized
             BambuModel.P1S -> "p1s" in normalized
+            BambuModel.P2S -> "p2s" in normalized
             BambuModel.X1C -> "x1 carbon" in normalized || "x1c" in normalized
             BambuModel.X1E -> "x1e" in normalized
             BambuModel.H2D -> "h2d" in normalized
@@ -506,6 +507,7 @@ object BambuProjectFileInspector {
         BambuModel.A1 -> "Bambu A1"
         BambuModel.P1P -> "Bambu P1P"
         BambuModel.P1S -> "Bambu P1S"
+        BambuModel.P2S -> "Bambu P2S"
         BambuModel.X1C -> "Bambu X1 Carbon"
         BambuModel.X1E -> "Bambu X1E"
         BambuModel.H2D -> "Bambu H2D"

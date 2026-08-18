@@ -34,7 +34,7 @@ class BambuCameraProtocolTest {
     }
 
     @Test
-    fun `h2d uses authenticated tls backed rtsp while a1 keeps jpeg protocol`() {
+    fun `h2d uses authenticated tls backed rtsp while a1 and p2s stay unsupported`() {
         val client = DefaultBambuCameraClient()
         val h2d = BambuConfig(
             ip = "192.168.1.50",
@@ -43,6 +43,7 @@ class BambuCameraProtocolTest {
             model = BambuModel.H2D,
         )
         val a1 = h2d.copy(model = BambuModel.A1)
+        val p2s = h2d.copy(model = BambuModel.P2S)
 
         assertTrue(client.supports(BambuModel.H2D))
         assertEquals(
@@ -50,5 +51,7 @@ class BambuCameraProtocolTest {
             client.rtspUri(h2d),
         )
         assertNull(client.rtspUri(a1))
+        assertTrue(!client.supports(BambuModel.P2S))
+        assertNull(client.rtspUri(p2s))
     }
 }

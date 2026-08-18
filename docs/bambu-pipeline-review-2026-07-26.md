@@ -51,6 +51,7 @@ live frame is reconfirmed after the latest RTSPS fix.
 | X1E | implemented | implemented | implemented | AMS + external | RTSPS 322 | medium-low: static/native only |
 | P1P | implemented | implemented | implemented | AMS + external | TCP JPEG 6000 | medium-low: static/native only |
 | P1S | implemented | implemented | implemented | AMS + external | TCP JPEG 6000 | medium-low: static/native only |
+| P2S | implemented | implemented | implemented | AMS + external | not exposed | medium-low: static/native only |
 | A1 | implemented | implemented | implemented | AMS Lite + external | TCP JPEG 6000 | medium: shares the proven A-series path |
 | A1 Mini | implemented | implemented | implemented | AMS Lite + external | TCP JPEG 6000 | field-verified: successful physical print on 01.04.00.00 firmware |
 | H2D | implemented | implemented | implemented | AMS, AMS-HT, L/R external, FTS-aware imported projects | RTSPS 322 | field-verified: successful dual-nozzle-aware physical print |
@@ -59,14 +60,13 @@ live frame is reconfirmed after the latest RTSPS fix.
 means the entire path exists and is covered by focused JVM/native artifact
 tests.
 
-## Current BambuStudio printers not implemented
+## Current BambuStudio printers not implemented for local slicing
 
 The current official BBL registry also contains these selectable families or
 profiles, none of which is exposed by this app:
 
 - H2D Pro
 - H2S
-- P2S
 - H2C
 - X2D
 - A2L
@@ -77,8 +77,9 @@ machine identity, dimensions and exclusions, machine G-code, kinematics,
 camera profile, FTPS/command quirks, and routing rules. In particular:
 
 - H2S is single-nozzle and has a different 340 x 320 x 340 envelope.
-- P2S has a known RTSPS timestamp/probing camera quirk and different calibration
-  defaults in Bambuddy.
+- P2S has an isolated backport of its official 0.4 mm profile/macros for the
+  bundled OrcaSlicer 2.2.4 engine. Its RTSPS camera still needs Bambuddy's
+  P2S-specific timestamp/probing workaround and remains unavailable here.
 - H2C and X2D are dual-nozzle; H2C also has nozzle-rack semantics.
 - A2L reports AMS Lite with special wire unit/slot IDs that must not be treated
   as the older A1 mapping.
@@ -195,7 +196,7 @@ The command is still not retried, so there is no duplicate-start risk.
   and an SDP filter for H2D's non-standard info lines.
 - Bambuddy uses a TLS proxy plus ffmpeg, giving it more tolerance and a
   per-model camera registry. Its P2S profile relaxes probing and regenerates
-  timestamps; P2S is not implemented here.
+  timestamps; P2S camera streaming remains intentionally unavailable here.
 
 The Media3 RTSPS path is architecturally different from Bambuddy. The H2D black
 frame report means camera confidence must remain low until the exported

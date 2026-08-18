@@ -2484,7 +2484,7 @@ fun PrepareScreen(
                         label = if (com.u1.slicer.slice.isLocalSliceAvailable(activePrinter)) {
                             "Slice Model"
                         } else {
-                            "A1 Mini local slicing only"
+                            "Use a Bambu Studio project"
                         },
                         onClick = {
                         val viewer = captureViewer

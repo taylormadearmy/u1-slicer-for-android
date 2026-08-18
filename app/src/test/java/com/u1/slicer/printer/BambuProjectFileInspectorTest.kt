@@ -513,6 +513,36 @@ class BambuProjectFileInspectorTest {
     }
 
     @Test
+    fun `p2s project is accepted only for a p2s printer`() {
+        val file = createExecutableProject(
+            machineName = "Bambu Lab P2S",
+            filamentIds = listOf(0),
+        )
+
+        try {
+            assertTrue(
+                BambuProjectFileInspector.validateExecutableProject(
+                    projectFile = file,
+                    plateId = 1,
+                    model = BambuModel.P2S,
+                    amsMapping = listOf(0),
+                ).isSuccess,
+            )
+
+            val mismatch = BambuProjectFileInspector.validateExecutableProject(
+                projectFile = file,
+                plateId = 1,
+                model = BambuModel.P1S,
+                amsMapping = listOf(0),
+            ).exceptionOrNull()
+            assertTrue(mismatch?.message?.contains("P2S") == true)
+            assertTrue(mismatch?.message?.contains("P1S") == true)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun `h2d nozzle diameter mismatch is checked against the required side`() {
         val file = createExecutableProject(
             machineName = "Bambu Lab H2D",

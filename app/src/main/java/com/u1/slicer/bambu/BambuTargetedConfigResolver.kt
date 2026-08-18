@@ -81,6 +81,7 @@ private val SlicerTarget.nativeMachineTarget: String
         SlicerTarget.BambuX1E -> "BAMBU_X1E"
         SlicerTarget.BambuP1S -> "BAMBU_P1S"
         SlicerTarget.BambuP1P -> "BAMBU_P1P"
+        SlicerTarget.BambuP2S -> "BAMBU_P2S"
         SlicerTarget.BambuA1 -> "BAMBU_A1"
         SlicerTarget.BambuA1Mini -> "BAMBU_A1_MINI"
         SlicerTarget.BambuH2D -> "BAMBU_H2D"

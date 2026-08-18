@@ -428,7 +428,10 @@ class DefaultBambuLanClient(
                     .put("bed_leveling", false)
                     .put("auto_bed_leveling", 2)
                     .put("flow_cali", false)
-                    .put("vibration_cali", true)
+                    // P2S firmware does not support the X/P-series vibration
+                    // calibration pass. Sending it can reject an otherwise
+                    // valid project-file command.
+                    .put("vibration_cali", model != BambuModel.P2S)
                     .put("layer_inspect", false)
                     .put("use_ams", ams.useAms)
                     .put("cfg", "0")
