@@ -98,7 +98,7 @@ fun PrinterEditDialog(
                         onClick = { kind = PrinterKind.MOONRAKER; testResult = null },
                         shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
                     ) {
-                        Text("Moonraker")
+                        Text("Snapmaker U1")
                     }
                     SegmentedButton(
                         selected = kind == PrinterKind.BAMBU_LAN,
@@ -106,7 +106,7 @@ fun PrinterEditDialog(
                         onClick = { kind = PrinterKind.BAMBU_LAN; testResult = null },
                         shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
                     ) {
-                        Text(if (bambuEnabled) "Bambu LAN" else "Bambu (off)")
+                        Text(if (bambuEnabled) "Bambu Lab (LAN)" else "Bambu (off)")
                     }
                 }
 
@@ -127,10 +127,15 @@ fun PrinterEditDialog(
                 }
 
                 if (kind == PrinterKind.MOONRAKER) {
+                    Text(
+                        "Connects to your Snapmaker U1 using Moonraker.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    )
                     OutlinedTextField(
                         value = url,
                         onValueChange = { url = it; testResult = null },
-                        label = { Text("Moonraker URL") },
+                        label = { Text("Printer address") },
                         placeholder = { Text("http://192.168.1.50") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
