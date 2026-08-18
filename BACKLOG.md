@@ -965,7 +965,7 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
 - **Remaining (low priority):** painted models >500K tris still use stride; could route through native path long-term
 - Track: [`#29`](https://github.com/taylormadearmy/u1-slicer-for-android/issues/29)
 
-### F45: Bambu printer support (GitHub #16) — DONE v4.0.0 (released 2026-08-11)
+### F45: Bambu printer support (GitHub #16) — DONE v4.0.1 (released 2026-08-18)
 - Shipped as an opt-in early-beta lane, disabled by default behind an explicit acknowledgement. Supports A1 Mini, A1, P1P, P1S, X1C, X1E and H2D for native slicing, monitoring, camera, FTPS project upload and LAN print commands.
 - Official target defaults are composed with safe imported process/filament settings, target adaptations, explicit user overrides and mandatory firmware metadata. Foreign machine geometry, machine G-code/macros, protocol commands, kinematic limits and nozzle topology cannot survive retargeting.
 - Physical print validation passed on A1 Mini (pre-lockdown 01.04.00.00 firmware using the restored legacy A-series project payload) and H2D. All seven targets passed Smoke-7 manual E2E; unavailable hardware targets remain explicitly unverified in the beta warning and docs.
@@ -979,6 +979,7 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
   - **E** — Slice-for-Bambu (bundle Bambu machine profiles into native engine; "Slice for Bambu & Send" button)
   - **F** — Optional bambuddy relay for off-LAN access
 - **Release gate completed:** pre-sliced send and first-class native Bambu slicing both shipped in v4.0.0.
+- **v4.0.1 follow-up:** added P2S as a first-class Bambu target, with the official 256 mm 0.4 mm profile and engine-compatible P2S macros. Its local slicing/export path passed all seven Bambu fixtures (single-, dual-, tri-, and four-colour imported projects) and the complete 27-case U1 manual E2E suite. P2S camera streaming remains unavailable; a physical P2S Map & Upload/print has not been run.
 - Specs:
   - Roadmap: [`docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md`](docs/superpowers/specs/2026-05-24-bambu-integration-roadmap.md)
   - A+B design: [`docs/superpowers/specs/2026-05-24-bambu-ab-design.md`](docs/superpowers/specs/2026-05-24-bambu-ab-design.md)
@@ -1108,6 +1109,8 @@ The following are candidate options for M5. We'll choose which to build next. Al
 - Useful for both routine Snapmaker Orca updates and the eventual FullSpectrum fork evaluation (F14)
 
 ## Closed (recent)
+
+- **v4.0.1 (released 2026-08-18):** Added Bambu Lab P2S slicing support: native 256 mm geometry/kinematics, official P2S profile identity and macros, project metadata, LAN capability routing, and offline P2S E2E coverage. The current Orca 2.2.4 engine lacks several newer P2S macro expressions, so unsupported material-specific fan transitions are deliberately omitted rather than substituted with unverified printer values. Validation: 1,949 JVM + 446 Pixel instrumented + 34/34 manual E2E (27 U1 + 7 P2S). No physical P2S upload or print was initiated.
 
 - **v4.0.0 (released 2026-08-11)**: Your One Slicer branding and opt-in early-beta Bambu support for A1 Mini, A1, P1P, P1S, X1C, X1E and H2D. Added first-class target configuration and project artifacts, safe imported-profile preservation, FTPS/MQTT/camera integration, H2D dual-nozzle and AMS routing, legacy A-series firmware compatibility, provenance diagnostics, separate U1/Bambu manual E2E suites, and preview-scene lifecycle hardening. Full validation: 1,949 JVM + 443 Pixel instrumented + 78/78 manual E2E; user-initiated physical prints passed on A1 Mini and H2D.
 
