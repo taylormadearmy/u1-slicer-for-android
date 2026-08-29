@@ -530,6 +530,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         _copyCount.value = 1
         _copyBedWarning.value = null
         _objectBoundingBoxes.value = floatArrayOf()
+        // A new import must not expose the prior file's plate selector state while its
+        // metadata pipeline is still running. Otherwise a fast plate-selection action can
+        // be routed to the previous multi-plate source (e.g. Buzz followed by Korok),
+        // producing a native load failure before the new file has published its plates.
+        _threeMfInfo.value = null
+        _fileThreeMfInfo = null
+        _multiPlatePlates.value = emptyList()
+        _multiPlateSourceFile = null
+        _showPlateSelector.value = false
+        sourceModelFile = null
+        sourceModelInfo = null
         hasMultipleDistinctObjectsVar = false
         customObjectPositions = null
         _multiObjectPositions.value = null
@@ -5961,7 +5972,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                         val hasPaintData = (_fileThreeMfInfo ?: _threeMfInfo.value ?: sourceModelInfo)?.hasPaintData == true
 
                         var replayedCount = 0
-                        if (isMixSpace && !hasPaintData) {
+                        // F99 has already lowered source file states into U1's physical/mix
+                        // tool space in the staged 3MF. Re-applying the old canonical
+                        // colour mapping here mistakes virtual mix id 5 for source colour 5
+                        // and collapses it back to a physical tool, so leave those native
+                        // assignments intact. Explicit Parts-panel overrides still replay
+                        // through the branch below.
+                        if (shouldReplayCanonicalVolumeMapping(
+                                mixToolSpace = isMixSpace,
+                                hasPaintData = hasPaintData,
+                                canonicalColourRemapActive = _canonicalColourRemaps.value.isNotEmpty(),
+                            )) {
                             val canonicalCount = _canonicalFilamentList.value?.size ?: com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
                             val objectCount = native.nativeGetObjectCount()
                             for (o in 0 until objectCount) {

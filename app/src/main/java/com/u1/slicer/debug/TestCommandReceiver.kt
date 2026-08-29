@@ -355,6 +355,7 @@ class TestCommandReceiver(
         val filamentSlots = printerViewModel.printerFilamentSlots.value
         Log.i(TAG, "=== DUMP_STATE ===")
         Log.i(TAG, "State: $state")
+        Log.i(TAG, "ShowPlateSelector: ${slicerViewModel.showPlateSelector.value}")
         Log.i(TAG, "PrinterStatus: $printerStatus")
         Log.i(TAG, "SendingState: $sendingState")
         Log.i(TAG, "PrinterUrl: $printerUrl")

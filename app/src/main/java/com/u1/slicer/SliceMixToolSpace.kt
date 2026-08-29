@@ -7,6 +7,16 @@ internal data class SliceMixToolSpaceDecision(
 )
 
 /**
+ * F99 stages canonical file colours into physical/mix tool space before the native model reload.
+ * In that state a virtual mix id is no longer a canonical source colour and must not be remapped.
+ */
+internal fun shouldReplayCanonicalVolumeMapping(
+    mixToolSpace: Boolean,
+    hasPaintData: Boolean,
+    canonicalColourRemapActive: Boolean,
+): Boolean = mixToolSpace && !hasPaintData && !canonicalColourRemapActive
+
+/**
  * Decide whether the current slice needs mix-tool space.
  *
  * Painted full-spectrum files must stay in mix-tool space even when the current

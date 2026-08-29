@@ -51,4 +51,18 @@ class SliceMixToolSpaceDecisionTest {
         assertTrue(decision.mixToolSpace)
         assertTrue(decision.mixPhysicalBase == 4)
     }
+
+    @Test
+    fun `canonical remap does not reapply source colour mapping to virtual mix ids`() {
+        assertFalse(shouldReplayCanonicalVolumeMapping(
+            mixToolSpace = true,
+            hasPaintData = false,
+            canonicalColourRemapActive = true,
+        ))
+        assertTrue(shouldReplayCanonicalVolumeMapping(
+            mixToolSpace = true,
+            hasPaintData = false,
+            canonicalColourRemapActive = false,
+        ))
+    }
 }
