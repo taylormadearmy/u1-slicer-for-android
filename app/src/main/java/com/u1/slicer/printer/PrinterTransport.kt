@@ -42,7 +42,7 @@ interface PrinterTransport {
     suspend fun start(scope: CoroutineScope) {}
     suspend fun stop() {}
     suspend fun testConnection(): String?
-    suspend fun queryWebcamSnapshotCandidates(): List<String> = emptyList()
+    suspend fun queryWebcamSources(): List<WebcamSource> = emptyList()
     suspend fun wakeCamera() {}
     suspend fun queryFilamentSlots(): List<FilamentSlot>? = null
     suspend fun getLedState(): Boolean? = null

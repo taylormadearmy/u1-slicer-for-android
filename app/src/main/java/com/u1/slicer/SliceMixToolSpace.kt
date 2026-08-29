@@ -19,12 +19,22 @@ internal fun decideSliceMixToolSpace(
     hasActiveMixRows: Boolean,
     objectMixAssigned: Boolean,
     paintedMixAssigned: Boolean,
+    canonicalColourRemapActive: Boolean = false,
 ): SliceMixToolSpaceDecision {
     val anyMixAssigned = paintedMixAssigned || (hasActiveMixRows && objectMixAssigned)
-    val mixPhysicalBase = if (anyMixAssigned) maxOf(numPhysical, canonicalCount) else 0
+    // F99 stages every remapped source state into U1's fixed four-tool space.
+    // That applies to direct physical mappings too: subsequent G-code already
+    // contains physical T commands and must never receive the old canonical
+    // print-time mapping a second time.
+    val mixToolSpace = anyMixAssigned || canonicalColourRemapActive
+    val mixPhysicalBase = when {
+        canonicalColourRemapActive -> numPhysical
+        anyMixAssigned -> maxOf(numPhysical, canonicalCount)
+        else -> 0
+    }
     return SliceMixToolSpaceDecision(
         anyMixAssigned = anyMixAssigned,
-        mixToolSpace = anyMixAssigned,
+        mixToolSpace = mixToolSpace,
         mixPhysicalBase = mixPhysicalBase,
     )
 }

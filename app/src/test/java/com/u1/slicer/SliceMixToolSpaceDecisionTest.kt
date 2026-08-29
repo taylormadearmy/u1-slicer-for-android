@@ -35,4 +35,20 @@ class SliceMixToolSpaceDecisionTest {
         assertFalse(decision.mixToolSpace)
         assertTrue(decision.mixPhysicalBase == 0)
     }
+
+    @Test
+    fun `canonical remap uses the physical tool space without becoming a mix`() {
+        val decision = decideSliceMixToolSpace(
+            numPhysical = 4,
+            canonicalCount = 7,
+            hasActiveMixRows = false,
+            objectMixAssigned = false,
+            paintedMixAssigned = false,
+            canonicalColourRemapActive = true,
+        )
+
+        assertFalse(decision.anyMixAssigned)
+        assertTrue(decision.mixToolSpace)
+        assertTrue(decision.mixPhysicalBase == 4)
+    }
 }

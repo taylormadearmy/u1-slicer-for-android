@@ -70,8 +70,7 @@ class MoonrakerTransport(
 
     override suspend fun testConnection(): String? = client.testConnection()
 
-    override suspend fun queryWebcamSnapshotCandidates(): List<String> =
-        client.queryWebcamSnapshotCandidates()
+    override suspend fun queryWebcamSources(): List<WebcamSource> = client.queryWebcamSources()
 
     override suspend fun wakeCamera() {
         client.wakeCamera()

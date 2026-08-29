@@ -20,6 +20,7 @@ extern void setPreviewExtruderOverride(int objIdx, int volIdx, int slot);
 extern std::vector<Slic3r::Vec3d>& getRotationBasePositions();
 extern std::vector<Slic3r::Vec3d>& getRotationBaseRotations();
 extern void onSplitObjectReshape(int objIdx, int newCount, int newVolumeCount);
+extern void onDeleteObjectReshape(int objIdx);
 extern void onSplitVolumeReshape(int objIdx, int newVolumeCount);
 extern void resetRotationBases();
 
@@ -651,6 +652,20 @@ std::optional<int> SlicerEngine::duplicateObject(int objIdx) {
     invalidatePreviewMeshCache();
     SAPIL_LOGI("duplicateObject: cloned object %d → new index %d", objIdx, newIdx);
     return newIdx;
+}
+
+bool SlicerEngine::deleteObject(int objIdx) {
+    if (!f66_objIdxValid(objIdx)) return false;
+    Slic3r::Model& model = getGlobalModel();
+    if (model.objects.size() <= 1) return false;
+
+    model.delete_object(static_cast<size_t>(objIdx));
+    onDeleteObjectReshape(objIdx);
+    resetLoadTimeScaleFactors();
+    resetRotationBases();
+    invalidatePreviewMeshCache();
+    SAPIL_LOGI("deleteObject: removed object %d; %d remain", objIdx, (int)model.objects.size());
+    return true;
 }
 
 int SlicerEngine::splitVolume(int objIdx, int volIdx) {

@@ -10,7 +10,7 @@ package com.u1.slicer.data
 object MixSlotOrdering {
     /**
      * Project rows first (in order), then library rows that (a) are not already present by
-     * id in the project list and (b) reference only physical filaments <= numPhysical.
+     * id in the project list and (b) reference only available physical filaments.
      * Mirrors MixedFilamentManager.serialize()'s iteration exactly.
      */
     fun activeOrder(
@@ -18,12 +18,13 @@ object MixSlotOrdering {
         libraryMixes: List<MixedFilamentRow>,
         numPhysical: Int,
     ): List<MixedFilamentRow> {
+        fun usable(row: MixedFilamentRow) = row.components.all { it in 1..numPhysical }
         val out = ArrayList<MixedFilamentRow>(projectMixes.size + libraryMixes.size)
-        out.addAll(projectMixes)
+        out.addAll(projectMixes.filter(::usable))
         val projectIds = projectMixes.mapTo(HashSet()) { it.id }
         for (r in libraryMixes) {
             if (r.id in projectIds) continue
-            if (r.componentA > numPhysical || r.componentB > numPhysical) continue
+            if (!usable(r)) continue
             out.add(r)
         }
         return out

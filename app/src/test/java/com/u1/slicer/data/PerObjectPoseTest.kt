@@ -78,4 +78,13 @@ class PerObjectPoseTest {
         // shift = 0 → key 7 stays at 7.
         assertEquals("x", after[7])
     }
+
+    @Test
+    fun remapOnDelete_dropsDeletedObjectAndShiftsLaterObjectsDown() {
+        val before = mapOf(0 to "first", 2 to "deleted", 3 to "later")
+
+        val after = remapPerObjectMapOnDelete(before, removedIdx = 2)
+
+        assertEquals(mapOf(0 to "first", 2 to "later"), after)
+    }
 }

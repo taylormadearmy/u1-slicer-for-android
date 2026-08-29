@@ -185,4 +185,37 @@ class PrinterViewModelTest {
         assertEquals("12345678", printer.bambu?.accessCode)
         assertEquals("P1S123ABC", printer.bambu?.serial)
     }
+
+    @Test
+    fun `buildPrinter keeps camera UID only for unchanged Moonraker printer`() {
+        val moonraker = PrinterViewModel.buildPrinter(
+            id = "moonraker-1",
+            fallbackNickname = "Printer 1",
+            existingExtruderPresets = defaultExtruderPresets(),
+            nickname = "U1",
+            kind = PrinterKind.MOONRAKER,
+            url = "printer.local",
+            bambuIp = "",
+            bambuAccessCode = "",
+            bambuSerial = "",
+            bambuModel = BambuModel.P1S,
+            selectedWebcamUid = "physical-camera",
+        )
+        val bambu = PrinterViewModel.buildPrinter(
+            id = "bambu-1",
+            fallbackNickname = "Printer 1",
+            existingExtruderPresets = defaultExtruderPresets(),
+            nickname = "P1S",
+            kind = PrinterKind.BAMBU_LAN,
+            url = "",
+            bambuIp = "192.168.1.88",
+            bambuAccessCode = "12345678",
+            bambuSerial = "p1s123abc",
+            bambuModel = BambuModel.P1S,
+            selectedWebcamUid = "physical-camera",
+        )
+
+        assertEquals("physical-camera", moonraker.selectedWebcamUid)
+        assertNull(bambu.selectedWebcamUid)
+    }
 }

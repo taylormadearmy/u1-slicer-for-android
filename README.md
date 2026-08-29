@@ -6,7 +6,7 @@ Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 ex
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
-Current release: `v4.0.2` (`versionCode 402`)
+Current release: `v4.0.3` (`versionCode 403`)
 
 **This has been fully "vibe" coded using AI. A lot of effort has gone into adding as many unit, instrumented and manaual e2e tests as as possible which are run before every release, but use at your own risk.**
 
@@ -31,6 +31,11 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 - **Background slicing** — foreground service keeps slicing alive when app is backgrounded
 - **Auto-resume** (v2.6.0): If Android closes the app while you have a model loaded, sliced, or being edited, a "Resume <name>?" banner appears on next launch to restore your session. Sliced sessions resume on the Preview tab instantly; the model loads in the background for editing.
 - **ColorMix** — blend 2–4 physical extruder filaments into a single virtual mix slot. The top surface splits per printed line across the mix components for visible colour mixing. Three top-surface modes per mix: Stripes (per-line round-robin), Proportional (weighted within-line boundary), and Dither (1.5 mm Bayer halftone dashes). Optional fine-line mode (nozzle/2 line width) and ironing glaze (force-ironing pass split across components). Works with both object/part assignment and Smart Paint. Wipe-tower-safe.
+
+- **Adaptive layer height** — keep a 3MF's variable layers, turn them off, or generate a Detail, Balanced, or Fast adaptive profile for a single-tool job
+- **File-colour remapping** — map each imported 3MF colour to a physical U1 extruder or a saved ColorMix recipe before slicing
+- **Multi-object editing** — select already-separated 3MF objects, move them independently, and delete individual objects while keeping session restore intact
+- **Camera selection** — choose the physical print camera when a Moonraker printer exposes more than one compatible snapshot feed
 
 ### Bambu support
 
@@ -93,11 +98,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 1949 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 446 instrumented tests (ARM64 device required)
+./gradlew testDebugUnitTest              # 1975 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 449 instrumented tests (ARM64 device required)
 ```
 
-**2395 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more.
+**2424 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

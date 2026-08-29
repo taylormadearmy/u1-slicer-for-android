@@ -39,4 +39,14 @@ data class ObjectSelection(
             else              -> this
         }
     }
+
+    /** Remap (or clear) the selection after one object is removed. */
+    fun onDelete(removedIdx: Int): ObjectSelection {
+        val cur = objectIndex ?: return this
+        return when {
+            cur == removedIdx -> cleared()
+            cur > removedIdx -> withObject(cur - 1)
+            else -> this
+        }
+    }
 }
