@@ -384,6 +384,13 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         applyBambuConfigToPrusa(dpc, config, has_embedded_profile);
         return;
     }
+    // Raw STL has no embedded profile, so global ironing must cross the JNI
+    // boundary. An empty value intentionally leaves a file profile/default intact.
+    if (!config.ironing_type.empty()) {
+        Slic3r::ConfigSubstitutionContext substitutions{
+            Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
+        dpc.set_deserialize("ironing_type", config.ironing_type, substitutions);
+    }
     // Layer settings (OrcaSlicer keys)
     // layer_height: 0.0f sentinel means "let profile_keys[] value (or OrcaSlicer default) stand".
     // USE_FILE and ORCA_DEFAULT modes pass 0.0f from Kotlin; OVERRIDE passes the explicit value.

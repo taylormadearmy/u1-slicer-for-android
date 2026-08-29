@@ -1840,6 +1840,8 @@ fun PrepareScreen(
     val state by viewModel.state.collectAsState()
     val config by viewModel.config.collectAsState()
     val slicingOverrides by viewModel.slicingOverrides.collectAsState()
+    val adaptiveLayerHeight by viewModel.adaptiveLayerHeight.collectAsState()
+    val adaptiveLayerHeightRange by viewModel.adaptiveLayerHeightRange.collectAsState()
     val plateType by viewModel.plateType.collectAsState()
     val context = LocalContext.current
     val modelInfo by viewModel.modelInfo.collectAsState()
@@ -1849,6 +1851,9 @@ fun PrepareScreen(
     val currentPlateId by viewModel.currentPlateId.collectAsState()
     val showMultiColorDialog by viewModel.showMultiColorDialog.collectAsState()
     val colorMapping by viewModel.colorMapping.collectAsState()
+    val canonicalColourRemaps by viewModel.canonicalColourRemaps.collectAsState()
+    val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
+    val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val activePrinter by printerViewModel.activePrinter.collectAsState()
     val effectiveSliceTarget by viewModel.effectiveSliceTarget.collectAsState()
@@ -2254,6 +2259,14 @@ fun PrepareScreen(
                         // selected, object-scoped controls (Auto-orient, Split,
                         // Reset rotation/scale, Parts panel) when an object is.
                         if (currentModelName.isNotEmpty()) {
+                            if (hasMultipleDistinctObjects) {
+                                com.u1.slicer.ui.ObjectBrowser(
+                                    viewModel = viewModel,
+                                    objectCount = objectBoundingBoxes.size / 3,
+                                    modelVersion = modelAddVersion,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                )
+                            }
                             com.u1.slicer.ui.EditPanel(
                                 viewModel = viewModel,
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -2320,6 +2333,13 @@ fun PrepareScreen(
                         PrintSetupSection(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
                             colorMapping = colorMapping,
+                            canonicalColourRemaps = canonicalColourRemaps,
+                            availableMixes = com.u1.slicer.data.MixSlotOrdering.activeOrder(
+                                projectMixes,
+                                libraryMixes,
+                                com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+                            ),
+                            onCanonicalColourRemapsChange = viewModel::setCanonicalColourRemaps,
                             extruderPresets = extruderPresets,
                             syncFilamentPresets = prepareSyncPresets,
                             isBambuPrinter = activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN,
@@ -2425,6 +2445,9 @@ fun PrepareScreen(
                                 ?: threeMfInfo?.detectedColors?.size?.takeIf { it > 0 },
                             extruderPresets = extruderPresets,
                             colorMapping = colorMapping,
+                            adaptiveLayerHeight = adaptiveLayerHeight,
+                            adaptiveLayerHeightRange = adaptiveLayerHeightRange,
+                            onAdaptiveLayerHeightChange = viewModel::setAdaptiveLayerHeight,
                         )
                     }
                 }
@@ -3122,6 +3145,9 @@ fun ConfigCard(
     filamentCount: Int? = null,
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset> = emptyList(),
     colorMapping: List<Int>? = null,
+    adaptiveLayerHeight: com.u1.slicer.data.AdaptiveLayerHeightState = com.u1.slicer.data.AdaptiveLayerHeightState(),
+    adaptiveLayerHeightRange: FloatArray? = null,
+    onAdaptiveLayerHeightChange: ((com.u1.slicer.data.AdaptiveLayerHeightState) -> Unit)? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3148,6 +3174,39 @@ fun ConfigCard(
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+
+            if (onAdaptiveLayerHeightChange != null) {
+                val options = com.u1.slicer.data.AdaptiveLayerHeightState.Mode.entries
+                Text("Variable layer height", fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    options.forEach { mode ->
+                        FilterChip(
+                            selected = adaptiveLayerHeight.mode == mode,
+                            onClick = { onAdaptiveLayerHeightChange(adaptiveLayerHeight.copy(mode = mode)) },
+                            label = { Text(when (mode) {
+                                com.u1.slicer.data.AdaptiveLayerHeightState.Mode.USE_FILE -> "File"
+                                com.u1.slicer.data.AdaptiveLayerHeightState.Mode.OFF -> "Off"
+                                com.u1.slicer.data.AdaptiveLayerHeightState.Mode.ADAPTIVE -> "Adaptive"
+                            }) },
+                        )
+                    }
+                }
+                if (adaptiveLayerHeight.mode == com.u1.slicer.data.AdaptiveLayerHeightState.Mode.ADAPTIVE) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        com.u1.slicer.data.AdaptiveLayerHeightState.Preset.entries.forEach { preset ->
+                            FilterChip(
+                                selected = adaptiveLayerHeight.preset == preset,
+                                onClick = { onAdaptiveLayerHeightChange(adaptiveLayerHeight.copy(preset = preset)) },
+                                label = { Text(preset.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                            )
+                        }
+                    }
+                }
+                adaptiveLayerHeightRange?.let { range ->
+                    Text("${"%.2f".format(range[0])}–${"%.2f".format(range[1])} mm · ${range[2].toInt()} profile points", style = MaterialTheme.typography.bodySmall)
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+            }
 
             if (onOverridesChange != null) {
                 com.u1.slicer.ui.SlicingOverridesAccordion(
@@ -3306,7 +3365,9 @@ fun SliceButton(
 fun SlicingProgressCard(progress: Int, stage: String, onCancel: (() -> Unit)? = null) {
     // Track elapsed time so user knows slicing is still active even when
     // PrusaSlicer doesn't report sub-step progress for a while.
-    var elapsedSeconds by remember { mutableIntStateOf(0) }
+    // Retain elapsed time when Android recreates the activity for a rotation or
+    // configuration change; Slicing itself remains owned by the ViewModel.
+    var elapsedSeconds by androidx.compose.runtime.saveable.rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
             kotlinx.coroutines.delay(1000L)
@@ -5223,6 +5284,9 @@ fun ModelInfoDialog(
 fun PrintSetupSection(
     detectedColors: List<String>,
     colorMapping: List<Int>?,
+    canonicalColourRemaps: List<com.u1.slicer.data.CanonicalColourRemap> = emptyList(),
+    availableMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
+    onCanonicalColourRemapsChange: (List<com.u1.slicer.data.CanonicalColourRemap>) -> Unit = {},
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
     syncFilamentPresets: List<com.u1.slicer.data.ExtruderPreset> = extruderPresets,
     isBambuPrinter: Boolean = false,
@@ -5278,6 +5342,7 @@ fun PrintSetupSection(
     var editingMaterialFor by remember { mutableStateOf<Int?>(null) }
     var editingColorFor by remember { mutableStateOf<Int?>(null) }
     var showSyncDialog by remember { mutableStateOf(false) }
+    var showColourRemap by remember { mutableStateOf(false) }
 
     var hasPromptedSyncForMix by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
@@ -5321,6 +5386,64 @@ fun PrintSetupSection(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = if (expanded) "Collapse" else "Expand",
                     tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+
+            if (detectedColors.isNotEmpty()) {
+                OutlinedButton(onClick = { showColourRemap = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Remap file colours to tools or ColorMix")
+                }
+            }
+            if (showColourRemap) {
+                val draft = remember(canonicalColourRemaps) {
+                    mutableStateMapOf<Int, com.u1.slicer.data.CanonicalColourRemap>().apply {
+                        canonicalColourRemaps.forEach { put(it.fileIndex, it) }
+                    }
+                }
+                AlertDialog(
+                    onDismissRequest = { showColourRemap = false },
+                    title = { Text("Colour remap") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            effectiveDetectedColors.forEachIndexed { index, _ ->
+                                val current = draft[index]?.destination
+                                Text("Filament ${index + 1}")
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    (0..3).forEach { slot ->
+                                        FilterChip(
+                                            selected = current == com.u1.slicer.data.CanonicalColourDestination.PhysicalSlot(slot),
+                                            onClick = {
+                                                draft[index] = com.u1.slicer.data.CanonicalColourRemap(
+                                                    index,
+                                                    com.u1.slicer.data.CanonicalColourDestination.PhysicalSlot(slot),
+                                                )
+                                            },
+                                            label = { Text("E${slot + 1}") },
+                                        )
+                                    }
+                                }
+                                availableMixes.forEach { mix ->
+                                    FilterChip(
+                                        selected = current == com.u1.slicer.data.CanonicalColourDestination.Mix(mix.id),
+                                        onClick = {
+                                            draft[index] = com.u1.slicer.data.CanonicalColourRemap(
+                                                index,
+                                                com.u1.slicer.data.CanonicalColourDestination.Mix(mix.id),
+                                            )
+                                        },
+                                        label = { Text(mix.label) },
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            onCanonicalColourRemapsChange(draft.values.sortedBy { it.fileIndex })
+                            showColourRemap = false
+                        }) { Text("Apply") }
+                    },
+                    dismissButton = { TextButton(onClick = { showColourRemap = false }) { Text("Cancel") } },
                 )
             }
 

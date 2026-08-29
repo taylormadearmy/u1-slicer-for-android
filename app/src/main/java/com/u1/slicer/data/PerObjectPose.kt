@@ -48,3 +48,15 @@ fun <V> remapPerObjectMapOnSplit(
     }
     return out
 }
+
+/** Drops state for a deleted object and shifts later object indices down one. */
+fun <V> remapPerObjectMapOnDelete(map: Map<Int, V>, removedIdx: Int): Map<Int, V> {
+    val out = HashMap<Int, V>(map.size)
+    for ((k, v) in map) {
+        when {
+            k < removedIdx -> out[k] = v
+            k > removedIdx -> out[k - 1] = v
+        }
+    }
+    return out
+}

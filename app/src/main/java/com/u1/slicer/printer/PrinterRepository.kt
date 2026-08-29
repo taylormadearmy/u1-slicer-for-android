@@ -112,7 +112,14 @@ class PrinterRepository(
         val cfg = printersRepo.config.first() ?: return
         val active = cfg.active
         if (active.kind != PrinterKind.MOONRAKER) return
-        printersRepo.update(active.copy(moonrakerUrl = normalized))
+        printersRepo.update(
+            active.copy(
+                moonrakerUrl = normalized,
+                selectedWebcamUid = active.selectedWebcamUid.takeIf {
+                    normalized == MoonrakerClient.normalizeUrl(active.moonrakerUrl)
+                },
+            )
+        )
     }
 
     /** Returns null on success, or an error message string on failure. */
@@ -280,8 +287,8 @@ class PrinterRepository(
             ?: TransportCommandResult.Failure("No printer configured")
     }
 
-    suspend fun queryWebcamSnapshotCandidates(): List<String> =
-        currentTransport?.queryWebcamSnapshotCandidates() ?: emptyList()
+    suspend fun queryWebcamSources(): List<WebcamSource> =
+        currentTransport?.queryWebcamSources() ?: emptyList()
 
     suspend fun wakeCamera() {
         currentTransport?.wakeCamera()

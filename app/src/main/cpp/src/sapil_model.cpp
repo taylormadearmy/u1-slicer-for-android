@@ -25,6 +25,8 @@
 #include "libslic3r/QuadricEdgeCollapse.hpp"
 #include "libslic3r/Semver.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/Print.hpp"
+#include "libslic3r/Slicing.hpp"
 #include <tbb/parallel_for.h>
 
 // miniz for direct ZIP extraction of project_settings.config
@@ -1053,6 +1055,15 @@ void onSplitObjectReshape(int objIdx, int newCount, int newVolumeCount) {
         newCount, empty_vols);
 }
 
+// Called after Model::delete_object. Unlike a split, there is no replacement
+// at this index: erase exactly the matching preview-extruder cache slot so all
+// following object overrides retain their logical owner.
+void onDeleteObjectReshape(int objIdx) {
+    if (objIdx >= 0 && objIdx < (int)g_model_preview_extruders.size()) {
+        g_model_preview_extruders.erase(g_model_preview_extruders.begin() + objIdx);
+    }
+}
+
 // Called by splitVolume after `obj->volumes.size()` grew: resize the inner
 // vector to match so subsequent setPreviewExtruderOverride(..., volIdx, ...)
 // for the new volumes lands on a real slot.
@@ -1110,6 +1121,77 @@ void SlicerEngine::clearModel() {
             << "}";
     diagnostics_record_native_event("native_model_cleared", payload.str());
     SAPIL_LOGI("Model cleared");
+}
+
+std::vector<float> SlicerEngine::setAdaptiveLayerHeight(float quality, unsigned int smoothing_radius, bool keep_min) {
+    if (!g_model_loaded || g_model.objects.empty() || !std::isfinite(quality) || quality < 0.f || quality > 1.f)
+        return {};
+
+    // The loaded project config is the closest source of truth for imported files.
+    // Raw models have no embedded profile, so seed just the values the slicing-parameter
+    // builder needs for a conventional 0.4 mm nozzle / 0.2 mm layer baseline.
+    Slic3r::DynamicPrintConfig config = g_model_config;
+    if (!config.has("nozzle_diameter"))
+        config.set_key_value("nozzle_diameter", new Slic3r::ConfigOptionFloats({0.4}));
+    if (!config.has("filament_diameter"))
+        config.set_key_value("filament_diameter", new Slic3r::ConfigOptionFloats({1.75}));
+    if (!config.has("layer_height"))
+        config.set_key_value("layer_height", new Slic3r::ConfigOptionFloat(0.2));
+    if (!config.has("initial_layer_print_height"))
+        config.set_key_value("initial_layer_print_height", new Slic3r::ConfigOptionFloat(0.2));
+
+    float min_height = std::numeric_limits<float>::infinity();
+    float max_height = 0.f;
+    size_t points = 0;
+    try {
+        for (Slic3r::ModelObject* object : g_model.objects) {
+            if (object == nullptr) continue;
+            const float max_z = static_cast<float>(object->raw_bounding_box().size().z());
+            const auto params = Slic3r::PrintObject::slicing_parameters(
+                config, *object, max_z, Slic3r::Vec3d::Ones());
+            auto profile = Slic3r::layer_height_profile_adaptive(params, *object, quality);
+            profile = Slic3r::smooth_height_profile(
+                profile, params, Slic3r::HeightProfileSmoothingParams(smoothing_radius, keep_min));
+            for (size_t i = 1; i < profile.size(); i += 2) {
+                min_height = std::min(min_height, static_cast<float>(profile[i]));
+                max_height = std::max(max_height, static_cast<float>(profile[i]));
+            }
+            points += profile.size() / 2;
+            object->layer_height_profile.set(profile);
+        }
+    } catch (const std::exception& e) {
+        SAPIL_LOGE("Adaptive layer generation failed: %s", e.what());
+        return {};
+    }
+    if (points == 0 || !std::isfinite(min_height)) return {};
+    g_preview_mesh_valid = false;
+    return {min_height, max_height, static_cast<float>(points)};
+}
+
+bool SlicerEngine::clearVariableLayerHeights() {
+    if (!g_model_loaded) return false;
+    for (Slic3r::ModelObject* object : g_model.objects)
+        if (object != nullptr) object->layer_height_profile.clear();
+    g_preview_mesh_valid = false;
+    return true;
+}
+
+std::vector<float> SlicerEngine::getVariableLayerHeightRange() const {
+    if (!g_model_loaded) return {};
+    float min_height = std::numeric_limits<float>::infinity();
+    float max_height = 0.f;
+    size_t points = 0;
+    for (const Slic3r::ModelObject* object : g_model.objects) {
+        if (object == nullptr || object->layer_height_profile.empty()) continue;
+        const auto& profile = object->layer_height_profile.get();
+        for (size_t i = 1; i < profile.size(); i += 2) {
+            min_height = std::min(min_height, static_cast<float>(profile[i]));
+            max_height = std::max(max_height, static_cast<float>(profile[i]));
+        }
+        points += profile.size() / 2;
+    }
+    return (points == 0 || !std::isfinite(min_height))
+        ? std::vector<float>() : std::vector<float>{min_height, max_height, static_cast<float>(points)};
 }
 
 bool SlicerEngine::addModel(const std::string& filepath) {

@@ -101,8 +101,8 @@ fun PrintersSettingsCard(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                if (bambuEnabled) "Moonraker is the stable Snapmaker path. Bambu is enabled in beta mode."
-                else "Moonraker is the stable Snapmaker path. Enable Bambu beta support in Settings to add a Bambu printer.",
+                if (bambuEnabled) "Add a Snapmaker U1 or a supported Bambu Lab printer. Bambu support is currently in beta."
+                else "Add a Snapmaker U1. Enable Bambu beta support in Settings to add a supported Bambu Lab printer.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
             )

@@ -41,6 +41,8 @@ data class Printer(
     val moonrakerUrl: String = "",
     val bambu: BambuConfig? = null,
     val extruderPresets: List<ExtruderPreset> = defaultExtruderPresets(),
+    /** Stable Moonraker webcam UID chosen for this printer, or null for automatic choice. */
+    val selectedWebcamUid: String? = null,
 ) {
     init {
         when (kind) {
@@ -62,6 +64,7 @@ data class Printer(
             put("moonrakerUrl", p.moonrakerUrl)
             if (p.bambu != null) put("bambu", BambuConfig.toJsonObject(p.bambu))
             put("extruderPresets", JSONArray(serializeExtruderPresets(p.extruderPresets)))
+            p.selectedWebcamUid?.takeIf { it.isNotBlank() }?.let { put("selectedWebcamUid", it) }
         }
 
         fun fromJsonObject(obj: JSONObject): Printer {
@@ -80,6 +83,7 @@ data class Printer(
                 moonrakerUrl = obj.optString("moonrakerUrl", ""),
                 bambu = obj.optJSONObject("bambu")?.let(BambuConfig::fromJsonObject),
                 extruderPresets = extruderPresets,
+                selectedWebcamUid = obj.optString("selectedWebcamUid", "").takeIf { it.isNotBlank() },
             )
         }
 

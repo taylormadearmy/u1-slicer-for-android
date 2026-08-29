@@ -97,14 +97,18 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     val activePrinter: StateFlow<Printer?> = printersRepo.activePrinter
         .stateIn(viewModelScope, SharingStarted.Lazily, null)
 
-    // Resolved webcam snapshot URL candidates (primary + optional alt with port).
+    // Resolved Moonraker webcam sources. Each source owns its snapshot URL fallbacks.
     // Populated by resolveWebcam() which queries /server/webcams/list.
-    private val _webcamCandidates = MutableStateFlow<List<String>>(emptyList())
-    val webcamCandidates: StateFlow<List<String>> = _webcamCandidates.asStateFlow()
+    private val _webcamSelection = MutableStateFlow(WebcamSelection())
+    val webcamSelection: StateFlow<WebcamSelection> = _webcamSelection.asStateFlow()
+    @Deprecated("Use webcamSelection so source identity is retained")
+    val webcamCandidates: StateFlow<List<String>> = _webcamSelection
+        .map { it.selected?.snapshotUrls.orEmpty() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     // Kept for backward compat — primary candidate or empty
-    val webcamSnapshotUrl: StateFlow<String> = _webcamCandidates
-        .map { it.firstOrNull() ?: "" }
+    val webcamSnapshotUrl: StateFlow<String> = _webcamSelection
+        .map { it.selected?.snapshotUrls?.firstOrNull().orEmpty() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /** F78: per-extruder slot config sourced from the active printer. */
@@ -401,6 +405,12 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     bambuAccessCode = bambuAccessCode,
                     bambuSerial = bambuSerial,
                     bambuModel = bambuModel,
+                    selectedWebcamUid = current.selectedWebcamUid.takeIf {
+                        current.kind == PrinterKind.MOONRAKER &&
+                            kind == PrinterKind.MOONRAKER &&
+                            com.u1.slicer.network.MoonrakerClient.normalizeUrl(current.moonrakerUrl) ==
+                                com.u1.slicer.network.MoonrakerClient.normalizeUrl(url)
+                    },
                 )
             val activeId = printersRepo.config.first()?.activeId
             if (id == activeId && printerConnectionFingerprint(current) != printerConnectionFingerprint(updated)) {
@@ -426,9 +436,25 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun resolveWebcam(actionContext: PrinterActionContext) {
-        val candidates = printerRepo.queryWebcamSnapshotCandidates()
+        val sources = printerRepo.queryWebcamSources()
         if (isCurrentPrinterAction(actionContext)) {
-            _webcamCandidates.value = candidates
+            val preferredUid = printersRepo.config.first()?.active?.selectedWebcamUid
+            _webcamSelection.value = WebcamSelection.resolve(sources, preferredUid)
+        }
+    }
+
+    /** Persist the active Moonraker printer's selected camera by its stable UID. */
+    fun selectWebcam(uid: String) {
+        viewModelScope.launch {
+            val selectedPrinterId = printersRepo.config.first()?.activeId ?: return@launch
+            val selection = _webcamSelection.value
+            val source = selection.sources.firstOrNull { it.uid == uid } ?: return@launch
+            if (source.isLegacyFallback) return@launch
+            val config = printersRepo.config.first() ?: return@launch
+            val active = config.active
+            if (active.id != selectedPrinterId || active.kind != PrinterKind.MOONRAKER) return@launch
+            printersRepo.update(active.copy(selectedWebcamUid = uid))
+            _webcamSelection.value = WebcamSelection.resolve(selection.sources, uid)
         }
     }
 
@@ -521,23 +547,39 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** Apply the sync result — update presets with printer data as requested. */
-    fun applySyncResult(preview: SyncState.Preview, applyColors: Boolean, applyTypes: Boolean) {
+    fun applySyncResult(
+        preview: SyncState.Preview,
+        applyColors: Boolean,
+        applyTypes: Boolean,
+        importMatchedProfiles: Boolean = false,
+    ) {
         _syncState.value = SyncState.Idle
         viewModelScope.launch {
             if (!isCurrentPrinterAction(preview.actionContext)) return@launch
             val cfg = printersRepo.config.first() ?: return@launch
             val active = cfg.active
+            val library = (libraryState.value as? com.u1.slicer.data.LibraryState.Ready)?.library
+            val linkedProfileIds = if (importMatchedProfiles && library != null) {
+                withContext(Dispatchers.IO) {
+                    preview.entries.mapNotNull { entry ->
+                        val slug = entry.matchedSlug ?: return@mapNotNull null
+                        val catalogueEntry = library.entry(slug) ?: return@mapNotNull null
+                        entry.slotIndex to upsertLibraryProfile(filamentDao, catalogueEntry)
+                    }.toMap()
+                }
+            } else emptyMap()
             val current = applySyncPreviewEntries(
                 presets = active.extruderPresets,
                 entries = preview.entries,
                 applyColors = applyColors,
                 applyTypes = applyTypes,
+                linkedProfileIds = linkedProfileIds,
             )
             if (!isCurrentPrinterAction(preview.actionContext)) return@launch
             printersRepo.update(active.copy(extruderPresets = current))
             // Record catalogue recents for slots whose matched filament was applied,
             // so the library surfaces them in search/recents next time.
-            if (applyColors || applyTypes) {
+            if (applyColors || applyTypes || importMatchedProfiles) {
                 preview.entries.mapNotNull { it.matchedSlug }.forEach { slug ->
                     libraryRepo.recordRecent(slug)
                 }
@@ -770,6 +812,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             bambuAccessCode: String,
             bambuSerial: String,
             bambuModel: BambuModel,
+            selectedWebcamUid: String? = null,
         ): Printer {
             val resolvedNickname = nickname.ifBlank { fallbackNickname }
             return when (kind) {
@@ -780,6 +823,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     moonrakerUrl = com.u1.slicer.network.MoonrakerClient.normalizeUrl(url),
                     bambu = null,
                     extruderPresets = existingExtruderPresets,
+                    selectedWebcamUid = selectedWebcamUid,
                 )
                 PrinterKind.BAMBU_LAN -> Printer(
                     id = id,
@@ -793,6 +837,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                         model = bambuModel,
                     ),
                     extruderPresets = existingExtruderPresets,
+                    selectedWebcamUid = null,
                 )
             }
         }
@@ -949,7 +994,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         _syncState.value = SyncState.Idle
         _sendingState.value = SendingState.Idle
         _remoteScreenAvailable.value = false
-        _webcamCandidates.value = emptyList()
+        _webcamSelection.value = WebcamSelection()
         _isLightOn.value = null
     }
 

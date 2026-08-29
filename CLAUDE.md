@@ -3,7 +3,7 @@
 Android app wrapping **Snapmaker Orca 2.2.4** (OrcaSlicer fork) for Snapmaker U1 (270×270×270mm, 4 extruders).
 Kotlin + Jetpack Compose + Material3 blue theme + Native C++ via JNI.
 App ID: `com.u1.slicer.orca`
-Current release: `v4.0.1` (`versionCode 401`)
+Current release: `v4.0.4` (`versionCode 404`)
 
 > **NEVER start a print on the user's physical printer without explicit permission.**
 > The "Map & Print" / "Send to Printer" / "Send & Print" buttons upload G-code AND
@@ -92,8 +92,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1949 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 446 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 1976 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 451 instrumented tests — uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -114,7 +114,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1949 tests across 204 reported test suites
+### Unit tests (`app/src/test/`) - 1976 tests across 210 reported test suites
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -213,7 +213,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 446 tests across 66 reported test suites
+### Instrumented tests (`app/src/androidTest/`) - 451 tests across 68 reported test suites
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
@@ -235,6 +235,7 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `slicing/StlMixPrimeTowerTest.kt` (1) — B145 gate: single-object STL + mix assigned → prime tower PRESENT when enabled (before fix, normalize_fdm_2 disabled it because extruders().size()==1)
 - `slicing/PaintedMixTopSurfaceTest.kt` (2) — B146/B147 gate: model painted to a mix via Smart Paint (no nativeSetVolumeExtruder) must split the top surface within-layer for DITHER mode (B146) and STRIPES mode (B147); gate = >=1 layer with BOTH T2+T3 in `;TYPE:Top surface` blocks
 - `MatchAColourE2ETest.kt` (1) — pick-a-colour end-to-end gate: a mix suggested by `MixColourMatcher.bestMix` slices into G-code using EXACTLY the suggested filaments (every suggested tool prints; non-suggested tools absent)
+- `slicing/FileColourMixRemapSliceTest.kt` (2) — F99 file-colour to ColorMix pipeline: standard file-colour remap and the five-canonical-colour collision where source E3 must retain virtual mix id 5 after the staged 3MF reload, so both physical component tools reach G-code
 - `slicing/GoatDedupeSemmTest.kt` (1) — B76 Goat: user mapping [0,1,2,2] preserves all 4 paint states in embed; post-remap T3 absorbs into T2
 - `slicing/ProfileEmbedderIntegrationTest.kt` (15) — ZIP validity, config keys, full embed→slice pipeline, re-embed regression guard (B24), sub-plan #2b plate-filtered `custom_gcode_per_layer.xml` (legacy drop + `plateId` single-plate filter)
 - `slicing/BambuPlateStateRegressionTest.kt` (5) — Tier A regression tests for the 6 PM-reported plate state bugs: Dragon plate 3 / F1 calendar extruder counts (#1/#2), hanging file translate preserved through slice (#3), H2C benchy multi-tool G-code (#5), Buzz cold-load perf gate (#6)

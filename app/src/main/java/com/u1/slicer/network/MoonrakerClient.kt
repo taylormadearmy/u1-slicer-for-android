@@ -1,6 +1,7 @@
 package com.u1.slicer.network
 
 import android.util.Log
+import com.u1.slicer.printer.WebcamSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.*
@@ -32,13 +33,10 @@ class MoonrakerClient {
         }
 
     /**
-     * Query Moonraker's webcam list and return snapshot URL candidates for the first webcam.
-     * Returns up to 2 candidates: [primary, alt] where alt keeps the original port.
-     * Falls back to legacy mjpeg-streamer path if the list is unavailable.
-     * Mirrors the bridge's moonraker.py get_webcams() + _resolve_moonraker_url() logic.
-     * Always appends monitor.jpg as a final fallback candidate.
+     * Query every snapshot-capable Moonraker webcam. Each source keeps its own
+     * URL variants so endpoint failure cannot select a different camera.
      */
-    suspend fun queryWebcamSnapshotCandidates(): List<String> = withContext(Dispatchers.IO) {
+    suspend fun queryWebcamSources(): List<WebcamSource> = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank()) return@withContext emptyList()
         val monitorUrl = "$baseUrl/server/files/camera/monitor.jpg"
         try {
@@ -50,29 +48,52 @@ class MoonrakerClient {
                 val webcams = org.json.JSONObject(body)
                     .getJSONObject("result")
                     .getJSONArray("webcams")
-                if (webcams.length() > 0) {
-                    val cam = webcams.getJSONObject(0)
-                    val rawUrl = cam.optString("snapshot_url", "")
-                        .ifBlank { cam.optString("snapshotUrl", "") }
-                    if (rawUrl.isNotBlank()) {
+                val sources = buildList {
+                    for (index in 0 until webcams.length()) {
+                        val cam = webcams.optJSONObject(index) ?: continue
+                        if (!cam.optBoolean("enabled", true)) continue
+                        val uid = cam.optString("uid", "").trim()
+                        val rawUrl = cam.optString("snapshot_url", "")
+                            .ifBlank { cam.optString("snapshotUrl", "") }
+                        if (uid.isBlank() || rawUrl.isBlank()) continue
                         val primary = resolveWebcamUrl(rawUrl, keepPort = false)
-                        val alt = resolveWebcamUrl(rawUrl, keepPort = true)
-                        val candidates = listOfNotNull(
+                        val alternate = resolveWebcamUrl(rawUrl, keepPort = true)
+                        val snapshotUrls = listOfNotNull(
                             primary.ifBlank { null },
-                            alt.takeIf { it.isNotBlank() && it != primary }
+                            alternate.takeIf { it.isNotBlank() && it != primary },
                         )
-                        if (candidates.isNotEmpty()) {
-                            Log.d(TAG, "Webcam candidates: $candidates")
-                            return@withContext candidates + monitorUrl
-                        }
+                        if (snapshotUrls.isEmpty()) continue
+                        add(
+                            WebcamSource(
+                                uid = uid,
+                                name = cam.optString("name", "Camera ${index + 1}").ifBlank { "Camera ${index + 1}" },
+                                location = cam.optString("location", ""),
+                                service = cam.optString("service", ""),
+                                snapshotUrls = snapshotUrls,
+                            )
+                        )
                     }
+                }
+                if (sources.isNotEmpty()) {
+                    Log.d(TAG, "Discovered ${sources.size} webcam source(s): ${sources.map { it.uid }}")
+                    return@withContext sources
                 }
             }
         } catch (e: Exception) {
             Log.d(TAG, "Webcam list unavailable, using legacy fallback: ${e.message}")
         }
-        // Legacy fallback: mjpeg-streamer style + monitor.jpg
-        listOf("$baseUrl/webcam/?action=snapshot", monitorUrl)
+        // Legacy fallback: mjpeg-streamer style + monitor.jpg. This is one source,
+        // not two selectable cameras.
+        listOf(
+            WebcamSource(
+                uid = LEGACY_WEBCAM_UID,
+                name = "Camera",
+                location = "",
+                service = "legacy",
+                snapshotUrls = listOf("$baseUrl/webcam/?action=snapshot", monitorUrl),
+                isLegacyFallback = true,
+            )
+        )
     }
 
     /**
@@ -120,6 +141,7 @@ class MoonrakerClient {
     }
 
     companion object {
+        const val LEGACY_WEBCAM_UID = "__legacy_moonraker_camera__"
         /** Normalizes a printer URL: adds http:// scheme and :7125 port if missing. */
         fun normalizeUrl(raw: String): String {
             var url = raw.trim()

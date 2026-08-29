@@ -136,4 +136,21 @@ class SyncPreviewBuilderTest {
         assertEquals(listOf("PETG", "TPU"), applied.map { it.materialType })
         assertEquals(listOf("AMS 2 Tray 1", "External spool"), applied.map { it.label })
     }
+
+    @Test
+    fun `sync can link a reviewed catalogue profile without changing other slots`() {
+        val entries = buildSyncPreviewEntries(presets, listOf(slot(0, "Prusament")), lib)
+
+        val applied = applySyncPreviewEntries(
+            presets = presets,
+            entries = entries,
+            applyColors = false,
+            applyTypes = false,
+            linkedProfileIds = mapOf(0 to 42L),
+        )
+
+        assertEquals(42L, applied.first { it.index == 0 }.filamentProfileId)
+        assertEquals(null, applied.first { it.index == 1 }.filamentProfileId)
+        assertEquals("PLA", applied.first { it.index == 0 }.materialType)
+    }
 }
