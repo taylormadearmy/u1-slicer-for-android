@@ -115,8 +115,9 @@ fun resolveMachineSliceConfig(profile: MachineProfile, base: SliceConfig): Slice
 ```
 **Consumes:** `MachineProfile` (task 1.1), existing `wipeTowerClampBounds` (`SlicerViewModel.kt:248`).
 
-- [ ] **Step 1: Failing tests** — U1 profile → config equal to today's defaults (270/270/270, `machineTarget=="SNAPMAKER_U1"`, wipe tower untouched at 170/140); generic 300 profile → 300/300/350, `machineTarget=="GENERIC"`, wipe tower position preserved when in-bounds and clamped when out (assert one out-of-bounds case: base `wipeTowerX=290f` → clamped ≤ `300 - width - margin`).
-- [ ] **Steps 2–4: FAIL → implement → PASS. Step 5: Commit** `feat(machine): resolveMachineSliceConfig for SNAPMAKER/GENERIC families`.
+- [x] **Step 1: Failing tests** — U1 profile → config equal to today's defaults (270/270/270, `machineTarget=="SNAPMAKER_U1"`, wipe tower untouched at 170/140); generic 300 profile → 300/300/350, `machineTarget=="GENERIC"`, wipe tower position preserved when in-bounds and clamped when out (assert one out-of-bounds case: base `wipeTowerX=290f` → clamped ≤ `300 - width - margin`).
+- [x] **Steps 2–4: FAIL → implement → PASS.**
+- [x] **Step 5: Commit** `feat(machine): resolveMachineSliceConfig for SNAPMAKER/GENERIC families`.
 
 ### Task 1.4: Native — honour JNI bed geometry; add `printable_height`
 
