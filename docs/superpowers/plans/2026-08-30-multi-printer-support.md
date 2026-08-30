@@ -68,11 +68,11 @@ data class MachineProfile(
 }
 ```
 
-- [ ] **Step 1: Write the failing tests** — bed-size rule: `bedSizeX = round(maxX - minX)` of the `printable_area` bbox, **rounded to the nearest whole mm** (the U1's area is `-0.5..270.5` → bbox 271; profiles commonly pad ±0.5, so also subtract symmetric sub-mm padding: when `minX < 0` and `maxX > round(maxX)-0.6`, use `round(maxX + minX)` → 270). Assert: U1 fixture → `bedSizeX==270f`, `bedSizeY==270f`, `maxPrintHeight==270f`, `extruderCount==4`, `gcodeFlavor==KLIPPER`, `machineStartGcode` contains `PRINT_START`; generic fixture (plain `0..300` area) → `300f/300f/350f`, `extruderCount==1`; malformed JSON and missing `printable_area` return null; `type:"process"` returns null.
-- [ ] **Step 2: Run, verify FAIL** (`./gradlew testDebugUnitTest --tests "com.u1.slicer.machine.MachineProfileTest"`).
-- [ ] **Step 3: Implement** `MachineProfile.kt` (org.json; `printable_area` entries are `"x×y"` strings using `x` separator — reuse the parsing pattern from `ProfileEmbedder.sanitizeWipeTowerPosition`).
-- [ ] **Step 4: Run, verify PASS.**
-- [ ] **Step 5: Commit** `feat(machine): MachineProfile data model parsed from Orca machine JSON`.
+- [x] **Step 1: Write the failing tests** — bed-size rule: `bedSizeX = round(maxX - minX)` of the `printable_area` bbox, **rounded to the nearest whole mm** (the U1's area is `-0.5..270.5` → bbox 271; profiles commonly pad ±0.5, so also subtract symmetric sub-mm padding: when `minX < 0` and `maxX > round(maxX)-0.6`, use `round(maxX + minX)` → 270). Assert: U1 fixture → `bedSizeX==270f`, `bedSizeY==270f`, `maxPrintHeight==270f`, `extruderCount==4`, `gcodeFlavor==KLIPPER`, `machineStartGcode` contains `PRINT_START`; generic fixture (plain `0..300` area) → `300f/300f/350f`, `extruderCount==1`; malformed JSON and missing `printable_area` return null; `type:"process"` returns null.
+- [x] **Step 2: Run, verify FAIL** (`./gradlew testDebugUnitTest --tests "com.u1.slicer.machine.MachineProfileTest"`).
+- [x] **Step 3: Implement** `MachineProfile.kt` (org.json; `printable_area` entries are `"x×y"` strings using `x` separator — reuse the parsing pattern from `ProfileEmbedder.sanitizeWipeTowerPosition`).
+- [x] **Step 4: Run, verify PASS.**
+- [x] **Step 5: Commit** `feat(machine): MachineProfile data model parsed from Orca machine JSON`.
 
 ### Task 1.2: `OrcaProfileResolver` — offline `inherits` chain resolution
 
