@@ -92,9 +92,11 @@ object OrcaProfileResolver {
 ```
 (The network loader that feeds `loadByName` from GitHub raw arrives in phase 5 — this task is pure merge logic, mirroring OrcaSlicer-Mobile's `downloadProfilesRecursively` merge semantics minus the whitelist.)
 
-- [ ] **Step 1: Failing tests** — chain resolves child-wins (child's `machine_start_gcode` beats base's; base-only key `retraction_length` survives); missing parent → null; cycle (`a inherits b`, `b inherits a`) → null; already-flat JSON returns itself minus bookkeeping keys.
-- [ ] **Step 2: Verify FAIL. Step 3: Implement. Step 4: Verify PASS.**
-- [ ] **Step 5: Commit** `feat(machine): OrcaProfileResolver inherits-chain merge`.
+- [x] **Step 1: Failing tests** — chain resolves child-wins (child's `machine_start_gcode` beats base's; base-only key `retraction_length` survives); missing parent → null; cycle (`a inherits b`, `b inherits a`) → null; already-flat JSON returns itself minus bookkeeping keys.
+- [x] **Step 2: Verify FAIL.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Verify PASS.**
+- [x] **Step 5: Commit** `feat(machine): OrcaProfileResolver inherits-chain merge`.
 
 ### Task 1.3: `MachineConfigResolver` — MachineProfile → SliceConfig
 
