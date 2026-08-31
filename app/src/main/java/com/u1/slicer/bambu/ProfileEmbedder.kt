@@ -553,7 +553,10 @@ class ProfileEmbedder(private val context: Context) {
         plateId: Int? = null
     ): File {
         val outputFile = File(outputDir, "embedded_${inputFile.name}")
-        val configIni = serializeConfig(config)
+        // An embed written by this app is safe for native profile_keys[]. Keep the
+        // provenance on the output boundary so every app-authored embed is marked,
+        // including callers that do not use the U1-oriented buildConfig() helper.
+        val configIni = serializeConfig(config + ("snapmaker_authored_profile" to "1"))
 
         ZipFile(inputFile).use { srcZip ->
             ZipOutputStream(FileOutputStream(outputFile)).use { destZip ->

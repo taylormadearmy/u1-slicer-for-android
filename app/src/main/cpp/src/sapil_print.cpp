@@ -958,44 +958,20 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         Slic3r::DynamicPrintConfig dpc;
         dpc.apply(Slic3r::FullPrintConfig::defaults());
 
-        // Detect whether the embedded config is a Snapmaker profile before applying
-        // any overrides — both applyConfigToPrusa and profile_keys need this flag.
-        //
-        // Phase 2 B.3 status (2026-04-28): the Kotlin `ProfileEmbedder`
-        // now writes an explicit `snapmaker_authored_profile = "1"` key
-        // to the embedded `Metadata/project_settings.config` JSON, so a
-        // future native check can replace this PRINT_START heuristic
-        // with a tautological true-positive. Implementing that check
-        // requires registering `snapmaker_authored_profile` as a
-        // ConfigOptionString in OrcaSlicer's `PrintConfig.cpp` schema
-        // (otherwise `model_config.option<>()` returns null for
-        // unregistered keys), which is invasive enough that it's
-        // tracked as a separate native commit. For now the heuristic
-        // stays — the Kotlin marker is in place and harmless until
-        // the native side reads it.
-        //
-        // Reviewer concerns (R1, R2): a Bambu/PrusaSlicer file
-        // prepared for any Klipper-based printer (Voron, RatRig, etc.)
-        // could false-positive here. Mitigation in the meantime:
-        // ProfileEmbedder rewrites `machine_start_gcode` to U1's
-        // PRINT_START template before the native side ever sees it,
-        // so Bambu/Klipper-foreign profiles never reach this check
-        // with their original start G-code intact. The only path that
-        // bypasses ProfileEmbedder is direct legacy load of pre-marked
-        // Snapmaker 3MFs (where the heuristic fires correctly).
+        // App-authored embeds carry an explicit marker. PRINT_START rescues
+        // desktop U1 exports only when the active target is Snapmaker.
         auto& model_config = getModelConfig();
-        bool is_snapmaker_profile = false;
+        const bool authored = model_config.has("snapmaker_authored_profile");
+        bool klipper_heuristic = false;
         if (!model_config.empty()) {
             auto* start_opt = model_config.option<Slic3r::ConfigOptionString>("machine_start_gcode");
             if (start_opt && start_opt->value.find("PRINT_START") != std::string::npos) {
-                is_snapmaker_profile = true;
+                klipper_heuristic = true;
             }
         }
-        // Imported 3MFs currently pass through the U1 profile embedder. The explicit
-        // target wins so Bambu slices never inherit U1 templates or machine limits.
-        if (config.machine_target.rfind("BAMBU_", 0) == 0) {
-            is_snapmaker_profile = false;
-        }
+        const bool is_snapmaker_family = config.machine_target == "SNAPMAKER_U1";
+        const bool apply_profile_keys = authored || (klipper_heuristic && is_snapmaker_family);
+        const bool is_snapmaker_profile = is_snapmaker_family && (authored || klipper_heuristic);
         // A non-empty project config is the import payload for a Bambu target.
         // It is intentionally distinct from the U1 marker above: Bambu profile
         // values are admitted through a much narrower, non-machine whitelist.
@@ -1058,7 +1034,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     }
                 }
                 SAPIL_LOGI("Applied %d safe keys from imported Bambu config", applied);
-            } else if (is_snapmaker_profile) {
+            } else if (apply_profile_keys) {
                 // Keys safe to apply from the embedded Snapmaker profile.
                 // G-code templates: must come from our profile (not Bambu defaults).
                 // Machine limits + per-feature accelerations: these encode the U1's actual
@@ -1356,7 +1332,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Runs AFTER profile_keys so that user-controllable settings (wipe tower,
         // temperatures, layer height, speeds) from the JNI config override the
         // embedded profile's values.
-        applyConfigToPrusa(dpc, config, is_snapmaker_profile || is_bambu_embedded_profile);
+        applyConfigToPrusa(dpc, config, apply_profile_keys || is_bambu_embedded_profile);
 
         if (is_bambu_embedded_profile) {
             // Exported alongside the normal diagnostics trace.  Keep this compact
@@ -1640,6 +1616,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
             << ",\"wipeTowerX\":" << config.wipe_tower_x
             << ",\"wipeTowerY\":" << config.wipe_tower_y
             << ",\"isSnapmakerProfile\":" << (is_snapmaker_profile ? "true" : "false")
+            << ",\"appliedProfileKeys\":" << (apply_profile_keys ? "true" : "false")
             << ",\"profileKeysApplied\":" << applied
             << "}";
         diagnostics_record_native_event("slice_pre_process", slice_context.str());

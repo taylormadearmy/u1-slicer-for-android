@@ -161,9 +161,9 @@ bool apply_profile_keys = authored || (klipper_heuristic && is_snapmaker_family)
 ```
 The marker key is read from the raw JSON config map before Orca schema filtering (it is not a registered `PrintConfig` option — same access pattern the fork uses for other custom keys; if the raw map is filtered earlier, register the key in the fork's `PrintConfig.cpp` as `coString` and commit the submodule).
 
-- [ ] **Step 1: Failing tests** — (a) slice a fixture 3MF whose embedded config contains `PRINT_START` in `machine_start_gcode` but no marker, with `machineTarget="GENERIC"`: assert diagnostics `isSnapmakerProfile==false` (new diagnostics key `appliedProfileKeys=false`) and slice still succeeds; (b) existing U1 desktop-export fixture with `machineTarget="SNAPMAKER_U1"`: `appliedProfileKeys==true` (regression pin); (c) app-authored embed (via `ProfileEmbedder`) with `machineTarget="GENERIC"`: `appliedProfileKeys==true`.
-- [ ] **Steps 2–4: FAIL → implement (Kotlin + native, rebuild `.so`) → PASS + confidence check.**
-- [ ] **Step 5: Commit** `feat(native): authored-profile marker gates profile_keys; PRINT_START heuristic scoped to Snapmaker targets`.
+- [x] **Step 1: Failing tests** — (a) slice a fixture 3MF whose embedded config contains `PRINT_START` in `machine_start_gcode` but no marker, with `machineTarget="GENERIC"`: assert diagnostics `isSnapmakerProfile==false` (new diagnostics key `appliedProfileKeys=false`) and slice still succeeds; (b) existing U1 desktop-export fixture with `machineTarget="SNAPMAKER_U1"`: `appliedProfileKeys==true` (regression pin); (c) app-authored embed (via `ProfileEmbedder`) with `machineTarget="GENERIC"`: `appliedProfileKeys==true`.
+- [x] **Steps 2–4: FAIL → implement (Kotlin + native, rebuild `.so`) → PASS + confidence check.**
+- [x] **Step 5: Commit** `feat(native): authored-profile marker gates profile_keys; PRINT_START heuristic scoped to Snapmaker targets`.
 
 ### Task 1.6: Wire U1 through `MachineProfile` + `MachineProfileRepository`
 
