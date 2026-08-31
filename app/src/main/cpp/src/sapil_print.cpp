@@ -446,9 +446,13 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
 
     // Snapmaker U1 bed geometry — OrcaSlicer defaults to 200×200mm (Bambu A1).
     // Must always be set so the slicer knows the actual printable area.
+    const double bed_x = config.bed_size_x > 0 ? (double)config.bed_size_x : 270.0;
+    const double bed_y = config.bed_size_y > 0 ? (double)config.bed_size_y : 270.0;
+    const double bed_z = config.max_print_height > 0 ? (double)config.max_print_height : 270.0;
     dpc.set_key_value("printable_area", new Slic3r::ConfigOptionPoints({
-        {0, 0}, {270, 0}, {270, 270}, {0, 270}
+        {0, 0}, {bed_x, 0}, {bed_x, bed_y}, {0, bed_y}
     }));
+    dpc.set_key_value("printable_height", new Slic3r::ConfigOptionFloat(bed_z));
 
     // Bed plate type — OrcaSlicer defaults to btPC (Engineering Plate) whose temp keys
     // are cool_plate_temp (35°C for PLA).  The Snapmaker U1 uses a textured PEI plate,
@@ -1064,7 +1068,10 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                 static const char* profile_keys[] = {
                     // Machine geometry + plate type
                     "printable_area",
+                    "printable_height",
                     "curr_bed_type",
+                    "nozzle_diameter",
+                    "filament_diameter",
                     // Bed temperature (per plate type)
                     "hot_plate_temp",
                     "hot_plate_temp_initial_layer",
@@ -1120,6 +1127,9 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // Retraction details (from printer profile)
                     "deretraction_speed",
                     "retraction_minimum_travel",
+                    "retraction_length",
+                    "retraction_speed",
+                    "retract_length_toolchange",
                     // Overhang speed limits (from process profile)
                     "enable_overhang_speed",
                     "overhang_1_4_speed",
@@ -1256,6 +1266,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     // Native Snapmaker profiles calibrate these carefully (0–800mm³).
                     // Without them we use OrcaSlicer's compiled default (flat 140mm³).
                     "flush_volumes_matrix",
+                    "flush_volumes_vector",
                     "flush_multiplier",
                     "filament_minimal_purge_on_wipe_tower",
                     "purge_in_prime_tower",
@@ -1323,6 +1334,7 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
                     "dithering_local_z_direct_multicolor",
                     "dithering_step_painted_zones_only",
                     "local_z_wipe_tower_purge_lines",
+                    "exclude_object",
                     nullptr
                 };
                 for (const char** k = profile_keys; *k; ++k) {
@@ -1533,7 +1545,8 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // 2 mm absorbs that without losing the safety property: a model
         // that is genuinely off-bed will be off by tens of millimetres.
         {
-            const double BED_X = 270.0, BED_Y = 270.0;
+            const double BED_X = config.bed_size_x > 0 ? (double)config.bed_size_x : 270.0;
+            const double BED_Y = config.bed_size_y > 0 ? (double)config.bed_size_y : 270.0;
             const double EDGE_TOL = 2.0;
             Slic3r::BoundingBoxf3 worldBB;
             for (auto* obj : model.objects) {
