@@ -57,6 +57,7 @@ import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.bambu.resolveTargetedSliceConfig
+import com.u1.slicer.machine.resolveMachineSliceConfig
 import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
 import com.u1.slicer.navigation.Routes
@@ -1857,6 +1858,14 @@ fun PrepareScreen(
     val threeMfInfo by viewModel.threeMfInfo.collectAsState()
     val activePrinter by printerViewModel.activePrinter.collectAsState()
     val effectiveSliceTarget by viewModel.effectiveSliceTarget.collectAsState()
+    val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
+    val activeMachineConfig = remember(effectiveSliceTarget, activeMachineProfile, config) {
+        if (effectiveSliceTarget == SlicerTarget.SnapmakerU1) {
+            resolveMachineSliceConfig(activeMachineProfile, config)
+        } else {
+            resolveTargetedSliceConfig(effectiveSliceTarget, config)
+        }
+    }
     val h2dNozzleAssignments by viewModel.h2dFilamentNozzleAssignments.collectAsState()
     val anyMixAssigned by viewModel.anyMixAssigned.collectAsState()
     val filaments by viewModel.filaments.collectAsState(initial = emptyList())
@@ -2411,6 +2420,9 @@ fun PrepareScreen(
                             ScaleSection(
                                 scale = modelScale,
                                 onScaleChange = { viewModel.setModelScale(it) },
+                                bedSizeX = activeMachineConfig.bedSizeX,
+                                bedSizeY = activeMachineConfig.bedSizeY,
+                                maxPrintHeight = activeMachineConfig.maxPrintHeight,
                                 copyCount = copyCount,
                                 onSetCopyCount = viewModel::setCopyCount,
                                 copyBedWarning = copyBedWarning,
@@ -5752,6 +5764,9 @@ private data class RotAxis(
 fun ScaleSection(
     scale: SlicerViewModel.ModelScale,
     onScaleChange: (SlicerViewModel.ModelScale) -> Unit,
+    bedSizeX: Float,
+    bedSizeY: Float,
+    maxPrintHeight: Float,
     copyCount: Int = 1,
     onSetCopyCount: (Int) -> Unit = {},
     copyBedWarning: String? = null,
@@ -5876,13 +5891,13 @@ fun ScaleSection(
                         fun formatField(scaleFactor: Float, axisSize: Float): String =
                             if (mmActive) "%.1f".format(scaleFactor * axisSize)
                             else "%.0f".format(scaleFactor * 100)
-                        // mm warning when scaled size exceeds the 270 mm bed on any axis.
+                        // Warn when the scaled size exceeds the active machine on any axis.
                         val mmBedWarning = if (mmActive) listOfNotNull(
-                            "X".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.x, sizeX) },
-                            "Y".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.y, sizeY) },
-                            "Z".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.z, sizeZ) }
+                            "X".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.x, sizeX, bedSizeX) },
+                            "Y".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.y, sizeY, bedSizeY) },
+                            "Z".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.z, sizeZ, maxPrintHeight) }
                         ).takeIf { it.isNotEmpty() }?.let {
-                            "Exceeds 270 mm bed on ${it.joinToString("/")}"
+                            "Exceeds active printer build volume on ${it.joinToString("/")}"
                         } else null
                         if (uniformMode) {
                             // Reference axis for uniform mm input is Z (height) — the most

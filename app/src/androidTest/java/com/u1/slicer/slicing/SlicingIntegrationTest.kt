@@ -550,7 +550,7 @@ class SlicingIntegrationTest {
         val result = lib.slice(DEFAULT_CONFIG)!!
         assertTrue("Benchy should slice successfully", result.success)
         val gcode = File(result.gcodePath).readText()
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "All X/Y coordinates must be within 0-270mm bed. " +
             "X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}. " +
@@ -571,7 +571,7 @@ class SlicingIntegrationTest {
         val result = lib.slice(DEFAULT_CONFIG)!!
         assertTrue("Tetrahedron should slice successfully", result.success)
         val gcode = File(result.gcodePath).readText()
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "All X/Y must be within 0-270mm. X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}",
             bounds.withinBounds
@@ -591,7 +591,7 @@ class SlicingIntegrationTest {
         val result = lib.slice(config)!!
         assertTrue("3MF should slice successfully", result.success)
         val gcode = File(result.gcodePath).readText()
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "3MF G-code X/Y must be within 0-270mm. X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}",
             bounds.withinBounds
@@ -631,7 +631,7 @@ class SlicingIntegrationTest {
         )
 
         val gcode = File(result.gcodePath).readText()
-        val bounds = GcodeValidator.checkBedBounds(gcode)
+        val bounds = GcodeValidator.checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
         assertTrue(
             "All G-code X/Y moves must stay within the 270×270mm bed. " +
                 "X: ${bounds.minX}..${bounds.maxX}, Y: ${bounds.minY}..${bounds.maxY}. " +
@@ -1438,7 +1438,12 @@ class SlicingIntegrationTest {
         val c = asset("tetrahedron.stl").copyTo(File(cacheDir, "tetrahedron_c.stl"), overwrite = true)
         val combined = File(cacheDir, "f77_combined.stl")
 
-        val result = com.u1.slicer.model.MultiStlCombiner.combine(listOf(a, b, c), combined)
+        val result = com.u1.slicer.model.MultiStlCombiner.combine(
+            listOf(a, b, c),
+            combined,
+            bedSizeX = 270f,
+            bedSizeY = 270f,
+        )
         assertNotNull("F77: combiner must return a result", result)
         result!!
         assertEquals(3, result.placedParts.size)

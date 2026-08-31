@@ -12,16 +12,13 @@ package com.u1.slicer.model
  *
  * The percent slider already coerces into 10–300 %; the mm path applies the
  * same range plus a 1 mm minimum so a user typing "0.05" doesn't produce a
- * sub-millimetre print, and a 270 mm bed-bound warning so they know when an
+ * sub-millimetre print, and a profile-derived build-limit warning so they know when an
  * axis runs off the bed.
  */
 object ModelScaleConverter {
 
     /** Minimum permitted mm value for any axis (clamps user input below 1 mm). */
     const val MIN_MM: Float = 1f
-
-    /** Snapmaker U1 build volume (square, X = Y = Z = 270 mm). */
-    const val BED_MM: Float = 270f
 
     /** Existing percent-scale clamp range, kept in sync with the percent slider. */
     const val MIN_SCALE: Float = 0.1f
@@ -47,9 +44,9 @@ object ModelScaleConverter {
 
     /**
      * Returns true when applying [scale] to [loadTimeSize] yields a footprint
-     * that exceeds the 270 mm bed dimension. UI uses this to surface a soft
+     * that exceeds [axisLimit]. UI uses this to surface a soft
      * warning — the slice path still runs.
      */
-    fun exceedsBed(scale: Float, loadTimeSize: Float): Boolean =
-        scaleToMm(scale, loadTimeSize) > BED_MM
+    fun exceedsBed(scale: Float, loadTimeSize: Float, axisLimit: Float): Boolean =
+        scaleToMm(scale, loadTimeSize) > axisLimit
 }

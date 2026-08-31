@@ -3,6 +3,9 @@ package com.u1.slicer.gcode
 import org.junit.Assert.*
 import org.junit.Test
 
+private fun GcodeValidator.checkBedBounds(gcode: String): GcodeValidator.BedBoundsResult =
+    checkBedBounds(gcode, bedMaxX = 270.0, bedMaxY = 270.0)
+
 /**
  * JVM unit tests for GcodeValidator.
  *
@@ -342,6 +345,25 @@ class GcodeValidatorTest {
     }
 
     @Test
+    fun checkBedBounds_uses180_270And300MillimeterLimits() {
+        for (bedSize in listOf(180.0, 270.0, 300.0)) {
+            val onEdge = GcodeValidator.checkBedBounds(
+                "G1 X$bedSize Y$bedSize\n",
+                bedMaxX = bedSize,
+                bedMaxY = bedSize,
+            )
+            val beyondEdge = GcodeValidator.checkBedBounds(
+                "G1 X${bedSize + 1.0} Y$bedSize\n",
+                bedMaxX = bedSize,
+                bedMaxY = bedSize,
+            )
+
+            assertTrue("$bedSize mm edge should be valid", onEdge.withinBounds)
+            assertFalse("move beyond $bedSize mm should fail", beyondEdge.withinBounds)
+        }
+    }
+
+    @Test
     fun checkBedBounds_skipsCommentLines() {
         val gcode = "; G1 X-999 Y-999 this is a comment\nG1 X135 Y135\n"
         val result = GcodeValidator.checkBedBounds(gcode)
@@ -387,6 +409,8 @@ class GcodeValidatorTest {
     @Test
     fun summarizeParsedOutput_countsModelAndPrimeTowerExtrusionSeparately() {
         val parsed = ParsedGcode(
+            bedWidth = 270f,
+            bedHeight = 270f,
             layers = listOf(
                 GcodeLayer(
                     index = 0,
@@ -418,6 +442,8 @@ class GcodeValidatorTest {
     @Test
     fun isEffectivelyEmpty_trueWhenOnlyPrimeTowerExtrusionExists() {
         val parsed = ParsedGcode(
+            bedWidth = 270f,
+            bedHeight = 270f,
             layers = listOf(
                 GcodeLayer(
                     index = 0,
@@ -441,6 +467,8 @@ class GcodeValidatorTest {
     @Test
     fun isEffectivelyEmpty_trueWhenOnlySkirtExtrusionExists() {
         val parsed = ParsedGcode(
+            bedWidth = 270f,
+            bedHeight = 270f,
             layers = listOf(
                 GcodeLayer(
                     index = 0,
@@ -467,6 +495,8 @@ class GcodeValidatorTest {
     @Test
     fun summarizeParsedOutput_flagsSuspiciousModelCoordinates() {
         val parsed = ParsedGcode(
+            bedWidth = 270f,
+            bedHeight = 270f,
             layers = listOf(
                 GcodeLayer(
                     index = 0,

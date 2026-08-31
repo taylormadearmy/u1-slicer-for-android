@@ -419,15 +419,17 @@ object GcodeValidator {
      * Only checks lines with both X and Y — travel/single-axis moves are skipped
      * if the missing axis is unknown.
      *
-     * @param bedMinX  bed lower X limit (default 0.0)
-     * @param bedMaxX  bed upper X limit (default 270.0 for Snapmaker U1)
-     * @param bedMinY  bed lower Y limit (default 0.0)
-     * @param bedMaxY  bed upper Y limit (default 270.0 for Snapmaker U1)
+     * @param bedMaxX bed upper X limit
+     * @param bedMaxY bed upper Y limit
+     * @param bedMinX bed lower X limit (default 0.0)
+     * @param bedMinY bed lower Y limit (default 0.0)
      */
     fun checkBedBounds(
         gcode: String,
-        bedMinX: Double = 0.0, bedMaxX: Double = 270.0,
-        bedMinY: Double = 0.0, bedMaxY: Double = 270.0
+        bedMaxX: Double,
+        bedMaxY: Double,
+        bedMinX: Double = 0.0,
+        bedMinY: Double = 0.0
     ): BedBoundsResult {
         var curX = Double.NaN
         var curY = Double.NaN

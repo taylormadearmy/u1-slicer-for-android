@@ -407,9 +407,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         null,
     )
 
-    private fun activeMachineProfile(): MachineProfile =
-        activePrinterForSlicing.value?.let(machineProfilesRepo::activeFor)
-            ?: machineProfilesRepo.builtInU1()
+    val activeMachineProfile: StateFlow<MachineProfile> = printersRepo.activePrinter
+        .map { printer -> printer?.let(machineProfilesRepo::activeFor) ?: machineProfilesRepo.builtInU1() }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            machineProfilesRepo.builtInU1(),
+        )
     /**
      * The active printer is the sole source of the slice target.  Changing
      * printers happens on the Printer screen, never from a preview-only
@@ -1517,6 +1521,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 Log.d("SplitDebug", "POST-SPLIT natural worldMins=${natural.toList()}, " +
                     "boxes=${boxes.toList()}, newCount=$newCount")
 
+                val (bedSizeX, bedSizeY) = activeBedDimensions()
                 val positions = if (natural.size == newCount * 2) {
                     val adjusted = natural.copyOf()
                     if (sourceIsSingleCombined) {
@@ -1557,7 +1562,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     Log.d("SplitDebug", "natural.size mismatch — falling back to grid layout " +
                         "(natural.size=${natural.size}, expected=${newCount * 2})")
                     com.u1.slicer.model.CopyArrangeCalculator
-                        .buildMultiObjectPositions(boxes)
+                        .buildMultiObjectPositions(boxes, bedSizeX, bedSizeY)
                 }
                 val setOk = native.setObjectPositions(positions)
                 Log.d("SplitDebug", "setObjectPositions(${positions.toList()}) → ok=$setOk")
@@ -1625,11 +1630,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val (bedSizeX, bedSizeY) = activeBedDimensions()
                     val existing = customObjectPositions
                         ?: com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(
-                            boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                            boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                         )
                     val positions = com.u1.slicer.model.CopyArrangeCalculator
                         .placeAdditionalObject(
-                            existing, boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                            existing, boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                         )
                     native.setObjectPositions(positions)
                     customObjectPositions = positions
@@ -1900,7 +1905,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val incoming = customObjectPositions ?: getPlacementPositions()
             val (bedSizeX, bedSizeY) = activeBedDimensions()
             val result = com.u1.slicer.model.CopyArrangeCalculator.autoArrange(
-                boxes, reserved, incoming, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                boxes, reserved, incoming, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
             )
 
             applyPlacementPositions(result.positions, towerPos)
@@ -3532,10 +3537,17 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
                 val combinedName = "combined_${System.currentTimeMillis()}.stl"
                 val combinedFile = File(workspaceDir, combinedName)
-                val result = com.u1.slicer.model.MultiStlCombiner.combine(copiedFiles, combinedFile)
+                val (bedSizeX, bedSizeY) = activeBedDimensions()
+                val result = com.u1.slicer.model.MultiStlCombiner.combine(
+                    copiedFiles,
+                    combinedFile,
+                    bedSizeX,
+                    bedSizeY,
+                )
                 if (result == null) {
                     _state.value = SlicerState.Error(
-                        "None of the selected STL files could be placed on the 270 mm bed."
+                        "None of the selected STL files could be placed on the " +
+                            "${bedSizeX.toInt()}\u00d7${bedSizeY.toInt()} mm bed."
                     )
                     return@launch
                 }
@@ -3723,11 +3735,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val (bedSizeX, bedSizeY) = activeBedDimensions()
             val positions = if (existingPos != null) {
                 com.u1.slicer.model.CopyArrangeCalculator.placeAdditionalObject(
-                    existingPos, boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                    existingPos, boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                 )
             } else {
                 com.u1.slicer.model.CopyArrangeCalculator.buildMultiObjectPositions(
-                    boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                    boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
                 )
             }
             native.setObjectPositions(positions)
@@ -4806,7 +4818,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun activeBedDimensions(): Pair<Float, Float> {
         val targetConfig = if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) {
-            resolveMachineSliceConfig(activeMachineProfile(), _config.value)
+            resolveMachineSliceConfig(activeMachineProfile.value, _config.value)
         } else {
             resolveTargetedSliceConfig(effectiveSliceTarget.value, _config.value)
         }
@@ -4826,7 +4838,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         if (hasMultipleDistinctObjectsVar && _objectBoundingBoxes.value.size >= 3) {
             val boxes = _objectBoundingBoxes.value
             val positions = CopyArrangeCalculator.buildMultiObjectPositions(
-                boxes, bedSize = bedSizeX, bedSizeY = bedSizeY,
+                boxes, bedSizeX = bedSizeX, bedSizeY = bedSizeY,
             )
             val tower = if (cfg.wipeTowerEnabled) {
                 CopyArrangeCalculator.computeWipeTowerPositionForObjects(
@@ -5267,7 +5279,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 overrides = profileOverrides,
                 targetExtruderCount = targetCount,
                 processProfileKeys = activeProcessKeys,
-                machineProfile = activeMachineProfile().takeIf { sliceTarget == SlicerTarget.SnapmakerU1 },
+                machineProfile = activeMachineProfile.value.takeIf { sliceTarget == SlicerTarget.SnapmakerU1 },
             )
         if (resolvedF99 != null) {
             val physicalPresets = extruderPresets.value.sortedBy { it.index }
@@ -6858,7 +6870,13 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         return try {
-            val parsed = GcodeParser.parse(gcodeFile, colorSegmentsByPausePrint = colorSegmentsByPausePrint)
+            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            val parsed = GcodeParser.parse(
+                gcodeFile,
+                bedSizeX,
+                bedSizeY,
+                colorSegmentsByPausePrint = colorSegmentsByPausePrint,
+            )
             val outputSummary = GcodeValidator.summarizeParsedOutput(parsed)
             val modelBounds = outputSummary.modelExtrudeBounds
             val nonPrimeBounds = outputSummary.nonPrimeExtrudeBounds
@@ -7258,7 +7276,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             }
             try {
                 _sliceMixToolSpace.value = false
-                val parsed = GcodeParser.parse(gcodeFile)
+                val (bedSizeX, bedSizeY) = activeBedDimensions()
+                val parsed = GcodeParser.parse(gcodeFile, bedSizeX, bedSizeY)
                 setParsedGcodeWithRangeReset(parsed)
                 _sliceMixToolSpace.value = storedGcodeIsPhysical(job)
                 _state.value = SlicerState.SliceComplete(sliceResultFromJob(job))
@@ -7307,7 +7326,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Copy the current source model to files/jobs/<jobId>/ for durable storage (F61).
     private fun readPrinterMachineGcode(): Pair<String, String> {
         return try {
-            val json = org.json.JSONObject(activeMachineProfile().machineJson)
+            val json = org.json.JSONObject(activeMachineProfile.value.machineJson)
             Pair(
                 json.optString("machine_start_gcode", ""),
                 json.optString("machine_end_gcode", ""),
@@ -7633,7 +7652,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         // the user sees a blank screen post-Resume.
         val gcodeFile = File(row.gcodePath)
         val parsed = try {
-            kotlinx.coroutines.withContext(Dispatchers.IO) { GcodeParser.parse(gcodeFile) }
+            val (bedSizeX, bedSizeY) = activeBedDimensions()
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
+                GcodeParser.parse(gcodeFile, bedSizeX, bedSizeY)
+            }
         } catch (e: Exception) {
             Log.w("SlicerVM", "F89 fast-path: gcode parse failed: ${e.message}")
             null

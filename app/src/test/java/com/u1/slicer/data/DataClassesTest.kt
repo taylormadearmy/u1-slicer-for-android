@@ -112,10 +112,14 @@ class DataClassesTest {
     }
 
     @Test
-    fun `ParsedGcode default bed dimensions`() {
-        val gcode = com.u1.slicer.gcode.ParsedGcode(layers = emptyList())
-        assertEquals(270f, gcode.bedWidth, 0.001f)
-        assertEquals(270f, gcode.bedHeight, 0.001f)
+    fun `ParsedGcode keeps required bed dimensions`() {
+        val gcode = com.u1.slicer.gcode.ParsedGcode(
+            layers = emptyList(),
+            bedWidth = 300f,
+            bedHeight = 180f,
+        )
+        assertEquals(300f, gcode.bedWidth, 0.001f)
+        assertEquals(180f, gcode.bedHeight, 0.001f)
     }
 
     // --- ModelInfo ---

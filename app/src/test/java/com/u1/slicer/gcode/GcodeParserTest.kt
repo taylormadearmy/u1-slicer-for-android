@@ -9,6 +9,9 @@ import java.io.File
 
 class GcodeParserTest {
 
+    private val bedWidth = 270f
+    private val bedHeight = 270f
+
     @get:Rule
     val tempFolder = TemporaryFolder()
 
@@ -21,7 +24,7 @@ class GcodeParserTest {
     @Test
     fun `parse empty file returns zero layers`() {
         val file = writeGcode("")
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         assertEquals(0, result.layers.size)
     }
 
@@ -31,7 +34,7 @@ class GcodeParserTest {
             ; This is a comment
             ; Another comment
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         assertEquals(0, result.layers.size)
     }
 
@@ -44,7 +47,7 @@ class GcodeParserTest {
             G1 X0 Y10 E3.0
             G1 X0 Y0 E4.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(1, result.layers.size)
         val layer = result.layers[0]
@@ -62,7 +65,7 @@ class GcodeParserTest {
             G0 X50 Y50
             G1 X60 Y50 E1.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(1, result.layers.size)
         assertEquals(2, result.layers[0].moves.size)
@@ -82,7 +85,7 @@ class GcodeParserTest {
             G1 Z0.7
             G1 X30 Y0 E5.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(3, result.layers.size)
         assertEquals(0.3f, result.layers[0].z, 0.001f)
@@ -99,7 +102,7 @@ class GcodeParserTest {
             G1 Z0.5
             G1 X20 Y20 E2.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(2, result.layers.size)
     }
@@ -113,7 +116,7 @@ class GcodeParserTest {
             G1 Z0.4
             G1 X20 Y20 E2.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(2, result.layers.size)
     }
@@ -129,7 +132,7 @@ class GcodeParserTest {
             T2
             G1 X30 Y30 E3.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(1, result.layers.size)
         assertEquals(3, result.layers[0].moves.size)
@@ -147,7 +150,7 @@ class GcodeParserTest {
             G92 E0
             G1 X20 Y20 E1.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(1, result.layers.size)
         // After G92 E0, E goes to 1.0 which is > 0, so it's an extrusion
@@ -164,7 +167,7 @@ class GcodeParserTest {
             G1 X20 Y20 E0.5
             G1 X30 Y30 E0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(1, result.layers.size)
         assertEquals(3, result.layers[0].moves.size)
@@ -180,7 +183,7 @@ class GcodeParserTest {
             G1 X10 Y10 E1.0 ; this is a wall
             G1 X20 Y20 E2.0 ; infill
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(1, result.layers.size)
         assertEquals(2, result.layers[0].moves.size)
@@ -193,7 +196,7 @@ class GcodeParserTest {
             G1 X10 Y20 E1.0
             G1 X30 Y40 E2.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         val moves = result.layers[0].moves
         // First move: from origin (0,0) to (10,20)
@@ -216,7 +219,7 @@ class GcodeParserTest {
             G1 E2.0
             G1 X20 Y20 E3.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         // The E-only move should be ignored (no XY displacement)
         assertEquals(1, result.layers.size)
@@ -226,7 +229,7 @@ class GcodeParserTest {
     @Test
     fun `parse default bed dimensions`() {
         val file = writeGcode("G1 Z0.3\nG1 X10 Y10 E1.0")
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(270f, result.bedWidth, 0.001f)
         assertEquals(270f, result.bedHeight, 0.001f)
@@ -245,7 +248,7 @@ class GcodeParserTest {
             T3
             G1 X40 Y40 E4.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         val extruders = result.layers[0].moves.map { it.extruder }
         assertEquals(listOf(0, 1, 2, 3), extruders)
@@ -263,7 +266,7 @@ class GcodeParserTest {
             G1 Z0.8
             G1 X40 Y40 E4.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         val indices = result.layers.map { it.index }
         assertEquals(listOf(0, 1, 2, 3), indices)
@@ -277,7 +280,7 @@ class GcodeParserTest {
             G1 X10 Y10 E1.0
             ; filament used [mm] = 1234.56,789.01
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(2, result.perExtruderFilamentMm.size)
         assertEquals(1234.56f, result.perExtruderFilamentMm[0], 0.01f)
@@ -292,7 +295,7 @@ class GcodeParserTest {
             G1 X10 Y10 E1.0
             ; filament used [mm] = 5678.90
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         assertEquals(1, result.perExtruderFilamentMm.size)
         assertEquals(5678.9f, result.perExtruderFilamentMm[0], 0.01f)
@@ -309,7 +312,7 @@ class GcodeParserTest {
             G1 X10 Y0 E1.0
             G1 X10 Y10 E2.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         val moves = result.layers[0].moves.filter { it.type == MoveType.EXTRUDE }
         assertTrue("All moves should be tagged OUTER_WALL", moves.all { it.featureType == FeatureType.OUTER_WALL })
     }
@@ -322,7 +325,7 @@ class GcodeParserTest {
             ;TYPE:Inner wall
             G1 X10 Y0 E1.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         val moves = result.layers[0].moves.filter { it.type == MoveType.EXTRUDE }
         assertTrue(moves.all { it.featureType == FeatureType.INNER_WALL })
     }
@@ -335,7 +338,7 @@ class GcodeParserTest {
             ;TYPE:Sparse infill
             G1 X10 Y0 E1.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         val moves = result.layers[0].moves.filter { it.type == MoveType.EXTRUDE }
         assertTrue(moves.all { it.featureType == FeatureType.SPARSE_INFILL })
     }
@@ -348,7 +351,7 @@ class GcodeParserTest {
             ;TYPE:Support
             G1 X10 Y0 E1.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         val moves = result.layers[0].moves.filter { it.type == MoveType.EXTRUDE }
         assertTrue(moves.all { it.featureType == FeatureType.SUPPORT })
     }
@@ -361,7 +364,7 @@ class GcodeParserTest {
             ;TYPE:Prime tower
             G1 X10 Y0 E1.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         val moves = result.layers[0].moves.filter { it.type == MoveType.EXTRUDE }
         assertTrue(moves.all { it.featureType == FeatureType.PRIME_TOWER })
     }
@@ -376,7 +379,7 @@ class GcodeParserTest {
             ;TYPE:Sparse infill
             G1 X20 Y0 E2.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         val moves = result.layers[0].moves.filter { it.type == MoveType.EXTRUDE }
         assertEquals(2, moves.size)
         assertEquals(FeatureType.OUTER_WALL, moves[0].featureType)
@@ -396,7 +399,7 @@ class GcodeParserTest {
             ;TYPE:Outer wall
             G1 X40 Y0 E13.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         // Prime tower region consumed E12.0 - E5.0 = 7.0mm
         assertEquals(7.0f, result.wipeTowerFilamentMm, 0.1f)
     }
@@ -410,7 +413,7 @@ class GcodeParserTest {
             G1 X10 Y0 E5.0
             G1 X20 Y0 E10.0
         """.trimIndent())
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         assertEquals(0f, result.wipeTowerFilamentMm, 0.01f)
     }
 
@@ -424,7 +427,7 @@ class GcodeParserTest {
             ; PAUSE_PRINT
             G1 X3 Y3 E3
         """.trimIndent())
-        val result = GcodeParser.parse(file, colorSegmentsByPausePrint = true)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight, colorSegmentsByPausePrint = true)
         val moves = result.layers.flatMap { it.moves }
         assertTrue(moves.isNotEmpty())
         assertEquals(0, moves.first().extruder)
@@ -445,7 +448,7 @@ class GcodeParserTest {
             ; filament used [mm] = 3406.23,0.00
             """.trimIndent()
         )
-        val result = GcodeParser.parse(file, colorSegmentsByPausePrint = true)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight, colorSegmentsByPausePrint = true)
 
         // In pause-segment mode we must reflect post-pause segments, not stale footer comments.
         assertEquals(2, result.perExtruderFilamentMm.size)
@@ -471,7 +474,7 @@ class GcodeParserTest {
             ; filament used [mm] = 7203.11,6387.34,0.00,0.00,0.00
             """.trimIndent()
         )
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         // Footer line preserved verbatim — 5 entries with zeros.
         assertEquals(5, result.perExtruderFilamentMm.size)
@@ -501,7 +504,7 @@ class GcodeParserTest {
             ; filament used [mm] = 100.00,50.00,0.00,0.00
             """.trimIndent()
         )
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         // Footer is canonical: position 0 = fileIdx 0 mm, position 1 = fileIdx 1 mm, etc.
         assertEquals(4, result.perExtruderFilamentMm.size)
@@ -531,7 +534,7 @@ class GcodeParserTest {
 
         // With maxMoves=30, should store at most 30 moves total but still report
         // correct layer count and total move count via metadata.
-        val result = GcodeParser.parse(file, maxMoves = 30)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight, maxMoves = 30)
 
         val storedMoves = result.layers.sumOf { it.moves.size }
         assertTrue("Stored moves ($storedMoves) should be <= 30", storedMoves <= 30)
@@ -556,7 +559,7 @@ class GcodeParserTest {
         }
         val file = writeGcode(sb.toString())
 
-        val result = GcodeParser.parse(file, maxMoves = 200)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight, maxMoves = 200)
 
         assertEquals(4, result.layers.size)
         assertEquals(800, result.totalMoves)
@@ -582,7 +585,7 @@ class GcodeParserTest {
         }
         val file = writeGcode(sb.toString())
 
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
 
         val storedMoves = result.layers.sumOf { it.moves.size }
         assertEquals(50, storedMoves)
@@ -606,7 +609,7 @@ class GcodeParserTest {
         val file = writeGcode(sb.toString())
 
         // Cap at 10 moves — but filament tracking should still cover all 40 moves
-        val result = GcodeParser.parse(file, maxMoves = 10)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight, maxMoves = 10)
 
         assertEquals(2, result.perExtruderFilamentMm.size)
         assertTrue("T0 filament should be > 0", result.perExtruderFilamentMm[0] > 0f)
@@ -639,7 +642,7 @@ class GcodeParserTest {
             G1 X20 Y0 E0.8
             """.trimIndent()
         )
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         // Three distinct tools (T0, T10, T11) each produced extrusion,
         // so the compact array has three entries. Pre-fix the parser
         // skipped T10/T11 entirely so all extrusion accumulated under
@@ -665,7 +668,7 @@ class GcodeParserTest {
             G1 X10 Y0 Z0.2 E2.0
             """.trimIndent()
         )
-        val result = GcodeParser.parse(file)
+        val result = GcodeParser.parse(file, bedWidth, bedHeight)
         // Only T15 produced extrusion → compact array of size 1, with
         // the full 2.0 mm attributed to it (not T0). Pre-fix, T15 would
         // be ignored and the extrusion would land on T0 — compact size
