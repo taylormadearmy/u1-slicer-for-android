@@ -29,6 +29,7 @@ class MachineProfileRepositoryTest {
         assertEquals(270f, profile.bedSizeY)
         assertEquals(4, profile.extruderCount)
         assertEquals(GcodeFlavor.KLIPPER, profile.gcodeFlavor)
+        assertEquals(MachineProfileRepository.U1_BED_STL_ASSET, profile.bedStlAsset)
     }
 
     @Test
@@ -51,6 +52,7 @@ class MachineProfileRepositoryTest {
         val repository = MachineProfileRepository(assets, cache)
 
         assertEquals(cached, repository.byId(cached.id))
+        assertNull(cached.bedStlAsset)
     }
 
     @Test

@@ -57,6 +57,7 @@ import com.u1.slicer.util.toFloatLenient
 import com.u1.slicer.data.SliceResult
 import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.bambu.resolveTargetedSliceConfig
+import com.u1.slicer.machine.MachineFamily
 import com.u1.slicer.machine.resolveMachineSliceConfig
 import com.u1.slicer.debug.TestCommandReceiver
 import com.u1.slicer.navigation.U1NavGraph
@@ -2174,10 +2175,6 @@ fun PrepareScreen(
                                 val b = f66LoadTimePoses[k] ?: com.u1.slicer.data.PerObjectPose()
                                 v.scaleX != b.scaleX || v.scaleY != b.scaleY || v.scaleZ != b.scaleZ
                             }
-                            val targetMachineConfig = resolveTargetedSliceConfig(
-                                viewModel.effectiveSliceTarget.value,
-                                config,
-                            )
                             InlineModelPreview(
                                 modelFilePath = modelPath,
                                 modelTriangleCount = loadedInfo?.triangleCount ?: 0,
@@ -2194,8 +2191,10 @@ fun PrepareScreen(
                                 } else null,
                                 onFullScreen = if (modelPath.endsWith(".stl", ignoreCase = true))
                                     onNavigateModelViewer else ({}),
-                                bedSizeMm = targetMachineConfig.bedSizeX,
-                                bedSizeYMm = targetMachineConfig.bedSizeY,
+                                bedSizeMm = activeMachineConfig.bedSizeX,
+                                bedSizeYMm = activeMachineConfig.bedSizeY,
+                                bedStlAsset = activeMachineProfile.bedStlAsset,
+                                machineFamily = activeMachineProfile.family,
                                 extruderColors = extruderColors,
                                 extruderMap = viewModel.buildExtruderMap(),
                                 colorMapping = colorMapping,
@@ -2707,6 +2706,14 @@ fun PreviewScreen(
     val printerCapabilities by printerViewModel.capabilities.collectAsState()
     val printerFilamentSlots by printerViewModel.printerFilamentSlots.collectAsState()
     val effectiveSliceTarget by viewModel.effectiveSliceTarget.collectAsState()
+    val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
+    val activeMachineConfig = remember(effectiveSliceTarget, activeMachineProfile, config) {
+        if (effectiveSliceTarget == SlicerTarget.SnapmakerU1) {
+            resolveMachineSliceConfig(activeMachineProfile, config)
+        } else {
+            resolveTargetedSliceConfig(effectiveSliceTarget, config)
+        }
+    }
     val latestSliceArtifact by viewModel.latestSliceArtifact.collectAsState()
     val resolvedFilamentColors by viewModel.resolvedFilamentColors.collectAsState()
     val canonicalFilamentColors by viewModel.canonicalFilamentColors.collectAsState()
@@ -2821,15 +2828,13 @@ fun PreviewScreen(
                         // B142b: mix-assigned slices emit physical-slot tools — no
                         // canonical→slot mapping applies and the palette is slot-space.
                         val gcodeColorMapping = if (isH2c || sliceMixToolSpace) null else colorMapping
-                        val targetMachineConfig = resolveTargetedSliceConfig(
-                            effectiveSliceTarget,
-                            config,
-                        )
                         InlineGcodePreview(
                             parsedGcode = parsedGcode!!,
                             extruderColors = extruderColors,
-                            bedSizeMm = targetMachineConfig.bedSizeX,
-                            bedSizeYMm = targetMachineConfig.bedSizeY,
+                            bedSizeMm = activeMachineConfig.bedSizeX,
+                            bedSizeYMm = activeMachineConfig.bedSizeY,
+                            bedStlAsset = activeMachineProfile.bedStlAsset,
+                            machineFamily = activeMachineProfile.family,
                             colorMapping = gcodeColorMapping,
                             slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D,
@@ -4085,6 +4090,8 @@ fun InlineModelPreview(
     modelSizeZ: Float = 0f,
     bedSizeMm: Float = 270f,
     bedSizeYMm: Float = bedSizeMm,
+    bedStlAsset: String? = "bed/u1_bed.stl",
+    machineFamily: MachineFamily = MachineFamily.SNAPMAKER,
     wipeTowerEnabled: Boolean = false,
     wipeTowerX: Float = 0f,
     wipeTowerY: Float = 0f,
@@ -4712,7 +4719,7 @@ fun InlineModelPreview(
                             onViewerReady?.invoke(view)
                             view.onCameraChanged = onCameraStateChange
                             view.setOnContentReady { viewerLoading = false }
-                            view.setBedSizeMm(bedSizeMm, bedSizeYMm)
+                            view.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
                             mesh?.let { view.setMesh(it) }
                             cameraState?.let { view.applyCameraState(it) }
                             // F66: wire tap-to-select on the Prepare viewer. The existing
@@ -4747,7 +4754,7 @@ fun InlineModelPreview(
                         viewerView = view
                         view.onCameraChanged = onCameraStateChange
                         view.setOnContentReady { viewerLoading = false }
-                        view.setBedSizeMm(bedSizeMm, bedSizeYMm)
+                        view.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
                         cameraState?.let {
                             if (view.camera.snapshot() != it) {
                                 view.applyCameraState(it)
@@ -6407,6 +6414,8 @@ fun InlineGcodePreview(
     extruderColors: List<String>,
     bedSizeMm: Float = 270f,
     bedSizeYMm: Float = bedSizeMm,
+    bedStlAsset: String? = "bed/u1_bed.stl",
+    machineFamily: MachineFamily = MachineFamily.SNAPMAKER,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     onExpand: () -> Unit,
@@ -6448,10 +6457,19 @@ fun InlineGcodePreview(
         normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
     }
 
-    LaunchedEffect(parsedGcode, previewColors, viewerView, cameraState, bedSizeMm, bedSizeYMm) {
+    LaunchedEffect(
+        parsedGcode,
+        previewColors,
+        viewerView,
+        cameraState,
+        bedSizeMm,
+        bedSizeYMm,
+        bedStlAsset,
+        machineFamily,
+    ) {
         val v = viewerView ?: return@LaunchedEffect
         viewerLoading = true
-        v.setBedSizeMm(bedSizeMm, bedSizeYMm)
+        v.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
         if (previewColors.isNotEmpty()) {
             v.setExtruderColors(previewColors)
         }
@@ -6493,7 +6511,7 @@ fun InlineGcodePreview(
                             viewerView = view
                             view.onCameraChanged = onCameraStateChange
                             view.setOnContentReady { viewerLoading = false }
-                            view.setBedSizeMm(bedSizeMm, bedSizeYMm)
+                            view.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
                             cameraState?.let { view.applyCameraState(it) }
                         }
                     },
@@ -6501,7 +6519,7 @@ fun InlineGcodePreview(
                         viewerView = view
                         view.onCameraChanged = onCameraStateChange
                         view.setOnContentReady { viewerLoading = false }
-                        view.setBedSizeMm(bedSizeMm, bedSizeYMm)
+                        view.setBedProfile(bedSizeMm, bedSizeYMm, bedStlAsset, machineFamily)
                         cameraState?.let {
                             if (view.camera.snapshot() != it) {
                                 view.applyCameraState(it)

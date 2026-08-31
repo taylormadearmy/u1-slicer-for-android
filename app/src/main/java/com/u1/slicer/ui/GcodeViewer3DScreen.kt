@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.u1.slicer.normalizeGcodePreviewColors
 import com.u1.slicer.gcode.ParsedGcode
+import com.u1.slicer.machine.MachineFamily
 import com.u1.slicer.viewer.GcodeViewerView
 import kotlin.coroutines.resume
 import kotlin.math.roundToInt
@@ -32,6 +33,8 @@ fun GcodeViewer3DScreen(
     extruderColors: List<String> = emptyList(),
     bedSizeXmm: Float = 270f,
     bedSizeYmm: Float = bedSizeXmm,
+    bedStlAsset: String? = "bed/u1_bed.stl",
+    machineFamily: MachineFamily = MachineFamily.SNAPMAKER,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     // Phase 2 §4 Step 7 (Preview side) — file-derived per-filament colours
@@ -66,10 +69,18 @@ fun GcodeViewer3DScreen(
         normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
     }
 
-    LaunchedEffect(parsedGcode, previewColors, viewerView, bedSizeXmm, bedSizeYmm) {
+    LaunchedEffect(
+        parsedGcode,
+        previewColors,
+        viewerView,
+        bedSizeXmm,
+        bedSizeYmm,
+        bedStlAsset,
+        machineFamily,
+    ) {
         val v = viewerView ?: return@LaunchedEffect
         isLoading = true
-        v.setBedSizeMm(bedSizeXmm, bedSizeYmm)
+        v.setBedProfile(bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily)
         val colors = previewColors
         val gcode = parsedGcode
         suspendCancellableCoroutine { cont ->
@@ -170,7 +181,7 @@ fun GcodeViewer3DScreen(
                     factory = { ctx ->
                         GcodeViewerView(ctx).also { view ->
                             viewerView = view
-                            view.setBedSizeMm(bedSizeXmm, bedSizeYmm)
+                            view.setBedProfile(bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily)
                             // Don't upload gcode here — the LaunchedEffect handles both
                             // colors and gcode atomically to avoid a race where VBOs are
                             // built with default colors before the real colors are set.

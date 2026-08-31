@@ -54,7 +54,7 @@ class MachineProfileRepository(
             cachedU1 ?: MachineProfile.fromResolvedOrcaJson(
                 assets.readText(U1_MACHINE_ASSET),
                 MachineFamily.SNAPMAKER,
-            )?.also { cachedU1 = it }
+            )?.copy(bedStlAsset = U1_BED_STL_ASSET)?.also { cachedU1 = it }
                 ?: error("Bundled U1 machine profile is invalid")
         }
     }
@@ -75,6 +75,7 @@ class MachineProfileRepository(
         const val U1_MACHINE_ASSET = "orca_profiles/printer/snapmaker_u1.json"
         const val U1_PROCESS_ASSET = "orca_profiles/process/standard_0.20mm.json"
         const val U1_FILAMENT_ASSET = "orca_profiles/filament/pla.json"
+        const val U1_BED_STL_ASSET = "bed/u1_bed.stl"
 
         /** Production factory; tests should inject an [AssetProvider] directly. */
         fun fromContext(context: Context, cacheDir: File = File(context.filesDir, "machine_profiles")):

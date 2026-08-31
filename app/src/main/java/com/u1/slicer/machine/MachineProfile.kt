@@ -42,7 +42,9 @@ data class MachineProfile(
     val machineEndGcode: String,
     val machineChangeFilamentGcode: String,
     val machinePauseGcode: String,
-    val machineJson: String
+    val machineJson: String,
+    /** Optional app asset used to render this machine's physical bed surface. */
+    val bedStlAsset: String? = null,
 ) {
     companion object {
         /**
