@@ -6,6 +6,7 @@ import com.u1.slicer.data.FilamentLibraryRepository
 import com.u1.slicer.data.PrintersRepository
 import com.u1.slicer.data.ProcessProfilesRepository
 import com.u1.slicer.data.SettingsRepository
+import com.u1.slicer.machine.MachineProfileRepository
 import com.u1.slicer.printer.DefaultPrinterTransportFactory
 import com.u1.slicer.printer.BambuDiagnostics
 import com.u1.slicer.printer.PrinterRepository
@@ -26,6 +27,7 @@ class AppContainer(context: Context) {
         )
     }
     val printersRepository = PrintersRepository(context.applicationContext)
+    val machineProfileRepository = MachineProfileRepository.fromContext(context.applicationContext)
     val processProfilesRepository = ProcessProfilesRepository(context.applicationContext)
     val printerTransportFactory = DefaultPrinterTransportFactory(
         bambuClientFactory = bambuLanClientFactory,

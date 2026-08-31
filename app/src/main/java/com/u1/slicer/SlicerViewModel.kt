@@ -73,6 +73,8 @@ import com.u1.slicer.slice.SlicerTarget
 import com.u1.slicer.slice.buildSliceArtifact
 import com.u1.slicer.slice.buildSliceArtifactWithTimings
 import com.u1.slicer.slice.resolveDefaultSliceTarget
+import com.u1.slicer.machine.MachineProfile
+import com.u1.slicer.machine.resolveMachineSliceConfig
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -348,6 +350,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private val filamentDao = container.filamentDao
     private val sliceJobDao = container.sliceJobDao
     private val libraryRepo = container.filamentLibraryRepository
+    private val machineProfilesRepo = container.machineProfileRepository
     private val profileEmbedder by lazy { ProfileEmbedder(getApplication()) }
 
     /** Debug-only: set by MainActivity to wire TestCommandReceiver navigation. */
@@ -403,6 +406,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         SharingStarted.Eagerly,
         null,
     )
+
+    private fun activeMachineProfile(): MachineProfile =
+        activePrinterForSlicing.value?.let(machineProfilesRepo::activeFor)
+            ?: machineProfilesRepo.builtInU1()
     /**
      * The active printer is the sole source of the slice target.  Changing
      * printers happens on the Printer screen, never from a preview-only
@@ -4798,7 +4805,11 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun activeBedDimensions(): Pair<Float, Float> {
-        val targetConfig = resolveTargetedSliceConfig(effectiveSliceTarget.value, _config.value)
+        val targetConfig = if (effectiveSliceTarget.value == SlicerTarget.SnapmakerU1) {
+            resolveMachineSliceConfig(activeMachineProfile(), _config.value)
+        } else {
+            resolveTargetedSliceConfig(effectiveSliceTarget.value, _config.value)
+        }
         return targetConfig.bedSizeX to targetConfig.bedSizeY
     }
 
@@ -5256,6 +5267,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                 overrides = profileOverrides,
                 targetExtruderCount = targetCount,
                 processProfileKeys = activeProcessKeys,
+                machineProfile = activeMachineProfile().takeIf { sliceTarget == SlicerTarget.SnapmakerU1 },
             )
         if (resolvedF99 != null) {
             val physicalPresets = extruderPresets.value.sortedBy { it.index }
@@ -7295,9 +7307,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     // Copy the current source model to files/jobs/<jobId>/ for durable storage (F61).
     private fun readPrinterMachineGcode(): Pair<String, String> {
         return try {
-            val context = getApplication<Application>()
-            val json = context.assets.open("orca_profiles/printer/snapmaker_u1.json")
-                .bufferedReader().use { org.json.JSONObject(it.readText()) }
+            val json = org.json.JSONObject(activeMachineProfile().machineJson)
             Pair(
                 json.optString("machine_start_gcode", ""),
                 json.optString("machine_end_gcode", ""),

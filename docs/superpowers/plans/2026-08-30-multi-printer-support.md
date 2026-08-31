@@ -182,9 +182,9 @@ class MachineProfileRepository(private val assets: AssetProvider, private val ca
 ```
 `Printer` (`data/Printer.kt`) gains `val machineProfileId: String? = null` — null means U1 (D10 migration is thereby automatic; add a JSON round-trip test in the existing `PrintersConfig` test file).
 
-- [ ] **Step 1: Failing tests** — repository returns U1 profile with 270/4/KLIPPER; unknown id → null; `activeFor(printer-with-null-id)` == builtInU1; `PrintersConfig` JSON round-trips `machineProfileId`.
-- [ ] **Steps 2–4: FAIL → implement → PASS**, then run the full JVM suite + confidence check (this task touches the embedder — the highest-blast-radius file in the app).
-- [ ] **Step 5: Commit** `feat(machine): MachineProfileRepository; U1 becomes the built-in machine profile`.
+- [x] **Step 1: Failing tests** — repository returns U1 profile with 270/4/KLIPPER; unknown id → null; `activeFor(printer-with-null-id)` == builtInU1; `PrintersConfig` JSON round-trips `machineProfileId`.
+- [x] **Steps 2–4: FAIL → implement → PASS**, then run the full JVM suite + confidence check (this task touches the embedder — the highest-blast-radius file in the app).
+- [x] **Step 5: Commit** `feat(machine): MachineProfileRepository; U1 becomes the built-in machine profile`.
 
 **Phase 1 exit criteria:** all suites green; `MachineBedSizeTest` proves non-270 slicing; no UI change visible to users.
 

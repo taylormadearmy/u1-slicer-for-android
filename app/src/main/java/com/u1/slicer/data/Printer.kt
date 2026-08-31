@@ -43,6 +43,8 @@ data class Printer(
     val extruderPresets: List<ExtruderPreset> = defaultExtruderPresets(),
     /** Stable Moonraker webcam UID chosen for this printer, or null for automatic choice. */
     val selectedWebcamUid: String? = null,
+    /** Stable machine-profile id; null preserves the built-in Snapmaker U1 migration path. */
+    val machineProfileId: String? = null,
 ) {
     init {
         when (kind) {
@@ -65,6 +67,7 @@ data class Printer(
             if (p.bambu != null) put("bambu", BambuConfig.toJsonObject(p.bambu))
             put("extruderPresets", JSONArray(serializeExtruderPresets(p.extruderPresets)))
             p.selectedWebcamUid?.takeIf { it.isNotBlank() }?.let { put("selectedWebcamUid", it) }
+            p.machineProfileId?.takeIf { it.isNotBlank() }?.let { put("machineProfileId", it) }
         }
 
         fun fromJsonObject(obj: JSONObject): Printer {
@@ -84,6 +87,7 @@ data class Printer(
                 bambu = obj.optJSONObject("bambu")?.let(BambuConfig::fromJsonObject),
                 extruderPresets = extruderPresets,
                 selectedWebcamUid = obj.optString("selectedWebcamUid", "").takeIf { it.isNotBlank() },
+                machineProfileId = obj.optString("machineProfileId", "").takeIf { it.isNotBlank() },
             )
         }
 

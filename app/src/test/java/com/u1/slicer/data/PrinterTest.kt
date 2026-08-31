@@ -24,6 +24,22 @@ class PrinterTest {
     }
 
     @Test
+    fun `PrintersConfig round-trip preserves machine profile id`() {
+        val printer = Printer(
+            id = "uuid-profile",
+            nickname = "Generic",
+            moonrakerUrl = "http://192.168.1.51",
+            machineProfileId = "generic-klipper-300",
+        )
+        val config = PrintersConfig(printers = listOf(printer), activeId = printer.id)
+
+        val roundTripped = PrintersConfig.fromJson(PrintersConfig.toJson(config))
+
+        assertEquals("generic-klipper-300", roundTripped.active.machineProfileId)
+        assertEquals(config, roundTripped)
+    }
+
+    @Test
     fun `Bambu printer round-trip through JSON preserves provider config`() {
         val p = Printer(
             id = "uuid-bambu",
