@@ -10,6 +10,7 @@ import org.json.JSONObject
  *  v1 — single-printer: top-level `printerUrl` + `extruderPresets` array
  *  v2 — multi-printer:  `printers` array + `activePrinterId`; also writes legacy
  *        top-level fields from the active printer so a v1 reader can still load the file.
+ *        Each printer record carries its optional `machineProfileId`, preserving geometry.
  *  v3 — F87: adds `processProfiles` array + `activeProcessProfileId`. v3 readers also
  *        accept v1/v2 backups (the new keys are simply absent).
  */
@@ -89,9 +90,9 @@ object SettingsBackup {
     }
 
     /**
-     * Export [BackupData] as a VERSION=2 JSON string.
+     * Export [BackupData] using the current schema version.
      *
-     * v2 schema:
+     * v2+ printer schema:
      *  - `printers` array + `activePrinterId`
      *  - Legacy compat: active printer's `printerUrl` + `extruderPresets` also written
      *    at the top level so a v1 reader can still load essential printer settings.

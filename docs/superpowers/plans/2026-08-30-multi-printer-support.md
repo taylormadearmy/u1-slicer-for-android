@@ -198,7 +198,7 @@ Thread the active profile's bed dimensions through every Kotlin 270/135 site fou
 - [x] **Task 2.2** Viewer: `BedDrawable` gains a generic rectangle+grid path (profile without `bedStlAsset`); U1 keeps `u1_bed.stl`; `ModelRenderer` camera/logo — `setupLogoTexture` renders only for `MachineFamily.SNAPMAKER`; `GcodeRenderer.setTarget(bedX/2, bedY/2, 0)`. Tests: structural guards (source-grep) for the family gate + existing viewer unit tests; manual screenshot pass on-device.
 - [x] **Task 2.3** UI literals: `PlacementViewerScreen.kt:154` legend, `MainActivity.kt:3233` Build Volume row, `:5879` scale warnings, `PlateSelectDialog`, `ExcludeObjectBedCanvas`, `ModelViewerScreen`/`GcodeViewer3DScreen` defaults — all take dims from the active profile via existing composable params. Tests: string-formatting unit tests for the warning/legend builders (extract pure functions where inline today).
 - [x] **Task 2.4** `BambuSanitizer`/`ThreeMfParser` off-bed heuristics: rename the `bedSize` params to `sourceBedSize`, document that they describe the *source file's* (Bambu ≤256) conventions, keep current values, and pin with regression fixtures (spec risk 5). No behaviour change; tests are pins.
-- [ ] **Task 2.5** `SettingsBackup` round-trips `machineProfileId` per printer; restore across printers keeps geometry consistent. Test in `SettingsBackupTest`.
+- [x] **Task 2.5** `SettingsBackup` round-trips `machineProfileId` per printer; restore across printers keeps geometry consistent. Test in `SettingsBackupTest`.
 
 **Exit criteria:** on-device with a dev-toggled 300 mm profile, Prepare/preview/placement/G-code viewer all render and clamp at 300; U1 pixel-identical.
 
