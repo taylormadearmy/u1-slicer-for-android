@@ -31,10 +31,10 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 fun GcodeViewer3DScreen(
     parsedGcode: ParsedGcode,
     extruderColors: List<String> = emptyList(),
-    bedSizeXmm: Float = 270f,
-    bedSizeYmm: Float = bedSizeXmm,
-    bedStlAsset: String? = "bed/u1_bed.stl",
-    machineFamily: MachineFamily = MachineFamily.SNAPMAKER,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     // Phase 2 §4 Step 7 (Preview side) — file-derived per-filament colours

@@ -41,7 +41,7 @@ internal fun viewLabelFor(source: SegmentationSource): String = when (source) {
 
 /** Compute a CameraViewState that frames the model nicely (target = model centroid,
  *  distance proportional to model diagonal). Without this the default camera fits the whole
- *  270×270 bed which makes small models look tiny and breaks tap precision. */
+ *  whole bed which makes small models look tiny and breaks tap precision. */
 internal fun computeFitCameraState(positions: FloatArray): CameraViewState? {
     if (positions.isEmpty()) return null
     var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY
@@ -100,10 +100,13 @@ internal fun findLeafContainingTriangle(
 internal fun mixRegionCount(slots: List<Int>, numPhysical: Int): Int =
     slots.count { it >= numPhysical }
 
-/** Translate raw triangle positions onto the U1 bed (270×270 plate origin at corner). The
- *  bounding box is centred at (135, 135) in XY and the lowest Z lands at 0. Output array has
- *  the same length as input. */
-internal fun recenterForBed(positions: FloatArray): FloatArray {
+/** Translate raw triangle positions onto a rectangular bed whose origin is at a corner. The
+ *  bounding box is centred on the active bed in XY and the lowest Z lands at 0. */
+internal fun recenterForBed(
+    positions: FloatArray,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+): FloatArray {
     if (positions.isEmpty()) return positions
     var minX = Float.POSITIVE_INFINITY; var maxX = Float.NEGATIVE_INFINITY
     var minY = Float.POSITIVE_INFINITY; var maxY = Float.NEGATIVE_INFINITY
@@ -116,8 +119,8 @@ internal fun recenterForBed(positions: FloatArray): FloatArray {
         if (z < minZ) minZ = z
         i += 3
     }
-    val targetCx = 135f
-    val targetCy = 135f
+    val targetCx = bedSizeXmm / 2f
+    val targetCy = bedSizeYmm / 2f
     val cx = (minX + maxX) / 2f
     val cy = (minY + maxY) / 2f
     val dx = targetCx - cx

@@ -37,6 +37,7 @@ import com.u1.slicer.aipaint.AiPaintMeshBuilder
 import com.u1.slicer.aipaint.AiPaintResultState
 import com.u1.slicer.aipaint.AiPaintViewModel
 import com.u1.slicer.data.MixedFilamentRow
+import com.u1.slicer.machine.MachineFamily
 import com.u1.slicer.viewer.ModelViewerView
 
 /**
@@ -49,6 +50,10 @@ import com.u1.slicer.viewer.ModelViewerView
 @Composable
 internal fun AiPaintViewer(
     state: AiPaintResultState,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     onTriangleTapped: (Int) -> Unit,
     onEmptyTap: () -> Unit,
     paintMode: Boolean,
@@ -85,8 +90,8 @@ internal fun AiPaintViewer(
     // subsampled space.
     val isSubsampled = state.cascadeStride > 1 && state.sourceTrianglePositions.isNotEmpty()
     val displayPositions = if (isSubsampled) state.sourceTrianglePositions else state.trianglePositions
-    val recenteredPositions = remember(displayPositions) {
-        recenterForBed(displayPositions)
+    val recenteredPositions = remember(displayPositions, bedSizeXmm, bedSizeYmm) {
+        recenterForBed(displayPositions, bedSizeXmm, bedSizeYmm)
     }
     val fitCamera = remember(recenteredPositions) {
         computeFitCameraState(recenteredPositions)
@@ -128,10 +133,14 @@ internal fun AiPaintViewer(
             factory = { ctx ->
                 ModelViewerView(ctx).also { view ->
                     viewerView = view
+                    view.setBedProfile(bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily)
                     mesh?.let { view.setMesh(it) }
                     view.setTrianglePickingPositions(recenteredPositions)
                     fitCamera?.let { view.applyCameraState(it) }
                 }
+            },
+            update = { view ->
+                view.setBedProfile(bedSizeXmm, bedSizeYmm, bedStlAsset, machineFamily)
             },
             modifier = Modifier.fillMaxSize()
         )

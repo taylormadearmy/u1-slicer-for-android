@@ -75,6 +75,8 @@ fun PrinterScreen(
     viewModel: PrinterViewModel,
     filaments: List<FilamentProfile> = emptyList(),
     excludeObjects: List<ExcludeObjectInfo> = emptyList(),
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     onNavigateSettings: () -> Unit = {},
     onNavigatePrepare: () -> Unit = {},
     onNavigatePreview: () -> Unit = {},
@@ -193,6 +195,8 @@ fun PrinterScreen(
         SkipObjectsSheet(
             objects = excludeObjects,
             skippedObjects = skippedObjects,
+            bedSizeXmm = bedSizeXmm,
+            bedSizeYmm = bedSizeYmm,
             onSkip = { name -> viewModel.skipObject(name) },
             onDismiss = { showSkipSheet = false }
         )
@@ -1568,6 +1572,8 @@ internal fun resolveStatusBadge(printerState: String, justSent: Boolean): String
 private fun SkipObjectsSheet(
     objects: List<ExcludeObjectInfo>,
     skippedObjects: Set<String>,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     onSkip: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1585,6 +1591,8 @@ private fun SkipObjectsSheet(
             ExcludeObjectBedCanvas(
                 objects = objects,
                 skippedObjects = skippedObjects,
+                bedSizeXmm = bedSizeXmm,
+                bedSizeYmm = bedSizeYmm,
                 onSkip = onSkip,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1629,32 +1637,34 @@ private fun SkipObjectsSheet(
 private fun ExcludeObjectBedCanvas(
     objects: List<ExcludeObjectInfo>,
     skippedObjects: Set<String>,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     onSkip: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val bedMm = 270f
     val density = LocalDensity.current
 
-    BoxWithConstraints(modifier = modifier.aspectRatio(1f)) {
-        val scalePx = with(density) { maxWidth.toPx() } / bedMm
+    BoxWithConstraints(modifier = modifier.aspectRatio(bedSizeXmm / bedSizeYmm)) {
+        val scaleX = with(density) { maxWidth.toPx() } / bedSizeXmm
+        val scaleY = with(density) { maxHeight.toPx() } / bedSizeYmm
 
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(objects, skippedObjects, scalePx) {
+                .pointerInput(objects, skippedObjects, scaleX, scaleY) {
                     val minTapRadiusPx = with(density) { 24.dp.toPx() }
                     detectTapGestures { tap ->
                         for (obj in objects) {
                             if (obj.name in skippedObjects) continue
                             val hit = if (obj.polygon.isNotEmpty()) {
                                 val pts = obj.polygon.map { (x, y) ->
-                                    Offset(x * scalePx, (bedMm - y) * scalePx)
+                                    Offset(x * scaleX, (bedSizeYmm - y) * scaleY)
                                 }
                                 pointInPolygon(tap, pts)
                             } else {
                                 val c = Offset(
-                                    obj.center.first * scalePx,
-                                    (bedMm - obj.center.second) * scalePx
+                                    obj.center.first * scaleX,
+                                    (bedSizeYmm - obj.center.second) * scaleY
                                 )
                                 (tap - c).getDistance() <= minTapRadiusPx
                             }
@@ -1677,7 +1687,7 @@ private fun ExcludeObjectBedCanvas(
                 if (obj.polygon.isNotEmpty()) {
                     val path = Path().apply {
                         val pts = obj.polygon.map { (x, y) ->
-                            Offset(x * scalePx, (bedMm - y) * scalePx)
+                            Offset(x * scaleX, (bedSizeYmm - y) * scaleY)
                         }
                         moveTo(pts[0].x, pts[0].y)
                         pts.drop(1).forEach { lineTo(it.x, it.y) }
@@ -1687,8 +1697,8 @@ private fun ExcludeObjectBedCanvas(
                     drawPath(path, strokeColor, style = Stroke(width = 2.dp.toPx()))
                 } else {
                     val c = Offset(
-                        obj.center.first * scalePx,
-                        (bedMm - obj.center.second) * scalePx
+                        obj.center.first * scaleX,
+                        (bedSizeYmm - obj.center.second) * scaleY
                     )
                     drawCircle(
                         strokeColor,

@@ -30,10 +30,10 @@ import java.io.File
 @Composable
 fun ModelViewerScreen(
     modelFilePath: String,
-    bedSizeXmm: Float = 270f,
-    bedSizeYmm: Float = bedSizeXmm,
-    bedStlAsset: String? = "bed/u1_bed.stl",
-    machineFamily: MachineFamily = MachineFamily.SNAPMAKER,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     onBack: () -> Unit
 ) {
     var mesh by remember { mutableStateOf<MeshData?>(null) }

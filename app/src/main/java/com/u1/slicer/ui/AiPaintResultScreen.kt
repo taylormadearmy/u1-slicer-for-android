@@ -13,11 +13,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.u1.slicer.aipaint.*
+import com.u1.slicer.machine.MachineFamily
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AiPaintResultScreen(
     uiState: AiPaintUiState,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     onUsePainting: (paintedPath: String) -> Unit,
     onRedo: () -> Unit,
     onBack: () -> Unit,
@@ -192,6 +197,10 @@ fun AiPaintResultScreen(
                     ) {
                     AiPaintViewer(
                         state = result,
+                        bedSizeXmm = bedSizeXmm,
+                        bedSizeYmm = bedSizeYmm,
+                        bedStlAsset = bedStlAsset,
+                        machineFamily = machineFamily,
                         onTriangleTapped = { triangleIdx ->
                             // Find the deepest leaf whose triangleIds contain the tapped index
                             // and highlight it. The tree row also visually selects.

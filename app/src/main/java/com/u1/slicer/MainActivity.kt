@@ -729,10 +729,13 @@ class MainActivity : ComponentActivity() {
                     printerContent = {
                         val filaments by viewModel.filaments.collectAsState(initial = emptyList())
                         val excludeObjects by viewModel.excludeObjects.collectAsState()
+                        val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
                         PrinterScreen(
                             viewModel = printerViewModel,
                             filaments = filaments,
                             excludeObjects = excludeObjects,
+                            bedSizeXmm = activeMachineProfile.bedSizeX,
+                            bedSizeYmm = activeMachineProfile.bedSizeY,
                             onNavigateSettings = { navigateTab(Routes.SETTINGS) },
                             onNavigatePrepare = { navigateTab(Routes.PREPARE) },
                             onNavigatePreview = { navigateTab(Routes.PREVIEW) },
@@ -1932,6 +1935,8 @@ fun PrepareScreen(
     if (showPlateSelector && multiPlatePlates.isNotEmpty()) {
         com.u1.slicer.ui.PlateSelectDialog(
             plates = multiPlatePlates,
+            bedSizeXmm = activeMachineConfig.bedSizeX,
+            bedSizeYmm = activeMachineConfig.bedSizeY,
             onSelect = { viewModel.selectPlate(it) },
             onDismiss = { viewModel.dismissPlateSelector() },
             info = threeMfInfo
@@ -1940,6 +1945,8 @@ fun PrepareScreen(
         // F85: plate selector dialog — "Add to bed" multi-plate 3MF
         com.u1.slicer.ui.PlateSelectDialog(
             plates = addPending.plates,
+            bedSizeXmm = activeMachineConfig.bedSizeX,
+            bedSizeYmm = activeMachineConfig.bedSizeY,
             onSelect = { viewModel.confirmAddPlate(it) },
             onDismiss = { viewModel.cancelPendingAdd() },
             info = null
@@ -2445,6 +2452,9 @@ fun PrepareScreen(
                         // Single-colour Smart Paint entry previously here is gone.
                         ConfigCard(
                             config, viewModel::updateConfig,
+                            bedSizeX = activeMachineConfig.bedSizeX,
+                            bedSizeY = activeMachineConfig.bedSizeY,
+                            maxPrintHeight = activeMachineConfig.maxPrintHeight,
                             slicingOverrides = slicingOverrides,
                             onOverridesChange = { viewModel.saveSlicingOverrides(it) },
                             plateType = plateType,
@@ -3146,6 +3156,9 @@ fun InfoRow(label: String, value: String, valueColor: Color = Color.Unspecified)
 fun ConfigCard(
     config: com.u1.slicer.data.SliceConfig,
     onUpdate: ((com.u1.slicer.data.SliceConfig) -> com.u1.slicer.data.SliceConfig) -> Unit,
+    bedSizeX: Float,
+    bedSizeY: Float,
+    maxPrintHeight: Float,
     copyCount: Int = 1,
     onSetCopyCount: (Int) -> Unit = {},
     slicingOverrides: com.u1.slicer.data.SlicingOverrides = com.u1.slicer.data.SlicingOverrides(),
@@ -3247,7 +3260,7 @@ fun ConfigCard(
             // `config.filamentType` which is set only at file-load time and never
             // updates after a Prepare-screen material override — so it shows stale
             // info. The Filaments panel above is now the single source of truth.
-            InfoRow("Build Volume", "270 x 270 x 270 mm")
+            InfoRow("Build Volume", com.u1.slicer.ui.formatBuildVolume(bedSizeX, bedSizeY, maxPrintHeight))
         }
     }
 }
@@ -4088,10 +4101,10 @@ fun InlineModelPreview(
     modelSizeX: Float = 0f,
     modelSizeY: Float = 0f,
     modelSizeZ: Float = 0f,
-    bedSizeMm: Float = 270f,
-    bedSizeYMm: Float = bedSizeMm,
-    bedStlAsset: String? = "bed/u1_bed.stl",
-    machineFamily: MachineFamily = MachineFamily.SNAPMAKER,
+    bedSizeMm: Float,
+    bedSizeYMm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     wipeTowerEnabled: Boolean = false,
     wipeTowerX: Float = 0f,
     wipeTowerY: Float = 0f,
@@ -4126,7 +4139,7 @@ fun InlineModelPreview(
     // Used to restore the file's original plate position after prepareSlicer() has
     // clobbered native state; skipped when nativeSliceStateDirty is false so the
     // natural load state is preserved on first preview.
-    loadTimeInstanceOffsets: FloatArray = floatArrayOf(135f, 135f),
+    loadTimeInstanceOffsets: FloatArray,
     nativeSliceStateDirty: Boolean = false,
     // Per-object bounding boxes [sizeX0,sizeY0,sizeZ0, ...] for correct per-object hit-testing
     // when multiple distinct files have been added to the bed. Empty = use merged mesh AABB.
@@ -4955,6 +4968,8 @@ fun InlineModelPreview(
                     triangleCount = modelTriangleCount,
                     modelSizeX = effPlaceSizeX,
                     modelSizeY = effPlaceSizeY,
+                    bedSizeXmm = bedSizeMm,
+                    bedSizeYmm = bedSizeYMm,
                     wipeTowerDepth = wipeTowerDepth,
                     objectPositions = objPositions.copyOf(),
                     wipeTowerVisible = placementConfig.wipeTowerVisible,
@@ -5052,6 +5067,8 @@ private fun LargePreviewFallback(
     triangleCount: Int,
     modelSizeX: Float,
     modelSizeY: Float,
+    bedSizeXmm: Float,
+    bedSizeYmm: Float,
     wipeTowerDepth: Float,
     objectPositions: FloatArray,
     wipeTowerVisible: Boolean,
@@ -5072,6 +5089,8 @@ private fun LargePreviewFallback(
             modifier = Modifier.fillMaxSize(),
             modelSizeX = modelSizeX,
             modelSizeY = modelSizeY,
+            bedSizeXmm = bedSizeXmm,
+            bedSizeYmm = bedSizeYmm,
             towerDepthMm = wipeTowerDepth,
             copyCount = objPositions.size / 2,
             wipeTowerEnabled = wipeTowerVisible,
@@ -5899,12 +5918,17 @@ fun ScaleSection(
                             if (mmActive) "%.1f".format(scaleFactor * axisSize)
                             else "%.0f".format(scaleFactor * 100)
                         // Warn when the scaled size exceeds the active machine on any axis.
-                        val mmBedWarning = if (mmActive) listOfNotNull(
-                            "X".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.x, sizeX, bedSizeX) },
-                            "Y".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.y, sizeY, bedSizeY) },
-                            "Z".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.z, sizeZ, maxPrintHeight) }
-                        ).takeIf { it.isNotEmpty() }?.let {
-                            "Exceeds active printer build volume on ${it.joinToString("/")}"
+                        val mmBedWarning = if (mmActive) {
+                            com.u1.slicer.ui.formatBuildVolumeWarning(
+                                exceededAxes = listOfNotNull(
+                                    "X".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.x, sizeX, bedSizeX) },
+                                    "Y".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.y, sizeY, bedSizeY) },
+                                    "Z".takeIf { com.u1.slicer.model.ModelScaleConverter.exceedsBed(scale.z, sizeZ, maxPrintHeight) },
+                                ),
+                                widthMm = bedSizeX,
+                                depthMm = bedSizeY,
+                                heightMm = maxPrintHeight,
+                            )
                         } else null
                         if (uniformMode) {
                             // Reference axis for uniform mm input is Z (height) — the most
@@ -6412,10 +6436,10 @@ private fun PrepareMixSlotRow(
 fun InlineGcodePreview(
     parsedGcode: com.u1.slicer.gcode.ParsedGcode,
     extruderColors: List<String>,
-    bedSizeMm: Float = 270f,
-    bedSizeYMm: Float = bedSizeMm,
-    bedStlAsset: String? = "bed/u1_bed.stl",
-    machineFamily: MachineFamily = MachineFamily.SNAPMAKER,
+    bedSizeMm: Float,
+    bedSizeYMm: Float,
+    bedStlAsset: String?,
+    machineFamily: MachineFamily,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     onExpand: () -> Unit,

@@ -198,6 +198,7 @@ fun U1NavGraph(
             val container = (navController.context.applicationContext as U1SlicerApplication).container
             val aiVm = container.aiPaintViewModel
             val uiState by aiVm.uiState.collectAsState()
+            val activeMachineProfile by viewModel.activeMachineProfile.collectAsState()
             // M3-Phase-B/F1: wire the slot ceiling so mix slots (ids ≥ numPhysical)
             // are accepted by the three paint guards in AiPaintViewModel. SideEffect
             // runs synchronously each recomposition, keeping the lambda fresh whenever
@@ -298,6 +299,10 @@ fun U1NavGraph(
 
             AiPaintResultScreen(
                 uiState = uiState,
+                bedSizeXmm = activeMachineProfile.bedSizeX,
+                bedSizeYmm = activeMachineProfile.bedSizeY,
+                bedStlAsset = activeMachineProfile.bedStlAsset,
+                machineFamily = activeMachineProfile.family,
                 filamentColours = filamentColours,
                 projectMixes = projectMixes,
                 libraryMixes = libraryMixes,
