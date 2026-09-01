@@ -77,14 +77,19 @@ fun FilamentScreen(
     val libraryMixes by (mixedFilamentManager?.libraryMixes?.collectAsState()
         ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
     val physicalSlotCount = slotCount.coerceIn(1, 4)
-    val displayedMixRecipe = resolveImportedMixRecipeDisplaySummary(
-        source = mixRecipeSource,
-        importedRecipe = importedMixRecipe,
-        mixedFilamentManager = mixedFilamentManager,
-        numPhysicalFilaments = physicalSlotCount,
-    )
+    val mixesAvailable = slotCount == com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+    val displayedMixRecipe = if (mixesAvailable) {
+        resolveImportedMixRecipeDisplaySummary(
+            source = mixRecipeSource,
+            importedRecipe = importedMixRecipe,
+            mixedFilamentManager = mixedFilamentManager,
+            numPhysicalFilaments = physicalSlotCount,
+        )
+    } else {
+        null
+    }
 
-    if (showMixDialog && mixedFilamentManager != null) {
+    if (mixesAvailable && showMixDialog && mixedFilamentManager != null) {
         val physicalColours = remember(extruderPresets, physicalSlotCount) {
             (0 until physicalSlotCount).map { i ->
                 val hex = extruderPresets.firstOrNull { it.index == i }?.color
@@ -263,7 +268,7 @@ fun FilamentScreen(
                 }
             }
 
-            if (mixedFilamentManager != null && displayedMixRecipe != null) {
+            if (mixesAvailable && mixedFilamentManager != null && displayedMixRecipe != null) {
                 item("imported-mix-recipe") {
                     ImportedMixRecipeBanner(
                         recipe = displayedMixRecipe,
@@ -283,7 +288,7 @@ fun FilamentScreen(
             // M3 Phase A: Mix Slots section. Always rendered when the manager is
             // wired, regardless of whether the library has any single-component
             // profiles — users can still create mixes from the 4 physical slots.
-            if (mixedFilamentManager != null) {
+            if (mixesAvailable && mixedFilamentManager != null) {
                 item("mix-slots-header") {
                     Spacer(Modifier.height(4.dp))
                     Row(

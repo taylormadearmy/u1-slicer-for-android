@@ -207,6 +207,7 @@ fun U1NavGraph(
             // runs synchronously each recomposition, keeping the lambda fresh whenever
             // the active mix set changes.
             val numPhysical = activeMachineProfile.extruderCount.coerceIn(1, 4)
+            val mixesAvailable = numPhysical == com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
             SideEffect {
                 aiVm.slotCeiling = {
                     if (numPhysical == com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS) {
@@ -235,11 +236,15 @@ fun U1NavGraph(
             // so the provider lambda can capture it.
             SideEffect {
                 aiVm.mixDisplayColoursProvider = {
-                    viewModel.mixedFilamentManager.activeOrder(numPhysical).map { row ->
-                        com.u1.slicer.aipaint.FilamentMixPredictor.predict(
-                            row.components.map { filamentColours.getOrNull(it - 1) ?: "#888888" },
-                            row.weights
-                        )
+                    if (mixesAvailable) {
+                        viewModel.mixedFilamentManager.activeOrder(numPhysical).map { row ->
+                            com.u1.slicer.aipaint.FilamentMixPredictor.predict(
+                                row.components.map { filamentColours.getOrNull(it - 1) ?: "#888888" },
+                                row.weights
+                            )
+                        }
+                    } else {
+                        emptyList()
                     }
                 }
             }
@@ -263,7 +268,7 @@ fun U1NavGraph(
             var createMixOpen by remember { mutableStateOf(false) }
             var editMixRow by remember { mutableStateOf<com.u1.slicer.data.MixedFilamentRow?>(null) }
 
-            if (createMixOpen || editMixRow != null) {
+            if (mixesAvailable && (createMixOpen || editMixRow != null)) {
                 val physicalColours = remember(extruderPresets, numPhysical) {
                     (0 until numPhysical).map { i ->
                         val hex = extruderPresets.firstOrNull { it.index == i }?.color
@@ -304,8 +309,8 @@ fun U1NavGraph(
                 bedStlAsset = activeMachineProfile.bedStlAsset,
                 machineFamily = activeMachineProfile.family,
                 filamentColours = filamentColours,
-                projectMixes = projectMixes,
-                libraryMixes = libraryMixes,
+                projectMixes = if (mixesAvailable) projectMixes else emptyList(),
+                libraryMixes = if (mixesAvailable) libraryMixes else emptyList(),
                 numPhysical = numPhysical,
                 canonicalCount = canonicalCount,
                 onUsePainting = {
@@ -348,7 +353,7 @@ fun U1NavGraph(
                 onPickLibraryFilament = { slot, entry -> viewModel.applyLibraryPick(slot, entry) },
                 onImportLibraryProfile = { slot, entry -> viewModel.importLibraryProfileForSlot(slot, entry) },
                 onRetryLibrary = { viewModel.retryLibraryLoad() },
-                onCreateMix = { createMixOpen = true },
+                onCreateMix = if (mixesAvailable) ({ createMixOpen = true }) else null,
                 onEditMix = { row -> editMixRow = row },
             )
         }

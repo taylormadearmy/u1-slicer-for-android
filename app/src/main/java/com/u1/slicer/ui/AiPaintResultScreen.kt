@@ -49,9 +49,10 @@ fun AiPaintResultScreen(
     libraryMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     numPhysical: Int = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
     canonicalCount: Int = numPhysical,
-    onCreateMix: () -> Unit = {},
+    onCreateMix: (() -> Unit)? = null,
     onEditMix: (com.u1.slicer.data.MixedFilamentRow) -> Unit = {},
 ) {
+    val mixesAvailable = numPhysical == com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
     // Which slot the HSV colour picker is open for (or null when closed). Driven by tapping the
     // leading swatch on a RegionRow — applies the new hex to the slot's canonical region so the
     // 3D viewer palette updates too.
@@ -138,8 +139,10 @@ fun AiPaintResultScreen(
                     // picker would then show grey instead of the real filament colour.
                     // F3 (M3-Phase-B): palette extended beyond the 4 physical slots to include
                     // one naive-blend entry per active mix (in MixSlotOrdering order).
-                    val activeMixes = remember(projectMixes, libraryMixes, numPhysical) {
-                        com.u1.slicer.data.MixSlotOrdering.activeOrder(projectMixes, libraryMixes, numPhysical)
+                    val activeMixes = remember(projectMixes, libraryMixes, numPhysical, mixesAvailable) {
+                        if (mixesAvailable) {
+                            com.u1.slicer.data.MixSlotOrdering.activeOrder(projectMixes, libraryMixes, numPhysical)
+                        } else emptyList()
                     }
                     val slotPalette: List<Color> = remember(filamentColours, activeMixes, numPhysical) {
                         val physical = (0 until numPhysical).map { slot ->

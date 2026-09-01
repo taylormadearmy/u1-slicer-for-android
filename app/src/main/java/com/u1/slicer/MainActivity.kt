@@ -1922,12 +1922,18 @@ fun PrepareScreen(
     val sessionResumeOffer by viewModel.sessionResumeOffer.collectAsState()
     val silentRestoreInProgress by viewModel.silentRestoreInProgress.collectAsState()
     val perVolumeExtruders by viewModel.perVolumeExtruders.collectAsState()
-    val displayedMixRecipe = resolveImportedMixRecipeDisplaySummary(
-        source = mixRecipeSource,
-        importedRecipe = importedMixRecipe,
-        mixedFilamentManager = viewModel.mixedFilamentManager,
-        numPhysicalFilaments = extruderPresets.size.coerceAtLeast(4),
-    )
+    val mixesAvailable = activeMachineProfile.extruderCount ==
+        com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+    val displayedMixRecipe = if (mixesAvailable) {
+        resolveImportedMixRecipeDisplaySummary(
+            source = mixRecipeSource,
+            importedRecipe = importedMixRecipe,
+            mixedFilamentManager = viewModel.mixedFilamentManager,
+            numPhysicalFilaments = com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+        )
+    } else {
+        null
+    }
     var showImportedRecipeDialog by remember { mutableStateOf(false) }
     val embeddedGcodeProject = remember(threeMfInfo, currentPlateId, currentModelName) {
         viewModel.getEmbeddedBambuGcodeProject()
@@ -2360,11 +2366,15 @@ fun PrepareScreen(
                             detectedColors = threeMfInfo?.detectedColors ?: emptyList(),
                             colorMapping = colorMapping,
                             canonicalColourRemaps = canonicalColourRemaps,
-                            availableMixes = com.u1.slicer.data.MixSlotOrdering.activeOrder(
-                                projectMixes,
-                                libraryMixes,
-                                com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
-                            ),
+                            availableMixes = if (mixesAvailable) {
+                                com.u1.slicer.data.MixSlotOrdering.activeOrder(
+                                    projectMixes,
+                                    libraryMixes,
+                                    com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS,
+                                )
+                            } else {
+                                emptyList()
+                            },
                             onCanonicalColourRemapsChange = viewModel::setCanonicalColourRemaps,
                             extruderPresets = extruderPresets,
                             slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
@@ -2400,12 +2410,16 @@ fun PrepareScreen(
                             hasPerVolumeOverrides = perVolumeExtruders.isNotEmpty(),
                             onRestoreAllFilamentAssignments = { viewModel.clearAllFilamentAssignments() },
                             // Task 3: Mixes subsection folded into this card.
-                            mixSlotsContent = {
-                                PrepareMixSlotsSectionContent(
-                                    viewModel = viewModel,
-                                    extruderPresets = extruderPresets,
-                                    slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
-                                )
+                            mixSlotsContent = if (mixesAvailable) {
+                                {
+                                    PrepareMixSlotsSectionContent(
+                                        viewModel = viewModel,
+                                        extruderPresets = extruderPresets,
+                                        slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
+                                    )
+                                }
+                            } else {
+                                null
                             },
                         )
                         if (effectiveSliceTarget == SlicerTarget.BambuH2D) {
@@ -5451,7 +5465,10 @@ fun PrintSetupSection(
 
             if (detectedColors.isNotEmpty()) {
                 OutlinedButton(onClick = { showColourRemap = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Remap file colours to tools or ColorMix")
+                    Text(
+                        if (availableMixes.isEmpty()) "Remap file colours to tools"
+                        else "Remap file colours to tools or ColorMix"
+                    )
                 }
             }
             if (showColourRemap) {
@@ -6216,6 +6233,8 @@ fun PrepareMixSlotsSectionContent(
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
     slotCount: Int = 4,
 ) {
+    if (slotCount != com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS) return
+
     val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
     val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
     // Bug B — drive the "current" highlight + re-evaluate after each assignment.

@@ -404,7 +404,7 @@ internal fun SlotPaletteRow(
     activeSlot: Int,
     hasLassoSelection: Boolean,
     onTapSlot: (Int) -> Unit,
-    onCreateMix: () -> Unit,
+    onCreateMix: (() -> Unit)?,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -461,15 +461,16 @@ internal fun SlotPaletteRow(
                 }
             }
         }
-        // "+" create-mix chip.
-        Box(
-            Modifier
-                .size(40.dp)
-                .border(1.5.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
-                .clickable { onCreateMix() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("+", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium)
+        onCreateMix?.let { onCreateMix ->
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .border(1.5.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                    .clickable { onCreateMix() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("+", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium)
+            }
         }
     }
 }
