@@ -24,6 +24,18 @@ class SyncPreviewBuilderTest {
             materialType = type, subType = "", manufacturer = vendor)
 
     @Test
+    fun `single slot preview only includes E1`() {
+        val entries = buildSyncPreviewEntries(presets, emptyList(), lib, slotCount = 1)
+        assertEquals(listOf(0), entries.map { it.slotIndex })
+    }
+
+    @Test
+    fun `two slot preview only includes E1 and E2`() {
+        val entries = buildSyncPreviewEntries(presets, emptyList(), lib, slotCount = 2)
+        assertEquals(listOf(0, 1), entries.map { it.slotIndex })
+    }
+
+    @Test
     fun `matched slot carries catalogue name colour material`() {
         val entries = buildSyncPreviewEntries(presets, listOf(slot(0, "Prusament")), lib)
         val e = entries[0]

@@ -13,6 +13,8 @@ import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
 import com.u1.slicer.data.PrintersConfig
 import com.u1.slicer.data.defaultExtruderPresets
+import com.u1.slicer.data.parseExtruderPresets
+import com.u1.slicer.data.serializeExtruderPresets
 import com.u1.slicer.data.upsertLibraryProfile
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
@@ -45,6 +47,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     private val libraryRepo = (application as U1SlicerApplication).container.filamentLibraryRepository
     private val filamentDao = (application as U1SlicerApplication).container.filamentDao
     private val settingsRepo = (application as U1SlicerApplication).container.settingsRepository
+    private val machineProfilesRepo = (application as U1SlicerApplication).container.machineProfileRepository
 
     // ── OpenPrintTag filament library (Task 7) — hosted in ExtruderSlotEditDialog ──
     val libraryState = libraryRepo.state
@@ -113,7 +116,17 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
 
     /** F78: per-extruder slot config sourced from the active printer. */
     val extruderPresets: StateFlow<List<ExtruderPreset>> = printersRepo.activePrinter
-        .map { it?.extruderPresets ?: defaultExtruderPresets() }
+        .map { printer ->
+            val profile = printer?.let(machineProfilesRepo::activeFor) ?: machineProfilesRepo.builtInU1()
+            val slotCount = profile.extruderCount.coerceIn(1, 4)
+            when {
+                printer == null -> defaultExtruderPresets(slotCount)
+                printer.kind == PrinterKind.BAMBU_LAN -> printer.extruderPresets
+                printer.extruderPresets.map { it.index }.toSet() == (0 until slotCount).toSet() ->
+                    printer.extruderPresets
+                else -> parseExtruderPresets(serializeExtruderPresets(printer.extruderPresets), slotCount)
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.Eagerly, defaultExtruderPresets())
 
     private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Unknown)
@@ -528,6 +541,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                 slots = slots,
                 library = library,
                 includeAllPrinterSlots = active?.kind == PrinterKind.BAMBU_LAN,
+                slotCount = active?.let(machineProfilesRepo::extruderCountFor) ?: 4,
             )
             if (active?.kind == PrinterKind.BAMBU_LAN) {
                 BambuDiagnostics.record(

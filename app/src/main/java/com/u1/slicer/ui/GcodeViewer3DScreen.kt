@@ -35,6 +35,7 @@ fun GcodeViewer3DScreen(
     bedSizeYmm: Float,
     bedStlAsset: String?,
     machineFamily: MachineFamily,
+    slotCount: Int = 4,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     // Phase 2 §4 Step 7 (Preview side) — file-derived per-filament colours
@@ -65,8 +66,13 @@ fun GcodeViewer3DScreen(
     // Set colors + upload gcode atomically on the GL thread.
     // suspendCancellableCoroutine waits for the GL work to finish before
     // clearing the loading indicator.
-    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
+    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors, slotCount) {
+        normalizeGcodePreviewColors(
+            extruderColors,
+            colorMapping,
+            resolvedFilamentColors,
+            slotCount,
+        )
     }
 
     LaunchedEffect(

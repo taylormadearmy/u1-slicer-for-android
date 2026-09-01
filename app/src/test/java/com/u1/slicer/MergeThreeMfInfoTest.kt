@@ -525,6 +525,24 @@ class MergeThreeMfInfoTest {
     }
 
     @Test
+    fun `buildPreviewSlotColors sizes palette to active profile`() {
+        val presets = listOf(
+            com.u1.slicer.data.ExtruderPreset(0, "#112233"),
+            com.u1.slicer.data.ExtruderPreset(1, "#445566"),
+            com.u1.slicer.data.ExtruderPreset(2, "#778899"),
+        )
+
+        assertEquals(
+            listOf("#112233"),
+            SlicerViewModel.buildPreviewSlotColors(presets, listOf(0, 1), slotCount = 1),
+        )
+        assertEquals(
+            listOf("#112233", "#445566"),
+            SlicerViewModel.buildPreviewSlotColors(presets, listOf(0, 1, 2), slotCount = 2),
+        )
+    }
+
+    @Test
     fun `buildPreviewSlotColors falls back to default slot colors when preset color is blank`() {
         val presets = listOf(
             com.u1.slicer.data.ExtruderPreset(0, ""),

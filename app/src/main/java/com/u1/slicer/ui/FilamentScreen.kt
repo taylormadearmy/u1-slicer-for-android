@@ -57,6 +57,7 @@ fun FilamentScreen(
     // CreateMixSlotDialog.
     mixedFilamentManager: MixedFilamentManager? = null,
     extruderPresets: List<ExtruderPreset> = emptyList(),
+    slotCount: Int = 4,
     importedMixRecipe: MixedFilamentSliceSummary? = null,
     mixRecipeSource: MixedFilamentDefinitionSource = MixedFilamentDefinitionSource.MANAGER_STATE,
     onCreateEditableMixCopy: (() -> Unit)? = null,
@@ -75,16 +76,17 @@ fun FilamentScreen(
         ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
     val libraryMixes by (mixedFilamentManager?.libraryMixes?.collectAsState()
         ?: remember { mutableStateOf(emptyList<MixedFilamentRow>()) })
+    val physicalSlotCount = slotCount.coerceIn(1, 4)
     val displayedMixRecipe = resolveImportedMixRecipeDisplaySummary(
         source = mixRecipeSource,
         importedRecipe = importedMixRecipe,
         mixedFilamentManager = mixedFilamentManager,
-        numPhysicalFilaments = extruderPresets.size.coerceAtLeast(4),
+        numPhysicalFilaments = physicalSlotCount,
     )
 
     if (showMixDialog && mixedFilamentManager != null) {
-        val physicalColours = remember(extruderPresets) {
-            (0..3).map { i ->
+        val physicalColours = remember(extruderPresets, physicalSlotCount) {
+            (0 until physicalSlotCount).map { i ->
                 val hex = extruderPresets.firstOrNull { it.index == i }?.color
                     ?.takeIf { it.isNotBlank() }
                     ?: ExtruderPreset.DEFAULT_COLORS[i]
@@ -93,7 +95,7 @@ fun FilamentScreen(
         }
         CreateMixSlotDialog(
             physicalFilamentColours = physicalColours,
-            physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+            physicalFilamentLabels = (0 until physicalSlotCount).map { "E${it + 1}" },
             editingRow = editingMix,
             onConfirmN = { components, weights, mode, topMixMode, fineTopLines, ironingGlaze ->
                 val edit = editingMix
@@ -366,7 +368,7 @@ fun FilamentScreen(
                     itemsIndexed(projectMixes, key = { _, r -> "p-${r.id}" }) { _, row ->
                         MixSlotCard(
                             row = row,
-                            physicalColours = (0..3).map { i ->
+                            physicalColours = (0 until physicalSlotCount).map { i ->
                                 val hex = extruderPresets.firstOrNull { it.index == i }?.color
                                     ?.takeIf { it.isNotBlank() }
                                     ?: ExtruderPreset.DEFAULT_COLORS[i]
@@ -403,7 +405,7 @@ fun FilamentScreen(
                     itemsIndexed(libraryOnly, key = { _, r -> "l-${r.id}" }) { _, row ->
                         MixSlotCard(
                             row = row,
-                            physicalColours = (0..3).map { i ->
+                            physicalColours = (0 until physicalSlotCount).map { i ->
                                 val hex = extruderPresets.firstOrNull { it.index == i }?.color
                                     ?.takeIf { it.isNotBlank() }
                                     ?: ExtruderPreset.DEFAULT_COLORS[i]

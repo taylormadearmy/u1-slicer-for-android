@@ -550,6 +550,8 @@ class MainActivity : ComponentActivity() {
                 val appSlicerState by viewModel.state.collectAsState()
                 val previewActivePrinter by printerViewModel.activePrinter.collectAsState()
                 val latestSliceArtifact by viewModel.latestSliceArtifact.collectAsState()
+                val appMachineProfile by viewModel.activeMachineProfile.collectAsState()
+                val appSlotCount = appMachineProfile.extruderCount.coerceIn(1, 4)
                 // F88: collect model name so Save/Share G-code can suggest a meaningful filename.
                 val currentModelFileName by viewModel.modelFileName.collectAsState()
                 val sharedPreviewModelKey = when (val s = appSlicerState) {
@@ -1123,7 +1125,7 @@ class MainActivity : ComponentActivity() {
                                             // over file-declared), matching the Per-Extruder
                                             // summary — e.g. PETG, not the file's PLA.
                                             slicedMaterials = if (uploadPhysicalSlotSpace)
-                                                (0 until 4).map { slot ->
+                                                (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
                                                     extruderPresets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
                                                 }
                                             else viewModel.sliceTimeMaterials(canonical, currentMapping),
@@ -1152,7 +1154,7 @@ class MainActivity : ComponentActivity() {
                                                             colorMapping = com.u1.slicer.gcode.sendRemapForAction(
                                                                 uploadOnly = true,
                                                                 physicalMapping = if (sourceToolSpace == com.u1.slicer.gcode.GcodeToolSpace.PHYSICAL) {
-                                                                    (0 until 4).toList()
+                                                                    (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).toList()
                                                                 } else {
                                                                     emptyList()
                                                                 },
@@ -1209,12 +1211,14 @@ class MainActivity : ComponentActivity() {
                                     // mapping shows no warning; re-mapping to a
                                     // different-material nozzle warns. Otherwise feed
                                     // the canonical slice mapping.
-                                    sliceTimeColorMapping = if (mixSlotSpace) (0 until 4).toList() else currentMapping,
+                                    sliceTimeColorMapping = if (mixSlotSpace) {
+                                        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).toList()
+                                    } else currentMapping,
                                     // B128: feed the actual sliced materials (file-declared
                                     // when applicable) so the "Sliced as X" mismatch check
                                     // matches the slice instead of the slot preset.
                                     sliceTimeMaterials = if (mixSlotSpace)
-                                        (0 until 4).map { slot ->
+                                        (0 until com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS).map { slot ->
                                             extruderPresets.firstOrNull { it.index == slot }?.materialType ?: "PLA"
                                         }
                                     else viewModel.sliceTimeMaterials(canonical, currentMapping),
@@ -1239,11 +1243,18 @@ class MainActivity : ComponentActivity() {
                                         val canonicalSize = canonical.size
                                         val maxFileIdx = plateFileIndices.maxOrNull() ?: (canonicalSize - 1)
                                         val expandedSize = maxOf(canonicalSize, maxFileIdx + 1)
-                                        val expanded = MutableList(expandedSize) { fileIdx -> fileIdx % 4 }
+                                        val mappingSlotCount = if (mixSlotSpace) {
+                                            com.u1.slicer.aipaint.SegmentationCascade.TARGET_SLOTS
+                                        } else {
+                                            appSlotCount
+                                        }
+                                        val expanded = MutableList(expandedSize) { fileIdx ->
+                                            fileIdx % mappingSlotCount
+                                        }
                                         plateFileIndices.forEachIndexed { posInPlate, fileIdx ->
                                             val slot = plateMapping.getOrNull(posInPlate)
                                             if (slot != null && fileIdx in 0 until expandedSize) {
-                                                // Physical slot (0..3). The explicit if/else
+                                                // Physical slot for the active profile. The explicit if/else
                                                 // avoids tripping the coerceIn grep guard in
                                                 // HardcodedExtruderCapTest.
                                                 expanded[fileIdx] = if (slot >= 0) slot else 0
@@ -2356,6 +2367,7 @@ fun PrepareScreen(
                             ),
                             onCanonicalColourRemapsChange = viewModel::setCanonicalColourRemaps,
                             extruderPresets = extruderPresets,
+                            slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                             syncFilamentPresets = prepareSyncPresets,
                             isBambuPrinter = activePrinter?.kind == com.u1.slicer.data.PrinterKind.BAMBU_LAN,
                             filaments = filaments,
@@ -2392,6 +2404,7 @@ fun PrepareScreen(
                                 PrepareMixSlotsSectionContent(
                                     viewModel = viewModel,
                                     extruderPresets = extruderPresets,
+                                    slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                                 )
                             },
                         )
@@ -2845,6 +2858,7 @@ fun PreviewScreen(
                             bedSizeYMm = activeMachineConfig.bedSizeY,
                             bedStlAsset = activeMachineProfile.bedStlAsset,
                             machineFamily = activeMachineProfile.family,
+                            slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                             colorMapping = gcodeColorMapping,
                             slicerLayerCount = s.result.totalLayers,
                             onExpand = onNavigateGcodeViewer3D,
@@ -2904,6 +2918,7 @@ fun PreviewScreen(
                         filamentOverrides = filamentOverrides,
                         plateFileIndices = plateFileIndicesForSummary,
                         mixToolSpacePalette = if (sliceMixToolSpace) slotPaletteWithMixBlends else emptyList(),
+                        slotCount = activeMachineProfile.extruderCount.coerceIn(1, 4),
                     )
                 }
                 is SlicerViewModel.SlicerState.Error -> {
@@ -3669,9 +3684,10 @@ fun SliceCompleteSummaryCard(
      * E1..E4 + mix blends). Canonical/file lookups don't apply in that space.
      */
     mixToolSpacePalette: List<String> = emptyList(),
+    slotCount: Int = 4,
 ) {
-    val displaySlots = remember(perExtruderFilamentMm, colorMapping) {
-        buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping)
+    val displaySlots = remember(perExtruderFilamentMm, colorMapping, slotCount) {
+        buildPerExtruderDisplaySlots(perExtruderFilamentMm.size, colorMapping, slotCount)
     }
     // v2.0.0 systematic fix — build the visible chip list from the canonical-
     // wide gcode-derived plateFileIndices when available; otherwise fall back
@@ -3847,8 +3863,13 @@ internal fun resolveExtruderMaterialType(slot: Int, presets: List<com.u1.slicer.
  * slots via colorMapping (e.g. compact [0,1] mapped to physical [2,1] => E3, E2). We show
  * used mapped slots first, then fill with remaining physical slots.
  */
-internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?): List<Int> {
+internal fun buildPerExtruderDisplaySlots(
+    count: Int,
+    colorMapping: List<Int>?,
+    slotCount: Int = 4,
+): List<Int> {
     if (count <= 0) return emptyList()
+    val slots = slotCount.coerceIn(1, 4)
     // Phase 2 §4 Step 6 — when colorMapping is missing for a multi-filament
     // file, return identity. Filament indices >= 4 fall through to the grey
     // fallback in the colour resolver downstream rather than being capped to
@@ -3858,9 +3879,9 @@ internal fun buildPerExtruderDisplaySlots(count: Int, colorMapping: List<Int>?):
 
     val ordered = mutableListOf<Int>()
     colorMapping.forEach { slot ->
-        if (slot in 0..3 && slot !in ordered) ordered += slot
+        if (slot in 0 until slots && slot !in ordered) ordered += slot
     }
-    for (slot in 0..3) {
+    for (slot in 0 until slots) {
         if (slot !in ordered) ordered += slot
     }
     while (ordered.size < count) {
@@ -5326,6 +5347,7 @@ fun PrintSetupSection(
     availableMixes: List<com.u1.slicer.data.MixedFilamentRow> = emptyList(),
     onCanonicalColourRemapsChange: (List<com.u1.slicer.data.CanonicalColourRemap>) -> Unit = {},
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    slotCount: Int = 4,
     syncFilamentPresets: List<com.u1.slicer.data.ExtruderPreset> = extruderPresets,
     isBambuPrinter: Boolean = false,
     filaments: List<com.u1.slicer.data.FilamentProfile>,
@@ -5447,7 +5469,7 @@ fun PrintSetupSection(
                                 val current = draft[index]?.destination
                                 Text("Filament ${index + 1}")
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    (0..3).forEach { slot ->
+                                    (0 until slotCount.coerceIn(1, 4)).forEach { slot ->
                                         FilterChip(
                                             selected = current == com.u1.slicer.data.CanonicalColourDestination.PhysicalSlot(slot),
                                             onClick = {
@@ -6192,6 +6214,7 @@ fun ScaleSection(
 fun PrepareMixSlotsSectionContent(
     viewModel: SlicerViewModel,
     extruderPresets: List<com.u1.slicer.data.ExtruderPreset>,
+    slotCount: Int = 4,
 ) {
     val projectMixes by viewModel.mixedFilamentManager.projectMixes.collectAsState()
     val libraryMixes by viewModel.mixedFilamentManager.libraryMixes.collectAsState()
@@ -6214,8 +6237,8 @@ fun PrepareMixSlotsSectionContent(
     // Recomputed after assignment so the tapped row shows "· current".
     val currentModelSlot = remember(perVolumeExtruders) { viewModel.aggregatedModelFilament() }
 
-    val physicalColours = remember(extruderPresets) {
-        (0..3).map { i ->
+    val physicalColours = remember(extruderPresets, slotCount) {
+        (0 until slotCount.coerceIn(1, 4)).map { i ->
             val hex = extruderPresets.firstOrNull { it.index == i }?.color
                 ?.takeIf { it.isNotBlank() }
                 ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS[i]
@@ -6226,7 +6249,7 @@ fun PrepareMixSlotsSectionContent(
     if (showDialog) {
         com.u1.slicer.ui.CreateMixSlotDialog(
             physicalFilamentColours = physicalColours,
-            physicalFilamentLabels = listOf("E1", "E2", "E3", "E4"),
+            physicalFilamentLabels = physicalColours.indices.map { "E${it + 1}" },
             editingRow = editingRow,
             onConfirmN = { components, weights, mode, topMixMode, fineTopLines, ironingGlaze ->
                 val edit = editingRow
@@ -6440,6 +6463,7 @@ fun InlineGcodePreview(
     bedSizeYMm: Float,
     bedStlAsset: String?,
     machineFamily: MachineFamily,
+    slotCount: Int = 4,
     colorMapping: List<Int>? = null,
     slicerLayerCount: Int = 0,
     onExpand: () -> Unit,
@@ -6477,8 +6501,13 @@ fun InlineGcodePreview(
     val displayLayer =
         com.u1.slicer.ui.computeDisplayLayer(maxLayer, displayLayerCount, gcodeLayerCount)
 
-    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors) {
-        normalizeGcodePreviewColors(extruderColors, colorMapping, resolvedFilamentColors)
+    val previewColors = remember(extruderColors, colorMapping, resolvedFilamentColors, slotCount) {
+        normalizeGcodePreviewColors(
+            extruderColors,
+            colorMapping,
+            resolvedFilamentColors,
+            slotCount,
+        )
     }
 
     LaunchedEffect(
@@ -6688,7 +6717,9 @@ internal fun normalizeGcodePreviewColors(
     extruderColors: List<String>,
     colorMapping: List<Int>?,
     resolvedFilamentColors: List<String> = emptyList(),
+    slotCount: Int = 4,
 ): List<String> {
+    val slots = slotCount.coerceIn(1, 4)
     if (resolvedFilamentColors.isNotEmpty() || !colorMapping.isNullOrEmpty()) {
         // Phase 2 canonical path. Palette length grows with the canonical
         // filament list (or colorMapping size, whichever is larger) so
@@ -6720,24 +6751,24 @@ internal fun normalizeGcodePreviewColors(
         val length = maxOf(
             resolvedFilamentColors.size,
             colorMapping?.size ?: 0,
-            4,
+            slots,
         )
         return MutableList(length) { i ->
             val fileColor = resolvedFilamentColors.getOrNull(i)
             val slot = colorMapping?.getOrNull(i)
-            val slotColor = slot?.takeIf { it in 0..3 }
+            val slotColor = slot?.takeIf { it in 0 until slots }
                 ?.let { extruderColors.getOrNull(it).orEmpty() }
             when {
                 !fileColor.isNullOrBlank() -> fileColor
                 !slotColor.isNullOrBlank() -> slotColor
-                else -> extruderColors.getOrNull(i % 4).orEmpty()
+                else -> extruderColors.getOrNull(i % slots).orEmpty()
             }
         }
     }
     // Legacy path: 4-slot palette indexed by physical slot. Used when
     // neither resolvedFilamentColors nor colorMapping is available
     // (single-colour STL, very early during load, etc.)
-    return MutableList(4) { extruderColors.getOrNull(it).orEmpty() }
+    return MutableList(slots) { extruderColors.getOrNull(it).orEmpty() }
 }
 
 @Composable

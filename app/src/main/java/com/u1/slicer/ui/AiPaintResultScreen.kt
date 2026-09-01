@@ -162,7 +162,7 @@ fun AiPaintResultScreen(
                         physical + mixes
                     }
                     // fix38.1: float-array form of slotPalette for the GL renderer. Used by
-                    // AiPaintViewer's recolor path so triangleRegions[t] (a slot byte 0..3)
+                    // AiPaintViewer's recolor path so each physical slot byte
                     // correctly indexes into the user's loaded filament colours, regardless of
                     // how many leaves are currently assigned to that slot or in what order.
                     val slotPaletteFloats: List<FloatArray> = remember(slotPalette) {
@@ -515,7 +515,7 @@ fun AiPaintResultScreen(
         // surface that reads filamentColours / extruderPresets — Smart Paint picker, tree
         // rows, Prepare filaments row, Map dialog — so the user only edits it once and the
         // change sticks for future loads.
-        if (slot in 0..3) {
+        if (slot in 0 until numPhysical) {
             val initialHex = filamentColours.getOrNull(slot)
                 ?: com.u1.slicer.data.ExtruderPreset.DEFAULT_COLORS.getOrNull(slot)
                 ?: "#888888"
