@@ -48,6 +48,9 @@ class MachineProfileRepository(
     fun activeFor(printer: Printer): MachineProfile =
         printer.machineProfileId?.let(::byId) ?: builtInU1()
 
+    /** Returns the supported physical slot count for a configured printer. */
+    fun extruderCountFor(printer: Printer): Int = activeFor(printer).extruderCount.coerceIn(1, 4)
+
     private fun builtInU1Internal(): MachineProfile {
         // The lazy cache must not recursively call builtInU1().
         return cachedU1 ?: synchronized(this) {

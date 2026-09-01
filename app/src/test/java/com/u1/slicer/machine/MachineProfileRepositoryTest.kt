@@ -61,6 +61,28 @@ class MachineProfileRepositoryTest {
         val printer = Printer(id = "p1", nickname = "U1", moonrakerUrl = "http://printer")
 
         assertEquals(repository.builtInU1(), repository.activeFor(printer))
+        assertEquals(4, repository.extruderCountFor(printer))
+    }
+
+    @Test
+    fun `printer extruder count comes from its bound machine profile`() {
+        val cache = tempCache()
+        val cachedJson = requireNotNull(
+            javaClass.classLoader?.getResource("machine/generic_klipper_300.json")
+        ).readText()
+        val cached = requireNotNull(
+            MachineProfile.fromResolvedOrcaJson(cachedJson, MachineFamily.GENERIC)
+        )
+        File(cache, "${cached.id}.json").writeText(cachedJson)
+        val repository = MachineProfileRepository(assets, cache)
+        val printer = Printer(
+            id = "generic",
+            nickname = "Generic",
+            moonrakerUrl = "http://printer",
+            machineProfileId = cached.id,
+        )
+
+        assertEquals(1, repository.extruderCountFor(printer))
     }
 
     private fun tempCache(): File = createTempDir(prefix = "machine-profiles-").also {
