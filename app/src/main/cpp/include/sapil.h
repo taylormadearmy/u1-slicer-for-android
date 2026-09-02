@@ -298,7 +298,7 @@ public:
 
     // Split one volume's mesh into multiple volumes within the same object.
     // Returns the new volume count for the object on success, -1 on failure.
-    int splitVolume(int objIdx, int volIdx);
+    int splitVolume(int objIdx, int volIdx, int configured_extruders);
 
     // B132c follow-up (v2.10.4): deep-copy an existing object via
     // Model::add_object(*src). The new object is appended at the end of the

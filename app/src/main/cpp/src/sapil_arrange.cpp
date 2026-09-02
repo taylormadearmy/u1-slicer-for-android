@@ -668,11 +668,12 @@ bool SlicerEngine::deleteObject(int objIdx) {
     return true;
 }
 
-int SlicerEngine::splitVolume(int objIdx, int volIdx) {
+int SlicerEngine::splitVolume(int objIdx, int volIdx, int configured_extruders) {
     if (!f66_volIdxValid(objIdx, volIdx)) return -1;
     auto* obj = getGlobalModel().objects[objIdx];
-    constexpr unsigned MAX_EXTRUDERS = 4; // U1 hardware limit
-    obj->volumes[volIdx]->split(MAX_EXTRUDERS);
+    const unsigned max_extruders = static_cast<unsigned>(
+        std::max(1, std::min(configured_extruders, 4)));
+    obj->volumes[volIdx]->split(max_extruders);
     // F66 review-2026-05-30 P0: keep the override cache + base snapshots in sync.
     onSplitVolumeReshape(objIdx, (int)obj->volumes.size());
     resetLoadTimeScaleFactors();

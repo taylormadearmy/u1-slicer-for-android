@@ -378,12 +378,16 @@ static void applyBambuConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const Slice
     }
 }
 
-static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config, bool has_embedded_profile = false) {
+static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfig& config,
+                               bool has_embedded_profile = false,
+                               bool profile_has_extruder_offset = false,
+                               bool profile_has_semm = false) {
     const bool is_bambu_target = config.machine_target.rfind("BAMBU_", 0) == 0;
     if (is_bambu_target) {
         applyBambuConfigToPrusa(dpc, config, has_embedded_profile);
         return;
     }
+    const bool is_snapmaker_target = config.machine_target == "SNAPMAKER_U1";
     // Raw STL has no embedded profile, so global ironing must cross the JNI
     // boundary. An empty value intentionally leaves a file profile/default intact.
     if (!config.ironing_type.empty()) {
@@ -566,11 +570,14 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
     // during the standby period between tool changes.  Use the same length as normal retraction.
     dpc.set_key_value("retract_length_toolchange", new Slic3r::ConfigOptionFloats(retract_len));
 
-    // Multi-extruder machine type — the Snapmaker U1 has 4 independent extruders, NOT a
-    // single-extruder multi-material (SEMM) setup like Bambu/Prusa MMU.  Embedded Snapmaker
-    // profiles incorrectly set single_extruder_multi_material=1, which disables ooze_prevention
-    // and causes bowden-style unload/reload sequences.  Always override to false.
-    dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+    // The U1 has independent extruders, so retain its established SEMM=false safety override.
+    // Authored generic profiles own this machine-topology flag; preserve it when supplied and
+    // synthesize the safe false default only when the profile omits it.
+    if (is_snapmaker_target || !has_embedded_profile) {
+        dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+    } else if (!profile_has_semm) {
+        dpc.set_key_value("single_extruder_multi_material", new Slic3r::ConfigOptionBool(false));
+    }
 
     // Wipe tower filament handling — OrcaSlicer defaults are for bowden SEMM printers
     // (cooling_tube_retraction=91.5, cooling_tube_length=5, parking_pos=92, ramming=on).
@@ -636,11 +643,18 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         }
     }
 
-    // Extruder offsets — all (0,0) for Snapmaker U1 (firmware handles offsets).
-    // MUST be sized to match extruder count; the default is a single entry, and
-    // WipeTowerIntegration copies the raw vector then indexes by tool ID — OOB
-    // access produces corrupt wipe tower coordinates (2^116 / -inf X values).
-    dpc.set_key_value("extruder_offset", new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
+    // Keep authored machine offsets. When absent, synthesize (0,0) entries; either way the
+    // vector must match the configured extruder count because WipeTowerIntegration indexes it
+    // directly by tool ID.
+    if (!has_embedded_profile || !profile_has_extruder_offset) {
+        dpc.set_key_value("extruder_offset",
+            new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
+    } else if (auto* profile_offsets = dpc.option<Slic3r::ConfigOptionPoints>("extruder_offset")) {
+        profile_offsets->values.resize(n_ext, Slic3r::Vec2d(0, 0));
+    } else {
+        dpc.set_key_value("extruder_offset",
+            new Slic3r::ConfigOptionPoints(std::vector<Slic3r::Vec2d>(n_ext, Slic3r::Vec2d(0, 0))));
+    }
 
     // F91 (2026-05-25): three-way precedence for per-filament tuning keys —
     //   1. SliceConfig.filament_* (user filament-library values)  ← always wins when set
@@ -1332,7 +1346,13 @@ SliceResult SlicerEngine::slice(const SliceConfig& config, ProgressCallback prog
         // Runs AFTER profile_keys so that user-controllable settings (wipe tower,
         // temperatures, layer height, speeds) from the JNI config override the
         // embedded profile's values.
-        applyConfigToPrusa(dpc, config, apply_profile_keys || is_bambu_embedded_profile);
+        applyConfigToPrusa(
+            dpc,
+            config,
+            apply_profile_keys || is_bambu_embedded_profile,
+            model_config.has("extruder_offset"),
+            model_config.has("single_extruder_multi_material")
+        );
 
         if (is_bambu_embedded_profile) {
             // Exported alongside the normal diagnostics trace.  Keep this compact

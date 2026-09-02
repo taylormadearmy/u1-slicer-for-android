@@ -417,6 +417,10 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun activePhysicalSlotCount(): Int =
         activeMachineProfile.value.extruderCount.coerceIn(1, 4)
+
+    private fun configuredArrangeExtruderCount(): Int =
+        _config.value.extruderCount.coerceIn(1, activePhysicalSlotCount())
+
     /**
      * The active printer is the sole source of the slice target.  Changing
      * printers happens on the Printer screen, never from a preview-only
@@ -1660,7 +1664,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
      * Returns the new volume count, or `-1` on failure.
      */
     fun splitVolume(objIdx: Int, volIdx: Int): Int {
-        val newCount = native.nativeSplitVolume(objIdx, volIdx)
+        val newCount = native.nativeSplitVolume(objIdx, volIdx, configuredArrangeExtruderCount())
         if (newCount > 0) {
             _splitVolumeOps.value = _splitVolumeOps.value + "$objIdx:$volIdx"
             _modelOperations.value = _modelOperations.value + ModelOperation.SplitVolume(objIdx, volIdx)
@@ -1764,7 +1768,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
             val applied = when (operation) {
                 is ModelOperation.SplitObject -> native.nativeSplitObject(operation.objectIndex) != null
                 is ModelOperation.SplitVolume -> native.nativeSplitVolume(
-                    operation.objectIndex, operation.volumeIndex,
+                    operation.objectIndex, operation.volumeIndex, configuredArrangeExtruderCount(),
                 ) > 0
                 is ModelOperation.DuplicateObject -> native.nativeDuplicateObject(operation.objectIndex) >= 0
                 is ModelOperation.DeleteObject -> native.nativeDeleteObject(operation.objectIndex)

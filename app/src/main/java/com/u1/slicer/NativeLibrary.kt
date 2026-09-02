@@ -301,7 +301,7 @@ class NativeLibrary {
 
     /** Split one volume into multiple volumes within the same object. Returns the
      *  new volume count, or -1 on failure. */
-    external fun nativeSplitVolume(objIdx: Int, volIdx: Int): Int
+    external fun nativeSplitVolume(objIdx: Int, volIdx: Int, configuredExtruderCount: Int): Int
 
     /** B132c follow-up (v2.10.4): deep-copy an existing object at [objIdx].
      *  Returns the new object's index on success (always `nativeGetObjectCount()-1`),
