@@ -60,6 +60,7 @@ import com.u1.slicer.gcode.GcodeValidator
 import com.u1.slicer.gcode.LayerToolPauseInjector
 import com.u1.slicer.gcode.ParsedGcode
 import com.u1.slicer.gcode.buildSuspiciousModelLineContexts
+import com.u1.slicer.gcode.gcodeDialect
 import com.u1.slicer.gcode.gcodeToolSpaceFromDb
 import com.u1.slicer.gcode.gcodeToolSpaceToDb
 import com.u1.slicer.gcode.parseExcludeObjects
@@ -6599,6 +6600,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // pauses for non-selected plates post-slice. Prefer currentModelFile
                     // whenever a plate is selected; fall back to sourceModelFile only for
                     // non-plate (STL / single-plate) flows.
+                    val gcodeDialect = activeMachineProfile.value.gcodeDialect()
                     val activePlateIdUi = _currentPlateId.value
                     val layerToolMetadataFile = when {
                         _threeMfInfo.value?.hasLayerToolChanges != true -> null
@@ -6616,7 +6618,8 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                                 result.gcodePath,
                                 it,
                                 plateIdxForInjector,
-                                native::nativeGetPlateData
+                                native::nativeGetPlateData,
+                                gcodeDialect,
                             )
                         }
                         ?: false
@@ -6675,10 +6678,21 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     // 3MF: extract preview image from ZIP. STL: fall back to GL capture bitmap.
                     try {
                         val sourcePath = rawInputFile?.absolutePath ?: sourceModelFile?.absolutePath ?: currentModelFile?.absolutePath
-                        val injected = sourcePath != null && GcodeThumbnailInjector.inject(result.gcodePath, sourcePath)
+                        val injected = sourcePath != null && GcodeThumbnailInjector.inject(
+                            result.gcodePath,
+                            sourcePath,
+                            gcodeDialect,
+                        )
                         if (injected) {
                             Log.i("SlicerVM", "Thumbnails injected from 3MF preview")
-                        } else if (capturedBitmap != null && GcodeThumbnailInjector.injectFromBitmap(result.gcodePath, capturedBitmap)) {
+                        } else if (
+                            capturedBitmap != null &&
+                            GcodeThumbnailInjector.injectFromBitmap(
+                                result.gcodePath,
+                                capturedBitmap,
+                                gcodeDialect,
+                            )
+                        ) {
                             Log.i("SlicerVM", "Thumbnails injected from GL capture")
                         }
                     } catch (e: Throwable) {

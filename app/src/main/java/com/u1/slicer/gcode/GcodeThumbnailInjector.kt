@@ -153,20 +153,7 @@ object GcodeThumbnailInjector {
             rgb.recycle()
 
             val b64 = Base64.encodeToString(pngBytes, Base64.NO_WRAP)
-            when (dialect.thumbnailFormat) {
-                ThumbnailFormat.KLIPPER,
-                ThumbnailFormat.PRUSA -> sb.append("; thumbnail begin ${w}x${h} ${b64.length}\n")
-            }
-            // Split into 76-char lines — matches the vanilla Klipper/Moonraker format used by
-            // u1-slicer-bridge and supported by all Moonraker versions (incl. older firmware).
-            var i = 0
-            while (i < b64.length) {
-                val end = minOf(i + 76, b64.length)
-                sb.append("; ${b64.substring(i, end)}\n")
-                i = end
-            }
-            sb.append("; thumbnail end\n")
-            sb.append(";\n")
+            sb.append(formatThumbnailBlock(w, h, b64, dialect.thumbnailFormat))
         }
         return sb.toString()
     }

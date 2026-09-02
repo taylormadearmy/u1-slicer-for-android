@@ -19,8 +19,8 @@ data class PauseInjection(
 )
 
 data class ValidatorRules(
-    val requiresMarlinNozzleTemperatureCommands: Boolean = false,
-    val forbiddenCommands: Set<String> = emptySet(),
+    val requiredCommandPrefixes: Set<String> = emptySet(),
+    val forbiddenCommandPrefixes: Set<String> = emptySet(),
     val rejectBowdenUnloadSequence: Boolean = false,
 )
 
@@ -58,17 +58,68 @@ object KlipperSnapmakerDialect : GcodeDialect {
     override val validatorRules = ValidatorRules(rejectBowdenUnloadSequence = true)
 }
 
-// Task 4.2 replaces these extraction-time defaults with their firmware-specific rules.
-object KlipperGenericDialect : GcodeDialect by KlipperSnapmakerDialect {
+object KlipperGenericDialect : GcodeDialect {
     override fun remapToolLine(line: String, toolMap: Map<Int, Int>): String = line
+
+    override val pauseInjection = PauseInjection(
+        marker = "; PAUSE_PRINT",
+        fallbackCommand = "PAUSE",
+        useProfileCommand = false,
+        emitToolChange = false,
+        emitToolTemperature = false,
+    )
+    override val thumbnailFormat = ThumbnailFormat.KLIPPER
+    override val supportsExcludeObject = true
+    override val validatorRules = ValidatorRules()
 }
 
-object MarlinDialect : GcodeDialect by KlipperSnapmakerDialect {
+object MarlinDialect : GcodeDialect {
     override fun remapToolLine(line: String, toolMap: Map<Int, Int>): String = line
+
+    override val pauseInjection = PauseInjection(
+        marker = "; PAUSE_PRINT",
+        fallbackCommand = "M600",
+        useProfileCommand = false,
+        emitToolChange = false,
+        emitToolTemperature = false,
+    )
+    override val thumbnailFormat = ThumbnailFormat.PRUSA
+    override val supportsExcludeObject = false
+    override val validatorRules = ValidatorRules(
+        requiredCommandPrefixes = setOf("M104", "M109"),
+        forbiddenCommandPrefixes = setOf("EXCLUDE_OBJECT_", "SET_HEATER_TEMPERATURE"),
+    )
 }
 
 fun MachineProfile.gcodeDialect(): GcodeDialect = when {
     family == MachineFamily.SNAPMAKER -> KlipperSnapmakerDialect
     gcodeFlavor == GcodeFlavor.MARLIN -> MarlinDialect
     else -> KlipperGenericDialect
+}
+
+internal fun formatThumbnailBlock(
+    width: Int,
+    height: Int,
+    encoded: String,
+    format: ThumbnailFormat,
+): String = buildString {
+    val rowLength = when (format) {
+        ThumbnailFormat.KLIPPER -> 76
+        ThumbnailFormat.PRUSA -> {
+            append("; THUMBNAIL_BLOCK_START\n\n;\n")
+            78
+        }
+    }
+    append("; thumbnail begin ${width}x${height} ${encoded.length}\n")
+    var offset = 0
+    while (offset < encoded.length) {
+        val end = minOf(offset + rowLength, encoded.length)
+        append("; ${encoded.substring(offset, end)}\n")
+        offset = end
+    }
+    append("; thumbnail end\n")
+    when (format) {
+        ThumbnailFormat.KLIPPER -> append(";\n")
+        ThumbnailFormat.PRUSA -> append("; THUMBNAIL_BLOCK_END\n\n")
+    }
 }

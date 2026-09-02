@@ -102,6 +102,22 @@ class LayerToolPauseInjectorTest {
     }
 
     @Test
+    fun `generic Klipper injection uses PAUSE without Snapmaker tool commands`() {
+        assertDialectPause(
+            dialect = KlipperGenericDialect,
+            expectedCommand = "PAUSE",
+        )
+    }
+
+    @Test
+    fun `Marlin injection uses M600 without Klipper tool commands`() {
+        assertDialectPause(
+            dialect = MarlinDialect,
+            expectedCommand = "M600",
+        )
+    }
+
+    @Test
     fun `injectFrom3mf preserves nozzle_temperature array indexes with nil entries`() {
         val dir = createTempDir(prefix = "layer_tool_pause_nil_indexes_")
         try {
@@ -513,6 +529,50 @@ class LayerToolPauseInjectorTest {
             // — T0 is the starting tool, the printer is already on it at layer boundaries.
             assertFalse("T0 should be skipped by layer-tool injector (starting tool)",
                 result.contains(Regex("(?m)^T0$")))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    private fun assertDialectPause(dialect: GcodeDialect, expectedCommand: String) {
+        val dir = createTempDir(prefix = "layer_tool_pause_dialect_")
+        try {
+            val model = File(dir, "sample.3mf")
+            ZipOutputStream(model.outputStream()).use { zip ->
+                write(
+                    zip,
+                    "Metadata/custom_gcode_per_layer.xml",
+                    """
+                    <custom_gcodes_per_layer>
+                      <plate>
+                        <layer top_z="1.6" type="1" extruder="2" color="#F4D976" extra="" gcode="M601"/>
+                      </plate>
+                    </custom_gcodes_per_layer>
+                    """.trimIndent(),
+                )
+                write(
+                    zip,
+                    "Metadata/project_settings.config",
+                    """{"machine_pause_gcode":"M400 U1","nozzle_temperature":["220","230"]}""",
+                )
+            }
+            val gcode = File(dir, "sample.gcode")
+            gcode.writeText(";LAYER_CHANGE\n;Z:1.7\nG1 X2 Y2\n")
+
+            assertTrue(
+                LayerToolPauseInjector.injectFrom3mf(
+                    gcode.absolutePath,
+                    model,
+                    0,
+                    plateDataOf(plateJsonForColorChange(1.6, 2)),
+                    dialect,
+                ),
+            )
+            val output = gcode.readText()
+            assertTrue(output.contains("; PAUSE_PRINT\n$expectedCommand\n"))
+            assertFalse(output.contains("M400 U1"))
+            assertFalse(output.lineSequence().any { it.trim() == "T1" })
+            assertFalse(output.contains("M109"))
         } finally {
             dir.deleteRecursively()
         }
