@@ -7,6 +7,8 @@ import com.u1.slicer.bambu.BambuSanitizer
 import com.u1.slicer.bambu.ProfileEmbedder
 import com.u1.slicer.bambu.ThreeMfParser
 import com.u1.slicer.data.SliceConfig
+import com.u1.slicer.gcode.GcodeValidator
+import com.u1.slicer.gcode.MarlinDialect
 import com.u1.slicer.machine.GcodeFlavor
 import com.u1.slicer.machine.MachineFamily
 import com.u1.slicer.machine.MachineProfile
@@ -89,6 +91,8 @@ class MarlinFlavorTest {
         assertFalse("Marlin must not contain Snapmaker SM_ macros", executable(gcode, "SM_"))
         assertFalse("Marlin must not invoke PRINT_START", executable(gcode, "PRINT_START"))
         assertFalse("Marlin must not invoke END_PRINT", executable(gcode, "END_PRINT"))
+        val validation = GcodeValidator.validateDialect(gcode, MarlinDialect)
+        assertTrue("Marlin dialect validator must accept the slice: $validation", validation.isValid)
     }
 
     private fun marlinSliceConfig(profile: MachineProfile): SliceConfig = SliceConfig(

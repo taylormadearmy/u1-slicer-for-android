@@ -53,6 +53,7 @@ import com.u1.slicer.data.WipeTowerDepthEstimator
 import com.u1.slicer.data.resolveExportMapping
 import com.u1.slicer.data.storedGcodeIsPhysical
 import com.u1.slicer.gcode.ExcludeObjectInfo
+import com.u1.slicer.gcode.GcodeDialect
 import com.u1.slicer.gcode.GcodeToolSpace
 import com.u1.slicer.gcode.GcodeParser
 import com.u1.slicer.gcode.GcodeThumbnailInjector
@@ -6650,6 +6651,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     val outputValidation = validateSliceOutput(
                         result,
                         buildExpectedModelFootprint(mi, copies, custom),
+                        dialect = gcodeDialect,
                         // Only force pause-segment coloring when we actually injected pause markers.
                         // Painted/toolchange workflows should continue to use T-command extruder indices.
                         colorSegmentsByPausePrint = injectedLayerToolPause
@@ -6917,6 +6919,7 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     private fun validateSliceOutput(
         result: SliceResult,
         expectedFootprint: ExpectedModelFootprint?,
+        dialect: GcodeDialect,
         colorSegmentsByPausePrint: Boolean = false
     ): SliceOutputValidation {
         val gcodeFile = File(result.gcodePath)
@@ -6946,6 +6949,9 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         return try {
+            val dialectValidation = gcodeFile.useLines { lines ->
+                GcodeValidator.validateDialectLines(lines, dialect)
+            }
             val (bedSizeX, bedSizeY) = activeBedDimensions()
             val parsed = GcodeParser.parse(
                 gcodeFile,
@@ -7016,9 +7022,18 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 },
                 "overlapsExpectedModelFootprint" to overlapsExpectedModelFootprint,
-                "parsedWipeTowerFilamentMm" to parsed.wipeTowerFilamentMm
+                "parsedWipeTowerFilamentMm" to parsed.wipeTowerFilamentMm,
+                "gcodeDialect" to dialect.javaClass.simpleName,
+                "missingRequiredGcodeCommands" to
+                    dialectValidation.missingRequiredCommandPrefixes.toList(),
+                "presentForbiddenGcodeCommands" to
+                    dialectValidation.presentForbiddenCommandPrefixes.toList(),
+                "rejectedBowdenUnloadSequence" to
+                    dialectValidation.hasRejectedBowdenUnloadSequence,
             )
             val errorMessage = when {
+                !dialectValidation.isValid ->
+                    "Slicing produced G-code incompatible with the selected printer.\n\n${dialectValidation.describe()}."
                 GcodeValidator.isEffectivelyEmpty(outputSummary) ->
                     "Slicing produced empty or invalid output.\n\nThe generated G-code did not contain any printable model extrusion. Try Reset App State and slice again."
                 GcodeValidator.hasSuspiciousModelGeometry(outputSummary) ->

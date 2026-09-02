@@ -9,6 +9,29 @@ package com.u1.slicer.gcode
  */
 object GcodeValidator {
 
+    data class DialectValidationResult(
+        val missingRequiredCommandPrefixes: Set<String>,
+        val presentForbiddenCommandPrefixes: Set<String>,
+        val hasRejectedBowdenUnloadSequence: Boolean,
+    ) {
+        val isValid: Boolean
+            get() = missingRequiredCommandPrefixes.isEmpty() &&
+                presentForbiddenCommandPrefixes.isEmpty() &&
+                !hasRejectedBowdenUnloadSequence
+
+        fun describe(): String = buildList {
+            if (missingRequiredCommandPrefixes.isNotEmpty()) {
+                add("Missing required commands: ${missingRequiredCommandPrefixes.joinToString()}")
+            }
+            if (presentForbiddenCommandPrefixes.isNotEmpty()) {
+                add("Unsupported commands: ${presentForbiddenCommandPrefixes.joinToString()}")
+            }
+            if (hasRejectedBowdenUnloadSequence) {
+                add("Unsupported Bowden unload sequence detected")
+            }
+        }.joinToString(". ")
+    }
+
     data class MoveSample(
         val x0: Float,
         val y0: Float,
@@ -377,9 +400,50 @@ object GcodeValidator {
         gcode: String,
         dialect: GcodeDialect = KlipperSnapmakerDialect,
     ): Boolean {
-        @Suppress("UNUSED_VARIABLE")
-        val rules = dialect.validatorRules
+        if (!dialect.validatorRules.rejectBowdenUnloadSequence) return false
         return gcode.lines().any { it.trim() == "; Retract(unload)" }
+    }
+
+    fun validateDialect(
+        gcode: String,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
+    ): DialectValidationResult = validateDialectLines(gcode.lineSequence(), dialect)
+
+    internal fun validateDialectLines(
+        lines: Sequence<String>,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
+    ): DialectValidationResult {
+        val rules = dialect.validatorRules
+        val requiredSeen = mutableSetOf<String>()
+        val forbiddenSeen = linkedSetOf<String>()
+        var rejectedBowdenUnload = false
+
+        for (rawLine in lines) {
+            val line = rawLine.trim()
+            if (rules.rejectBowdenUnloadSequence && line == "; Retract(unload)") {
+                rejectedBowdenUnload = true
+            }
+            if (line.isEmpty() || line.startsWith(';')) continue
+            for (prefix in rules.requiredCommandPrefixes) {
+                if (matchesCommandPrefix(line, prefix)) requiredSeen += prefix
+            }
+            for (prefix in rules.forbiddenCommandPrefixes) {
+                if (matchesCommandPrefix(line, prefix)) forbiddenSeen += prefix
+            }
+        }
+
+        return DialectValidationResult(
+            missingRequiredCommandPrefixes = rules.requiredCommandPrefixes - requiredSeen,
+            presentForbiddenCommandPrefixes = forbiddenSeen,
+            hasRejectedBowdenUnloadSequence = rejectedBowdenUnload,
+        )
+    }
+
+    private fun matchesCommandPrefix(line: String, prefix: String): Boolean {
+        if (!line.startsWith(prefix)) return false
+        return prefix.endsWith('_') ||
+            line.length == prefix.length ||
+            line[prefix.length].isWhitespace()
     }
 
     /**

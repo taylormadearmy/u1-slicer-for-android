@@ -223,6 +223,87 @@ class GcodeValidatorTest {
     }
 
     @Test
+    fun hasBowdenUnloadSequence_isScopedToSnapmakerDialect() {
+        val gcode = "; Retract(unload)\nG1 E-80 F3000\n"
+
+        assertTrue(GcodeValidator.hasBowdenUnloadSequence(gcode, KlipperSnapmakerDialect))
+        assertFalse(GcodeValidator.hasBowdenUnloadSequence(gcode, KlipperGenericDialect))
+        assertFalse(GcodeValidator.hasBowdenUnloadSequence(gcode, MarlinDialect))
+    }
+
+    @Test
+    fun validateDialect_acceptsValidMarlinBody() {
+        val result = GcodeValidator.validateDialect(
+            """
+            ; EXCLUDE_OBJECT_DEFINE in a comment is harmless
+            M104 S215
+            G28
+            M109 S215
+            """.trimIndent(),
+            MarlinDialect,
+        )
+
+        assertTrue(result.isValid)
+        assertTrue(result.missingRequiredCommandPrefixes.isEmpty())
+        assertTrue(result.presentForbiddenCommandPrefixes.isEmpty())
+        assertFalse(result.hasRejectedBowdenUnloadSequence)
+    }
+
+    @Test
+    fun validateDialect_reportsMissingMarlinTemperatureCommands() {
+        val result = GcodeValidator.validateDialect("G28\nM104 S215\n", MarlinDialect)
+
+        assertFalse(result.isValid)
+        assertEquals(setOf("M109"), result.missingRequiredCommandPrefixes)
+    }
+
+    @Test
+    fun validateDialect_rejectsKlipperCommandsInMarlinBody() {
+        val result = GcodeValidator.validateDialect(
+            """
+            M104 S215
+            M109 S215
+            EXCLUDE_OBJECT_DEFINE NAME=benchy
+            SET_HEATER_TEMPERATURE HEATER=extruder TARGET=215
+            """.trimIndent(),
+            MarlinDialect,
+        )
+
+        assertFalse(result.isValid)
+        assertEquals(
+            setOf("EXCLUDE_OBJECT_", "SET_HEATER_TEMPERATURE"),
+            result.presentForbiddenCommandPrefixes,
+        )
+    }
+
+    @Test
+    fun validateDialect_keepsGenericKlipperRulesPermissive() {
+        val result = GcodeValidator.validateDialect(
+            "EXCLUDE_OBJECT_DEFINE NAME=benchy\nSET_HEATER_TEMPERATURE HEATER=extruder TARGET=215\n",
+            KlipperGenericDialect,
+        )
+
+        assertTrue(result.isValid)
+    }
+
+    @Test
+    fun validateDialect_rejectsBowdenUnloadOnlyForSnapmaker() {
+        val gcode = "; Retract(unload)\nG1 E-80 F3000\n"
+
+        val snapmakerResult = GcodeValidator.validateDialect(gcode, KlipperSnapmakerDialect)
+        val genericResult = GcodeValidator.validateDialect(gcode, KlipperGenericDialect)
+        val marlinResult = GcodeValidator.validateDialect(
+            "M104 S215\nM109 S215\n$gcode",
+            MarlinDialect,
+        )
+
+        assertTrue(snapmakerResult.hasRejectedBowdenUnloadSequence)
+        assertFalse(snapmakerResult.isValid)
+        assertTrue(genericResult.isValid)
+        assertTrue(marlinResult.isValid)
+    }
+
+    @Test
     fun maxRetractionMm_rejectsBowdenToolchangeRetraction() {
         // Regression: OrcaSlicer SEMM defaults caused 94mm retraction during tool changes,
         // jamming the Snapmaker U1's direct-drive extruders. Max safe retraction is ~5mm.
