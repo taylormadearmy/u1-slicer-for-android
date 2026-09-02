@@ -922,10 +922,18 @@ static void applyConfigToPrusa(Slic3r::DynamicPrintConfig& dpc, const SliceConfi
         }
     }
 
-    // Exclude object / cancel object support — enables EXCLUDE_OBJECT_DEFINE / EXCLUDE_OBJECT_START /
-    // EXCLUDE_OBJECT_END G-code markers so firmware can cancel individual objects mid-print.
-    // OrcaSlicer defaults to false; enable unconditionally for all U1 prints.
-    dpc.set_key_value("exclude_object", new Slic3r::ConfigOptionBool(true));
+    // Exclude object / cancel object support emits Klipper EXCLUDE_OBJECT_* commands.
+    // Keep every Snapmaker U1 path byte-compatible, including raw STL fallback slices whose
+    // compiled flavor is Marlin, and enable it for authored generic Klipper profiles. Marlin
+    // firmware does not accept the Klipper commands.
+    const auto* gcode_flavor =
+        dpc.option<Slic3r::ConfigOptionEnum<Slic3r::GCodeFlavor>>("gcode_flavor");
+    const bool supports_exclude_object =
+        config.machine_target == "SNAPMAKER_U1" ||
+        (gcode_flavor != nullptr && gcode_flavor->value == Slic3r::gcfKlipper);
+    dpc.set_key_value(
+        "exclude_object",
+        new Slic3r::ConfigOptionBool(supports_exclude_object));
 
     // Full-spectrum mixed-filament (stage 2): when the caller passed a
     // recipe via SliceConfig.mixed_filament_definitions, write it into
