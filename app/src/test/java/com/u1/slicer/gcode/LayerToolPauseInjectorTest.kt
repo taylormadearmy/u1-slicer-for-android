@@ -67,6 +67,41 @@ class LayerToolPauseInjectorTest {
     }
 
     @Test
+    fun `injectFrom3mf recognizes legacy pause marker without a space`() {
+        val dir = createTempDir(prefix = "layer_tool_pause_legacy_marker_")
+        try {
+            val model = File(dir, "sample.3mf")
+            ZipOutputStream(model.outputStream()).use { zip ->
+                write(
+                    zip,
+                    "Metadata/custom_gcode_per_layer.xml",
+                    """
+                    <custom_gcodes_per_layer>
+                      <plate>
+                        <layer top_z="1.6" type="1" extruder="2" color="#F4D976" extra="" gcode="M601"/>
+                      </plate>
+                    </custom_gcodes_per_layer>
+                    """.trimIndent(),
+                )
+            }
+            val gcode = File(dir, "sample.gcode")
+            gcode.writeText(";PAUSE_PRINT\n;LAYER_CHANGE\n;Z:1.7\nG1 X2 Y2\n")
+
+            assertFalse(
+                LayerToolPauseInjector.injectFrom3mf(
+                    gcode.absolutePath,
+                    model,
+                    0,
+                    plateDataOf(plateJsonForColorChange(1.6, 2)),
+                ),
+            )
+            assertEquals(1, gcode.readLines().count { it.trim() == ";PAUSE_PRINT" })
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `injectFrom3mf preserves nozzle_temperature array indexes with nil entries`() {
         val dir = createTempDir(prefix = "layer_tool_pause_nil_indexes_")
         try {

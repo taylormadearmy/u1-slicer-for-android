@@ -373,7 +373,12 @@ object GcodeValidator {
      * This should NEVER appear in Snapmaker U1 G-code — the U1 has independent extruders,
      * not a single-extruder-multi-material (SEMM) bowden setup.
      */
-    fun hasBowdenUnloadSequence(gcode: String): Boolean {
+    fun hasBowdenUnloadSequence(
+        gcode: String,
+        dialect: GcodeDialect = KlipperSnapmakerDialect,
+    ): Boolean {
+        @Suppress("UNUSED_VARIABLE")
+        val rules = dialect.validatorRules
         return gcode.lines().any { it.trim() == "; Retract(unload)" }
     }
 
