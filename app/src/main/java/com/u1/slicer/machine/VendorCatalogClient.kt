@@ -14,6 +14,8 @@ data class VendorCatalogIndex(
     val version: String,
     val machineModelList: List<VendorCatalogEntry>,
     val machineList: List<VendorCatalogEntry>,
+    val processList: List<VendorCatalogEntry> = emptyList(),
+    val filamentList: List<VendorCatalogEntry> = emptyList(),
     val rawJson: String = "",
 )
 
@@ -32,12 +34,24 @@ class VendorCatalogClient(
         val url = profilesBaseUrl.newBuilder()
             .addPathSegment("$vendor.json")
             .build()
+        return parseVendorIndex(fetch(url))
+    }
+
+    fun fetchProfile(vendor: String, subPath: String): String {
+        require(vendor.isNotBlank() && '/' !in vendor && '\\' !in vendor)
+        val segments = subPath.split('/')
+        require(segments.isNotEmpty() && segments.none { it.isBlank() || it == "." || it == ".." || '\\' in it })
+        val builder = profilesBaseUrl.newBuilder().addPathSegment(vendor)
+        segments.forEach(builder::addPathSegment)
+        return fetch(builder.build())
+    }
+
+    private fun fetch(url: HttpUrl): String {
         val request = Request.Builder().url(url).get().build()
         return try {
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) throw CatalogError.Http(response.code)
-                val body = response.body?.string() ?: throw CatalogError.Malformed("Empty vendor index")
-                parseVendorIndex(body)
+                response.body?.string() ?: throw CatalogError.Malformed("Empty Orca profile response")
             }
         } catch (error: CatalogError) {
             throw error
@@ -67,11 +81,13 @@ class VendorCatalogClient(
             val version = root.optString("version").takeIf { it.isNotBlank() }
                 ?: throw CatalogError.Malformed("Vendor index has no version")
             VendorCatalogIndex(
-                name,
-                version,
-                parseEntries(root, "machine_model_list"),
-                parseEntries(root, "machine_list"),
-                json,
+                name = name,
+                version = version,
+                machineModelList = parseEntries(root, "machine_model_list"),
+                machineList = parseEntries(root, "machine_list"),
+                processList = parseEntries(root, "process_list", required = false),
+                filamentList = parseEntries(root, "filament_list", required = false),
+                rawJson = json,
             )
         } catch (error: CatalogError) {
             throw error
@@ -79,8 +95,13 @@ class VendorCatalogClient(
             throw CatalogError.Malformed("Malformed vendor index: ${error.message ?: "invalid JSON"}")
         }
 
-        private fun parseEntries(root: JSONObject, key: String): List<VendorCatalogEntry> {
-            val array = root.optJSONArray(key) ?: throw CatalogError.Malformed("Vendor index has no $key")
+        private fun parseEntries(
+            root: JSONObject,
+            key: String,
+            required: Boolean = true,
+        ): List<VendorCatalogEntry> {
+            val array = root.optJSONArray(key)
+                ?: if (required) throw CatalogError.Malformed("Vendor index has no $key") else return emptyList()
             return buildList(array.length()) {
                 for (i in 0 until array.length()) {
                     val item = array.optJSONObject(i) ?: throw CatalogError.Malformed("Invalid $key entry")

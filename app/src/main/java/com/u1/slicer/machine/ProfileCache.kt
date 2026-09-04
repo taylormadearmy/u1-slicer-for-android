@@ -56,6 +56,17 @@ class ProfileCache(private val root: File) {
         return file.takeIf { it.isFile }?.readText()
     }
 
+    fun writeVendorIndex(vendor: String, index: VendorCatalogIndex) {
+        requireSafeSegment(vendor)
+        writeAtomically(File(File(root, vendor), INDEX_FILE), index.rawJson.ifBlank { serialize(index) })
+    }
+
+    fun writeProfile(vendor: String, subPath: String, json: String) {
+        requireSafeSegment(vendor)
+        requireSafePath(subPath)
+        writeAtomically(File(File(root, vendor), subPath), json)
+    }
+
     fun rollback(vendor: String) {
         requireSafeSegment(vendor)
         val current = File(root, vendor)
@@ -116,6 +127,22 @@ class ProfileCache(private val root: File) {
         }
     }
 
+    private fun writeAtomically(target: File, text: String) {
+        target.parentFile?.mkdirs()
+        val temporary = File(target.parentFile, ".${target.name}.tmp-${System.nanoTime()}")
+        try {
+            temporary.writeText(text)
+            Files.move(
+                temporary.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } finally {
+            if (temporary.exists()) temporary.delete()
+        }
+    }
+
     companion object {
         private const val INDEX_FILE = "vendor-index.json"
         private const val BACKUP_SUFFIX = ".backup"
@@ -135,6 +162,8 @@ class ProfileCache(private val root: File) {
             put("name", index.name); put("version", index.version)
             put("machine_model_list", index.machineModelList.toJson())
             put("machine_list", index.machineList.toJson())
+            put("process_list", index.processList.toJson())
+            put("filament_list", index.filamentList.toJson())
         }.toString()
 
         private fun List<VendorCatalogEntry>.toJson() = org.json.JSONArray().also { array ->
