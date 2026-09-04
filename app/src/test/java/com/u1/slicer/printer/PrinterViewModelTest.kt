@@ -165,6 +165,27 @@ class PrinterViewModelTest {
     }
 
     @Test
+    fun `buildPrinter binds a generic Moonraker printer to its machine profile`() {
+        val printer = PrinterViewModel.buildPrinter(
+            id = "ender-1",
+            fallbackNickname = "Ender",
+            existingExtruderPresets = defaultExtruderPresets(1),
+            nickname = "Ender",
+            kind = PrinterKind.MOONRAKER,
+            url = "ender.local",
+            bambuIp = "",
+            bambuAccessCode = "",
+            bambuSerial = "",
+            bambuModel = BambuModel.P1S,
+            machineProfileId = "creality-ender-3-v3-se-0.4",
+        )
+
+        assertEquals("creality-ender-3-v3-se-0.4", printer.machineProfileId)
+        assertEquals(1, printer.extruderPresets.size)
+        assertNull(printer.bambu)
+    }
+
+    @Test
     fun `buildPrinter creates bambu printer with blank moonraker url`() {
         val printer = PrinterViewModel.buildPrinter(
             id = "bambu-1",

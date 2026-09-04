@@ -56,6 +56,22 @@ class MachineProfileRepositoryTest {
     }
 
     @Test
+    fun `save persists a resolved profile for a fresh repository instance`() {
+        val cache = tempCache()
+        val cachedJson = requireNotNull(
+            javaClass.classLoader?.getResource("machine/generic_klipper_300.json")
+        ).readText()
+        val profile = requireNotNull(
+            MachineProfile.fromResolvedOrcaJson(cachedJson, MachineFamily.GENERIC)
+        )
+
+        MachineProfileRepository(assets, cache).save(profile)
+
+        assertEquals(profile, MachineProfileRepository(assets, cache).byId(profile.id))
+        assertEquals(emptyList<File>(), cache.listFiles { file -> file.name.contains(".tmp-") }?.toList())
+    }
+
+    @Test
     fun `printer without a profile id uses built in U1`() {
         val repository = MachineProfileRepository(assets, tempCache())
         val printer = Printer(id = "p1", nickname = "U1", moonrakerUrl = "http://printer")

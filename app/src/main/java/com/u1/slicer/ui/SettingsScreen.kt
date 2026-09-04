@@ -521,6 +521,26 @@ fun SettingsScreen(
                                 }
                             }
                         },
+                        createPrinterWizardViewModel = {
+                            val container = (context.applicationContext as U1SlicerApplication).container
+                            com.u1.slicer.machine.PrinterWizardViewModel(
+                                fetchIndex = { vendor ->
+                                    container.profileCache.readVendorIndex(vendor)
+                                        ?: container.vendorCatalogClient.fetchVendorIndex(vendor).also { index ->
+                                            container.profileCache.writeVendorIndex(vendor, index)
+                                        }
+                                },
+                                resolveMachine = { vendor, name ->
+                                    container.cachedOrcaProfileLookup.resolveByName(
+                                        vendor,
+                                        com.u1.slicer.machine.OrcaProfileType.MACHINE,
+                                        name,
+                                    )
+                                },
+                                validate = container.machineProfileValidator::validate,
+                                save = printerViewModel::addProfilePrinter,
+                            )
+                        },
                         bambuEnabled = bambuBetaEnabled,
                     )
                 }

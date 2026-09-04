@@ -73,6 +73,10 @@ android {
         }
     }
 
+    sourceSets {
+        androidTest.assets.srcDir 'src/test/resources'
+    }
+
 //    externalNativeBuild {
 //        cmake {
 //            path "src/main/cpp/CMakeLists.txt"

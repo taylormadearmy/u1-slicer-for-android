@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -37,6 +38,10 @@ import androidx.compose.ui.unit.sp
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.machine.PrinterWizardViewModel
+import com.u1.slicer.ui.machine.PrinterWizardScreen
+
+private enum class AddPrinterFlow { CHOOSE, U1, BAMBU, CATALOGUE }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,10 +76,11 @@ fun PrintersSettingsCard(
         bambuSerial: String,
         bambuModel: BambuModel,
     ) -> String?,
+    createPrinterWizardViewModel: () -> PrinterWizardViewModel,
     bambuEnabled: Boolean = false,
 ) {
     var editing by remember { mutableStateOf<Printer?>(null) }
-    var addingNew by remember { mutableStateOf(false) }
+    var addFlow by remember { mutableStateOf<AddPrinterFlow?>(null) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -93,7 +99,7 @@ fun PrintersSettingsCard(
                     fontSize = 16.sp,
                     color = MaterialTheme.colorScheme.primary,
                 )
-                TextButton(onClick = { addingNew = true }) {
+                TextButton(onClick = { addFlow = AddPrinterFlow.CHOOSE }) {
                     Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Add")
@@ -101,8 +107,8 @@ fun PrintersSettingsCard(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                if (bambuEnabled) "Add a Snapmaker U1 or a supported Bambu Lab printer. Bambu support is currently in beta."
-                else "Add a Snapmaker U1. Enable Bambu beta support in Settings to add a supported Bambu Lab printer.",
+                if (bambuEnabled) "Add a Snapmaker U1, a supported Bambu Lab printer, or an Orca catalogue printer."
+                else "Add a Snapmaker U1 or an Orca catalogue printer. Enable Bambu beta support for Bambu Lab printers.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
             )
@@ -139,7 +145,35 @@ fun PrintersSettingsCard(
         }
     }
 
-    if (addingNew) {
+    if (addFlow == AddPrinterFlow.CHOOSE) {
+        AlertDialog(
+            onDismissRequest = { addFlow = null },
+            title = { Text("Add printer") },
+            text = {
+                Column {
+                    TextButton(onClick = { addFlow = AddPrinterFlow.U1 }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Snapmaker U1", modifier = Modifier.fillMaxWidth())
+                    }
+                    if (bambuEnabled) {
+                        TextButton(
+                            onClick = { addFlow = AddPrinterFlow.BAMBU },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Bambu Lab (LAN)", modifier = Modifier.fillMaxWidth()) }
+                    }
+                    TextButton(
+                        onClick = { addFlow = AddPrinterFlow.CATALOGUE },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Orca catalogue printer", modifier = Modifier.fillMaxWidth()) }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { addFlow = null }) { Text("Cancel") }
+            },
+        )
+    }
+    if (addFlow == AddPrinterFlow.U1 || addFlow == AddPrinterFlow.BAMBU) {
+        val initialKind = if (addFlow == AddPrinterFlow.BAMBU) PrinterKind.BAMBU_LAN else PrinterKind.MOONRAKER
         PrinterEditDialog(
             existing = null,
             onSave = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
@@ -147,8 +181,13 @@ fun PrintersSettingsCard(
             },
             onTest = onTestConnection,
             bambuEnabled = bambuEnabled,
-            onDismiss = { addingNew = false },
+            initialKind = initialKind,
+            onDismiss = { addFlow = null },
         )
+    }
+    if (addFlow == AddPrinterFlow.CATALOGUE) {
+        val wizard = remember { createPrinterWizardViewModel() }
+        PrinterWizardScreen(viewModel = wizard, onDismiss = { addFlow = null })
     }
     editing?.let { existing ->
         PrinterEditDialog(

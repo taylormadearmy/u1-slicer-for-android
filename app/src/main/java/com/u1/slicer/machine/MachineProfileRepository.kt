@@ -3,6 +3,8 @@ package com.u1.slicer.machine
 import android.content.Context
 import com.u1.slicer.data.Printer
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /** Minimal asset abstraction so profile loading can be tested without an Android Context. */
 fun interface AssetProvider {
@@ -50,6 +52,24 @@ class MachineProfileRepository(
 
     /** Returns the supported physical slot count for a configured printer. */
     fun extruderCountFor(printer: Printer): Int = activeFor(printer).extruderCount.coerceIn(1, 4)
+
+    /** Atomically persists one fully resolved profile for binding from [Printer.machineProfileId]. */
+    fun save(profile: MachineProfile) {
+        val target = cacheFileFor(profile.id) ?: error("Invalid machine profile id: ${profile.id}")
+        target.parentFile?.mkdirs()
+        val temporary = File(target.parentFile, ".${target.name}.tmp-${System.nanoTime()}")
+        try {
+            temporary.writeText(profile.machineJson)
+            Files.move(
+                temporary.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } finally {
+            if (temporary.exists()) temporary.delete()
+        }
+    }
 
     private fun builtInU1Internal(): MachineProfile {
         // The lazy cache must not recursively call builtInU1().

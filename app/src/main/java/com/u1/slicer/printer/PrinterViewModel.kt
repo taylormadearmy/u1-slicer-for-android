@@ -18,6 +18,7 @@ import com.u1.slicer.data.serializeExtruderPresets
 import com.u1.slicer.data.upsertLibraryProfile
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
+import com.u1.slicer.machine.MachineProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.withContext
@@ -395,6 +396,27 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** Saves, adds, and activates a generic machine after the wizard validation gate passes. */
+    suspend fun addProfilePrinter(profile: MachineProfile, nickname: String, url: String) {
+        withContext(Dispatchers.IO) { machineProfilesRepo.save(profile) }
+        val printer = buildPrinter(
+            id = java.util.UUID.randomUUID().toString(),
+            fallbackNickname = profile.displayName,
+            existingExtruderPresets = defaultExtruderPresets(profile.extruderCount),
+            nickname = nickname,
+            kind = PrinterKind.MOONRAKER,
+            url = url,
+            bambuIp = "",
+            bambuAccessCode = "",
+            bambuSerial = "",
+            bambuModel = BambuModel.P1S,
+            machineProfileId = profile.id,
+        )
+        printersRepo.add(printer)
+        printerRepo.prepareForActivePrinterSwitch()
+        printersRepo.setActive(printer.id)
+    }
+
     fun updatePrinter(
         id: String,
         nickname: String,
@@ -424,6 +446,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                             com.u1.slicer.network.MoonrakerClient.normalizeUrl(current.moonrakerUrl) ==
                                 com.u1.slicer.network.MoonrakerClient.normalizeUrl(url)
                     },
+                    machineProfileId = current.machineProfileId,
                 )
             val activeId = printersRepo.config.first()?.activeId
             if (id == activeId && printerConnectionFingerprint(current) != printerConnectionFingerprint(updated)) {
@@ -827,6 +850,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             bambuSerial: String,
             bambuModel: BambuModel,
             selectedWebcamUid: String? = null,
+            machineProfileId: String? = null,
         ): Printer {
             val resolvedNickname = nickname.ifBlank { fallbackNickname }
             return when (kind) {
@@ -838,6 +862,7 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     bambu = null,
                     extruderPresets = existingExtruderPresets,
                     selectedWebcamUid = selectedWebcamUid,
+                    machineProfileId = machineProfileId,
                 )
                 PrinterKind.BAMBU_LAN -> Printer(
                     id = id,

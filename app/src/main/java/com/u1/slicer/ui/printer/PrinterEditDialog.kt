@@ -55,9 +55,10 @@ fun PrinterEditDialog(
     ) -> String?,
     onDismiss: () -> Unit,
     bambuEnabled: Boolean = false,
+    initialKind: PrinterKind = existing?.kind ?: PrinterKind.MOONRAKER,
 ) {
     var nickname by remember { mutableStateOf(existing?.nickname ?: "") }
-    var kind by remember { mutableStateOf(existing?.kind ?: PrinterKind.MOONRAKER) }
+    var kind by remember { mutableStateOf(initialKind) }
     var url by remember { mutableStateOf(existing?.moonrakerUrl ?: "") }
     var bambuIp by remember { mutableStateOf(existing?.bambu?.ip ?: "") }
     var bambuAccessCode by remember { mutableStateOf(existing?.bambu?.accessCode ?: "") }
