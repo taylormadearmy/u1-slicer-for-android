@@ -60,6 +60,7 @@ import com.u1.slicer.U1SlicerApplication
 import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.network.UpdateChecker
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import com.u1.slicer.data.OverrideMode
 import com.u1.slicer.data.OverrideValue
 import com.u1.slicer.data.SlicingOverrides
@@ -540,6 +541,21 @@ fun SettingsScreen(
                                 validate = container.machineProfileValidator::validate,
                                 save = printerViewModel::addProfilePrinter,
                             )
+                        },
+                        onImportOrcaPrinter = { input, fileName ->
+                            val container = (context.applicationContext as U1SlicerApplication).container
+                            val imported = container.orcaProfileBundleImporter.import(input, fileName)
+                            val existingFilaments = container.filamentDao.getAll().first()
+                                .mapTo(mutableSetOf()) { it.name }
+                            imported.filaments.filter { existingFilaments.add(it.name) }.forEach {
+                                container.filamentDao.insert(it)
+                            }
+                            imported.processes.forEach { profile ->
+                                container.processProfilesRepository.add(profile)
+                            }
+                            imported.machines.forEach { profile ->
+                                printerViewModel.addProfilePrinter(profile, profile.displayName, "")
+                            }
                         },
                         bambuEnabled = bambuBetaEnabled,
                     )

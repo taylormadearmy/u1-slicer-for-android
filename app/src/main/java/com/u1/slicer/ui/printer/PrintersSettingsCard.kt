@@ -1,5 +1,7 @@
 package com.u1.slicer.ui.printer
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,9 +31,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,6 +44,9 @@ import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
 import com.u1.slicer.machine.PrinterWizardViewModel
 import com.u1.slicer.ui.machine.PrinterWizardScreen
+import com.u1.slicer.ui.documentDisplayName
+import java.io.InputStream
+import kotlinx.coroutines.launch
 
 private enum class AddPrinterFlow { CHOOSE, U1, BAMBU, CATALOGUE }
 
@@ -77,10 +84,32 @@ fun PrintersSettingsCard(
         bambuModel: BambuModel,
     ) -> String?,
     createPrinterWizardViewModel: () -> PrinterWizardViewModel,
+    onImportOrcaPrinter: suspend (InputStream, String) -> Unit,
     bambuEnabled: Boolean = false,
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var editing by remember { mutableStateOf<Printer?>(null) }
     var addFlow by remember { mutableStateOf<AddPrinterFlow?>(null) }
+    var importError by remember { mutableStateOf<String?>(null) }
+    var importing by remember { mutableStateOf(false) }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            importing = true
+            try {
+                val name = context.documentDisplayName(uri) ?: "profile.orca_printer"
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    onImportOrcaPrinter(input, name)
+                } ?: error("Could not read Orca profile bundle.")
+                addFlow = null
+            } catch (error: Exception) {
+                importError = error.message ?: "Orca profile import failed."
+            } finally {
+                importing = false
+            }
+        }
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -164,6 +193,17 @@ fun PrintersSettingsCard(
                         onClick = { addFlow = AddPrinterFlow.CATALOGUE },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Orca catalogue printer", modifier = Modifier.fillMaxWidth()) }
+                    TextButton(
+                        enabled = !importing,
+                        onClick = {
+                            importLauncher.launch(arrayOf(
+                                "application/zip",
+                                "application/octet-stream",
+                                "*/*",
+                            ))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Import .orca_printer bundle", modifier = Modifier.fillMaxWidth()) }
                 }
             },
             confirmButton = {},
@@ -188,6 +228,16 @@ fun PrintersSettingsCard(
     if (addFlow == AddPrinterFlow.CATALOGUE) {
         val wizard = remember { createPrinterWizardViewModel() }
         PrinterWizardScreen(viewModel = wizard, onDismiss = { addFlow = null })
+    }
+    importError?.let { error ->
+        AlertDialog(
+            onDismissRequest = { importError = null },
+            title = { Text("Import failed") },
+            text = { Text(error) },
+            confirmButton = {
+                TextButton(onClick = { importError = null }) { Text("OK") }
+            },
+        )
     }
     editing?.let { existing ->
         PrinterEditDialog(

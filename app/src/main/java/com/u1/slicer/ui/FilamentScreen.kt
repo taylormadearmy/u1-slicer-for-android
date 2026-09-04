@@ -36,6 +36,8 @@ import com.u1.slicer.data.MixedFilamentRow
 import com.u1.slicer.data.MixedFilamentSliceSummary
 import com.u1.slicer.data.resolveImportedMixRecipeDisplaySummary
 import com.u1.slicer.util.toFloatLenient
+import com.u1.slicer.U1SlicerApplication
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -67,6 +69,7 @@ fun FilamentScreen(
     var editingFilament by remember { mutableStateOf<FilamentProfile?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val importScope = rememberCoroutineScope()
 
     // M3 Phase A: mix-slot dialog state. `editingMix` non-null = Edit mode.
     var showMixDialog by remember { mutableStateOf(false) }
@@ -154,14 +157,25 @@ fun FilamentScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        try {
-            val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
-                ?: throw Exception("Could not read file")
-            val profiles = parseFilamentJson(json, context)
-            if (profiles.isEmpty()) throw Exception("No valid filament profiles found in file")
-            onImport(profiles)
-        } catch (e: Exception) {
-            importError = e.message ?: "Import failed"
+        importScope.launch {
+            try {
+                val providerName = context.documentDisplayName(uri)
+                val name = providerName ?: if (
+                    context.contentResolver.getType(uri) in setOf("application/zip", "application/octet-stream")
+                ) "profile.orca_filament" else "profile.json"
+                val profiles = context.contentResolver.openInputStream(uri)?.use { input ->
+                    if (name.endsWith(".orca_filament", ignoreCase = true)) {
+                        val container = (context.applicationContext as U1SlicerApplication).container
+                        container.orcaProfileBundleImporter.import(input, name).filaments
+                    } else {
+                        parseFilamentJson(input.bufferedReader().readText(), context)
+                    }
+                } ?: throw Exception("Could not read file")
+                if (profiles.isEmpty()) throw Exception("No valid filament profiles found in file")
+                onImport(profiles)
+            } catch (e: Exception) {
+                importError = e.message ?: "Import failed"
+            }
         }
     }
 
@@ -203,7 +217,12 @@ fun FilamentScreen(
                 actions = {
                     TextButton(
                         onClick = {
-                            importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                            importLauncher.launch(arrayOf(
+                                "application/json",
+                                "application/zip",
+                                "application/octet-stream",
+                                "*/*",
+                            ))
                         },
                         modifier = Modifier.padding(end = 4.dp)
                     ) {
@@ -213,7 +232,7 @@ fun FilamentScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("Import JSON")
+                        Text("Import profile")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
