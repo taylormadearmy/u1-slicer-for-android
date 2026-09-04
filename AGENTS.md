@@ -52,6 +52,14 @@ ANDROID_SERIAL=<id> ./gradlew connectedDebugAndroidTest --no-daemon \
 ```
 The default instrumented smoke set and E2E range live in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1). Use `-InstrumentedClasses` / `-SkipUnit` / `-SkipInstrumented` / `-SkipE2E` only when you intentionally want a partial sweep.
 
+When changing the pinned Orca catalogue or its recorded fetched-profile snapshots, run the pinned upstream profile checks before the confidence sweep:
+
+```powershell
+python .\scripts\validate-machine-profiles.py
+```
+
+The wrapper is offline and validates the recorded subpaths in `app/src/test/resources/machine/catalogue/` with the checker from the pinned Orca submodule.
+
 **Sharded across two devices** (roughly 2× speedup):
 ```bash
 scripts/run-instrumented-sharded.sh

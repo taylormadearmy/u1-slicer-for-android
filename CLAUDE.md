@@ -108,6 +108,14 @@ For the repo-defined confidence sweep, use:
 ```
 The default smoke set is defined in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1). When touching session resume, copy-count / bed-fit, or Prepare/slice state, include the recent-change add-ons from the manifest rather than inventing a new subset.
 
+When changing the pinned Orca catalogue or its recorded fetched-profile snapshots, run the pinned upstream profile checks before the confidence sweep:
+
+```powershell
+python .\scripts\validate-machine-profiles.py
+```
+
+The wrapper uses `app/src/main/cpp/orcaslicer/scripts/orca_extra_profile_check.py` without network access. It validates the recorded subpaths present in the partial vendor-index snapshots under `app/src/test/resources/machine/catalogue/`.
+
 For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` if present.
 
 > **All tests must pass — there are no known pre-existing failures.** If a test fails, investigate it; do not assume it is a pre-existing or flaky issue.

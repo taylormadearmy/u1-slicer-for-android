@@ -27,6 +27,14 @@ For the repo-defined confidence sweep with live progress output and a status fil
 ```
 The default smoke list and E2E range are in [`scripts/confidence-check.psd1`](scripts/confidence-check.psd1).
 
+If the pinned Orca catalogue or any recorded fetched-profile snapshot changed, validate those files before starting the confidence sweep:
+
+```powershell
+python .\scripts\validate-machine-profiles.py
+```
+
+This check is offline. It runs the applicable checks from the pinned Orca submodule against the recorded subpaths under `app/src/test/resources/machine/catalogue/`.
+
 If Gradle's connected-test wrapper is flaky on this Windows machine, run the device suite directly:
 
 ```bash
