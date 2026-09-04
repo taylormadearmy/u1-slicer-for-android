@@ -14,6 +14,7 @@ data class VendorCatalogIndex(
     val version: String,
     val machineModelList: List<VendorCatalogEntry>,
     val machineList: List<VendorCatalogEntry>,
+    val rawJson: String = "",
 )
 
 /** Fetches the machine catalogue from the pinned OrcaSlicer profile tree. */
@@ -70,6 +71,7 @@ class VendorCatalogClient(
                 version,
                 parseEntries(root, "machine_model_list"),
                 parseEntries(root, "machine_list"),
+                json,
             )
         } catch (error: CatalogError) {
             throw error
