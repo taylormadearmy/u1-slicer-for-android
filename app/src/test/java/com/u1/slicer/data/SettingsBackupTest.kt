@@ -16,6 +16,26 @@ import org.junit.Test
 class SettingsBackupTest {
 
     @Test
+    fun `backup preserves host credentials under PrusaSlicer keys`() {
+        val printer = Printer(
+            id = "prusa",
+            nickname = "PrusaLink",
+            hostType = HostType.PRUSALINK,
+            moonrakerUrl = "http://prusa.local",
+            apiKey = "api",
+            username = "user",
+            password = "pass",
+        )
+        val json = SettingsBackup.export(SettingsBackup.BackupData(null, null,
+            PrintersConfig(listOf(printer), printer.id), null))
+        val record = JSONObject(json).getJSONArray("printers").getJSONObject(0)
+        assertEquals("prusalink", record.getString("host_type"))
+        assertEquals("http://prusa.local", record.getString("print_host"))
+        assertEquals("api", record.getString("printhost_apikey"))
+        assertEquals(printer, requireNotNull(SettingsBackup.import(json).printersConfig).active)
+    }
+
+    @Test
     fun `export produces valid JSON with version field`() {
         val json = SettingsBackup.export(
             SliceConfig(), SlicingOverrides(), "", emptyList(), emptyList()

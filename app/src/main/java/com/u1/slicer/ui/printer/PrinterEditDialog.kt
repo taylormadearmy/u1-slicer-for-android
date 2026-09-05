@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,7 +40,11 @@ fun PrinterEditDialog(
     onSave: (
         nickname: String,
         kind: PrinterKind,
+        hostType: HostType,
         url: String,
+        apiKey: String,
+        username: String,
+        password: String,
         bambuIp: String,
         bambuAccessCode: String,
         bambuSerial: String,
@@ -47,7 +52,11 @@ fun PrinterEditDialog(
     ) -> Unit,
     onTest: suspend (
         kind: PrinterKind,
+        hostType: HostType,
         url: String,
+        apiKey: String,
+        username: String,
+        password: String,
         bambuIp: String,
         bambuAccessCode: String,
         bambuSerial: String,
@@ -56,27 +65,34 @@ fun PrinterEditDialog(
     onDismiss: () -> Unit,
     bambuEnabled: Boolean = false,
     initialKind: PrinterKind = existing?.kind ?: PrinterKind.MOONRAKER,
+    initialHostType: HostType = existing?.hostType
+        ?: if (initialKind == PrinterKind.BAMBU_LAN) HostType.BAMBU_LAN else HostType.MOONRAKER,
 ) {
     var nickname by remember { mutableStateOf(existing?.nickname ?: "") }
     var kind by remember { mutableStateOf(initialKind) }
+    var hostType by remember { mutableStateOf(initialHostType) }
     var url by remember { mutableStateOf(existing?.moonrakerUrl ?: "") }
+    var apiKey by remember { mutableStateOf(existing?.apiKey ?: "") }
+    var username by remember { mutableStateOf(existing?.username ?: "") }
+    var password by remember { mutableStateOf(existing?.password ?: "") }
     var bambuIp by remember { mutableStateOf(existing?.bambu?.ip ?: "") }
     var bambuAccessCode by remember { mutableStateOf(existing?.bambu?.accessCode ?: "") }
     var bambuSerial by remember { mutableStateOf(existing?.bambu?.serial ?: "") }
     var bambuModel by remember { mutableStateOf(existing?.bambu?.model ?: BambuModel.P1S) }
+    var hostExpanded by remember { mutableStateOf(false) }
     var modelExpanded by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val canChangeKind = canChangePrinterKind(existing)
 
-    val canSave = when (kind) {
-        PrinterKind.MOONRAKER -> url.isNotBlank()
-        PrinterKind.BAMBU_LAN -> bambuIp.isNotBlank() && bambuAccessCode.isNotBlank() && bambuSerial.isNotBlank()
+    val canSave = when (hostType) {
+        HostType.BAMBU_LAN -> bambuIp.isNotBlank() && bambuAccessCode.isNotBlank() && bambuSerial.isNotBlank()
+        else -> url.isNotBlank()
     }
-    val canTest = when (kind) {
-        PrinterKind.MOONRAKER -> url.isNotBlank()
-        PrinterKind.BAMBU_LAN -> bambuIp.isNotBlank() && bambuAccessCode.isNotBlank() && bambuSerial.isNotBlank()
+    val canTest = when (hostType) {
+        HostType.BAMBU_LAN -> bambuIp.isNotBlank() && bambuAccessCode.isNotBlank() && bambuSerial.isNotBlank()
+        else -> url.isNotBlank()
     }
 
     AlertDialog(
@@ -92,22 +108,29 @@ fun PrinterEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    SegmentedButton(
-                        selected = kind == PrinterKind.MOONRAKER,
-                        enabled = canChangeKind,
-                        onClick = { kind = PrinterKind.MOONRAKER; testResult = null },
-                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                    ) {
-                        Text("Snapmaker U1")
-                    }
-                    SegmentedButton(
-                        selected = kind == PrinterKind.BAMBU_LAN,
-                        enabled = canChangeKind && bambuEnabled,
-                        onClick = { kind = PrinterKind.BAMBU_LAN; testResult = null },
-                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                    ) {
-                        Text(if (bambuEnabled) "Bambu Lab (LAN)" else "Bambu (off)")
+                ExposedDropdownMenuBox(
+                    expanded = hostExpanded,
+                    onExpandedChange = { if (canChangeKind) hostExpanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = when (hostType) { HostType.MOONRAKER -> "Moonraker"; HostType.OCTOPRINT -> "OctoPrint"; HostType.PRUSALINK -> "PrusaLink"; HostType.BAMBU_LAN -> "Bambu Lab (LAN)" },
+                        onValueChange = {}, readOnly = true, label = { Text("Host type") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(hostExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    )
+                    DropdownMenu(expanded = hostExpanded, onDismissRequest = { hostExpanded = false }) {
+                        listOf(HostType.MOONRAKER, HostType.OCTOPRINT, HostType.PRUSALINK, HostType.BAMBU_LAN).forEach { option ->
+                            DropdownMenuItem(
+                                enabled = option != HostType.BAMBU_LAN || bambuEnabled,
+                                text = { Text(option.name.replace('_', ' ')) },
+                                onClick = {
+                                    hostType = option
+                                    kind = if (option == HostType.BAMBU_LAN) PrinterKind.BAMBU_LAN else PrinterKind.MOONRAKER
+                                    hostExpanded = false
+                                    testResult = null
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -119,7 +142,7 @@ fun PrinterEditDialog(
                     )
                 }
 
-                if (kind == PrinterKind.BAMBU_LAN) {
+                if (hostType == HostType.BAMBU_LAN) {
                     Text(
                         "Use the printer's LAN-only access code and serial number. Upload and print support depends on printer firmware.",
                         style = MaterialTheme.typography.bodySmall,
@@ -127,9 +150,9 @@ fun PrinterEditDialog(
                     )
                 }
 
-                if (kind == PrinterKind.MOONRAKER) {
+                if (hostType != HostType.BAMBU_LAN) {
                     Text(
-                        "Connects to your Snapmaker U1 using Moonraker.",
+                        "Connects to your printer using the selected host service.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                     )
@@ -141,6 +164,11 @@ fun PrinterEditDialog(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    OutlinedTextField(value = apiKey, onValueChange = { apiKey = it; testResult = null }, label = { Text("API key (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    if (hostType == HostType.PRUSALINK) {
+                        OutlinedTextField(value = username, onValueChange = { username = it; testResult = null }, label = { Text("Username (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = password, onValueChange = { password = it; testResult = null }, label = { Text("Password (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    }
                 } else {
                     ExposedDropdownMenuBox(
                         expanded = modelExpanded,
@@ -203,7 +231,11 @@ fun PrinterEditDialog(
                             scope.launch {
                                 testResult = onTest(
                                     kind,
+                                    hostType,
                                     url,
+                                    apiKey,
+                                    username,
+                                    password,
                                     bambuIp,
                                     bambuAccessCode,
                                     bambuSerial,
@@ -234,7 +266,11 @@ fun PrinterEditDialog(
                     onSave(
                         nickname,
                         kind,
+                        hostType,
                         url,
+                        apiKey,
+                        username,
+                        password,
                         bambuIp,
                         bambuAccessCode,
                         bambuSerial,

@@ -3,6 +3,28 @@ package com.u1.slicer.data
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** Network host protocol used for a configured printer. */
+enum class HostType {
+    MOONRAKER, OCTOPRINT, PRUSALINK, BAMBU_LAN;
+
+    companion object {
+        fun fromPrusaSlicer(value: String?): HostType = when (value?.trim()?.lowercase()) {
+            "octoprint" -> OCTOPRINT
+            "prusalink", "prusa_link" -> PRUSALINK
+            "bambu", "bambu_lan", "bambulab" -> BAMBU_LAN
+            else -> MOONRAKER
+        }
+
+        fun toPrusaSlicer(value: HostType): String = when (value) {
+            MOONRAKER -> "moonraker"
+            OCTOPRINT -> "octoprint"
+            PRUSALINK -> "prusalink"
+            BAMBU_LAN -> "bambu_lan"
+        }
+    }
+}
+
+/** Retained as a source/binary compatibility category for existing UI and Bambu code. */
 enum class PrinterKind { MOONRAKER, BAMBU_LAN }
 
 enum class BambuModel { X1C, X1E, P1S, P1P, P2S, A1, A1_MINI, H2D }
@@ -38,8 +60,12 @@ data class Printer(
     val id: String,
     val nickname: String,
     val kind: PrinterKind = PrinterKind.MOONRAKER,
+    val hostType: HostType = if (kind == PrinterKind.BAMBU_LAN) HostType.BAMBU_LAN else HostType.MOONRAKER,
     val moonrakerUrl: String = "",
     val bambu: BambuConfig? = null,
+    val apiKey: String? = null,
+    val username: String? = null,
+    val password: String? = null,
     val extruderPresets: List<ExtruderPreset> = defaultExtruderPresets(),
     /** Stable Moonraker webcam UID chosen for this printer, or null for automatic choice. */
     val selectedWebcamUid: String? = null,
@@ -50,10 +76,12 @@ data class Printer(
         when (kind) {
             PrinterKind.MOONRAKER -> {
                 require(bambu == null) { "Moonraker printer must not have bambu config" }
+                require(hostType != HostType.BAMBU_LAN) { "Non-Bambu printer must not use Bambu LAN host type" }
             }
             PrinterKind.BAMBU_LAN -> {
                 require(bambu != null) { "Bambu printer requires bambu config" }
                 require(moonrakerUrl.isBlank()) { "Bambu printer must not have moonrakerUrl" }
+                require(hostType == HostType.BAMBU_LAN) { "Bambu printer requires Bambu LAN host type" }
             }
         }
     }
@@ -63,7 +91,12 @@ data class Printer(
             put("id", p.id)
             put("nickname", p.nickname)
             put("kind", p.kind.name)
+            put("host_type", HostType.toPrusaSlicer(p.hostType))
             put("moonrakerUrl", p.moonrakerUrl)
+            put("print_host", p.moonrakerUrl)
+            p.apiKey?.let { put("printhost_apikey", it) }
+            p.username?.let { put("printhost_user", it) }
+            p.password?.let { put("printhost_password", it) }
             if (p.bambu != null) put("bambu", BambuConfig.toJsonObject(p.bambu))
             put("extruderPresets", JSONArray(serializeExtruderPresets(p.extruderPresets)))
             p.selectedWebcamUid?.takeIf { it.isNotBlank() }?.let { put("selectedWebcamUid", it) }
@@ -71,7 +104,12 @@ data class Printer(
         }
 
         fun fromJsonObject(obj: JSONObject): Printer {
-            val kind = obj.optString("kind", PrinterKind.MOONRAKER.name)
+            val persistedHostType = if (obj.has("host_type")) {
+                HostType.fromPrusaSlicer(obj.optString("host_type"))
+            } else null
+            val kind = obj.optString("kind", if (persistedHostType == HostType.BAMBU_LAN) {
+                PrinterKind.BAMBU_LAN.name
+            } else PrinterKind.MOONRAKER.name)
                 .takeIf { it.isNotBlank() }
                 ?.let { PrinterKind.valueOf(it) }
                 ?: PrinterKind.MOONRAKER
@@ -83,8 +121,12 @@ data class Printer(
                 id = obj.getString("id"),
                 nickname = obj.getString("nickname"),
                 kind = kind,
-                moonrakerUrl = obj.optString("moonrakerUrl", ""),
+                hostType = persistedHostType ?: if (kind == PrinterKind.BAMBU_LAN) HostType.BAMBU_LAN else HostType.MOONRAKER,
+                moonrakerUrl = obj.optString("print_host", obj.optString("moonrakerUrl", "")),
                 bambu = obj.optJSONObject("bambu")?.let(BambuConfig::fromJsonObject),
+                apiKey = obj.optString("printhost_apikey", "").takeIf { it.isNotBlank() },
+                username = obj.optString("printhost_user", "").takeIf { it.isNotBlank() },
+                password = obj.optString("printhost_password", "").takeIf { it.isNotBlank() },
                 extruderPresets = extruderPresets,
                 selectedWebcamUid = obj.optString("selectedWebcamUid", "").takeIf { it.isNotBlank() },
                 machineProfileId = obj.optString("machineProfileId", "").takeIf { it.isNotBlank() },

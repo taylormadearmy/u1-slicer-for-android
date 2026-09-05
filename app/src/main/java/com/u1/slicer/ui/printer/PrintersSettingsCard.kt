@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.sp
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
 import com.u1.slicer.machine.PrinterWizardViewModel
 import com.u1.slicer.ui.machine.PrinterWizardScreen
 import com.u1.slicer.ui.documentDisplayName
@@ -58,7 +59,11 @@ fun PrintersSettingsCard(
     onAdd: (
         nickname: String,
         kind: PrinterKind,
+        hostType: HostType,
         url: String,
+        apiKey: String,
+        username: String,
+        password: String,
         bambuIp: String,
         bambuAccessCode: String,
         bambuSerial: String,
@@ -68,7 +73,11 @@ fun PrintersSettingsCard(
         id: String,
         nickname: String,
         kind: PrinterKind,
+        hostType: HostType,
         url: String,
+        apiKey: String,
+        username: String,
+        password: String,
         bambuIp: String,
         bambuAccessCode: String,
         bambuSerial: String,
@@ -77,7 +86,11 @@ fun PrintersSettingsCard(
     onDelete: (id: String) -> Unit,
     onTestConnection: suspend (
         kind: PrinterKind,
+        hostType: HostType,
         url: String,
+        apiKey: String,
+        username: String,
+        password: String,
         bambuIp: String,
         bambuAccessCode: String,
         bambuSerial: String,
@@ -216,8 +229,8 @@ fun PrintersSettingsCard(
         val initialKind = if (addFlow == AddPrinterFlow.BAMBU) PrinterKind.BAMBU_LAN else PrinterKind.MOONRAKER
         PrinterEditDialog(
             existing = null,
-            onSave = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                onAdd(nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel)
+            onSave = { nick, kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
+                onAdd(nick, kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel)
             },
             onTest = onTestConnection,
             bambuEnabled = bambuEnabled,
@@ -242,8 +255,8 @@ fun PrintersSettingsCard(
     editing?.let { existing ->
         PrinterEditDialog(
             existing = existing,
-            onSave = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                onEdit(existing.id, nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel)
+            onSave = { nick, kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
+                onEdit(existing.id, nick, kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel)
             },
             onTest = onTestConnection,
             bambuEnabled = bambuEnabled,

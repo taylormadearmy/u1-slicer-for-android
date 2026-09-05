@@ -473,23 +473,31 @@ fun SettingsScreen(
                     com.u1.slicer.ui.printer.PrintersSettingsCard(
                         printers = visiblePrinters,
                         activeId = activePrinterId,
-                        onAdd = { nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
+                        onAdd = { nick, kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
                             printerViewModel.addPrinter(
                                 nick,
                                 kind,
+                                hostType,
                                 url,
+                                apiKey,
+                                username,
+                                password,
                                 bambuIp,
                                 bambuAccessCode,
                                 bambuSerial,
                                 bambuModel,
                             )
                         },
-                        onEdit = { id, nick, kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
+                        onEdit = { id, nick, kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
                             printerViewModel.updatePrinter(
                                 id,
                                 nick,
                                 kind,
+                                hostType,
                                 url,
+                                apiKey,
+                                username,
+                                password,
                                 bambuIp,
                                 bambuAccessCode,
                                 bambuSerial,
@@ -497,15 +505,17 @@ fun SettingsScreen(
                             )
                         },
                         onDelete = { id -> printerViewModel.deletePrinter(id) },
-                        onTestConnection = { kind, url, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
-                            when (kind) {
-                                com.u1.slicer.data.PrinterKind.MOONRAKER -> {
+                        onTestConnection = { kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel ->
+                            when (hostType) {
+                                com.u1.slicer.data.HostType.MOONRAKER -> {
                                     val client = com.u1.slicer.network.MoonrakerClient().apply {
                                         baseUrl = com.u1.slicer.network.MoonrakerClient.normalizeUrl(url)
                                     }
                                     client.testConnection()
                                 }
-                                com.u1.slicer.data.PrinterKind.BAMBU_LAN -> {
+                                com.u1.slicer.data.HostType.OCTOPRINT,
+                                com.u1.slicer.data.HostType.PRUSALINK -> "Not yet supported"
+                                com.u1.slicer.data.HostType.BAMBU_LAN -> {
                                     if (bambuIp.isBlank() || bambuAccessCode.isBlank() || bambuSerial.isBlank()) {
                                         "Enter IP, access code, and serial first"
                                     } else {
