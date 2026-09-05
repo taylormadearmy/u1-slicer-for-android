@@ -25,6 +25,8 @@ class MachineProfileTest {
         assertEquals(4, profile.extruderCount)
         assertEquals(0.4f, profile.nozzleDiameter)
         assertEquals(GcodeFlavor.KLIPPER, profile.gcodeFlavor)
+        assertEquals(300, profile.maxNozzleTemperatureC)
+        assertEquals(120, profile.maxBedTemperatureC)
         assertEquals(false, profile.singleExtruderMultiMaterial)
         assertTrue(profile.machineStartGcode.contains("PRINT_START"))
         assertEquals(fixture("snapmaker_u1_resolved.json"), profile.machineJson)
@@ -42,6 +44,24 @@ class MachineProfileTest {
         assertEquals(1, profile.extruderCount)
         assertEquals(GcodeFlavor.KLIPPER, profile.gcodeFlavor)
         assertEquals(0.4f, profile.nozzleDiameter)
+    }
+
+    @Test
+    fun `parses app heater limits from selected machine profile`() {
+        val json = """
+            {
+              "type": "machine",
+              "name": "Cool-running printer",
+              "printable_area": ["0x0", "180x0", "180x180", "0x180"],
+              "max_nozzle_temperature": "275",
+              "max_bed_temperature": "95"
+            }
+        """.trimIndent()
+
+        val profile = requireNotNull(MachineProfile.fromResolvedOrcaJson(json, MachineFamily.GENERIC))
+
+        assertEquals(275, profile.maxNozzleTemperatureC)
+        assertEquals(95, profile.maxBedTemperatureC)
     }
 
     @Test

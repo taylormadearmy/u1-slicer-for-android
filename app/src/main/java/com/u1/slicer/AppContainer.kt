@@ -51,6 +51,7 @@ class AppContainer(context: Context) {
     val processProfilesRepository = ProcessProfilesRepository(context.applicationContext)
     val printerTransportFactory = DefaultPrinterTransportFactory(
         bambuClientFactory = bambuLanClientFactory,
+        machineProfileFactory = machineProfileRepository::activeFor,
     )
     val printerRepository = PrinterRepository(
         context.applicationContext,

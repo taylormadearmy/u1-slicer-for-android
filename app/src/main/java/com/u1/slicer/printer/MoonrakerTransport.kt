@@ -16,6 +16,8 @@ import java.io.File
 
 class MoonrakerTransport(
     private val client: MoonrakerClient,
+    private val maxBedTemperatureC: Int = com.u1.slicer.machine.MachineProfile.DEFAULT_MAX_BED_TEMPERATURE_C,
+    private val maxNozzleTemperatureC: Int = com.u1.slicer.machine.MachineProfile.DEFAULT_MAX_NOZZLE_TEMPERATURE_C,
 ) : PrinterTransport {
     override val capabilities = PrinterTransportCapabilities(
         supportsCamera = true,
@@ -23,7 +25,7 @@ class MoonrakerTransport(
         supportsLightControl = true,
         supportsFilamentSync = true,
         supportsHeaterControl = true,
-        supportsCustomGcode = true,
+        supportsConsole = true,
         supportsSkipObjects = true,
         supportsUpload = true,
         supportsStartJob = true,
@@ -93,7 +95,13 @@ class MoonrakerTransport(
         else TransportCommandResult.Failure("Could not send G-code")
 
     override suspend fun setHeaterTemperature(heater: String, targetC: Int): TransportCommandResult =
-        if (client.setHeaterTemperature(heater, targetC)) TransportCommandResult.Success
+        if (client.setHeaterTemperature(
+                heater,
+                targetC,
+                maxBedTemperatureC,
+                maxNozzleTemperatureC,
+            )
+        ) TransportCommandResult.Success
         else TransportCommandResult.Failure("Could not update temperature")
 
     override suspend fun probeRemoteScreen(): Boolean = client.probeRemoteScreen()

@@ -4,13 +4,31 @@ import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
 import com.u1.slicer.network.MoonrakerClient
+import com.u1.slicer.machine.MachineFamily
+import com.u1.slicer.machine.MachineProfile
+import kotlinx.coroutines.test.runTest
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PrinterTransportFactoryTest {
+
+    @Test
+    fun `factory dispatches OctoPrint and PrusaLink by host type`() {
+        val octo = object : PrinterTransport by OctoPrintTransport("http://octo", apiKey = null) {}
+        val prusa = object : PrinterTransport by PrusaLinkTransport("http://prusa") {}
+        val factory = DefaultPrinterTransportFactory(
+            octoPrintTransportFactory = { octo },
+            prusaLinkTransportFactory = { prusa },
+        )
+        assertTrue(factory.create(Printer("o", "Octo", hostType = HostType.OCTOPRINT)) === octo)
+        assertTrue(factory.create(Printer("p", "Prusa", hostType = HostType.PRUSALINK)) === prusa)
+    }
 
     @Test
     fun `factory creates moonraker transport for moonraker printer`() {
@@ -28,6 +46,48 @@ class PrinterTransportFactoryTest {
 
         assertTrue(transport is MoonrakerTransport)
         assertTrue(client.baseUrl.contains(":7125"))
+    }
+
+    @Test
+    fun `factory binds selected machine heater limits to Moonraker transport`() = runTest {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        server.start()
+        try {
+            val profile = requireNotNull(
+                MachineProfile.fromResolvedOrcaJson(
+                    """{
+                      "type":"machine",
+                      "name":"Limited",
+                      "printable_area":["0x0","180x0","180x180","0x180"],
+                      "max_nozzle_temperature":"275",
+                      "max_bed_temperature":"95"
+                    }""",
+                    MachineFamily.GENERIC,
+                )
+            )
+            val factory = DefaultPrinterTransportFactory(
+                moonrakerClientFactory = { MoonrakerClient() },
+                machineProfileFactory = { profile },
+            )
+            val transport = factory.create(
+                Printer(
+                    id = "limited",
+                    nickname = "Limited",
+                    moonrakerUrl = server.url("/").toString(),
+                )
+            )
+
+            assertEquals(
+                TransportCommandResult.Success,
+                transport.setHeaterTemperature("extruder", 999),
+            )
+            val request = server.takeRequest()
+            assertEquals("/printer/gcode/script", request.path)
+            assertTrue(request.body.readUtf8().contains("TARGET=275"))
+        } finally {
+            server.shutdown()
+        }
     }
 
     @Test

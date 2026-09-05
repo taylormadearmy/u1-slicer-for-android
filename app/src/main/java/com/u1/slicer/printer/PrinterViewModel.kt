@@ -840,7 +840,11 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             PrinterKind.MOONRAKER -> listOf(
                 printer.id,
                 printer.kind.name,
-                com.u1.slicer.network.MoonrakerClient.normalizeUrl(printer.moonrakerUrl),
+                printer.hostType.name,
+                normalizePrintHostUrl(printer.moonrakerUrl, printer.hostType),
+                printer.apiKey.orEmpty(),
+                printer.username.orEmpty(),
+                printer.password.orEmpty(),
             ).joinToString("|")
             PrinterKind.BAMBU_LAN -> printer.bambu?.let { bambu ->
                 listOf(
@@ -880,13 +884,13 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
                     nickname = resolvedNickname,
                     kind = PrinterKind.MOONRAKER,
                     hostType = hostType,
-                    moonrakerUrl = com.u1.slicer.network.MoonrakerClient.normalizeUrl(url),
+                    moonrakerUrl = normalizePrintHostUrl(url, hostType),
                     apiKey = apiKey.trim().takeIf { it.isNotBlank() },
                     username = username.trim().takeIf { it.isNotBlank() },
                     password = password.takeIf { it.isNotBlank() },
                     bambu = null,
                     extruderPresets = existingExtruderPresets,
-                    selectedWebcamUid = selectedWebcamUid,
+                    selectedWebcamUid = selectedWebcamUid.takeIf { hostType == HostType.MOONRAKER },
                     machineProfileId = machineProfileId,
                 )
                 PrinterKind.BAMBU_LAN -> Printer(

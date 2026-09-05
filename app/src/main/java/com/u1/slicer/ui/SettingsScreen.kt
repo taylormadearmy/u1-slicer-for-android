@@ -513,8 +513,18 @@ fun SettingsScreen(
                                     }
                                     client.testConnection()
                                 }
-                                com.u1.slicer.data.HostType.OCTOPRINT,
-                                com.u1.slicer.data.HostType.PRUSALINK -> "Not yet supported"
+                                com.u1.slicer.data.HostType.OCTOPRINT ->
+                                    com.u1.slicer.printer.OctoPrintTransport(
+                                        com.u1.slicer.printer.normalizePrintHostUrl(url, hostType),
+                                        apiKey.takeIf { it.isNotBlank() },
+                                    ).testConnection()
+                                com.u1.slicer.data.HostType.PRUSALINK ->
+                                    com.u1.slicer.printer.PrusaLinkTransport(
+                                        baseUrl = com.u1.slicer.printer.normalizePrintHostUrl(url, hostType),
+                                        apiKey = apiKey.takeIf { it.isNotBlank() },
+                                        username = username.takeIf { it.isNotBlank() },
+                                        password = password.takeIf { it.isNotBlank() },
+                                    ).testConnection()
                                 com.u1.slicer.data.HostType.BAMBU_LAN -> {
                                     if (bambuIp.isBlank() || bambuAccessCode.isBlank() || bambuSerial.isBlank()) {
                                         "Enter IP, access code, and serial first"

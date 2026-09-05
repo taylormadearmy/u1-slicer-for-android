@@ -43,6 +43,9 @@ data class MachineProfile(
     val machineChangeFilamentGcode: String,
     val machinePauseGcode: String,
     val machineJson: String,
+    /** Maximum targets accepted by the app's manual Moonraker heater controls. */
+    val maxNozzleTemperatureC: Int = DEFAULT_MAX_NOZZLE_TEMPERATURE_C,
+    val maxBedTemperatureC: Int = DEFAULT_MAX_BED_TEMPERATURE_C,
     /** Optional app asset used to render this machine's physical bed surface. */
     val bedStlAsset: String? = null,
 ) {
@@ -93,7 +96,17 @@ data class MachineProfile(
                         root.optString("change_filament_gcode")
                     ),
                     machinePauseGcode = root.optString("machine_pause_gcode"),
-                    machineJson = json
+                    machineJson = json,
+                    maxNozzleTemperatureC = temperatureLimit(
+                        root,
+                        "max_nozzle_temperature",
+                        DEFAULT_MAX_NOZZLE_TEMPERATURE_C,
+                    ),
+                    maxBedTemperatureC = temperatureLimit(
+                        root,
+                        "max_bed_temperature",
+                        DEFAULT_MAX_BED_TEMPERATURE_C,
+                    ),
                 )
             } catch (_: Exception) {
                 null
@@ -149,6 +162,12 @@ data class MachineProfile(
                 round(max - min).toFloat()
             }
         }
+
+        private fun temperatureLimit(root: JSONObject, key: String, fallback: Int): Int =
+            root.optString(key).toIntOrNull()?.takeIf { it > 0 } ?: fallback
+
+        const val DEFAULT_MAX_NOZZLE_TEMPERATURE_C = 300
+        const val DEFAULT_MAX_BED_TEMPERATURE_C = 120
 
         private fun stableId(vendor: String, model: String, variant: String, name: String): String {
             val modelWithoutVendor = model.trim().removePrefix(vendor.trim()).trim()

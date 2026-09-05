@@ -356,7 +356,7 @@ class MoonrakerClientTest {
             Triple("extruder1", 215, "SET_HEATER_TEMPERATURE HEATER=extruder1 TARGET=215"),
         )
         cases.forEach { (heater, target, expected) ->
-            assertEquals(expected, MoonrakerClient.buildSetHeaterGcode(heater, target))
+            assertEquals(expected, MoonrakerClient.buildSetHeaterGcode(heater, target, 120, 300))
         }
     }
 
@@ -385,15 +385,15 @@ class MoonrakerClientTest {
     }
 
     @Test
-    fun `setHeaterTemperature clamps to safe range`() {
+    fun `setHeaterTemperature clamps to selected machine profile limits`() {
         assertEquals("SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=0",
-            MoonrakerClient.buildSetHeaterGcode("heater_bed", -10))
-        assertEquals("SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=120",
-            MoonrakerClient.buildSetHeaterGcode("heater_bed", 999))
+            MoonrakerClient.buildSetHeaterGcode("heater_bed", -10, 95, 275))
+        assertEquals("SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET=95",
+            MoonrakerClient.buildSetHeaterGcode("heater_bed", 999, 95, 275))
         assertEquals("SET_HEATER_TEMPERATURE HEATER=extruder TARGET=0",
-            MoonrakerClient.buildSetHeaterGcode("extruder", -5))
-        assertEquals("SET_HEATER_TEMPERATURE HEATER=extruder TARGET=300",
-            MoonrakerClient.buildSetHeaterGcode("extruder", 999))
+            MoonrakerClient.buildSetHeaterGcode("extruder", -5, 95, 275))
+        assertEquals("SET_HEATER_TEMPERATURE HEATER=extruder TARGET=275",
+            MoonrakerClient.buildSetHeaterGcode("extruder", 999, 95, 275))
     }
 
     @Test

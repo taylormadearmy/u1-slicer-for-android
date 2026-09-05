@@ -4,6 +4,7 @@ import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -142,5 +143,14 @@ class PrinterRepositoryTest {
         assertTrue(PrinterRepository.shouldRecreateTransport(moonraker, moonrakerUrlChanged))
         assertTrue(PrinterRepository.shouldRecreateTransport(moonraker, bambu))
         assertTrue(PrinterRepository.shouldRecreateTransport(bambu, bambuIpChanged))
+    }
+
+    @Test
+    fun shouldRecreateTransport_detects_host_and_credential_changes() {
+        val current = Printer("octo", "Octo", hostType = HostType.OCTOPRINT, moonrakerUrl = "http://octo", apiKey = "a")
+        assertTrue(PrinterRepository.shouldRecreateTransport(current, current.copy(hostType = HostType.PRUSALINK)))
+        assertTrue(PrinterRepository.shouldRecreateTransport(current, current.copy(apiKey = "b")))
+        assertTrue(PrinterRepository.shouldRecreateTransport(current, current.copy(username = "u")))
+        assertTrue(PrinterRepository.shouldRecreateTransport(current, current.copy(password = "p")))
     }
 }

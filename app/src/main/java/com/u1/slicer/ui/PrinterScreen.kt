@@ -97,6 +97,13 @@ fun PrinterScreen(
     val activePrinterId by viewModel.activePrinterId.collectAsState()
     val activePrinter by viewModel.activePrinter.collectAsState()
     val capabilities by viewModel.capabilities.collectAsState()
+    val controlVisibility = remember(capabilities, status.isConnected, status.isIdle) {
+        com.u1.slicer.ui.printer.resolvePrinterScreenControlVisibility(
+            capabilities = capabilities,
+            isConnected = status.isConnected,
+            isIdle = status.isIdle,
+        )
+    }
     val printerFilamentSlots by viewModel.printerFilamentSlots.collectAsState()
     val cameraState by viewModel.cameraState.collectAsState()
     val selectedWebcam = webcamSelection.selected
@@ -223,7 +230,7 @@ fun PrinterScreen(
                 title = { Text("Printer", fontWeight = FontWeight.Bold) },
                 actions = {
                     val isLightOn by viewModel.isLightOn.collectAsState()
-                    if (status.isConnected && capabilities.supportsLightControl) {
+                    if (controlVisibility.showLightControl) {
                         IconButton(onClick = { viewModel.toggleLight() }) {
                             Icon(
                                 Icons.Default.Lightbulb,
@@ -406,7 +413,7 @@ fun PrinterScreen(
             }
 
             // ── Camera feed ─────────────────────────────────────────────────
-            if (status.isConnected && capabilities.supportsCamera) {
+            if (controlVisibility.showCamera) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF0D0D1A)),
@@ -684,7 +691,7 @@ fun PrinterScreen(
                 }
 
                 // ── Temperatures ────────────────────────────────────────────
-                if (capabilities.supportsHeaterControl) Card(
+                if (controlVisibility.showHeaterControl) Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     shape = RoundedCornerShape(16.dp)
@@ -756,7 +763,7 @@ fun PrinterScreen(
                 // Tighter gate than "!isPrinting && !isPaused": `isIdle` excludes
                 // error/disconnected, where freeform G-code would either be
                 // rejected by Klipper or surprise the user.
-                if (capabilities.supportsCustomGcode && status.isConnected && status.isIdle) {
+                if (controlVisibility.showConsole) {
                     var customGcode by remember { mutableStateOf("") }
                     Card(
                         modifier = Modifier.fillMaxWidth(),

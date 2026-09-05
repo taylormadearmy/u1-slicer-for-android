@@ -14,7 +14,8 @@ data class PrinterTransportCapabilities(
     val supportsFilamentSync: Boolean = false,
     val reportsFilamentSlotsWithStatus: Boolean = false,
     val supportsHeaterControl: Boolean = false,
-    val supportsCustomGcode: Boolean = false,
+    /** Moonraker console for user-entered G-code. */
+    val supportsConsole: Boolean = false,
     val supportsSkipObjects: Boolean = false,
     val supportsUpload: Boolean = false,
     val supportsStartJob: Boolean = false,

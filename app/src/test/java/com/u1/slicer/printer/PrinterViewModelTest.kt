@@ -4,6 +4,7 @@ import com.u1.slicer.data.BambuConfig
 import com.u1.slicer.data.BambuModel
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
 import com.u1.slicer.data.PrintersConfig
 import com.u1.slicer.data.defaultExtruderPresets
 import org.junit.Assert.assertEquals
@@ -183,6 +184,44 @@ class PrinterViewModelTest {
         assertEquals("creality-ender-3-v3-se-0.4", printer.machineProfileId)
         assertEquals(1, printer.extruderPresets.size)
         assertNull(printer.bambu)
+    }
+
+    @Test
+    fun `buildPrinter normalizes OctoPrint without adding Moonraker port and retains credentials`() {
+        val printer = PrinterViewModel.buildPrinter(
+            id = "octo-1",
+            fallbackNickname = "OctoPrint",
+            existingExtruderPresets = defaultExtruderPresets(1),
+            nickname = "OctoPrint",
+            kind = PrinterKind.MOONRAKER,
+            hostType = HostType.OCTOPRINT,
+            url = "octo.local",
+            apiKey = " key ",
+            bambuIp = "",
+            bambuAccessCode = "",
+            bambuSerial = "",
+            bambuModel = BambuModel.P1S,
+        )
+
+        assertEquals("http://octo.local", printer.moonrakerUrl)
+        assertEquals("key", printer.apiKey)
+        assertNull(printer.selectedWebcamUid)
+    }
+
+    @Test
+    fun `connection fingerprint includes host protocol and credentials`() {
+        val printer = Printer(
+            id = "host-1",
+            nickname = "Host",
+            hostType = HostType.OCTOPRINT,
+            moonrakerUrl = "octo.local",
+            apiKey = "one",
+        )
+
+        val original = PrinterViewModel.printerConnectionFingerprint(printer)
+
+        assertFalse(original == PrinterViewModel.printerConnectionFingerprint(printer.copy(hostType = HostType.PRUSALINK)))
+        assertFalse(original == PrinterViewModel.printerConnectionFingerprint(printer.copy(apiKey = "two")))
     }
 
     @Test

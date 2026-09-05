@@ -3,8 +3,8 @@ package com.u1.slicer.printer
 import com.u1.slicer.AppEventNotifier
 import com.u1.slicer.data.Printer
 import com.u1.slicer.data.PrinterKind
+import com.u1.slicer.data.HostType
 import com.u1.slicer.network.FilamentSlot
-import com.u1.slicer.network.MoonrakerClient
 import com.u1.slicer.network.PrinterStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -79,9 +79,9 @@ class PrinterRepository(
         if (!shouldRecreateTransport(existingPrinter, newPrinter) && currentTransport != null) {
             activePrinter = newPrinter
             _activeNickname.value = newPrinter.nickname
-            _printerUrl.value = when (newPrinter.kind) {
-                PrinterKind.MOONRAKER -> MoonrakerClient.normalizeUrl(newPrinter.moonrakerUrl)
-                PrinterKind.BAMBU_LAN -> newPrinter.bambu?.ip.orEmpty()
+            _printerUrl.value = when (newPrinter.hostType) {
+                HostType.BAMBU_LAN -> newPrinter.bambu?.ip.orEmpty()
+                else -> normalizePrintHostUrl(newPrinter.moonrakerUrl, newPrinter.hostType)
             }
             return
         }
@@ -93,9 +93,9 @@ class PrinterRepository(
         currentTransport = transportFactory.create(newPrinter)
         consecutiveFailures = 0
         previousEffectiveState = "disconnected"
-        _printerUrl.value = when (newPrinter.kind) {
-            PrinterKind.MOONRAKER -> MoonrakerClient.normalizeUrl(newPrinter.moonrakerUrl)
-            PrinterKind.BAMBU_LAN -> newPrinter.bambu?.ip.orEmpty()
+        _printerUrl.value = when (newPrinter.hostType) {
+            HostType.BAMBU_LAN -> newPrinter.bambu?.ip.orEmpty()
+            else -> normalizePrintHostUrl(newPrinter.moonrakerUrl, newPrinter.hostType)
         }
         _capabilities.value = currentTransport?.capabilities ?: PrinterTransportCapabilities()
         _status.value = PrinterStatus(state = "disconnected", progress = 0f)
@@ -108,15 +108,16 @@ class PrinterRepository(
 
     /** Convenience: update the active printer's URL via PrintersRepository. */
     suspend fun updateActiveUrl(url: String) {
-        val normalized = MoonrakerClient.normalizeUrl(url)
         val cfg = printersRepo.config.first() ?: return
         val active = cfg.active
         if (active.kind != PrinterKind.MOONRAKER) return
+        val normalized = normalizePrintHostUrl(url, active.hostType)
         printersRepo.update(
             active.copy(
                 moonrakerUrl = normalized,
                 selectedWebcamUid = active.selectedWebcamUid.takeIf {
-                    normalized == MoonrakerClient.normalizeUrl(active.moonrakerUrl)
+                    active.hostType == HostType.MOONRAKER &&
+                        normalized == normalizePrintHostUrl(active.moonrakerUrl, active.hostType)
                 },
             )
         )
@@ -422,12 +423,13 @@ class PrinterRepository(
 
         internal fun shouldRecreateTransport(current: Printer?, next: Printer): Boolean {
             if (current == null) return true
-            if (current.kind != next.kind) return true
-            return when (next.kind) {
-                PrinterKind.MOONRAKER ->
-                    MoonrakerClient.normalizeUrl(current.moonrakerUrl) !=
-                        MoonrakerClient.normalizeUrl(next.moonrakerUrl)
-                PrinterKind.BAMBU_LAN -> current.bambu != next.bambu
+            if (current.kind != next.kind || current.hostType != next.hostType) return true
+            return when (next.hostType) {
+                HostType.MOONRAKER, HostType.OCTOPRINT, HostType.PRUSALINK ->
+                    normalizePrintHostUrl(current.moonrakerUrl, current.hostType) !=
+                        normalizePrintHostUrl(next.moonrakerUrl, next.hostType) ||
+                        current.apiKey != next.apiKey || current.username != next.username || current.password != next.password
+                HostType.BAMBU_LAN -> current.bambu != next.bambu
             }
         }
 
