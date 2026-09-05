@@ -216,7 +216,8 @@ class PrinterRepository(
     suspend fun uploadAndPrint(gcodeFile: java.io.File, filename: String): TransportCommandResult {
         val uploadName = buildPrinterUploadFilename(filename)
         val transport = currentTransport ?: return TransportCommandResult.Failure("No printer configured")
-        when (val uploaded = transport.uploadJob(gcodeFile, uploadName)) {
+        val startsOnUpload = transport.capabilities.supportsStartOnUpload
+        when (val uploaded = transport.uploadJob(gcodeFile, uploadName, startAfterUpload = startsOnUpload)) {
             TransportCommandResult.Success -> Unit
             is TransportCommandResult.Unsupported -> return uploaded
             is TransportCommandResult.Failure -> return uploaded
@@ -224,6 +225,10 @@ class PrinterRepository(
         currentCoroutineContext().ensureActive()
         if (currentTransport !== transport) {
             return TransportCommandResult.Failure("Active printer changed after upload; the print was not started")
+        }
+        if (startsOnUpload) {
+            transport.hintJobStarting()
+            return TransportCommandResult.Success
         }
         return when (val started = transport.startJob(uploadName)) {
             TransportCommandResult.Success -> {

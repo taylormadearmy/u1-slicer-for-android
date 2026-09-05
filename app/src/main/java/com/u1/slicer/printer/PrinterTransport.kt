@@ -18,6 +18,8 @@ data class PrinterTransportCapabilities(
     val supportsSkipObjects: Boolean = false,
     val supportsUpload: Boolean = false,
     val supportsStartJob: Boolean = false,
+    /** Upload can atomically start the job when the confirmed send path requests it. */
+    val supportsStartOnUpload: Boolean = false,
     val supportsStartProject: Boolean = false,
     val supportsPause: Boolean = false,
     val supportsResume: Boolean = false,
@@ -56,7 +58,11 @@ interface PrinterTransport {
     fun remoteScreenUrl(): String? = null
     suspend fun hintJobStarting() {}
 
-    suspend fun uploadJob(file: File, remoteName: String): TransportCommandResult =
+    suspend fun uploadJob(
+        file: File,
+        remoteName: String,
+        startAfterUpload: Boolean = false,
+    ): TransportCommandResult =
         TransportCommandResult.Unsupported("Upload is not supported for this printer")
 
     suspend fun validateStartProject(): TransportCommandResult = TransportCommandResult.Success

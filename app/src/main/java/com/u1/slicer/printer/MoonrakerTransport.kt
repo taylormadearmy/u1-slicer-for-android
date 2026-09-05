@@ -105,7 +105,11 @@ class MoonrakerTransport(
         refreshStatusOnce()
     }
 
-    override suspend fun uploadJob(file: File, remoteName: String): TransportCommandResult =
+    override suspend fun uploadJob(
+        file: File,
+        remoteName: String,
+        startAfterUpload: Boolean,
+    ): TransportCommandResult =
         if (client.uploadGcode(file, remoteName)) TransportCommandResult.Success
         else TransportCommandResult.Failure("Upload failed")
 
