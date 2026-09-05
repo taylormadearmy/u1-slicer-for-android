@@ -526,10 +526,7 @@ fun SettingsScreen(
                             val container = (context.applicationContext as U1SlicerApplication).container
                             com.u1.slicer.machine.PrinterWizardViewModel(
                                 fetchIndex = { vendor ->
-                                    container.profileCache.readVendorIndex(vendor)
-                                        ?: container.vendorCatalogClient.fetchVendorIndex(vendor).also { index ->
-                                            container.profileCache.writeVendorIndex(vendor, index)
-                                        }
+                                    container.cachedOrcaProfileLookup.refreshVendor(vendor)
                                 },
                                 resolveMachine = { vendor, name ->
                                     container.cachedOrcaProfileLookup.resolveByName(

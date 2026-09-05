@@ -23,6 +23,7 @@ class PrinterWizardEntryWiringTest {
 
         assertTrue(settings.contains("machineProfileValidator::validate"))
         assertTrue(settings.contains("printerViewModel::addProfilePrinter"))
+        assertTrue(settings.contains("cachedOrcaProfileLookup.refreshVendor(vendor)"))
         assertTrue(wizard.indexOf("validate(profile)") < wizard.indexOf("save(profile"))
     }
 }

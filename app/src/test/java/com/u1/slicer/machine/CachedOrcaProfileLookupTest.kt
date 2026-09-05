@@ -141,6 +141,87 @@ class CachedOrcaProfileLookupTest {
         }
     }
 
+    @Test
+    fun `vendor version bump replaces complete snapshot atomically and rollback restores prior version`() {
+        withCache { cache ->
+            cache.replaceVendor(
+                index("Acme", version = "1", machines = listOf(VendorCatalogEntry("Old machine", "machine/old.json"))),
+                mapOf("machine/old.json" to """{"type":"machine","name":"Old machine"}"""),
+            )
+            val updatedIndex = """{
+                "name":"Acme","version":"2",
+                "machine_model_list":[{"name":"New model","sub_path":"machine_model/new.json"}],
+                "machine_list":[{"name":"New machine","sub_path":"machine/new.json"}],
+                "process_list":[{"name":"New process","sub_path":"process/new.json"}],
+                "filament_list":[{"name":"New filament","sub_path":"filament/new.json"}]
+            }""".trimIndent()
+            val server = MockWebServer()
+            server.dispatcher = fixtureDispatcher(
+                mapOf(
+                    "/resources/profiles/Acme.json" to updatedIndex,
+                    "/resources/profiles/Acme/machine_model/new.json" to """{"name":"New model"}""",
+                    "/resources/profiles/Acme/machine/new.json" to """{"name":"New machine"}""",
+                    "/resources/profiles/Acme/process/new.json" to """{"name":"New process"}""",
+                    "/resources/profiles/Acme/filament/new.json" to """{"name":"New filament"}""",
+                ),
+            )
+            server.start()
+            try {
+                val lookup = CachedOrcaProfileLookup(
+                    cache,
+                    VendorCatalogClient(OkHttpClient(), server.url("/resources/profiles/")),
+                )
+
+                assertEquals("2", lookup.refreshVendor("Acme").version)
+                assertEquals("2", cache.readVendorIndex("Acme")?.version)
+                assertNull(cache.readProfile("Acme", "machine/old.json"))
+                assertNotNull(cache.readProfile("Acme", "machine_model/new.json"))
+                assertNotNull(cache.readProfile("Acme", "machine/new.json"))
+                assertNotNull(cache.readProfile("Acme", "process/new.json"))
+                assertNotNull(cache.readProfile("Acme", "filament/new.json"))
+                assertEquals("1", cache.readBackupIndex("Acme")?.version)
+
+                cache.rollback("Acme")
+                assertEquals("1", cache.readVendorIndex("Acme")?.version)
+                assertNotNull(cache.readProfile("Acme", "machine/old.json"))
+                assertNull(cache.readProfile("Acme", "machine/new.json"))
+            } finally {
+                server.shutdown()
+            }
+        }
+    }
+
+    @Test
+    fun `failed vendor update leaves installed snapshot intact`() {
+        withCache { cache ->
+            cache.replaceVendor(
+                index("Acme", version = "1", machines = listOf(VendorCatalogEntry("Old machine", "machine/old.json"))),
+                mapOf("machine/old.json" to """{"type":"machine","name":"Old machine"}"""),
+            )
+            val updatedIndex = """{
+                "name":"Acme","version":"2","machine_model_list":[],
+                "machine_list":[{"name":"Missing machine","sub_path":"machine/missing.json"}]
+            }""".trimIndent()
+            val server = MockWebServer()
+            server.enqueue(MockResponse().setResponseCode(200).setBody(updatedIndex))
+            server.enqueue(MockResponse().setResponseCode(500))
+            server.start()
+            try {
+                val lookup = CachedOrcaProfileLookup(
+                    cache,
+                    VendorCatalogClient(OkHttpClient(), server.url("/resources/profiles/")),
+                )
+
+                assertEquals("1", lookup.refreshVendor("Acme").version)
+                assertEquals("1", cache.readVendorIndex("Acme")?.version)
+                assertNotNull(cache.readProfile("Acme", "machine/old.json"))
+                assertNull(cache.readBackupIndex("Acme"))
+            } finally {
+                server.shutdown()
+            }
+        }
+    }
+
     private fun assertEnderChain(resolved: String?) {
         assertNotNull(resolved)
         val json = JSONObject(resolved!!)
@@ -153,12 +234,13 @@ class CachedOrcaProfileLookupTest {
 
     private fun index(
         vendor: String,
+        version: String = "1",
         machines: List<VendorCatalogEntry> = emptyList(),
         processes: List<VendorCatalogEntry> = emptyList(),
         filaments: List<VendorCatalogEntry> = emptyList(),
     ) = VendorCatalogIndex(
         name = vendor,
-        version = "1",
+        version = version,
         machineModelList = emptyList(),
         machineList = machines,
         processList = processes,

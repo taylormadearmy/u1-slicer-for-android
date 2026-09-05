@@ -13,6 +13,39 @@ class CachedOrcaProfileLookup(
     private val cache: ProfileCache,
     private val client: VendorCatalogClient,
 ) {
+    /**
+     * Returns the installed catalogue after checking the pinned source for a newer vendor snapshot.
+     * A complete newer snapshot is downloaded before the cache swap starts, so any fetch failure
+     * leaves the installed version available for offline use.
+     */
+    fun refreshVendor(vendor: String): VendorCatalogIndex {
+        val installed = cache.readVendorIndex(vendor)
+        val remote = try {
+            client.fetchVendorIndex(vendor)
+        } catch (error: Exception) {
+            return installed ?: throw error
+        }
+        if (installed == null) {
+            cache.replaceVendor(remote, emptyMap(), vendor)
+            return remote
+        }
+        if (!cache.needsUpdate(remote, vendor)) return installed
+
+        return try {
+            val profiles = remote.allEntries()
+                .distinctBy(VendorCatalogEntry::subPath)
+                .associate { entry ->
+                    val json = client.fetchProfile(vendor, entry.subPath)
+                    require(isJsonObject(json)) { "Malformed Orca profile: ${entry.subPath}" }
+                    entry.subPath to json
+                }
+            cache.replaceVendor(remote, profiles, vendor)
+            remote
+        } catch (_: Exception) {
+            installed
+        }
+    }
+
     fun resolveByName(vendor: String, type: OrcaProfileType, name: String): String? {
         var chainVendor = vendor
         val root = loadFromVendor(chainVendor, type, name, refreshIndexOnMiss = true) ?: return null
@@ -48,10 +81,10 @@ class CachedOrcaProfileLookup(
         refreshIndexOnMiss: Boolean,
     ): LoadedProfile? {
         val cachedIndex = cache.readVendorIndex(vendor)
-        var index = cachedIndex ?: fetchIndex(vendor) ?: return null
+        var index = cachedIndex ?: runCatching { refreshVendor(vendor) }.getOrNull() ?: return null
         var entry = index.entries(type).firstOrNull { it.name == name }
         if (entry == null && refreshIndexOnMiss && cachedIndex != null) {
-            index = fetchIndex(vendor) ?: return null
+            index = runCatching { refreshVendor(vendor) }.getOrNull() ?: return null
             entry = index.entries(type).firstOrNull { it.name == name }
         }
         entry ?: return null
@@ -64,11 +97,10 @@ class CachedOrcaProfileLookup(
         return LoadedProfile(vendor, json)
     }
 
-    private fun fetchIndex(vendor: String): VendorCatalogIndex? = runCatching {
-        client.fetchVendorIndex(vendor).also { cache.writeVendorIndex(vendor, it) }
-    }.getOrNull()
-
     private fun isJsonObject(json: String): Boolean = runCatching { JSONObject(json) }.isSuccess
+
+    private fun VendorCatalogIndex.allEntries(): List<VendorCatalogEntry> =
+        machineModelList + machineList + processList + filamentList
 
     private fun VendorCatalogIndex.entries(type: OrcaProfileType): List<VendorCatalogEntry> = when (type) {
         OrcaProfileType.MACHINE -> machineList
