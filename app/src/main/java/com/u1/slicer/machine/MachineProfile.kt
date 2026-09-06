@@ -99,13 +99,15 @@ data class MachineProfile(
                     machineJson = json,
                     maxNozzleTemperatureC = temperatureLimit(
                         root,
+                        "nozzle_max_temperature",
                         "max_nozzle_temperature",
-                        DEFAULT_MAX_NOZZLE_TEMPERATURE_C,
+                        fallback = DEFAULT_MAX_NOZZLE_TEMPERATURE_C,
                     ),
                     maxBedTemperatureC = temperatureLimit(
                         root,
+                        "bed_temperature_limit",
                         "max_bed_temperature",
-                        DEFAULT_MAX_BED_TEMPERATURE_C,
+                        fallback = DEFAULT_MAX_BED_TEMPERATURE_C,
                     ),
                 )
             } catch (_: Exception) {
@@ -163,8 +165,13 @@ data class MachineProfile(
             }
         }
 
-        private fun temperatureLimit(root: JSONObject, key: String, fallback: Int): Int =
-            root.optString(key).toIntOrNull()?.takeIf { it > 0 } ?: fallback
+        private fun temperatureLimit(
+            root: JSONObject,
+            vararg keys: String,
+            fallback: Int,
+        ): Int = keys.firstNotNullOfOrNull { key ->
+            root.optString(key).toIntOrNull()?.takeIf { it > 0 }
+        } ?: fallback
 
         const val DEFAULT_MAX_NOZZLE_TEMPERATURE_C = 300
         const val DEFAULT_MAX_BED_TEMPERATURE_C = 120

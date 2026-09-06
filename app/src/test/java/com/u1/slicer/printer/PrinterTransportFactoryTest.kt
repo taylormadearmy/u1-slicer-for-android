@@ -60,8 +60,8 @@ class PrinterTransportFactoryTest {
                       "type":"machine",
                       "name":"Limited",
                       "printable_area":["0x0","180x0","180x180","0x180"],
-                      "max_nozzle_temperature":"275",
-                      "max_bed_temperature":"95"
+                      "nozzle_max_temperature":"275",
+                      "bed_temperature_limit":"95"
                     }""",
                     MachineFamily.GENERIC,
                 )

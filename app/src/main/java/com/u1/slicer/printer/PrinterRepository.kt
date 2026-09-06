@@ -243,8 +243,8 @@ class PrinterRepository(
 
     suspend fun uploadOnly(gcodeFile: java.io.File, filename: String): TransportCommandResult {
         val uploadName = buildPrinterUploadFilename(filename)
-        return currentTransport?.uploadJob(gcodeFile, uploadName)
-            ?: TransportCommandResult.Failure("No printer configured")
+        val transport = currentTransport ?: return TransportCommandResult.Failure("No printer configured")
+        return uploadOnlyWithTransport(transport, gcodeFile, uploadName)
     }
 
     suspend fun uploadAndPrintBambuProject(
@@ -340,6 +340,16 @@ class PrinterRepository(
     }
 
     companion object {
+        internal suspend fun uploadOnlyWithTransport(
+            transport: PrinterTransport,
+            gcodeFile: java.io.File,
+            uploadName: String,
+        ): TransportCommandResult = transport.uploadJob(
+            file = gcodeFile,
+            remoteName = uploadName,
+            startAfterUpload = false,
+        )
+
         /** Number of consecutive "disconnected" polls required before PrinterOffline fires. */
         internal const val OFFLINE_GRACE_FAILURES = 3
 
