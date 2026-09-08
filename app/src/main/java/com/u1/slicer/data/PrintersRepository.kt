@@ -44,6 +44,11 @@ class PrintersRepository(private val context: Context) {
         }
     }
 
+    /** Restores the absent pre-test state after an instrumented repository test. */
+    internal suspend fun clearForTest() {
+        context.printersDataStore.edit { prefs -> prefs.remove(key) }
+    }
+
     /**
      * Runs migration if `printers_config_json` is not yet present.
      * Idempotent — calling repeatedly is a no-op after the first successful run.
