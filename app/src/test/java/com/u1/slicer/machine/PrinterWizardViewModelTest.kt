@@ -95,6 +95,40 @@ class PrinterWizardViewModelTest {
     }
 
     @Test
+    fun `catalog model alias resolves variants using its profile filename`() = runTest {
+        val catalogModel = VendorCatalogEntry("MK4IS", "machine/Prusa MK4.json")
+        val variantNames = listOf(
+            "Prusa MK4 0.25 nozzle",
+            "Prusa MK4 0.4 nozzle",
+        )
+        val index = VendorCatalogIndex(
+            name = "Prusa",
+            version = "02.02.00.04",
+            machineModelList = listOf(catalogModel),
+            machineList = variantNames.map { VendorCatalogEntry(it, "machine/$it.json") },
+        )
+        val viewModel = PrinterWizardViewModel(
+            vendorNames = listOf("Prusa"),
+            fetchIndex = { index },
+            resolveMachine = { _, name ->
+                machineJson(
+                    name = name,
+                    model = "Prusa MK4",
+                    structure = "i3",
+                )
+            },
+            validate = { MachineProfileValidationResult.success() },
+            save = { _, _, _ -> },
+        )
+
+        viewModel.selectVendor("Prusa")
+        viewModel.selectModel(catalogModel)
+
+        assertEquals(variantNames, viewModel.state.value.variants.map { it.profile.displayName })
+        assertEquals(null, viewModel.state.value.errorMessage)
+    }
+
+    @Test
     fun `validation failure surfaces exact error and blocks persistence`() = runTest {
         val fixture = singleMachineFixture()
         var saves = 0

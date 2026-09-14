@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.u1.slicer.machine.PrinterWizardStep
+import com.u1.slicer.machine.PrinterWizardVariant
 import com.u1.slicer.machine.PrinterWizardViewModel
 import com.u1.slicer.machine.VendorCatalogClient
 import kotlinx.coroutines.launch
@@ -68,9 +69,11 @@ fun PrinterWizardScreen(
                         scope.launch { viewModel.selectModel(model) }
                     }
                     PrinterWizardStep.VARIANT -> WizardList(
-                        state.variants,
-                        { "${it.profile.printerVariant} mm nozzle" },
-                    ) { variant -> viewModel.selectVariant(variant) }
+                        values = state.variants,
+                        label = ::printerWizardVariantLabel,
+                        key = ::printerWizardVariantKey,
+                        onClick = viewModel::selectVariant,
+                    )
                     PrinterWizardStep.CONFIRM -> Column(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
@@ -125,16 +128,23 @@ fun PrinterWizardScreen(
 private fun <T> WizardList(
     values: List<T>,
     label: (T) -> String = { it.toString() },
+    key: (T) -> Any = { label(it) },
     onClick: (T) -> Unit,
 ) {
     LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-        items(values, key = { label(it) }) { item ->
+        items(values, key = key) { item ->
             TextButton(onClick = { onClick(item) }, modifier = Modifier.fillMaxWidth()) {
                 Text(label(item), modifier = Modifier.fillMaxWidth())
             }
         }
     }
 }
+
+internal fun printerWizardVariantLabel(variant: PrinterWizardVariant): String =
+    variant.profile.displayName
+
+internal fun printerWizardVariantKey(variant: PrinterWizardVariant): String =
+    variant.sourcePath
 
 private fun wizardTitle(step: PrinterWizardStep): String = when (step) {
     PrinterWizardStep.VENDOR -> "Choose manufacturer"

@@ -10,7 +10,10 @@ import org.json.JSONObject
 
 enum class PrinterWizardStep { VENDOR, MODEL, VARIANT, CONFIRM }
 
-data class PrinterWizardVariant(val profile: MachineProfile)
+data class PrinterWizardVariant(
+    val profile: MachineProfile,
+    val sourcePath: String = profile.id,
+)
 
 data class PrinterWizardState(
     val step: PrinterWizardStep = PrinterWizardStep.VENDOR,
@@ -70,7 +73,12 @@ class PrinterWizardViewModel(
         val vendor = requireNotNull(_state.value.selectedVendor)
         val index = requireNotNull(currentIndex)
         require(model in index.machineModelList) { "Unknown model: ${model.name}" }
-        val candidates = index.machineList.filter { it.name.startsWith("${model.name} ") }
+        val profileNames = model.machineProfileNames()
+        val candidates = index.machineList.filter { entry ->
+            profileNames.any { profileName ->
+                entry.name == profileName || entry.name.startsWith("$profileName ")
+            }
+        }
         val variants = withContext(ioDispatcher) {
             candidates.mapNotNull { entry ->
                 val resolved = resolveMachine(vendor, entry.name) ?: return@mapNotNull null
@@ -79,8 +87,8 @@ class PrinterWizardViewModel(
                 }.toString()
                 val profile = MachineProfile.fromResolvedOrcaJson(vendorQualified, MachineFamily.GENERIC)
                     ?: return@mapNotNull null
-                profile.takeIf { it.printerModel == model.name && isWizardSupported(it) }
-                    ?.let(::PrinterWizardVariant)
+                profile.takeIf { it.printerModel in profileNames && isWizardSupported(it) }
+                    ?.let { PrinterWizardVariant(profile = it, sourcePath = entry.subPath) }
             }
         }
         _state.value = _state.value.copy(
@@ -151,6 +159,14 @@ class PrinterWizardViewModel(
     }
 
     private var currentIndex: VendorCatalogIndex? = null
+
+    private fun VendorCatalogEntry.machineProfileNames(): Set<String> = buildSet {
+        add(name)
+        subPath.substringAfterLast('/')
+            .removeSuffix(".json")
+            .takeIf(String::isNotBlank)
+            ?.let(::add)
+    }
 
     companion object {
         /** Delta beds and machines with more than four physical extruders are outside the v1 boundary. */
