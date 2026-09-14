@@ -98,12 +98,14 @@ fun PrintersSettingsCard(
     ) -> String?,
     createPrinterWizardViewModel: () -> PrinterWizardViewModel,
     onImportOrcaPrinter: suspend (InputStream, String) -> Unit,
-    bambuEnabled: Boolean = false,
+    experimentalPrinterSupportAcknowledged: Boolean = false,
+    onAcknowledgeExperimentalPrinterSupport: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var editing by remember { mutableStateOf<Printer?>(null) }
     var addFlow by remember { mutableStateOf<AddPrinterFlow?>(null) }
+    var pendingExperimentalChoice by remember { mutableStateOf<AddPrinterChoice?>(null) }
     var importError by remember { mutableStateOf<String?>(null) }
     var importing by remember { mutableStateOf(false) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -121,6 +123,27 @@ fun PrintersSettingsCard(
             } finally {
                 importing = false
             }
+        }
+    }
+    val launchAddChoice: (AddPrinterChoice) -> Unit = { choice ->
+        when (choice) {
+            AddPrinterChoice.SNAPMAKER_U1 -> addFlow = AddPrinterFlow.U1
+            AddPrinterChoice.BAMBU_LAN -> addFlow = AddPrinterFlow.BAMBU
+            AddPrinterChoice.ORCA_CATALOGUE -> addFlow = AddPrinterFlow.CATALOGUE
+            AddPrinterChoice.ORCA_IMPORT -> {
+                addFlow = null
+                importLauncher.launch(arrayOf(
+                    "application/zip",
+                    "application/octet-stream",
+                    "*/*",
+                ))
+            }
+        }
+    }
+    val selectAddChoice: (AddPrinterChoice) -> Unit = { choice ->
+        when (addPrinterNextStep(choice, experimentalPrinterSupportAcknowledged)) {
+            AddPrinterNextStep.Proceed -> launchAddChoice(choice)
+            AddPrinterNextStep.RequireAcknowledgement -> pendingExperimentalChoice = choice
         }
     }
 
@@ -149,8 +172,7 @@ fun PrintersSettingsCard(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                if (bambuEnabled) "Add a Snapmaker U1, a supported Bambu Lab printer, or an Orca catalogue printer."
-                else "Add a Snapmaker U1 or an Orca catalogue printer. Enable Bambu beta support for Bambu Lab printers.",
+                "Add a Snapmaker U1 or an experimental third-party printer.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
             )
@@ -193,35 +215,59 @@ fun PrintersSettingsCard(
             title = { Text("Add printer") },
             text = {
                 Column {
-                    TextButton(onClick = { addFlow = AddPrinterFlow.U1 }, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(
+                        onClick = { selectAddChoice(AddPrinterChoice.SNAPMAKER_U1) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Text("Snapmaker U1", modifier = Modifier.fillMaxWidth())
                     }
-                    if (bambuEnabled) {
-                        TextButton(
-                            onClick = { addFlow = AddPrinterFlow.BAMBU },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Bambu Lab (LAN)", modifier = Modifier.fillMaxWidth()) }
-                    }
+                    Text(
+                        "Experimental printer support",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                    )
                     TextButton(
-                        onClick = { addFlow = AddPrinterFlow.CATALOGUE },
+                        onClick = { selectAddChoice(AddPrinterChoice.BAMBU_LAN) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Orca catalogue printer", modifier = Modifier.fillMaxWidth()) }
+                    ) { Text("Bambu Lab (LAN) · Experimental", modifier = Modifier.fillMaxWidth()) }
+                    TextButton(
+                        onClick = { selectAddChoice(AddPrinterChoice.ORCA_CATALOGUE) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Other printer from Orca catalogue · Experimental", modifier = Modifier.fillMaxWidth()) }
                     TextButton(
                         enabled = !importing,
-                        onClick = {
-                            importLauncher.launch(arrayOf(
-                                "application/zip",
-                                "application/octet-stream",
-                                "*/*",
-                            ))
-                        },
+                        onClick = { selectAddChoice(AddPrinterChoice.ORCA_IMPORT) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Import .orca_printer bundle", modifier = Modifier.fillMaxWidth()) }
+                    ) { Text("Import .orca_printer bundle · Experimental", modifier = Modifier.fillMaxWidth()) }
                 }
             },
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { addFlow = null }) { Text("Cancel") }
+            },
+        )
+    }
+    pendingExperimentalChoice?.let { choice ->
+        AlertDialog(
+            onDismissRequest = { pendingExperimentalChoice = null },
+            title = { Text("Experimental printer support") },
+            text = {
+                Text(
+                    "Bambu connections and third-party Orca profiles are experimental. " +
+                        "Some models, firmware, and printer features may not work as expected. " +
+                        "Review the generated G-code and use upload-only testing before starting a print.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onAcknowledgeExperimentalPrinterSupport()
+                    pendingExperimentalChoice = null
+                    launchAddChoice(choice)
+                }) { Text("I understand, continue") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingExperimentalChoice = null }) { Text("Cancel") }
             },
         )
     }
@@ -233,7 +279,6 @@ fun PrintersSettingsCard(
                 onAdd(nick, kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel)
             },
             onTest = onTestConnection,
-            bambuEnabled = bambuEnabled,
             initialKind = initialKind,
             onDismiss = { addFlow = null },
         )
@@ -259,7 +304,6 @@ fun PrintersSettingsCard(
                 onEdit(existing.id, nick, kind, hostType, url, apiKey, username, password, bambuIp, bambuAccessCode, bambuSerial, bambuModel)
             },
             onTest = onTestConnection,
-            bambuEnabled = bambuEnabled,
             onDismiss = { editing = null },
         )
     }

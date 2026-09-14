@@ -2634,11 +2634,12 @@ class SlicerViewModel(application: Application) : AndroidViewModel(application) 
     val aiNamingEnabled: StateFlow<Boolean> = settingsRepo.aiNamingEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    val bambuBetaEnabled: StateFlow<Boolean> = settingsRepo.bambuBetaEnabled
+    val experimentalPrinterSupportAcknowledged: StateFlow<Boolean> =
+        settingsRepo.experimentalPrinterSupportAcknowledged
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
-    fun setBambuBetaEnabled(enabled: Boolean) {
-        viewModelScope.launch(Dispatchers.IO) { settingsRepo.saveBambuBetaEnabled(enabled) }
+    fun acknowledgeExperimentalPrinterSupport() {
+        viewModelScope.launch(Dispatchers.IO) { settingsRepo.acknowledgeExperimentalPrinterSupport() }
     }
 
     fun saveAiNamingEnabled(enabled: Boolean) {

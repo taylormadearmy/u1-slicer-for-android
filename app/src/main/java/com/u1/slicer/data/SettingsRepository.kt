@@ -126,13 +126,13 @@ class SettingsRepository(private val context: Context) {
         prefs[Keys.AI_NAMING_ENABLED] ?: false
     }
 
-    /** Bambu support is opt-in because it is still an early beta feature. */
-    val bambuBetaEnabled: Flow<Boolean> = context.appDataStore.data.map { prefs ->
+    /** One-time acknowledgement for adding experimental printers. The key name is retained for upgrades. */
+    val experimentalPrinterSupportAcknowledged: Flow<Boolean> = context.appDataStore.data.map { prefs ->
         prefs[Keys.BAMBU_BETA_ENABLED] ?: false
     }
 
-    suspend fun saveBambuBetaEnabled(enabled: Boolean) {
-        context.appDataStore.edit { prefs -> prefs[Keys.BAMBU_BETA_ENABLED] = enabled }
+    suspend fun acknowledgeExperimentalPrinterSupport() {
+        context.appDataStore.edit { prefs -> prefs[Keys.BAMBU_BETA_ENABLED] = true }
     }
 
     suspend fun saveAiNamingEnabled(enabled: Boolean) {

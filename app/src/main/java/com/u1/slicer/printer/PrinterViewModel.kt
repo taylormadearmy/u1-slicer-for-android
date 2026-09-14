@@ -232,9 +232,6 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     init {
-        viewModelScope.launch {
-            if (!settingsRepo.bambuBetaEnabled.first()) disableBambuMode()
-        }
         libraryRepo.ensureLoaded(viewModelScope)
         printerRepo.startPolling(viewModelScope)
         // Resolve webcam URLs for the already-saved printer URL (if any)
@@ -357,17 +354,6 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             printerRepo.prepareForActivePrinterSwitch()
             printersRepo.setActive(target.id)
             Log.i("PrinterViewModel", "U1 E2E target active")
-        }
-    }
-
-    fun disableBambuMode() {
-        viewModelScope.launch {
-            val config = printersRepo.config.first() ?: return@launch
-            val fallback = config.printers.firstOrNull { it.kind != PrinterKind.BAMBU_LAN }
-            if (fallback != null && config.activeId != fallback.id) {
-                printerRepo.prepareForActivePrinterSwitch()
-                printersRepo.setActive(fallback.id)
-            }
         }
     }
 

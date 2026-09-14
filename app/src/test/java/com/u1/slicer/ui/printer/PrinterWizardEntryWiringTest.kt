@@ -6,12 +6,12 @@ import org.junit.Test
 
 class PrinterWizardEntryWiringTest {
     @Test
-    fun `printer settings keeps U1 and Bambu add paths beside catalogue wizard`() {
+    fun `printer settings keeps U1 and experimental add paths beside catalogue wizard`() {
         val source = File("src/main/java/com/u1/slicer/ui/printer/PrintersSettingsCard.kt").readText()
 
         assertTrue(source.contains("Snapmaker U1"))
-        assertTrue(source.contains("Bambu Lab (LAN)"))
-        assertTrue(source.contains("Orca catalogue printer"))
+        assertTrue(source.contains("Bambu Lab (LAN) · Experimental"))
+        assertTrue(source.contains("Other printer from Orca catalogue · Experimental"))
         assertTrue(source.contains("PrinterWizardScreen"))
         assertTrue(source.contains("PrinterEditDialog"))
     }

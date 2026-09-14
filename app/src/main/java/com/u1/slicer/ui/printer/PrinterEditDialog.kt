@@ -63,7 +63,6 @@ fun PrinterEditDialog(
         bambuModel: BambuModel,
     ) -> String?,
     onDismiss: () -> Unit,
-    bambuEnabled: Boolean = false,
     initialKind: PrinterKind = existing?.kind ?: PrinterKind.MOONRAKER,
     initialHostType: HostType = existing?.hostType
         ?: if (initialKind == PrinterKind.BAMBU_LAN) HostType.BAMBU_LAN else HostType.MOONRAKER,
@@ -119,9 +118,13 @@ fun PrinterEditDialog(
                         modifier = Modifier.fillMaxWidth().menuAnchor(),
                     )
                     DropdownMenu(expanded = hostExpanded, onDismissRequest = { hostExpanded = false }) {
-                        listOf(HostType.MOONRAKER, HostType.OCTOPRINT, HostType.PRUSALINK, HostType.BAMBU_LAN).forEach { option ->
+                        val options = if (initialKind == PrinterKind.BAMBU_LAN) {
+                            listOf(HostType.BAMBU_LAN)
+                        } else {
+                            listOf(HostType.MOONRAKER, HostType.OCTOPRINT, HostType.PRUSALINK)
+                        }
+                        options.forEach { option ->
                             DropdownMenuItem(
-                                enabled = option != HostType.BAMBU_LAN || bambuEnabled,
                                 text = { Text(option.name.replace('_', ' ')) },
                                 onClick = {
                                     hostType = option
