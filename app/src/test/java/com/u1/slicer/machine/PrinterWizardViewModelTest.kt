@@ -9,7 +9,7 @@ import org.junit.Test
 
 class PrinterWizardViewModelTest {
     @Test
-    fun `vendor model variant flow filters delta and automated SEMM but keeps manual Ender`() = runTest {
+    fun `vendor model variant flow filters delta and keeps manual Ender`() = runTest {
         val ender = machineJson(
             name = "Creality Ender-3 V3 SE 0.4 nozzle",
             model = "Creality Ender-3 V3 SE",
@@ -59,6 +59,39 @@ class PrinterWizardViewModelTest {
             listOf("Creality Ender-3 V3 SE 0.4 nozzle"),
             viewModel.state.value.variants.map { it.profile.displayName },
         )
+    }
+
+    @Test
+    fun `standard single extruder model remains selectable when Orca enables SEMM mode`() = runTest {
+        val name = "Comgrow T500 0.4 nozzle"
+        val model = "Comgrow T500"
+        val index = VendorCatalogIndex(
+            name = "Comgrow",
+            version = "1.0.0",
+            machineModelList = listOf(VendorCatalogEntry(model, "machine_model/$model.json")),
+            machineList = listOf(VendorCatalogEntry(name, "machine/$name.json")),
+        )
+        val viewModel = PrinterWizardViewModel(
+            vendorNames = listOf("Comgrow"),
+            fetchIndex = { index },
+            resolveMachine = { _, _ ->
+                machineJson(
+                    name = name,
+                    model = model,
+                    structure = "i3",
+                    semm = true,
+                    manualChange = false,
+                )
+            },
+            validate = { MachineProfileValidationResult.success() },
+            save = { _, _, _ -> },
+        )
+
+        viewModel.selectVendor("Comgrow")
+        viewModel.selectModel(index.machineModelList.single())
+
+        assertEquals(listOf(name), viewModel.state.value.variants.map { it.profile.displayName })
+        assertEquals(null, viewModel.state.value.errorMessage)
     }
 
     @Test

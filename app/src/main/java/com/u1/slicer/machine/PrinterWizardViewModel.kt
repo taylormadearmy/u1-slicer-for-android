@@ -153,13 +153,11 @@ class PrinterWizardViewModel(
     private var currentIndex: VendorCatalogIndex? = null
 
     companion object {
-        /** Delta beds and automated SEMM/MMU behavior are outside the v1 support boundary. */
+        /** Delta beds and machines with more than four physical extruders are outside the v1 boundary. */
         fun isWizardSupported(profile: MachineProfile): Boolean {
             val json = runCatching { JSONObject(profile.machineJson) }.getOrNull() ?: return false
             if (json.optString("printer_structure").equals("delta", ignoreCase = true)) return false
-            if (profile.extruderCount !in 1..4) return false
-            val manualChange = json.optString("manual_filament_change") in setOf("1", "true", "yes")
-            return !profile.singleExtruderMultiMaterial || manualChange
+            return profile.extruderCount in 1..4
         }
     }
 }
