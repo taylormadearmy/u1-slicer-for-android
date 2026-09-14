@@ -462,6 +462,47 @@ class GcodeValidatorTest {
         assertEquals(180.0, result.maxY, 0.01)
     }
 
+    @Test
+    fun checkBedBounds_allowsBoundedOffBedTravelWithoutRelaxingExtrusionBounds() {
+        val travel = GcodeValidator.checkBedBounds(
+            "G1 X242 Y-9 F10200 ; park\n",
+            bedMaxX = 255.0,
+            bedMaxY = 225.0,
+            bedMinX = -5.0,
+            bedMinY = -5.0,
+            nonExtrudingTravelMarginMm = 5.0,
+        )
+        val extrusion = GcodeValidator.checkBedBounds(
+            "G1 X242 Y-9 E1 F500 ; purge\n",
+            bedMaxX = 255.0,
+            bedMaxY = 225.0,
+            bedMinX = -5.0,
+            bedMinY = -5.0,
+            nonExtrudingTravelMarginMm = 5.0,
+        )
+        val explicitPositiveExtrusion = GcodeValidator.checkBedBounds(
+            "G1 X242 Y-9 E+1 F500 ; purge\n",
+            bedMaxX = 255.0,
+            bedMaxY = 225.0,
+            bedMinX = -5.0,
+            bedMinY = -5.0,
+            nonExtrudingTravelMarginMm = 5.0,
+        )
+        val extremeTravel = GcodeValidator.checkBedBounds(
+            "G1 X242 Y-11 F10200 ; unsafe park\n",
+            bedMaxX = 255.0,
+            bedMaxY = 225.0,
+            bedMinX = -5.0,
+            bedMinY = -5.0,
+            nonExtrudingTravelMarginMm = 5.0,
+        )
+
+        assertTrue(travel.withinBounds)
+        assertFalse(extrusion.withinBounds)
+        assertFalse(explicitPositiveExtrusion.withinBounds)
+        assertFalse(extremeTravel.withinBounds)
+    }
+
     // ─── extractEstimatedTime ────────────────────────────────────────────────
 
     @Test

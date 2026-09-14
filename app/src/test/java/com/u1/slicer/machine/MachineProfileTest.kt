@@ -65,6 +65,28 @@ class MachineProfileTest {
     }
 
     @Test
+    fun `unwraps Orca array-backed custom G-code fields`() {
+        val json = """
+            {
+              "type": "machine",
+              "name": "Prusa CORE One 0.4 nozzle",
+              "printable_area": ["0x0", "250x0", "250x220", "0x220"],
+              "machine_start_gcode": ["M862.1 P[nozzle_diameter]\nG28"],
+              "machine_end_gcode": ["M104 S0\nM84"],
+              "change_filament_gcode": ["M600"],
+              "machine_pause_gcode": ["M601"]
+            }
+        """.trimIndent()
+
+        val profile = requireNotNull(MachineProfile.fromResolvedOrcaJson(json, MachineFamily.GENERIC))
+
+        assertEquals("M862.1 P[nozzle_diameter]\nG28", profile.machineStartGcode)
+        assertEquals("M104 S0\nM84", profile.machineEndGcode)
+        assertEquals("M600", profile.machineChangeFilamentGcode)
+        assertEquals("M601", profile.machinePauseGcode)
+    }
+
+    @Test
     fun `malformed JSON returns null`() {
         assertNull(MachineProfile.fromResolvedOrcaJson("not-json", MachineFamily.GENERIC))
     }

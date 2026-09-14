@@ -89,13 +89,11 @@ data class MachineProfile(
                     gcodeFlavor = GcodeFlavor.fromOrca(root.optString("gcode_flavor")),
                     singleExtruderMultiMaterial = root.optString("single_extruder_multi_material") in
                         setOf("1", "true", "yes"),
-                    machineStartGcode = root.optString("machine_start_gcode"),
-                    machineEndGcode = root.optString("machine_end_gcode"),
-                    machineChangeFilamentGcode = root.optString(
-                        "machine_change_filament_gcode",
-                        root.optString("change_filament_gcode")
-                    ),
-                    machinePauseGcode = root.optString("machine_pause_gcode"),
+                    machineStartGcode = orcaString(root, "machine_start_gcode"),
+                    machineEndGcode = orcaString(root, "machine_end_gcode"),
+                    machineChangeFilamentGcode = orcaString(root, "machine_change_filament_gcode")
+                        .ifBlank { orcaString(root, "change_filament_gcode") },
+                    machinePauseGcode = orcaString(root, "machine_pause_gcode"),
                     machineJson = json,
                     maxNozzleTemperatureC = temperatureLimit(
                         root,
@@ -172,6 +170,10 @@ data class MachineProfile(
         ): Int = keys.firstNotNullOfOrNull { key ->
             root.optString(key).toIntOrNull()?.takeIf { it > 0 }
         } ?: fallback
+
+        /** Orca serializes some scalar custom-G-code options as one-element arrays. */
+        private fun orcaString(root: JSONObject, key: String): String =
+            root.optJSONArray(key)?.optString(0) ?: root.optString(key)
 
         const val DEFAULT_MAX_NOZZLE_TEMPERATURE_C = 300
         const val DEFAULT_MAX_BED_TEMPERATURE_C = 120

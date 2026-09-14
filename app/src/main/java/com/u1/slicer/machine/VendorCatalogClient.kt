@@ -61,17 +61,20 @@ class VendorCatalogClient(
     }
 
     companion object {
-        const val ORCA_PROFILE_TAG = "v2.2.0"
-        private val DEFAULT_BASE_URL = "https://raw.githubusercontent.com/SoftFever/OrcaSlicer/$ORCA_PROFILE_TAG/resources/profiles/".toHttpUrl()
+        const val ORCA_PROFILE_REPOSITORY = "taylormadearmy/OrcaSlicer"
+        const val ORCA_PROFILE_TAG = "v2.2.4"
+        private val DEFAULT_BASE_URL = "https://raw.githubusercontent.com/$ORCA_PROFILE_REPOSITORY/$ORCA_PROFILE_TAG/resources/profiles/".toHttpUrl()
 
-        // Generated from the pinned v2.2.0 tag; GitHub raw does not enumerate directories.
+        // Generated from the pinned v2.2.4 tag; GitHub raw does not enumerate directories.
         val VENDOR_NAMES: List<String> = listOf(
-            "Anker", "Anycubic", "Artillery", "BBL", "BIQU", "Blocks", "Chuanying",
-            "Co Print", "Comgrow", "CONSTRUCT3D", "Creality", "Custom", "Dremel", "Elegoo",
-            "FLSun", "Flashforge", "FlyingBear", "Folgertech", "Geeetech", "Ginger Additive", "InfiMech",
-            "Kingroon", "MagicMaker", "Mellow", "OrcaArena", "Peopoly", "Positron3D", "Prusa",
+            "Afinia", "Anker", "Anycubic", "Artillery", "BBL", "BIQU", "Blocks", "Chuanying",
+            "Co Print", "CoLiDo", "Comgrow", "CONSTRUCT3D", "Creality", "Cubicon", "Custom",
+            "DeltaMaker", "Dremel", "Elegoo", "Eryone", "Flashforge", "FLSun", "FlyingBear",
+            "Folgertech", "Geeetech", "Ginger Additive", "InfiMech", "iQ", "Kingroon", "Lulzbot",
+            "MagicMaker", "Mellow", "OrcaArena", "Peopoly", "Phrozen", "Positron3D", "Prusa",
             "Qidi", "Raise3D", "Ratrig", "RolohaunDesign", "SecKit", "Snapmaker", "Sovol",
-            "Tronxy", "TwoTrees", "UltiMaker", "Vivedino", "Voron", "Voxelab", "Vzbot", "Wanhao",
+            "Tiertime", "Tronxy", "TwoTrees", "UltiMaker", "Vivedino", "Volumic", "Voron",
+            "Voxelab", "Vzbot", "Wanhao", "Wanhao France", "WonderMaker", "Z-Bolt",
         )
 
         fun parseVendorIndex(json: String): VendorCatalogIndex = try {

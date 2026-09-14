@@ -492,14 +492,18 @@ object GcodeValidator {
      * @param bedMaxY bed upper Y limit
      * @param bedMinX bed lower X limit (default 0.0)
      * @param bedMinY bed lower Y limit (default 0.0)
+     * @param nonExtrudingTravelMarginMm additional allowance for positioning and park moves
+     * without an E axis. Moves carrying an E axis retain the supplied bed bounds.
      */
     fun checkBedBounds(
         gcode: String,
         bedMaxX: Double,
         bedMaxY: Double,
         bedMinX: Double = 0.0,
-        bedMinY: Double = 0.0
+        bedMinY: Double = 0.0,
+        nonExtrudingTravelMarginMm: Double = 0.0,
     ): BedBoundsResult {
+        require(nonExtrudingTravelMarginMm >= 0.0)
         var curX = Double.NaN
         var curY = Double.NaN
         var minX = Double.POSITIVE_INFINITY
@@ -510,6 +514,7 @@ object GcodeValidator {
 
         val xRegex = Regex("""X(-?\d+(?:\.\d+)?)""")
         val yRegex = Regex("""Y(-?\d+(?:\.\d+)?)""")
+        val extrusionAxisRegex = Regex("""\bE[+-]?(?:\d|\.)""")
 
         for (rawLine in gcode.lines()) {
             val line = rawLine.trim()
@@ -522,14 +527,25 @@ object GcodeValidator {
             if (!curX.isNaN()) { minX = minOf(minX, curX); maxX = maxOf(maxX, curX) }
             if (!curY.isNaN()) { minY = minOf(minY, curY); maxY = maxOf(maxY, curY) }
 
-            val xOob = !curX.isNaN() && (curX < bedMinX - 0.5 || curX > bedMaxX + 0.5)
-            val yOob = !curY.isNaN() && (curY < bedMinY - 0.5 || curY > bedMaxY + 0.5)
+            val lineMargin = if (extrusionAxisRegex.containsMatchIn(line.substringBefore(';'))) {
+                0.0
+            } else {
+                nonExtrudingTravelMarginMm
+            }
+            val xOob = !curX.isNaN() &&
+                (curX < bedMinX - lineMargin - 0.5 || curX > bedMaxX + lineMargin + 0.5)
+            val yOob = !curY.isNaN() &&
+                (curY < bedMinY - lineMargin - 0.5 || curY > bedMaxY + lineMargin + 0.5)
             if ((xOob || yOob) && violations.size < 5) violations.add(line)
         }
 
+        val overallMinX = bedMinX - nonExtrudingTravelMarginMm - 0.5
+        val overallMaxX = bedMaxX + nonExtrudingTravelMarginMm + 0.5
+        val overallMinY = bedMinY - nonExtrudingTravelMarginMm - 0.5
+        val overallMaxY = bedMaxY + nonExtrudingTravelMarginMm + 0.5
         val withinBounds = violations.isEmpty() &&
-            (minX.isInfinite() || (minX >= bedMinX - 0.5 && maxX <= bedMaxX + 0.5)) &&
-            (minY.isInfinite() || (minY >= bedMinY - 0.5 && maxY <= bedMaxY + 0.5))
+            (minX.isInfinite() || (minX >= overallMinX && maxX <= overallMaxX)) &&
+            (minY.isInfinite() || (minY >= overallMinY && maxY <= overallMaxY))
 
         return BedBoundsResult(
             withinBounds = withinBounds,

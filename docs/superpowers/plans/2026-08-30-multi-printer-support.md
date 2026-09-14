@@ -17,7 +17,7 @@
 - All 1976 JVM unit tests and 451 instrumented tests must stay green after every task; never weaken an assertion (CLAUDE.md rule).
 - Native rebuilds: NDK 26 (clang 17.0.2), Release, stripped ~19–21 MB, via `scripts/rebuild-native-so.sh`; commit orca submodule changes BEFORE deploying a new `.so`; JNI symbol count must match `NativeLibrary.kt` `external fun` count.
 - U1 behaviour must be byte-equivalent through phases 1–3: every demoted literal becomes a fallback whose value equals today's literal, and the U1 `MachineProfile` supplies today's values.
-- Profile source pin: `https://raw.githubusercontent.com/SoftFever/OrcaSlicer/v2.2.0/resources/profiles/` (D2). The pin is a single constant `ORCA_PROFILE_TAG` in `VendorCatalogClient.kt`; bumping it requires re-running the phase-5 validation fixtures.
+- Profile source pin: `https://raw.githubusercontent.com/taylormadearmy/OrcaSlicer/v2.2.4/resources/profiles/` (D2). The repository and tag are constants in `VendorCatalogClient.kt`; bumping either requires re-running the phase-5 validation fixtures.
 - New user-facing strings: neutral wording ("printer", "machine profile"), never "Snapmaker" outside the Snapmaker family.
 - Do not touch the Bambu path (`SlicerTarget`, `BambuMachineProfile`, `resolveTargetedSliceConfig` Bambu branches, `applyBambuConfigToPrusa`) except where a task explicitly says so (D3).
 - Mixes (ColorMix / AI-paint mix bytes) remain gated to 4-slot printers; the `4 + k` encoding is untouched (D6).

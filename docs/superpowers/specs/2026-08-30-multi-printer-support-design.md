@@ -8,7 +8,7 @@
 
 ## TL;DR
 
-Let a user add *any* printer from OrcaSlicer's vendor catalogue (367 models across 68 vendors), or import an `.orca_printer` bundle, and get correct local slicing + upload for it — while the Snapmaker U1 remains the first-class default and the Bambu beta path keeps working unchanged. The core move is replacing the two hardcoded machine paths (U1 literals in `applyConfigToPrusa()`, `BambuMachineProfile` map) with one data-driven `MachineProfile` pipeline fed by Orca-native profile JSON.
+Let a user add *any* printer from the pinned OrcaSlicer v2.2.4 catalogue (326 models across 56 usable machine vendors), or import an `.orca_printer` bundle, and get correct local slicing + upload for it — while the Snapmaker U1 remains the first-class default and the Bambu beta path keeps working unchanged. The core move is replacing the two hardcoded machine paths (U1 literals in `applyConfigToPrusa()`, `BambuMachineProfile` map) with one data-driven `MachineProfile` pipeline fed by Orca-native profile JSON.
 
 ## Why now / evidence base
 
@@ -20,14 +20,14 @@ Three research inputs (2026-08-30):
    - The 4-extruder slot model is structural in exactly one place — mix/AI-paint byte encoding is `4 + k` (`SlicerViewModel.kt:6387-6398`); everywhere else "4" is a default or a clamp.
    - Connectivity is **already multi-printer** (F78: `PrintersConfig`, `PrinterTransportFactory`), and the Bambu path already demonstrates the per-machine pattern to generalise (`resolveTargetedSliceConfig` + native `machine_target`).
 2. **SliceBeam / OrcaSlicer-Mobile review** — their multi-printer support = bundled vendor catalogue + setup wizard (vendor → model → nozzle variant → filaments) + `.orca_printer` import with recursive `inherits` resolution and auto-download of missing bases from SoftFever GitHub raw. Their weakness (self-documented in their `ORCA_KEY_AUDIT.md`): a PrusaSlicer-ini conversion layer with rename maps and whitelists that silently drop keys. We copy the UX and the recursive-download idea; we skip the conversion layer entirely because our engine consumes Orca keys natively.
-3. **Ecosystem survey** — OrcaSlicer `resources/profiles/` (AGPL-3.0, same licence as us) is the profile source: 68 vendor index JSONs, 367 printer models, flat JSON with single-parent `inherits`, per-vendor subtree typically < 1 MB once PNG/STL are dropped. Upstream Orca also has a ready-made OTA design (`PresetUpdater::sync_vendor_config`: vendor `version` field + per-vendor zip + snapshot/rollback) and a full catalogue of AGPL host clients in `src/slic3r/Utils/` (OctoPrint, PrusaLink, Duet, Repetier, MKS…) to port to Kotlin.
+3. **Ecosystem survey** — OrcaSlicer v2.2.4 `resources/profiles/` (AGPL-3.0, same licence as us) is the profile source: 56 usable machine-vendor indexes and 326 printer models after excluding the blacklist and shared filament-library indexes, flat JSON with single-parent `inherits`, per-vendor subtree typically < 1 MB once PNG/STL are dropped. Upstream Orca also has a ready-made OTA design (`PresetUpdater::sync_vendor_config`: vendor `version` field + per-vendor zip + snapshot/rollback) and a full catalogue of AGPL host clients in `src/slic3r/Utils/` (OctoPrint, PrusaLink, Duet, Repetier, MKS…) to port to Kotlin.
 
 ## Decisions
 
 | # | Decision | Rationale |
 |---|----------|-----------|
 | D1 | **Profile format: Orca vendor JSON, no conversion layer.** | Engine already eats Orca keys via `project_settings.config`. OrcaSlicer-Mobile's ini/rename-map approach is their documented top bug source. |
-| D2 | **Profile source: SoftFever/OrcaSlicer `resources/profiles` pinned to tag `v2.2.0`**, fetched per-vendor at runtime from `raw.githubusercontent.com`, cached on device. Bundle only Snapmaker U1 (already in assets) + one generic-Klipper and one generic-Marlin profile. | 46 MB full tree is un-bundleable; per-vendor fetch is ~1 MB. Pin near our engine version (Snapmaker Orca 2.2.4) so key/placeholder syntax matches; bumping the pin is a deliberate, tested act. |
+| D2 | **Profile source: taylormadearmy/OrcaSlicer `resources/profiles` pinned to tag `v2.2.4`**, fetched per-vendor at runtime from `raw.githubusercontent.com`, cached on device. Bundle only Snapmaker U1 (already in assets) + one generic-Klipper and one generic-Marlin profile. | The matching Snapmaker fork/tag is the source of the app's native engine and exists at the runtime download URL; per-vendor fetch is ~1 MB. Matching the engine keeps keys and placeholder syntax compatible. Treat each future pin change as a deliberate, tested update. |
 | D3 | **One `MachineProfile` data model** (Kotlin) resolved from Orca machine JSON (with `inherits` chain), feeding the existing `SliceConfig` fields (`bedSizeX/Y`, `maxPrintHeight`, `machineStartGcode`…, `machineTarget`). The Bambu enum path stays as-is in v1 and converges later. | `resolveTargetedSliceConfig` already proves the shape. Don't destabilise the shipping Bambu beta while rebuilding the U1 path. |
 | D4 | **Native: honour JNI geometry everywhere; provenance via explicit marker.** `applyConfigToPrusa()` reads `config.bed_size_x/y`/`max_print_height` instead of 270-literals; `printable_height` joins `profile_keys[]`; the `PRINT_START` heuristic is replaced by reading `snapmaker_authored_profile` (kept as key name for back-compat; written for **every** app-authored embed) with the heuristic as fallback for old files. The 165-key whitelist applies to any app-authored profile, not just Snapmaker. | The marker already exists on the Kotlin side. This kills the false-positive class documented in-code at `sapil_print.cpp:973-981`. |
 | D5 | **Every key `applyConfigToPrusa()` writes must be overridable via `profile_keys[]`** — enforced by a structural unit test that parses `sapil_print.cpp`, in the style of the repo's existing source-grep guards. | This is the exact silent-drop bug class OrcaSlicer-Mobile shipped. Make it impossible to regress. |
@@ -50,7 +50,7 @@ Three research inputs (2026-08-30):
 ## Architecture
 
 ```
-Orca vendor catalogue (GitHub raw, pinned tag v2.2.0)
+Orca vendor catalogue (GitHub raw, pinned tag v2.2.4)
         │  VendorCatalogClient (fetch index + profiles, cache)
         ▼
 OrcaProfileResolver (inherits-chain resolution → flat machine/process/filament JSON)
@@ -86,7 +86,7 @@ native sapil_print.cpp:
 ## Risks
 
 1. **Native regression on the U1 path** while demoting literals to fallbacks. Mitigation: phase 1 changes are behaviour-preserving for U1 by construction (fallback values equal today's literals; JNI config for U1 sends the same 270/0.4/4 values), guarded by the full 451-test instrumented sweep + confidence-check before each phase merges.
-2. **Upstream profile keys unknown to Snapmaker Orca 2.2.4** (fork predates upstream 2.4.x keys; newer `change_filament_gcode` placeholder syntax). Mitigation: pin to `v2.2.0` (D2); wizard-fetch validation step slices a 1-layer cube with the fetched profile before saving it; CI fixture per family.
+2. **Upstream profile keys unknown to Snapmaker Orca 2.2.4** (fork predates upstream 2.4.x keys; newer `change_filament_gcode` placeholder syntax). Mitigation: pin to the matching `v2.2.4` profile tag (D2); the wizard-fetch validation step slices a 1-layer cube with the fetched profile before saving it; CI fixture per family.
 3. **Marlin flavour is genuinely new** for this engine build (`gcode_flavor=klipper` suppresses body M104/M109 — Marlin needs them emitted). Mitigation: dedicated phase-4 fixtures asserting `M104`/`M109` presence for a Marlin profile and absence of Klipper macros (`EXCLUDE_OBJECT_*`, `SET_*`).
 4. **Scope creep via the wizard** (thumbnails, filament libraries per vendor). Mitigation: wizard v1 shows text lists only; vendor cover PNGs are explicitly deferred.
 5. **`BambuSanitizer` off-bed heuristics** use 270-literals to classify plates; changing them can shift multi-plate detection for existing U1 users. Mitigation: heuristics stay 270-based for Bambu-authored files (they describe *Bambu* bed conventions, ≤256 mm) — they are parameterised to the **source file's** bed size, not the target printer's, with regression fixtures pinned.

@@ -61,10 +61,11 @@ class NativeMachineProfileValidator(context: Context) {
                 }
                 val bounds = GcodeValidator.checkBedBounds(
                     gcode = gcode,
-                    bedMaxX = profile.bedSizeX + PROFILE_GCODE_MARGIN_MM,
-                    bedMaxY = profile.bedSizeY + PROFILE_GCODE_MARGIN_MM,
-                    bedMinX = -PROFILE_GCODE_MARGIN_MM,
-                    bedMinY = -PROFILE_GCODE_MARGIN_MM,
+                    bedMaxX = profile.bedSizeX + PROFILE_EXTRUSION_MARGIN_MM,
+                    bedMaxY = profile.bedSizeY + PROFILE_EXTRUSION_MARGIN_MM,
+                    bedMinX = -PROFILE_EXTRUSION_MARGIN_MM,
+                    bedMinY = -PROFILE_EXTRUSION_MARGIN_MM,
+                    nonExtrudingTravelMarginMm = PROFILE_TRAVEL_MARGIN_MM,
                 )
                 if (!bounds.withinBounds) {
                     return@withLock MachineProfileValidationResult.failure(
@@ -115,7 +116,9 @@ class NativeMachineProfileValidator(context: Context) {
 
     companion object {
         const val VALIDATION_MODEL_ASSET = "machine/profile-validation-cube.stl"
-        // Orca's own Ender start G-code primes at X=-2.4 mm, outside the printable polygon.
-        private const val PROFILE_GCODE_MARGIN_MM = 5.0
+        // Vendor start G-code may prime just outside the printable polygon.
+        private const val PROFILE_EXTRUSION_MARGIN_MM = 5.0
+        // CORE One parks at Y=-9; travel gets 5 mm beyond the extrusion envelope.
+        private const val PROFILE_TRAVEL_MARGIN_MM = 5.0
     }
 }
