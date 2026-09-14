@@ -1,5 +1,6 @@
 package com.u1.slicer.machine
 
+import com.u1.slicer.data.HostType
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +16,14 @@ data class PrinterWizardVariant(
     val sourcePath: String = profile.id,
 )
 
+data class PrinterWizardConnection(
+    val hostType: HostType,
+    val address: String = "",
+    val apiKey: String = "",
+    val username: String = "",
+    val password: String = "",
+)
+
 data class PrinterWizardState(
     val step: PrinterWizardStep = PrinterWizardStep.VENDOR,
     val vendors: List<String> = emptyList(),
@@ -23,6 +32,7 @@ data class PrinterWizardState(
     val selectedVendor: String? = null,
     val selectedModel: VendorCatalogEntry? = null,
     val selectedVariant: PrinterWizardVariant? = null,
+    val connectionHostType: HostType? = null,
     val busy: Boolean = false,
     val errorMessage: String? = null,
     val saved: Boolean = false,
@@ -44,7 +54,7 @@ class PrinterWizardViewModel(
     private val fetchIndex: suspend (String) -> VendorCatalogIndex,
     private val resolveMachine: suspend (String, String) -> String?,
     private val validate: suspend (MachineProfile) -> MachineProfileValidationResult,
-    private val save: suspend (MachineProfile, String, String) -> Unit,
+    private val save: suspend (MachineProfile, String, PrinterWizardConnection) -> Unit,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val _state = MutableStateFlow(
@@ -105,12 +115,29 @@ class PrinterWizardViewModel(
         _state.value = _state.value.copy(
             step = PrinterWizardStep.CONFIRM,
             selectedVariant = variant,
+            connectionHostType = suggestedHostType(variant.profile),
             errorMessage = null,
         )
     }
 
-    suspend fun confirm(nickname: String, moonrakerUrl: String) = runBusy {
+    fun selectHostType(hostType: HostType) {
+        require(hostType in SUPPORTED_HOST_TYPES) { "Unsupported catalogue host type: $hostType" }
+        _state.value = _state.value.copy(connectionHostType = hostType, errorMessage = null)
+    }
+
+    suspend fun confirm(
+        nickname: String,
+        address: String,
+        apiKey: String = "",
+        username: String = "",
+        password: String = "",
+    ) = runBusy {
         val profile = requireNotNull(_state.value.selectedVariant).profile
+        val hostType = _state.value.connectionHostType
+        if (hostType == null) {
+            _state.value = _state.value.copy(errorMessage = "Choose a supported connection type.")
+            return@runBusy
+        }
         val result = withContext(ioDispatcher) { validate(profile) }
         if (!result.isValid) {
             _state.value = _state.value.copy(
@@ -119,7 +146,17 @@ class PrinterWizardViewModel(
             return@runBusy
         }
         withContext(ioDispatcher) {
-            save(profile, nickname.trim().ifBlank { profile.displayName }, moonrakerUrl.trim())
+            save(
+                profile,
+                nickname.trim().ifBlank { profile.displayName },
+                PrinterWizardConnection(
+                    hostType = hostType,
+                    address = address.trim(),
+                    apiKey = apiKey.trim(),
+                    username = username.trim(),
+                    password = password,
+                ),
+            )
         }
         _state.value = _state.value.copy(saved = true, errorMessage = null)
     }
@@ -140,6 +177,7 @@ class PrinterWizardViewModel(
             PrinterWizardStep.CONFIRM -> _state.value.copy(
                 step = PrinterWizardStep.VARIANT,
                 selectedVariant = null,
+                connectionHostType = null,
             )
         }
     }
@@ -169,6 +207,37 @@ class PrinterWizardViewModel(
     }
 
     companion object {
+        val SUPPORTED_HOST_TYPES = listOf(HostType.MOONRAKER, HostType.OCTOPRINT, HostType.PRUSALINK)
+
+        /** Uses supported Orca metadata where present and refuses to relabel unsupported hosts. */
+        fun suggestedHostType(profile: MachineProfile): HostType? {
+            if (profile.vendor.equals("Prusa", ignoreCase = true)) return HostType.PRUSALINK
+            if (
+                profile.vendor.equals("Snapmaker", ignoreCase = true) &&
+                profile.printerModel.contains("U1", ignoreCase = true)
+            ) return HostType.MOONRAKER
+
+            val rawHostType = runCatching { JSONObject(profile.machineJson).optString("host_type") }
+                .getOrDefault("")
+                .trim()
+                .lowercase()
+            return when (rawHostType) {
+                "moonraker" -> HostType.MOONRAKER
+                "octoprint" -> HostType.OCTOPRINT
+                "prusalink", "prusa_link" -> HostType.PRUSALINK
+                "" -> if (profile.gcodeFlavor == GcodeFlavor.KLIPPER) {
+                    HostType.MOONRAKER
+                } else {
+                    HostType.OCTOPRINT
+                }
+                else -> null
+            }
+        }
+
+        fun defaultHostType(profile: MachineProfile): HostType =
+            suggestedHostType(profile)
+                ?: if (profile.gcodeFlavor == GcodeFlavor.KLIPPER) HostType.MOONRAKER else HostType.OCTOPRINT
+
         /** Delta beds and machines with more than four physical extruders are outside the v1 boundary. */
         fun isWizardSupported(profile: MachineProfile): Boolean {
             val json = runCatching { JSONObject(profile.machineJson) }.getOrNull() ?: return false

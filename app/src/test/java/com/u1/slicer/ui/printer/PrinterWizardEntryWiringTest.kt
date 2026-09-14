@@ -22,8 +22,11 @@ class PrinterWizardEntryWiringTest {
         val wizard = File("src/main/java/com/u1/slicer/machine/PrinterWizardViewModel.kt").readText()
 
         assertTrue(settings.contains("machineProfileValidator::validate"))
-        assertTrue(settings.contains("printerViewModel::addProfilePrinter"))
+        assertTrue(settings.contains("hostType = connection.hostType"))
+        assertTrue(settings.contains("apiKey = connection.apiKey"))
+        assertTrue(settings.contains("username = connection.username"))
+        assertTrue(settings.contains("password = connection.password"))
         assertTrue(settings.contains("cachedOrcaProfileLookup.refreshVendor(vendor)"))
-        assertTrue(wizard.indexOf("validate(profile)") < wizard.indexOf("save(profile"))
+        assertTrue(wizard.indexOf("validate(profile)") < wizard.indexOf("save("))
     }
 }

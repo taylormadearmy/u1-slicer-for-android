@@ -20,6 +20,7 @@ import com.u1.slicer.data.upsertLibraryProfile
 import com.u1.slicer.network.FilamentSlot
 import com.u1.slicer.network.PrinterStatus
 import com.u1.slicer.machine.MachineProfile
+import com.u1.slicer.machine.PrinterWizardViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.withContext
@@ -392,7 +393,15 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** Saves, adds, and activates a generic machine after the wizard validation gate passes. */
-    suspend fun addProfilePrinter(profile: MachineProfile, nickname: String, url: String) {
+    suspend fun addProfilePrinter(
+        profile: MachineProfile,
+        nickname: String,
+        url: String,
+        hostType: HostType = PrinterWizardViewModel.defaultHostType(profile),
+        apiKey: String = "",
+        username: String = "",
+        password: String = "",
+    ) {
         withContext(Dispatchers.IO) { machineProfilesRepo.save(profile) }
         val printer = buildPrinter(
             id = java.util.UUID.randomUUID().toString(),
@@ -400,7 +409,11 @@ class PrinterViewModel(application: Application) : AndroidViewModel(application)
             existingExtruderPresets = defaultExtruderPresets(profile.extruderCount),
             nickname = nickname,
             kind = PrinterKind.MOONRAKER,
+            hostType = hostType,
             url = url,
+            apiKey = apiKey,
+            username = username,
+            password = password,
             bambuIp = "",
             bambuAccessCode = "",
             bambuSerial = "",

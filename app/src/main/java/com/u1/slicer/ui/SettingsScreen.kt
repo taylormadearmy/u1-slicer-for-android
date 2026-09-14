@@ -503,7 +503,17 @@ fun SettingsScreen(
                                     )
                                 },
                                 validate = container.machineProfileValidator::validate,
-                                save = printerViewModel::addProfilePrinter,
+                                save = { profile, nickname, connection ->
+                                    printerViewModel.addProfilePrinter(
+                                        profile = profile,
+                                        nickname = nickname,
+                                        url = connection.address,
+                                        hostType = connection.hostType,
+                                        apiKey = connection.apiKey,
+                                        username = connection.username,
+                                        password = connection.password,
+                                    )
+                                },
                             )
                         },
                         onImportOrcaPrinter = { input, fileName ->

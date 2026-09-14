@@ -1,5 +1,6 @@
 package com.u1.slicer.ui.machine
 
+import com.u1.slicer.data.HostType
 import com.u1.slicer.machine.GcodeFlavor
 import com.u1.slicer.machine.MachineFamily
 import com.u1.slicer.machine.MachineProfile
@@ -9,6 +10,13 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class PrinterWizardVariantListTest {
+    @Test
+    fun `connection labels name the selected host instead of implying Moonraker`() {
+        assertEquals("Moonraker address (optional)", printerWizardAddressLabel(HostType.MOONRAKER))
+        assertEquals("OctoPrint address (optional)", printerWizardAddressLabel(HostType.OCTOPRINT))
+        assertEquals("PrusaLink address (optional)", printerWizardAddressLabel(HostType.PRUSALINK))
+    }
+
     @Test
     fun `same nozzle variants retain distinct labels and list keys`() {
         val standard = variant(

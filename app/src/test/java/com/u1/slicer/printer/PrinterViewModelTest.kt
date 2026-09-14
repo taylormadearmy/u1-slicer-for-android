@@ -209,6 +209,34 @@ class PrinterViewModelTest {
     }
 
     @Test
+    fun `buildPrinter retains selected PrusaLink authentication`() {
+        val printer = PrinterViewModel.buildPrinter(
+            id = "prusa-1",
+            fallbackNickname = "Prusa",
+            existingExtruderPresets = defaultExtruderPresets(1),
+            nickname = "MK4S",
+            kind = PrinterKind.MOONRAKER,
+            hostType = HostType.PRUSALINK,
+            url = " prusa.local ",
+            apiKey = " api-key ",
+            username = " maker ",
+            password = "secret",
+            bambuIp = "",
+            bambuAccessCode = "",
+            bambuSerial = "",
+            bambuModel = BambuModel.P1S,
+            machineProfileId = "prusa-mk4-0.4",
+        )
+
+        assertEquals(HostType.PRUSALINK, printer.hostType)
+        assertEquals("http://prusa.local", printer.moonrakerUrl)
+        assertEquals("api-key", printer.apiKey)
+        assertEquals("maker", printer.username)
+        assertEquals("secret", printer.password)
+        assertEquals("prusa-mk4-0.4", printer.machineProfileId)
+    }
+
+    @Test
     fun `connection fingerprint includes host protocol and credentials`() {
         val printer = Printer(
             id = "host-1",

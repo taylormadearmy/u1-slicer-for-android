@@ -1,5 +1,6 @@
 package com.u1.slicer.machine
 
+import com.u1.slicer.data.HostType
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -129,6 +130,117 @@ class PrinterWizardViewModelTest {
     }
 
     @Test
+    fun `Prusa catalogue defaults to PrusaLink despite generic Orca host metadata`() = runTest {
+        val name = "Prusa MK4 0.4 nozzle"
+        val model = "Prusa MK4"
+        val index = VendorCatalogIndex(
+            name = "Prusa",
+            version = "1",
+            machineModelList = listOf(VendorCatalogEntry(model, "machine/$model.json")),
+            machineList = listOf(VendorCatalogEntry(name, "machine/$name.json")),
+        )
+        var savedConnection: PrinterWizardConnection? = null
+        val viewModel = PrinterWizardViewModel(
+            vendorNames = listOf("Prusa"),
+            fetchIndex = { index },
+            resolveMachine = { _, _ ->
+                machineJson(name, model, "i3", hostType = "octoprint")
+            },
+            validate = { MachineProfileValidationResult.success() },
+            save = { _, _, connection -> savedConnection = connection },
+        )
+
+        viewModel.selectVendor("Prusa")
+        viewModel.selectModel(index.machineModelList.single())
+        viewModel.selectVariant(viewModel.state.value.variants.single())
+
+        assertEquals(HostType.PRUSALINK, viewModel.state.value.connectionHostType)
+
+        viewModel.confirm(
+            nickname = "My MK4",
+            address = " prusa.local ",
+            apiKey = " api-key ",
+            username = " maker ",
+            password = "secret",
+        )
+
+        assertEquals(
+            PrinterWizardConnection(
+                hostType = HostType.PRUSALINK,
+                address = "prusa.local",
+                apiKey = "api-key",
+                username = "maker",
+                password = "secret",
+            ),
+            savedConnection,
+        )
+    }
+
+    @Test
+    fun `Snapmaker U1 catalogue default remains Moonraker despite Orca metadata`() = runTest {
+        val name = "Snapmaker U1 0.4 nozzle"
+        val model = "Snapmaker U1"
+        val index = VendorCatalogIndex(
+            name = "Snapmaker",
+            version = "1",
+            machineModelList = listOf(VendorCatalogEntry(model, "machine/$model.json")),
+            machineList = listOf(VendorCatalogEntry(name, "machine/$name.json")),
+        )
+        val viewModel = PrinterWizardViewModel(
+            vendorNames = listOf("Snapmaker"),
+            fetchIndex = { index },
+            resolveMachine = { _, _ -> machineJson(name, model, "i3", hostType = "octoprint") },
+            validate = { MachineProfileValidationResult.success() },
+            save = { _, _, _ -> },
+        )
+
+        viewModel.selectVendor("Snapmaker")
+        viewModel.selectModel(index.machineModelList.single())
+        viewModel.selectVariant(viewModel.state.value.variants.single())
+
+        assertEquals(HostType.MOONRAKER, viewModel.state.value.connectionHostType)
+    }
+
+    @Test
+    fun `catalog connection default is selectable and OctoPrint credentials are saved`() = runTest {
+        val fixture = singleMachineFixture(hostType = "octoprint")
+        var savedConnection: PrinterWizardConnection? = null
+        val viewModel = fixture.viewModel(
+            validate = { MachineProfileValidationResult.success() },
+            save = { _, _, connection -> savedConnection = connection },
+        )
+        fixture.chooseVariant(viewModel)
+
+        assertEquals(HostType.OCTOPRINT, viewModel.state.value.connectionHostType)
+        viewModel.selectHostType(HostType.MOONRAKER)
+        assertEquals(HostType.MOONRAKER, viewModel.state.value.connectionHostType)
+        viewModel.selectHostType(HostType.OCTOPRINT)
+
+        viewModel.confirm("Octo Ender", "octo.local", apiKey = "octo-key")
+
+        assertEquals(HostType.OCTOPRINT, savedConnection?.hostType)
+        assertEquals("octo-key", savedConnection?.apiKey)
+    }
+
+    @Test
+    fun `unsupported Orca host does not masquerade as Moonraker`() = runTest {
+        val fixture = singleMachineFixture(hostType = "esp3d")
+        var saves = 0
+        val viewModel = fixture.viewModel(
+            validate = { MachineProfileValidationResult.success() },
+            save = { _, _, _ -> saves++ },
+        )
+        fixture.chooseVariant(viewModel)
+
+        assertEquals(null, viewModel.state.value.connectionHostType)
+
+        viewModel.confirm("ESP printer", "printer.local")
+
+        assertEquals(0, saves)
+        assertEquals("Choose a supported connection type.", viewModel.state.value.errorMessage)
+    }
+
+    @Test
     fun `validation failure surfaces exact error and blocks persistence`() = runTest {
         val fixture = singleMachineFixture()
         var saves = 0
@@ -148,7 +260,7 @@ class PrinterWizardViewModelTest {
     @Test
     fun `successful validation persists selected profile and connection`() = runTest {
         val fixture = singleMachineFixture()
-        var saved: Triple<MachineProfile, String, String>? = null
+        var saved: Triple<MachineProfile, String, PrinterWizardConnection>? = null
         val viewModel = fixture.viewModel(
             validate = { MachineProfileValidationResult.success() },
             save = { profile, nickname, url -> saved = Triple(profile, nickname, url) },
@@ -160,7 +272,7 @@ class PrinterWizardViewModelTest {
         assertTrue(viewModel.state.value.saved)
         assertEquals("creality-ender-3-v3-se-0.4", saved!!.first.id)
         assertEquals("My Ender", saved!!.second)
-        assertEquals("http://ender.local", saved!!.third)
+        assertEquals("http://ender.local", saved!!.third.address)
     }
 
     private data class Fixture(
@@ -169,7 +281,7 @@ class PrinterWizardViewModelTest {
     ) {
         fun viewModel(
             validate: suspend (MachineProfile) -> MachineProfileValidationResult,
-            save: suspend (MachineProfile, String, String) -> Unit,
+            save: suspend (MachineProfile, String, PrinterWizardConnection) -> Unit,
         ) = PrinterWizardViewModel(
             vendorNames = listOf("Creality"),
             fetchIndex = { index },
@@ -185,7 +297,7 @@ class PrinterWizardViewModelTest {
         }
     }
 
-    private fun singleMachineFixture(): Fixture {
+    private fun singleMachineFixture(hostType: String? = null): Fixture {
         val name = "Creality Ender-3 V3 SE 0.4 nozzle"
         return Fixture(
             index = VendorCatalogIndex(
@@ -202,6 +314,7 @@ class PrinterWizardViewModelTest {
                 structure = "i3",
                 semm = true,
                 manualChange = true,
+                hostType = hostType,
             ),
         )
     }
@@ -212,6 +325,7 @@ class PrinterWizardViewModelTest {
         structure: String,
         semm: Boolean = false,
         manualChange: Boolean = false,
+        hostType: String? = null,
     ): String = JSONObject().apply {
         put("type", "machine")
         put("name", name)
@@ -219,6 +333,7 @@ class PrinterWizardViewModelTest {
         put("printer_variant", "0.4")
         put("printer_structure", structure)
         put("gcode_flavor", "marlin2")
+        hostType?.let { put("host_type", it) }
         put("printable_area", org.json.JSONArray(listOf("0x0", "220x0", "220x220", "0x220")))
         put("printable_height", "250")
         put("nozzle_diameter", org.json.JSONArray(listOf("0.4")))
