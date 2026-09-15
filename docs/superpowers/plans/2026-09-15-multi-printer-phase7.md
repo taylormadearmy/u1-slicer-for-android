@@ -3,10 +3,10 @@
 Scope: master plan Tasks 7.1–7.4 only. Starting commit 7f1acf6b on feature/a2-multi-printer in the existing multi-printer worktree. See the master plan and design spec dated 2026-08-30.
 
 ## Task 7.1: Confidence and upload-only wizard coverage
-- [ ] Add MachineBedSizeTest, SingleExtruderMachineTest and MarlinFlavorTest to the default confidence manifest.
-- [ ] Add a repeatable E2E batch scenario that adds a printer through the wizard, slices a fixture and uploads only to a mock host. Assert persisted profile, successful native slice and exact upload-only request semantics. Keep the existing U1 scenarios.
-- [ ] Add regression coverage first for new logic; record red/green evidence where applicable.
-- [ ] Run the expanded native smoke and new scenario, review and commit. Check master Task 7.1 only after passing.
+- [x] Add MachineBedSizeTest, SingleExtruderMachineTest and MarlinFlavorTest to the default confidence manifest.
+- [x] Add a repeatable E2E batch scenario that adds a printer through the wizard, slices a fixture and uploads only to a mock host. Assert persisted profile, successful native slice and exact upload-only request semantics. Keep the existing U1 scenarios.
+- [x] Add regression coverage first for new logic; record red/green evidence where applicable.
+- [x] Run the expanded native smoke and new scenario, review and commit. Check master Task 7.1 only after passing.
 
 ## Task 7.2: Documentation and staged issue handling
 - [ ] Update supported printers, architecture, profile conventions, wizard screenshot, test inventory and BACKLOG candidate status.
