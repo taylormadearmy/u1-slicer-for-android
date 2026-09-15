@@ -386,5 +386,7 @@ Get-ChildItem $ResultsDir -Filter "*.txt" |
     ForEach-Object { Get-Content $_.FullName; ""; } |
     Set-Content $summary
 
-Write-Step "Batch complete: passed=$passed failed=$failed summary=$summary"
+& (Join-Path $PSScriptRoot "batch-e2e-result.ps1") `
+    -Passed $passed -Failed $failed -Summary $summary
+exit $LASTEXITCODE
 
