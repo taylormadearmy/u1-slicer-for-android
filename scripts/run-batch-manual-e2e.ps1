@@ -11,7 +11,8 @@ param(
     [ValidateSet('A1_MINI', 'A1', 'P1P', 'P1S', 'P2S', 'X1C', 'X1E', 'H2D')]
     [string]$BambuTarget = 'H2D',
     [switch]$KeepExistingResults,
-    [switch]$NoInstall
+    [switch]$NoInstall,
+    [switch]$IncludePrinterWizardUpload
 )
 
 $ErrorActionPreference = "Stop"
@@ -287,6 +288,7 @@ if (!(Test-Path $ResultsDir)) {
 }
 if (!$KeepExistingResults) {
     Get-ChildItem $ResultsDir -Filter "??-*.txt" -ErrorAction SilentlyContinue | Remove-Item -Force
+    Remove-Item (Join-Path $ResultsDir "printer-wizard-add-slice-upload.txt") -Force -ErrorAction SilentlyContinue
 }
 
 if ([string]::IsNullOrWhiteSpace($ArtifactDir)) {
@@ -358,6 +360,23 @@ $last = if ($EndAt -gt 0) { [Math]::Min($EndAt, $runScenarios.Count) } else { $r
 for ($i = $StartAt; $i -le $last; $i++) {
     $ok = Run-Scenario $runScenarios[$i - 1] $i $runScenarios.Count
     if ($ok) { $passed++ } else { $failed++ }
+}
+
+if ($IncludePrinterWizardUpload -and $Suite -in @('U1', 'Both')) {
+    $wizardResult = Join-Path $ResultsDir "printer-wizard-add-slice-upload.txt"
+    Write-Step "[batch add-on] START printer wizard add, slice, and upload only"
+    & (Join-Path $PSScriptRoot "run-connected-with-progress.ps1") `
+        -Device $Device `
+        -ClassFilter "com.u1.slicer.slicing.PrinterWizardToSliceTest"
+    if ($LASTEXITCODE -eq 0) {
+        "SCENARIO: printer wizard add, slice, and upload only`nOVERALL: PASS" | Set-Content $wizardResult
+        $passed++
+        Write-Step "[batch add-on] PASS printer wizard add, slice, and upload only"
+    } else {
+        "SCENARIO: printer wizard add, slice, and upload only`nOVERALL: FAIL`nrunner exit: $LASTEXITCODE" | Set-Content $wizardResult
+        $failed++
+        Write-Step "[batch add-on] FAIL printer wizard add, slice, and upload only"
+    }
 }
 
 $summary = Join-Path $ResultsDir ("batch-manual-e2e-" + (Get-Date -Format "yyyy-MM-dd-HHmmss") + ".txt")

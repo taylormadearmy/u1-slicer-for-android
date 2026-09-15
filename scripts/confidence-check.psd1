@@ -11,6 +11,9 @@
         'com.u1.slicer.B131B132B133DiagnosticTest'
         'com.u1.slicer.slicing.MixSlotObjectAssignBlendGateTest'
         'com.u1.slicer.slicing.SlicingIntegrationTest'
+        'com.u1.slicer.slicing.MachineBedSizeTest'
+        'com.u1.slicer.slicing.SingleExtruderMachineTest'
+        'com.u1.slicer.slicing.MarlinFlavorTest'
         'com.u1.slicer.slicing.BambuPipelineIntegrationTest'
         'com.u1.slicer.slicing.BambuSingleNozzleNativeConfigTest'
         'com.u1.slicer.slicing.SemmSlicingTest'
@@ -19,7 +22,7 @@
     E2EStartAt = 1
     E2EEndAt = 7
     Notes = @(
-        'Baseline confidence sweep: JVM unit suite + curated instrumented smoke set + Smoke-7 manual E2E.'
+        'Baseline confidence sweep: JVM unit suite + curated instrumented smoke set + Smoke-7 manual E2E with a wizard-to-upload batch add-on.'
         'Add `B131B132B133DiagnosticTest` or `PreparePreviewViewModelTest` when touching copy-count, bed-fit, or Prepare/slice state.'
         'Add `SessionResumeIntegrationTest` when touching session restore, DataStore persistence, or resume banners.'
         'Add `NativeObjectExtruderMapTest` when touching object/extruder routing or any object-count / map derivation path.'
