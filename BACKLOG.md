@@ -717,20 +717,15 @@ Open bugs, features, and investigations. Everything else is done — see git log
 - **Pre-tag checklist**: sweep green at HEAD; JVM tests green; focused E2E batch on Send/Save/Share/Jobs paths + "block-on-Absent-multitool" manual test; version bump to 2.1.0 / versionCode 261; merge to main; build release APK; cut tag.
 - **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) §v2.1.0.
 
-### A2: v3.0.0 multi-printer via Orca profile import (GitHub #152)
-- **Status**: NOT STARTED. Estimated weeks. Needs a brainstorming-skill design session + spec doc before any code.
-- **Driver**: support multiple printers in a single Android app, profile-driven via OrcaSlicer profile import. Replaces the hardcoded U1 assumptions threaded through `applyConfigToPrusa`, the `profile_keys[]` whitelist, the `is_snapmaker_profile` heuristic, and the 4-slot `coerceIn(0, 3)` clamps.
-- **Scope**:
-  - **Profile import system.** Read `.orca_printer`, `.orca_filament`, `.orca_process` JSON. Handle 3MF-embedded variants. Validation (schema, required keys, conflict detection).
-  - **Profile merge logic (Kotlin).** Build a fully-resolved `Map<String, Any>` per active printer: base printer ⊕ active process ⊕ active filament per slot ⊕ user overrides ⊕ 3MF-embedded params.
-  - **JNI passthrough.** New `nativeApplyResolvedConfig(json)` consumes the resolved map. Replaces `applyConfigToPrusa`'s hardcoded values, the `profile_keys[]` whitelist, and the `is_snapmaker_profile` heuristic.
-  - **B.2 — config pipeline inversion.** Free byproduct of the JNI passthrough.
-  - **B.3 — PRINT_START heuristic obsoleted.** Profile carries explicit printer ID metadata.
-  - **Slot-count parameterisation.** `coerceIn(0, slotCount-1)` instead of hardcoded `0..3`. `meshAlignedFilamentColors` mod-N fallback uses `slotCount` from active profile.
-  - **UI.** Settings screen for imported profiles; active-profile indicator; migration of v2.x users to a pre-imported U1 profile.
-  - **First non-U1 printer profile + verification.** Real second printer; differential vs U1 must show only kinematics/extruder/bed differences from the profile delta.
-- **Relationship to F78** (multi-printer support): F78 is the user-facing "configure and switch between multiple printers" feature; A2 is the architectural foundation that makes it possible. F78 lands on top of A2.
-- **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) §v3.0.0.
+### A2: v5.0.0 multi-printer via Orca profiles (GitHub #152)
+- **Status**: IMPLEMENTED. Release candidate awaiting the remaining Phase 7 validation and publication. The current public release remains v4.0.4.
+- **Implemented**: one `MachineProfile` pipeline resolves Orca-native JSON, persists a profile ID per printer, and drives geometry, 1 to 4 physical slots, Klipper or Marlin G-code, and capability-gated Moonraker, OctoPrint, or PrusaLink upload. The built-in Snapmaker U1 remains the default.
+- **Catalogue and imports**: pinned `taylormadearmy/OrcaSlicer` v2.2.4 data exposes 326 models from 56 usable vendors after safety filtering. The wizard validates before save and caches resolved profiles for offline use. It also imports `.orca_printer` bundles.
+- **Native provenance**: `snapmaker_authored_profile` enables `profile_keys[]` for app-authored embeds. A `PRINT_START` check remains only as a scoped fallback for old Snapmaker-family files. `ProfileKeyCoverageTest` guards every key written by `applyConfigToPrusa()`.
+- **Separate Bambu path**: existing Bambu support remains dedicated and opt-in for this release candidate.
+- **Deferred follow-ups**: delta and circular beds, shared-extruder multi-material machines, SDCP and Duet transports, Bambu machine-path convergence, more than four physical extruders, and generalized ColorMix and Smart Paint mix encoding. Draft issue bodies live under [`docs/releases/v5.0.0/issues/`](docs/releases/v5.0.0/issues/).
+- **Validation boundary**: fresh-install profile persistence passed the wizard E2E. Upgrade persistence remains a Phase 7.3 check and is not yet claimed.
+- **Source**: [`docs/REFACTOR_STATUS.md`](docs/REFACTOR_STATUS.md) and [`docs/architecture/machine-profile-pipeline.md`](docs/architecture/machine-profile-pipeline.md).
 
 ### A3: Clipper post-upgrade native failure — APPARENTLY RESOLVED
 - **History**: Long-running native-geometry investigation into poisoned-Clipper polygons after app upgrade. Documented in [`CLIPPER_UPGRADE_INVESTIGATION.md`](CLIPPER_UPGRADE_INVESTIGATION.md).

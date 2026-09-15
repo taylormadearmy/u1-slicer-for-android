@@ -92,8 +92,8 @@ Public vulnerability reports should follow [`SECURITY.md`](SECURITY.md). Keep an
 ## Test
 
 ```bash
-./gradlew testDebugUnitTest                        # 1976 JVM unit tests
-./gradlew connectedDebugAndroidTest                # 451 instrumented tests — uses Orchestrator
+./gradlew testDebugUnitTest                        # 2134 JVM unit tests
+./gradlew connectedDebugAndroidTest                # 461 instrumented test methods — uses Orchestrator
 ```
 
 For live progress during the long Windows instrumented sweep, use:
@@ -122,7 +122,9 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 
 > **NEVER weaken a test assertion to make a failing test pass.** Do not change `>= 4` to `>= 2`, rename tests to match reduced expectations, or adjust expected values downward. Tests document correct behaviour. A failing test means the code regressed — investigate the root cause and fix the code, not the test.
 
-### Unit tests (`app/src/test/`) - 1976 tests across 210 reported test suites
+### Unit tests (`app/src/test/`) - 2134 tests across 238 reported test suites
+
+Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineConfigResolverTest` (3), `MachineProfileRepositoryTest` (6), `MachineProfileTest` (8), `OrcaProfileBundleImporterTest` (7), `OrcaProfileResolverTest` (5), `Phase2GeometryLiteralGuardTest` (1), `PrinterWizardViewModelTest` (9), `ProfileCacheTest` (7), and `VendorCatalogClientTest` (8).
 - `gcode/GcodeParserTest.kt` (36) — G-code parsing: layers, extrusion, extruder switching, ;TYPE: feature-type tagging, wipeTowerFilamentMm, B52 maxMoves cap + stride distribution, B67 perExtruderFilamentMm canonical footer order, multi-digit T-index (T15) high-tool attribution
 - `gcode/GcodeValidatorTest.kt` (45) — Tool changes, nozzle temps, layer count, prime tower footprint, bed bounds validation
 - `gcode/ExcludeObjectParserTest.kt` (5) — F72: parse NAME/CENTER/POLYGON from EXCLUDE_OBJECT_DEFINE lines; missing POLYGON graceful fallback; multiple objects; empty file; ignores START/END lines
@@ -221,7 +223,9 @@ For local device IDs and any private E2E notes, consult `E2E_TESTING.local.md` i
 - `ui/MixSwatchPaletteSourceTest.kt` (6) — B140/B142/B142b: chooser mix palette from printer slot presets (never file-resolved colours), filament chip resolves mix slots to blend colour, model mix blends from extruderPresets, post-slice G-code/summary use slot-space palette when the slice was mix-assigned
 - `MeshPaletteLiveSourceTest.kt` (1) — B141: canonical Prepare recolor palette prefers the live per-volume extruder set (refreshed on assignment, includes mix ids) over static usedExtruderIndices
 
-### Instrumented tests (`app/src/androidTest/`) - 451 tests across 68 reported test suites
+### Instrumented tests (`app/src/androidTest/`) - 461 test methods across 73 classes
+
+This heading records the source inventory, not a completed full-device run. Phase 7 executed the existing 197-test native smoke baseline, all four tests in `MachineBedSizeTest`, `SingleExtruderMachineTest`, and `MarlinFlavorTest`, and the one-test `PrinterWizardToSliceTest` flow. The wizard test validates the profile, saves it, reloads it from DataStore, slices a real fixture, and uploads only to an on-device loopback server. It does not start a print.
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
@@ -306,6 +310,17 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 - **Native**: Snapmaker Orca C++ via JNI (`app/src/main/cpp/`) — pre-built `.so` in `jniLibs/`
 - Keep `app/src/main/jniLibs/arm64-v8a/libc++_shared.so` alongside `libprusaslicer-jni.so` — clean worktrees and connected tests need both packaged into the APK
 - **3D**: OpenGL ES 3.0 via GLSurfaceView (`viewer/` package)
+
+### Machine-profile conventions
+
+- `MachineProfile` carries resolved Orca-native JSON plus parsed geometry, firmware, G-code flavor, and a 1 to 4 physical slot count. `MachineConfigResolver.resolveMachineSliceConfig()` is the config entry point.
+- `MachineProfileRepository` selects the built-in U1 profile or a cached profile by the ID stored on each `Printer`. The U1 remains the default for configurations without another selected profile.
+- `VendorCatalogClient` is pinned to `taylormadearmy/OrcaSlicer` tag `v2.2.4`. The safety-filtered catalogue exposes 326 models from 56 usable vendors.
+- The generic path supports rectangular FDM machines with Klipper or Marlin G-code. Moonraker, OctoPrint, and PrusaLink transports expose features through capability checks.
+- The Bambu path remains separate and opt-in. Do not replace it with generic profile handling until the Bambu convergence follow-up lands.
+- `ProfileEmbedder` writes `snapmaker_authored_profile` for every app-authored profile. Native code uses that marker to admit `profile_keys[]`. The `PRINT_START` check remains a fallback only for old Snapmaker-family files. `ProfileKeyCoverageTest` checks that `profile_keys[]` covers keys written by `applyConfigToPrusa()`.
+- The wizard resolves inheritance and validates a profile before saving it. Cached resolved profiles work offline. Supported imports are `.orca_printer` bundles and machine JSON from the pinned catalogue. Delta and circular beds, shared-extruder multi-material machines, SDCP and Duet transports, more than four physical slots, and generalized mix encoding remain deferred.
+- Do not describe an upgrade-persistence path as validated until the Phase 7.3 migration tests pass.
 
 ## Key Conventions
 

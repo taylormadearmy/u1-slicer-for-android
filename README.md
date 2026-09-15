@@ -2,7 +2,7 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-Native Android slicer for the **Snapmaker U1** 3D printer (270×270×270mm, 4 extruders), with opt-in early-beta LAN support for selected Bambu Lab printers, powered by [Snapmaker Orca 2.2.4](https://github.com/Snapmaker/OrcaSlicer) (OrcaSlicer fork).
+Native Android slicer for the **Snapmaker U1** and supported rectangular-bed FDM printers, powered by [Snapmaker Orca 2.2.4](https://github.com/Snapmaker/OrcaSlicer). The U1 remains the default. Selected Bambu Lab printers use a separate opt-in beta path.
 
 Built with Kotlin, Jetpack Compose, and OrcaSlicer's C++ engine via JNI — no server required, everything runs on-device.
 
@@ -15,6 +15,8 @@ Current release: `v4.0.4` (`versionCode 404`)
 Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for the preferred reporting flow.
 
 ## Features
+
+- **Multi-printer profiles (v5.0.0 candidate)**: choose from 326 models across 56 usable vendors in the pinned `taylormadearmy/OrcaSlicer` v2.2.4 catalogue, or import an `.orca_printer` bundle. The current generic path supports rectangular FDM printers with 1 to 4 physical slots, Klipper or Marlin G-code, and capability-gated Moonraker, OctoPrint, or PrusaLink upload.
 
 - **STL and 3MF slicing** — single-color, multi-color (up to 4 extruders), and paint-based (SEMM)
 - **Bambu support (early beta, opt-in)** — native slicing, monitoring, camera, upload and print flows for A1 Mini, A1, P1P, P1S, X1C, X1E and H2D; imported safe process/filament settings are preserved while target-owned machine and protocol fields are replaced
@@ -40,6 +42,14 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 ### Bambu support
 
 Bambu support is disabled by default. Enable it in Settings and explicitly accept the early-beta warning before adding or selecting a Bambu printer. Real-hardware print validation has been completed on H2D and A1 Mini; the other supported targets have configuration, protocol, native slicing, artifact and regression coverage but have not been physically tested by the developer. Firmware and LAN-mode requirements vary by printer generation.
+
+### Add another printer
+
+Open **Settings**, select **Add** under **Printers**, and choose an OrcaSlicer manufacturer or import an `.orca_printer` bundle. The wizard resolves inherited Orca JSON, validates the machine before saving it, and caches the resolved profile for offline use. Each printer keeps its own profile and physical slot count.
+
+![Choose a manufacturer in the multi-printer wizard](docs/images/multi-printer-wizard.png)
+
+The first v5.0.0 candidate supports rectangular beds, standard single-extruder and independent multi-extruder machines, and up to four physical slots. Delta and circular beds, shared-extruder multi-material systems, SDCP and Duet transports, and more than four physical extruders are deferred. ColorMix and Smart Paint mix encoding remain available only on four-slot printers.
 
 ### Smart Paint
 
@@ -98,11 +108,11 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ## Testing
 
 ```bash
-./gradlew testDebugUnitTest              # 1976 JVM unit tests
-./gradlew connectedDebugAndroidTest      # 451 instrumented tests (ARM64 device required)
+./gradlew testDebugUnitTest              # 2134 JVM unit tests
+./gradlew connectedDebugAndroidTest      # 461 instrumented test methods (ARM64 device required)
 ```
 
-**2427 total tests** covering G-code parsing/validation, feature-type tagging, 3MF sanitization, STL parsing, U1 and Bambu slicing integration, imported-profile preservation, printer protocols, Room DAOs, placement layout, native paint-state decoding, multi-plate canonical filament lists, ColorMix top-surface mixing, and more.
+**2,595 test methods in the current inventory.** The last complete JVM run passed 2,134 tests across 238 reported suites. The instrumented source inventory contains 461 methods across 73 classes. Phase 7 has executed the existing 197-test native smoke baseline, four added machine-profile native tests, and one wizard-to-slice-and-upload test. A full 461-method instrumented run remains part of release-candidate validation.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 
