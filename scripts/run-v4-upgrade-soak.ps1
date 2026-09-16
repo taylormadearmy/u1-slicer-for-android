@@ -82,6 +82,8 @@ Install-Apk $AndroidTestApk
 Launch-App "released v4.0.4"
 Run-Instrumented "com.u1.slicer.migration.V4UpgradeMigrationSeedTest#seedReleasedV4PrintersConfig" "v4 fixture seed"
 Save-Log "01-v4-seeded.logcat.txt"
+Launch-App "released v4.0.4 with seeded data"
+Save-Log "01b-v4-seeded-launch.logcat.txt"
 
 Install-Apk $CandidateApk
 Invoke-Adb logcat -c | Out-Null
