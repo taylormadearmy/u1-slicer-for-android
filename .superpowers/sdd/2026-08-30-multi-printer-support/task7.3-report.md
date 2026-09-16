@@ -21,6 +21,7 @@ Commits: `e999ebc7` (`test: harden v4 multi-printer migration`) and `f6ebbdf0` (
 - Focused green: `.\gradlew.bat testDebugUnitTest --no-daemon --tests com.u1.slicer.UpgradeDetectorTest --tests com.u1.slicer.data.Phase7MigrationFixtureTest`.
 - Full JVM green: `.\gradlew.bat testDebugUnitTest --no-daemon`; 2,139 tests across 239 suites, 0 failures, 0 errors, 0 skipped.
 - Instrumentation APK compile green: `.\gradlew.bat :app:assembleDebugAndroidTest --no-daemon`.
+- Current anchored instrumented source inventory: 465 `@Test` annotations across 77 Kotlin files (four soak methods/classes added by this task).
 - PowerShell soak script parses successfully. Device run is pending parent execution.
 
 ## Safety and repository state
