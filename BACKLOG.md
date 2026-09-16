@@ -720,7 +720,7 @@ Open bugs, features, and investigations. Everything else is done — see git log
 ### A2: v5.0.0 multi-printer via Orca profiles (GitHub #152)
 - **Status**: IMPLEMENTED. Release candidate awaiting the remaining Phase 7 validation and publication. The current public release remains v4.0.4.
 - **Implemented**: one `MachineProfile` pipeline resolves Orca-native JSON, persists a profile ID per printer, and drives geometry, 1 to 4 physical slots, Klipper or Marlin G-code, and capability-gated Moonraker, OctoPrint, or PrusaLink upload. The built-in Snapmaker U1 remains the default.
-- **Catalogue and imports**: pinned `taylormadearmy/OrcaSlicer` v2.2.4 data exposes 326 models from 56 usable vendors after safety filtering. The wizard validates before save and caches resolved profiles for offline use. It also imports `.orca_printer` bundles.
+- **Catalogue and imports**: the pinned `taylormadearmy/OrcaSlicer` v2.2.4 source index contains 326 models across 56 usable vendors. The wizard shows the eligible subset after rectangular-FDM, physical-slot, and firmware checks, validates before save, and caches resolved profiles for offline use. It also imports `.orca_printer` bundles.
 - **Native provenance**: `snapmaker_authored_profile` enables `profile_keys[]` for app-authored embeds. A `PRINT_START` check remains only as a scoped fallback for old Snapmaker-family files. `ProfileKeyCoverageTest` guards every key written by `applyConfigToPrusa()`.
 - **Separate Bambu path**: existing Bambu support remains dedicated and opt-in for this release candidate.
 - **Deferred follow-ups**: delta and circular beds, shared-extruder multi-material machines, SDCP and Duet transports, Bambu machine-path convergence, more than four physical extruders, and generalized ColorMix and Smart Paint mix encoding. Draft issue bodies live under [`docs/releases/v5.0.0/issues/`](docs/releases/v5.0.0/issues/).
@@ -917,7 +917,7 @@ Originally surfaced while writing on-device F87/F91 verification: `applyConfigTo
 - **Why**: User has standard presets they want to reuse across many prints (e.g. "0.16 fine" with tuned speed / walls / supports). Per-print manual override re-entry is friction.
 - **Persistence**: DataStore alongside existing filament library. `SettingsBackup` schema bump to include profiles (forward-compat: importing a v2 backup just doesn't see the section).
 - **Out of scope**: in-app profile editing (UI for 100+ keys is non-trivial); filament / printer profile import (those are A2).
-- **Relationship to A2**: A2 covers full Orca profile import (printer + filament + process) as part of v3.0.0 multi-printer architecture. F87 is the focused process-only first slice that can ship independently. A2 may later subsume or expand it.
+- **Relationship to A2**: A2 now implements the v5.0.0 machine-profile and `.orca_printer` path. F87 is the already-shipped process-only import path and remains separate from machine-profile selection.
 - **Source**: Kevin, 2026-05-23 (post-v2.4.0).
 
 ### F86: Prepare page — indicate overridden settings + reset button (GitHub #146) — DONE v2.3.0

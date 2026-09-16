@@ -29,7 +29,7 @@ The native `.so` is pre-built in `app/src/main/jniLibs/arm64-v8a/`. Normal build
 ./gradlew connectedDebugAndroidTest                # 461 instrumented test methods — uses Orchestrator
 ```
 
-**2595 test methods in the current inventory.** The last complete JVM run passed 2,134 tests across 238 reported suites. The instrumented source inventory contains 461 test methods across 73 classes. Phase 7 has run focused smoke coverage, but has not yet run all 461 instrumented methods. Instrumented tests use Android Test Orchestrator to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
+**2595 test methods in the current inventory.** The last complete JVM run passed 2,134 tests across 238 reported suites. An anchored source scan finds 461 `@Test` annotations across 73 instrumented-test Kotlin files. Phase 7 has run four focused machine-profile tests and one wizard test. The pending release gate is the unfiltered confidence run, not a new full 461-method device run. Instrumented tests use Android Test Orchestrator to prevent native memory accumulation across slicing tests. An ARM64 Android device is required.
 
 **Target device:** See `AGENTS.local.md` (or `CLAUDE.local.md`) for local device IDs. Pass the serial via `ANDROID_SERIAL=<id>` env var. Never deploy automated tests to personal or non-phone devices (the NF22E1 listed in local notes is off-limits).
 
@@ -145,7 +145,7 @@ Never reuse or update a published release — always use a new tag.
 
 - `MachineProfile` is the source of machine geometry, G-code flavor, firmware family, start and end G-code, and the physical slot count.
 - `MachineProfileRepository` resolves the built-in U1 profile and cached Orca profiles. Each configured `Printer` stores its profile ID. The U1 profile remains the default.
-- The catalogue is pinned to `taylormadearmy/OrcaSlicer` tag `v2.2.4`. It contains 326 models from 56 usable vendors after safety filtering.
+- The catalogue is pinned to `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Its source index contains 326 models across 56 usable vendors. The wizard shows the eligible subset after rectangular-FDM, physical-slot, and firmware checks.
 - The generic path supports rectangular FDM machines with 1 to 4 physical slots and either Klipper or Marlin G-code. Network upload uses Moonraker, OctoPrint, or PrusaLink when the profile and transport expose the required capability.
 - Bambu support remains a dedicated opt-in path. Do not route Bambu machines through the generic `MachineProfile` path until the planned convergence work lands.
 - `snapmaker_authored_profile` marks app-authored embedded profiles. Native code applies `profile_keys[]` for marked profiles. The `PRINT_START` check remains only as a scoped fallback for legacy Snapmaker files, and `ProfileKeyCoverageTest` guards every key written by `applyConfigToPrusa()`.

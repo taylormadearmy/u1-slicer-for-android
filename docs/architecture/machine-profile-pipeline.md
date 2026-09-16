@@ -13,7 +13,7 @@ pinned Orca vendor JSON or .orca_printer import
 
 `MachineProfileRepository` returns the built-in U1 profile when a printer has no other profile. A downloaded or imported profile is resolved before the wizard saves it, then stored in the cache so later slicing works offline.
 
-The pinned source is `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Catalogue filtering accepts 326 models from 56 usable vendors. The current generic path accepts rectangular FDM geometry, 1 to 4 physical slots, and Klipper or Marlin G-code. Upload uses Moonraker, OctoPrint, or PrusaLink only when the selected transport advertises the required capability.
+The pinned source is `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Its source index contains 326 models across 56 usable vendors. The wizard shows the eligible subset after rectangular-FDM, 1-to-4-slot, and Klipper-or-Marlin checks. Upload uses Moonraker, OctoPrint, or PrusaLink only when the selected transport advertises the required capability.
 
 `ProfileEmbedder` records `snapmaker_authored_profile` on every app-authored profile. Native code treats that key as provenance and admits values from `profile_keys[]`. Old Snapmaker files may lack the key, so native code retains a `PRINT_START` fallback restricted to the Snapmaker family. `ProfileKeyCoverageTest` parses `sapil_print.cpp` and verifies that `profile_keys[]` covers the keys that `applyConfigToPrusa()` writes.
 

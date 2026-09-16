@@ -8,7 +8,7 @@ Living status of the multi-phase Bambu file-handling refactor. Updated when a ph
 
 The generic printer path now resolves Orca-native machine JSON into `MachineProfile`, then derives `SliceConfig`, embedded profile settings, the G-code dialect, and transport capabilities. Each configured printer stores its profile ID. The repository keeps resolved profiles in its offline cache, and the built-in Snapmaker U1 remains the default.
 
-The catalogue source is `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Safety filtering leaves 326 models from 56 usable vendors. The current path covers rectangular FDM machines with 1 to 4 physical slots, Klipper or Marlin G-code, and Moonraker, OctoPrint, or PrusaLink upload when the transport supports the requested operation.
+The catalogue source is `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Its source index contains 326 models across 56 usable vendors. The wizard shows the eligible subset after rectangular-FDM, physical-slot, and firmware checks. The current path uses Moonraker, OctoPrint, or PrusaLink upload when the transport supports the requested operation.
 
 `ProfileEmbedder` writes `snapmaker_authored_profile` on app-authored embeds. Native code uses that marker to apply `profile_keys[]`. Old Snapmaker profiles can still use the `PRINT_START` fallback, but native code scopes that fallback to the Snapmaker family. `ProfileKeyCoverageTest` prevents `applyConfigToPrusa()` from writing a key that `profile_keys[]` silently drops.
 
@@ -29,7 +29,7 @@ For background see [`docs/architecture/2026-04-23-bambu-via-native-loader.md`](a
 - **v5.0.0 (multi-printer epic):** IMPLEMENTED, release candidate awaiting validation and publication. Tracked in [`BACKLOG.md`](../BACKLOG.md) as **A2**.
 - **Phase 3+ adjacent platform work:** 🔭 ROADMAP — see GitHub #16, #18, #33
 
-The "core" refactor (kill duplicate Kotlin parsing of Bambu files; native loader is single source of truth; canonical filaments come from the file; mapping happens at Send time) is **complete and shipping** in v2.0.0. What remains is hardening (v2.1) + a separate multi-printer feature epic (v3.0).
+The core Bambu file-handling refactor is complete and shipping. The A2 multi-printer epic is implemented as a v5.0.0 release candidate. Remaining work is the Phase 7 validation and publication sequence plus the deferred follow-up issues listed in the A2 section.
 
 ---
 
@@ -125,8 +125,8 @@ New code shipped in v2.0.0:
 - **Phase 2.6 carry-over.** STL canonical-list defaults from `PrinterViewModel.syncFilaments` (currently uses stale local `extruderPresets`).
 
 **Scope (out — explicitly deferred):**
-- Anything requiring native rebuild → v3.0.0
-- Anything requiring a second printer profile → v3.0.0
+- Historical v2.1 items that require native changes remain separate backlog work.
+- Multi-printer follow-ups now live under the v5.0.0 A2 scope and its staged issue drafts.
 
 **Pre-tag checklist:** sweep green at HEAD, JVM tests green, focused E2E batch on Send/Save/Share/Jobs paths + a "block-on-Absent-multitool" manual test, version bump to 2.1.0 / versionCode 261, merge to main, build release APK, cut tag.
 
@@ -165,5 +165,5 @@ These don't block v2.1 / v3.0 and are tracked as feature requests.
 
 ## What did NOT change in v2.0.0
 
-- The 4-extruder cap on the Snapmaker U1 is unchanged. Phase 2 does NOT add support for >4 physical slots; it just stops conflating canonical filament fileIdx with physical slot inside the slicer. Slot-count parameterisation lives in v3.0.0 once there's a real second printer to design against.
+- The 4-extruder cap on the Snapmaker U1 is unchanged. Phase 2 did not add support for more than four physical slots. A2 parameterizes supported machines from 1 to 4 slots; more than four remains a staged follow-up.
 - The orcaslicer submodule pinning. Submodule remains at `bd66b99b2d` (Snapmaker Orca 2.2.4 fork + Android-specific patches + post-Buzz H2C-fold fix). Upstream upgrades remain a separate consideration.

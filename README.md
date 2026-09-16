@@ -16,7 +16,7 @@ Security reports should be handled privately. See [SECURITY.md](SECURITY.md) for
 
 ## Features
 
-- **Multi-printer profiles (v5.0.0 candidate)**: choose from 326 models across 56 usable vendors in the pinned `taylormadearmy/OrcaSlicer` v2.2.4 catalogue, or import an `.orca_printer` bundle. The current generic path supports rectangular FDM printers with 1 to 4 physical slots, Klipper or Marlin G-code, and capability-gated Moonraker, OctoPrint, or PrusaLink upload.
+- **Multi-printer profiles (v5.0.0 candidate)**: browse the eligible subset of a pinned `taylormadearmy/OrcaSlicer` v2.2.4 source catalogue containing 326 models across 56 usable vendors, or import an `.orca_printer` bundle. Eligibility checks require rectangular FDM geometry, 1 to 4 physical slots, and Klipper or Marlin G-code. Upload uses Moonraker, OctoPrint, or PrusaLink when the selected transport supports it.
 
 - **STL and 3MF slicing** — single-color, multi-color (up to 4 extruders), and paint-based (SEMM)
 - **Bambu support (early beta, opt-in)** — native slicing, monitoring, camera, upload and print flows for A1 Mini, A1, P1P, P1S, X1C, X1E and H2D; imported safe process/filament settings are preserved while target-owned machine and protocol fields are replaced
@@ -112,7 +112,7 @@ The native `.so` is pre-built and committed to `app/src/main/jniLibs/arm64-v8a/`
 ./gradlew connectedDebugAndroidTest      # 461 instrumented test methods (ARM64 device required)
 ```
 
-**2,595 test methods in the current inventory.** The last complete JVM run passed 2,134 tests across 238 reported suites. The instrumented source inventory contains 461 methods across 73 classes. Phase 7 has executed the existing 197-test native smoke baseline, four added machine-profile native tests, and one wizard-to-slice-and-upload test. A full 461-method instrumented run remains part of release-candidate validation.
+**2,595 test methods in the current inventory.** The last complete JVM run passed 2,134 tests across 238 reported suites. An anchored source scan finds 461 `@Test` annotations across 73 instrumented-test Kotlin files. Phase 6 supplied the 197-test native smoke baseline. Current Phase 7 evidence adds four focused machine-profile tests and one wizard-to-slice-and-upload test. The pending release gate is the unfiltered confidence run with the 17-class smoke set and wizard scenario.
 
 Instrumented tests use [Android Test Orchestrator](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner#use-android) to run each test in its own process — prevents native memory accumulation across slicing tests.
 

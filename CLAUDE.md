@@ -225,7 +225,7 @@ Current A2 machine-profile suites: `CachedOrcaProfileLookupTest` (7), `MachineCo
 
 ### Instrumented tests (`app/src/androidTest/`) - 461 test methods across 73 classes
 
-This heading records the source inventory, not a completed full-device run. Phase 7 executed the existing 197-test native smoke baseline, all four tests in `MachineBedSizeTest`, `SingleExtruderMachineTest`, and `MarlinFlavorTest`, and the one-test `PrinterWizardToSliceTest` flow. The wizard test validates the profile, saves it, reloads it from DataStore, slices a real fixture, and uploads only to an on-device loopback server. It does not start a print.
+This heading records an anchored source inventory, not a completed full-device run. The command `rg -n '^\s*@Test\b' app/src/androidTest` finds 461 annotations across 73 Kotlin files. Phase 6 supplied the 197-test native smoke baseline. Phase 7 executed all four tests in `MachineBedSizeTest`, `SingleExtruderMachineTest`, and `MarlinFlavorTest`, plus the one-test `PrinterWizardToSliceTest` flow. The wizard test validates the profile, saves it, reloads it from DataStore, slices a real fixture, and uploads only to an on-device loopback server. It does not start a print. The pending release gate is the unfiltered confidence run with the 17-class smoke set and wizard scenario.
 - `data/FilamentDaoTest.kt` (9) — Room DAO CRUD, ordering, count
 - `data/FilamentLibraryAssetTest.kt` (2) — F96: bundled filament_library.json packaged in the APK parses at runtime (>10000 entries, count consistent; known Prusament entry present)
 - `data/SliceJobDaoTest.kt` (8) — Room DAO insert, ordering, delete, sourcePath null default, round-trip, updateSourcePath
@@ -315,7 +315,7 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 
 - `MachineProfile` carries resolved Orca-native JSON plus parsed geometry, firmware, G-code flavor, and a 1 to 4 physical slot count. `MachineConfigResolver.resolveMachineSliceConfig()` is the config entry point.
 - `MachineProfileRepository` selects the built-in U1 profile or a cached profile by the ID stored on each `Printer`. The U1 remains the default for configurations without another selected profile.
-- `VendorCatalogClient` is pinned to `taylormadearmy/OrcaSlicer` tag `v2.2.4`. The safety-filtered catalogue exposes 326 models from 56 usable vendors.
+- `VendorCatalogClient` is pinned to `taylormadearmy/OrcaSlicer` tag `v2.2.4`. Its source index contains 326 models across 56 usable vendors. The wizard exposes the eligible subset after rectangular-FDM, physical-slot, and firmware checks.
 - The generic path supports rectangular FDM machines with Klipper or Marlin G-code. Moonraker, OctoPrint, and PrusaLink transports expose features through capability checks.
 - The Bambu path remains separate and opt-in. Do not replace it with generic profile handling until the Bambu convergence follow-up lands.
 - `ProfileEmbedder` writes `snapmaker_authored_profile` for every app-authored profile. Native code uses that marker to admit `profile_keys[]`. The `PRINT_START` check remains a fallback only for old Snapmaker-family files. `ProfileKeyCoverageTest` checks that `profile_keys[]` covers keys written by `applyConfigToPrusa()`.
@@ -344,7 +344,7 @@ Open bugs and features are in [`BACKLOG.md`](BACKLOG.md). Do not implement backl
 
 ## Profile Key Pipeline
 
-Settings reach OrcaSlicer's native engine through **two paths** — a setting that's only in one path will silently fall back to OrcaSlicer's compiled default (often wrong for Snapmaker U1):
+Settings reach OrcaSlicer's native engine through **two paths**. A setting that exists in only one path can silently fall back to OrcaSlicer's compiled default.
 
 ### Path 1: `applyConfigToPrusa()` in `sapil_print.cpp`
 - Hardcoded fallback values, always applied (even for raw STL files without embedded profiles)
@@ -352,16 +352,18 @@ Settings reach OrcaSlicer's native engine through **two paths** — a setting th
 
 ### Path 2: `profile_keys[]` whitelist in `sapil_print.cpp`
 - Keys in this array are read from the embedded `project_settings.config` JSON in the 3MF
-- Only applied when `is_snapmaker_profile = true` (start gcode contains "PRINT_START")
-- **Add new settings here** when they come from the Snapmaker profiles
+- Applied to app-authored embedded profiles when `snapmaker_authored_profile` is present
+- Also applied to legacy Snapmaker-family files when their start G-code contains `PRINT_START`; this fallback does not admit generic non-Snapmaker files
+- **Add new overridable embedded-profile settings here** regardless of machine vendor
 
 ### Checklist for adding a new slicer setting
 1. Check the OrcaSlicer default in `PrintConfig.cpp` (`set_default_value` call) — is it acceptable?
 2. If not, add a fallback in `applyConfigToPrusa()` with the correct `ConfigOption` type
 3. **For per-extruder options**: size the vector to `n_ext`, not 1 — `WipeTowerIntegration` copies raw vectors without bounds checking
 4. Add the key name to `profile_keys[]` so the embedded profile can override the fallback
-5. If the setting should be user-controllable, add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
-6. **Rebuild the native `.so`** (use `ninja -j1` to avoid OOM, strip with `llvm-strip`, copy to `jniLibs/`)
+5. Update `ProfileKeyCoverageTest` only when a key is intentionally non-overridable; never bypass its coverage invariant for convenience
+6. If the setting should be user-controllable, add it to `buildProfileOverrides()` in `SlicerViewModel.kt`
+7. **Rebuild the native `.so`** (use `ninja -j1` to avoid OOM, strip with `llvm-strip`, copy to `jniLibs/`)
 
 For clarity: rebuilding the native library is not something to avoid on principle. If a feature depends on C++ changes, rebuild it so the shipped app actually gets the functionality.
 
