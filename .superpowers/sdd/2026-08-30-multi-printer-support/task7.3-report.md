@@ -21,7 +21,10 @@ Commits: `e999ebc7` (`test: harden v4 multi-printer migration`), `f6ebbdf0` (`te
 - Focused green: `.\gradlew.bat testDebugUnitTest --no-daemon --tests com.u1.slicer.UpgradeDetectorTest --tests com.u1.slicer.data.Phase7MigrationFixtureTest`.
 - Full JVM green: `.\gradlew.bat testDebugUnitTest --no-daemon`; 2,139 tests across 239 suites, 0 failures, 0 errors, 0 skipped.
 - Instrumentation APK compile green: `.\gradlew.bat :app:assembleDebugAndroidTest --no-daemon`.
-- Current anchored instrumented source inventory: 465 `@Test` annotations across 77 Kotlin files (four soak methods/classes added by this task).
+- Review fixes: the backup test now compares the imported printers with the independent v4 fixture, `UpgradeDetectorTest` includes the exact 404 -> 500 transition, and the soak snapshots/restores the approved device's prior printer config and `machine_profiles` contents.
+- Full JVM after review fixes: `2,140` tests across `239` suites, 0 failures, 0 errors, 0 skipped.
+- Current anchored instrumented source inventory: 467 `@Test` annotations across 77 Kotlin files.
+- Instrumentation APK compilation after review fixes: PASS.
 - PowerShell soak script parses successfully. Device run is pending parent execution.
 
 ## Safety and repository state

@@ -191,6 +191,14 @@ class UpgradeDetectorTest {
     }
 
     @Test
+    fun `v4 release to v5 release returns APK_CHANGED`() {
+        val saved = UpgradeDetector.State(lastVersionCode = 404, savedApkUpdateTime = 1_000L)
+        val current = UpgradeDetector.Current(versionCode = 500, apkUpdateTime = 2_000L)
+
+        assertEquals(UpgradeDetector.Result.APK_CHANGED, detector.detect(saved, current))
+    }
+
+    @Test
     fun `upgradeTransientFiles preserves durable machine profile cache`() {
         val dir = tempDir.root
         val profiles = File(dir, "machine_profiles").apply { mkdirs() }

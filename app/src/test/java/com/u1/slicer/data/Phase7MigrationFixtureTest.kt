@@ -77,15 +77,22 @@ class Phase7MigrationFixtureTest {
     @Test
     fun `v4 settings backup retains printer filaments overrides and process profiles`() {
         val json = requireNotNull(javaClass.classLoader?.getResource("migration/v4_settings_backup.json")).readText()
+        val expectedPrintersJson = requireNotNull(
+            javaClass.classLoader?.getResource("migration/v4_printers_config.json")
+        ).readText()
+        val expectedPrinters = PrintersConfig.fromJson(expectedPrintersJson)
         val imported = SettingsBackup.import(json)
         val config = requireNotNull(imported.printersConfig)
         val overrides = requireNotNull(imported.slicingOverrides)
         val filaments = requireNotNull(imported.filamentProfiles)
         val processes = requireNotNull(imported.processProfilesConfig)
 
-        assertEquals("u1-secondary-v4", config.activeId)
-        assertEquals(3, config.printers.size)
-        assertEquals("Offline Bambu", config.printers.last().nickname)
+        assertEquals(expectedPrinters, config)
+        assertEquals(listOf(21L, 22L), config.active.extruderPresets.map { it.filamentProfileId })
+        assertEquals("u1-cam-secondary", config.active.selectedWebcamUid)
+        val bambu = config.printers.single { it.kind == PrinterKind.BAMBU_LAN }
+        assertEquals(BambuModel.A1, bambu.bambu?.model)
+        assertEquals("fixture-only-access-code", bambu.bambu?.accessCode)
         assertEquals(false, overrides.flowCalibration)
         assertEquals(OverrideMode.OVERRIDE, overrides.layerHeight.mode)
         assertEquals(0.16f, overrides.layerHeight.value)

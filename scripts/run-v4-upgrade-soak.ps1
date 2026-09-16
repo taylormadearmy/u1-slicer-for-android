@@ -77,6 +77,13 @@ function Assert-ApkChangedExit([string]$Path, [string]$Label) {
 }
 
 Write-Host "Using only approved device $Device; no print or network host is contacted."
+$priorPackagePath = @(& adb -s $Device shell pm path $AppId 2>&1)
+$hasPriorInstall = $LASTEXITCODE -eq 0 -and (($priorPackagePath -join "`n") -match "package:")
+if ($hasPriorInstall) {
+    Install-Apk $AndroidTestApk
+    Run-Instrumented "com.u1.slicer.migration.PriorDeviceStateSnapshotTest#snapshotPrinterConfigAndMachineProfiles" "prior device state snapshot"
+}
+
 Install-Apk $V4Apk -AllowDowngrade
 Install-Apk $AndroidTestApk
 Launch-App "released v4.0.4"
@@ -103,5 +110,9 @@ $reinstallLog = Save-Log "03-candidate-reinstall-process.logcat.txt"
 Assert-ApkChangedExit $reinstallLog "candidate same-version reinstall"
 Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyV4PrintersConfigAndLegacyU1SliceAfterUpgrade" "post-reinstall v4 data and native U1 slice verification"
 Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyGenericProfileSurvivesCandidateReinstall" "post-reinstall generic profile verification"
+
+if ($hasPriorInstall) {
+    Run-Instrumented "com.u1.slicer.migration.PriorDeviceStateRestoreTest#restorePrinterConfigAndMachineProfiles" "prior device state restore"
+}
 
 Write-Host "v4.0.4 -> candidate upgrade soak completed on $Device."
