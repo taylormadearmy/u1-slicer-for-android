@@ -4,7 +4,7 @@ Status: DONE_WITH_CONCERNS
 
 Task 7.3 implementation is complete locally. The required on-device v4.0.4 -> candidate soak remains to be run by the parent on the approved device; this agent did not install or run any APK on a device.
 
-Commits: `e999ebc7` (`test: harden v4 multi-printer migration`) and `f6ebbdf0` (`test: add repeatable v4 upgrade soak`).
+Commits: `e999ebc7` (`test: harden v4 multi-printer migration`), `f6ebbdf0` (`test: add repeatable v4 upgrade soak`), `8a45102d` (`docs: record task 7.3 migration evidence`), `45d4f90e` (`docs: record task 7.3 test inventory`), and `e0a9ddce` (`test: launch v4 after migration seed`).
 
 ## Changes
 
