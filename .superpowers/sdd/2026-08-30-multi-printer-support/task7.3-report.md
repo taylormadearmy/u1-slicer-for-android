@@ -4,6 +4,8 @@ Status: DONE_WITH_CONCERNS
 
 Task 7.3 implementation is complete locally. The required on-device v4.0.4 -> candidate soak remains to be run by the parent on the approved device; this agent did not install or run any APK on a device.
 
+Commits: `e999ebc7` (`test: harden v4 multi-printer migration`) and `f6ebbdf0` (`test: add repeatable v4 upgrade soak`).
+
 ## Changes
 
 - Added `migration/v4_printers_config.json`, a v4.0.4-shaped fixture containing two U1 printers with stable identities, active selection, nondefault presets/material/profile IDs, selected webcams, and an offline loopback Bambu A1 entry.
