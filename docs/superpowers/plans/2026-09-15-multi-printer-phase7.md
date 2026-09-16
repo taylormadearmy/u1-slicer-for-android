@@ -9,10 +9,10 @@ Scope: master plan Tasks 7.1–7.4 only. Starting commit 7f1acf6b on feature/a2-
 - [x] Run the expanded native smoke and new scenario, review and commit. Check master Task 7.1 only after passing.
 
 ## Task 7.2: Documentation and staged issue handling
-- [ ] Update supported printers, architecture, profile conventions, wizard screenshot, test inventory and BACKLOG candidate status.
-- [ ] Stage release notes and six deferred issue bodies: delta beds, SEMM, SDCP/Duet, Bambu convergence, >4 extruders and mix encoding.
-- [ ] Stage #152 closure text referencing those future issues; do not publish any issue/status changes yet.
-- [ ] Validate documentation against implemented code and available test reports; review and commit. Refresh counts again after migration tests.
+- [x] Update supported printers, architecture, profile conventions, wizard screenshot, test inventory and BACKLOG candidate status.
+- [x] Stage release notes and six deferred issue bodies: delta beds, SEMM, SDCP/Duet, Bambu convergence, >4 extruders and mix encoding.
+- [x] Stage #152 closure text referencing those future issues; do not publish any issue/status changes yet.
+- [x] Validate documentation against implemented code and available test reports; review and commit. Refresh counts again after migration tests.
 
 ## Task 7.3: Upgrade and cross-version migration soak
 - [ ] Add a representative v4 PrintersConfig JSON fixture and regression tests for identity, active printer, credentials, presets and U1 fallback.

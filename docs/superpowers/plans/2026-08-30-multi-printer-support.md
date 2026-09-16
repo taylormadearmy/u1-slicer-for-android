@@ -254,7 +254,7 @@ Thread the active profile's bed dimensions through every Kotlin 270/135 site fou
 ## Phase 7 — Hardening + v5.0.0 release
 
 - [x] **Task 7.1** E2E matrix: extend `scripts/confidence-check.psd1` smoke set with `MachineBedSizeTest`, `SingleExtruderMachineTest`, `MarlinFlavorTest`; add an e2e-batch scenario "add printer via wizard → slice → upload-only".
-- [ ] **Task 7.2** Docs: CLAUDE.md (architecture, new test counts, machine-profile conventions section), README (supported printers statement + wizard screenshot), BACKLOG A2 flip, close #152 with follow-up issues for deferred items (delta beds, SEMM, SDCP/Duet, Bambu-path convergence, >4 extruders, mix-encoding generalisation).
+- [x] **Task 7.2** Docs: CLAUDE.md (architecture, new test counts, machine-profile conventions section), README (supported printers statement + wizard screenshot), BACKLOG A2 flip, close #152 with follow-up issues for deferred items (delta beds, SEMM, SDCP/Duet, Bambu-path convergence, >4 extruders, mix-encoding generalisation).
 - [ ] **Task 7.3** Migration soak: upgrade-in-place test from v4.x data (existing `UpgradeDetectorTest` + a new `PrintersConfig` migration fixture); `SettingsBackup` cross-version import test.
 - [ ] **Task 7.4** Release train per CLAUDE.md release checklist (version 5.0.0, versionCode 500), **with explicit user authorization before `gh release create`**.
 
