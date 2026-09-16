@@ -72,3 +72,18 @@ rg -n '326|461|197-test|nativeApplyResolvedConfig|v3.0.0 multi-printer|FOLLOW-UP
 ```
 
 Results: the diff check passed; the anchored scan returned 461 annotations in 73 Kotlin files; remaining 326 references distinguish the source total from the eligible subset; the publication checklist names all six exact follow-up tokens. No device, Gradle, build, network, or public command ran during the review fix.
+
+## Second review fix
+
+The second review found that the publication command still consumed candidate-era release notes with stale validation figures. The follow-up makes the release notes mechanically finalizable and moves finalization before the candidate commit. The checklist now requires the final JVM, unfiltered-confidence, upgrade-persistence, APK checksum, and candidate-commit evidence in the published body. It renders the candidate SHA after Git creates the commit, avoiding an impossible self-referential commit amend.
+
+The checklist keeps `BACKLOG.md`, README current-release text, and other public status fields at candidate or v4.0.4 state until GitHub shows the branded APK asset. The same-turn post-release sync then records the candidate SHA in the tracked release notes and flips public status.
+
+Static checks for the second fix:
+
+```powershell
+git diff --check b4174989
+rg -n 'FINAL-|release candidate|Current public release|notes-file' docs/release-notes/v5.0.0.md docs/releases/v5.0.0/publication-checklist.md
+```
+
+Results: the diff check passed. The checklist accounts for every finalization token, and `gh release create` consumes the rendered notes file rather than the tracked pre-commit template. No device, Gradle, build, network, or public command ran.
