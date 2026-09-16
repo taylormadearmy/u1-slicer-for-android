@@ -10,6 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Device = "NF12209000455"
 $AppId = "com.u1.slicer.orca"
+$MainActivity = "$AppId/com.u1.slicer.MainActivity"
 $TestId = "com.u1.slicer.orca.test"
 $Runner = "$TestId/androidx.test.runner.AndroidJUnitRunner"
 $ExpectedV4Sha256 = "2f93b91cee22cc6437009677e12b212c09f69c002dd529e4a201aebbd8725e78"
@@ -42,7 +43,12 @@ function Install-Apk([string]$Path, [switch]$AllowDowngrade) {
 function Launch-App([string]$Label) {
     Write-Host "Launching $Label"
     Invoke-Adb shell am force-stop $AppId | Out-Null
-    Invoke-Adb shell am start -n "$AppId/.MainActivity" | Out-Host
+    $output = @(& adb -s $Device shell am start -W -n $MainActivity 2>&1)
+    $output | Out-Host
+    $joined = $output -join "`n"
+    if ($LASTEXITCODE -ne 0 -or $joined -match "Error type|does not exist") {
+        throw "Could not launch ${MainActivity}: $joined"
+    }
     Start-Sleep -Seconds 3
 }
 
@@ -108,8 +114,7 @@ Invoke-Adb logcat -c | Out-Null
 Launch-App "candidate same-version reinstall"
 $reinstallLog = Save-Log "03-candidate-reinstall-process.logcat.txt"
 Assert-ApkChangedExit $reinstallLog "candidate same-version reinstall"
-Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyV4PrintersConfigAndLegacyU1SliceAfterUpgrade" "post-reinstall v4 data and native U1 slice verification"
-Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyGenericProfileSurvivesCandidateReinstall" "post-reinstall generic profile verification"
+Run-Instrumented "com.u1.slicer.migration.V5UpgradeMigrationVerificationTest#verifyGenericProfileSurvivesCandidateReinstall" "post-reinstall v4 data, native U1 slice, and generic profile verification"
 
 if ($hasPriorInstall) {
     Run-Instrumented "com.u1.slicer.migration.PriorDeviceStateRestoreTest#restorePrinterConfigAndMachineProfiles" "prior device state restore"

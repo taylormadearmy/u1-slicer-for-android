@@ -47,6 +47,10 @@ class V5UpgradeMigrationVerificationTest {
     fun verifyV4PrintersConfigAndLegacyU1SliceAfterUpgrade() = runBlocking {
         val config = requireNotNull(PrintersRepository(context).config.first())
         assertEquals(listOf("u1-primary-v4", "u1-secondary-v4", "bambu-a1-v4"), config.printers.map { it.id })
+        assertV4DataAndNativeSlice(config)
+    }
+
+    private fun assertV4DataAndNativeSlice(config: PrintersConfig) {
         assertEquals("u1-secondary-v4", config.activeId)
         assertEquals("Spare U1", config.active.nickname)
         assertEquals("u1-cam-secondary", config.active.selectedWebcamUid)
@@ -104,13 +108,18 @@ class V5UpgradeMigrationVerificationTest {
     @Test
     fun verifyGenericProfileSurvivesCandidateReinstall() = runBlocking {
         val config = requireNotNull(PrintersRepository(context).config.first())
+        assertEquals(
+            listOf("u1-primary-v4", "u1-secondary-v4", "bambu-a1-v4", "generic-klipper-soak"),
+            config.printers.map { it.id },
+        )
+        assertV4DataAndNativeSlice(config)
         val generic = config.printers.single { it.id == "generic-klipper-soak" }
         val resolved = MachineProfileRepository.fromContext(context).activeFor(generic)
         assertEquals("generic-klipper-0.4", resolved.id)
         assertEquals(300f, resolved.bedSizeX)
         assertEquals(300f, resolved.bedSizeY)
         assertEquals(350f, resolved.maxPrintHeight)
-        assertEquals(config.activeId, "u1-secondary-v4")
+        assertEquals("u1-secondary-v4", config.activeId)
     }
 
     private fun assertU1NativeSlice(profile: com.u1.slicer.machine.MachineProfile) {
