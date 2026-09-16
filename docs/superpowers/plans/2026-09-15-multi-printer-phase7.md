@@ -15,10 +15,10 @@ Scope: master plan Tasks 7.1–7.4 only. Starting commit 7f1acf6b on feature/a2-
 - [x] Validate documentation against implemented code and available test reports; review and commit. Refresh counts again after migration tests.
 
 ## Task 7.3: Upgrade and cross-version migration soak
-- [ ] Add a representative v4 PrintersConfig JSON fixture and regression tests for identity, active printer, credentials, presets and U1 fallback.
-- [ ] Add a cross-version SettingsBackup import fixture/test, preserving v4 values through current import.
-- [ ] Add and run a repeatable upgrade-in-place soak covering persistent v4 data, UpgradeDetector cache handling, restart and slice with migrated U1 profile. Do not clear app data to simulate an upgrade.
-- [ ] Run focused tests and JVM suite, review and commit. Check master Task 7.3 only after passing.
+- [x] Add a representative v4 PrintersConfig JSON fixture and regression tests for identity, active printer, credentials, presets and U1 fallback.
+- [x] Add a cross-version SettingsBackup import fixture/test, preserving v4 values through current import.
+- [x] Add and run a repeatable upgrade-in-place soak covering persistent v4 data, UpgradeDetector cache handling, restart and slice with migrated U1 profile. Do not clear app data to simulate an upgrade.
+- [x] Run focused tests and JVM suite, review and commit. Check master Task 7.3 only after passing.
 
 ## Task 7.4: Local v5.0.0 release candidate
 - [ ] Set versionName 5.0.0 and versionCode 500 in a focused version commit.
