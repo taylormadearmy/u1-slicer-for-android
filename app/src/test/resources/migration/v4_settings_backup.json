@@ -1,0 +1,100 @@
+{
+  "version": 3,
+  "sliceConfig": {
+    "layerHeight": 0.16,
+    "firstLayerHeight": 0.2,
+    "perimeters": 3,
+    "topSolidLayers": 6,
+    "bottomSolidLayers": 5,
+    "fillDensity": 0.22,
+    "fillPattern": "gyroid",
+    "printSpeed": 55.0,
+    "travelSpeed": 160.0,
+    "firstLayerSpeed": 18.0,
+    "nozzleTemp": 215,
+    "bedTemp": 60,
+    "retractLength": 0.8,
+    "retractSpeed": 45.0,
+    "supportEnabled": true,
+    "supportAngle": 50.0,
+    "skirtLoops": 2,
+    "brimWidth": 3.0,
+    "nozzleDiameter": 0.4,
+    "filamentDiameter": 1.75,
+    "filamentType": "PETG",
+    "wipeTowerEnabled": false,
+    "wipeTowerX": 170.0,
+    "wipeTowerY": 140.0,
+    "wipeTowerWidth": 60.0
+  },
+  "slicingOverrides": {
+    "layerHeight": {"mode": "OVERRIDE", "value": 0.16},
+    "infillDensity": {"mode": "OVERRIDE", "value": 0.22},
+    "wallCount": {"mode": "OVERRIDE", "value": 3},
+    "flowCalibration": false
+  },
+  "filamentProfiles": [
+    {
+      "name": "V4 PETG Blue",
+      "material": "PETG",
+      "nozzleTemp": 235,
+      "bedTemp": 80,
+      "retractLength": 0.8,
+      "retractSpeed": 40.0,
+      "color": "#1E88E5",
+      "density": 1.27
+    }
+  ],
+  "processProfiles": [
+    {
+      "id": "v4-process-fine",
+      "name": "V4 Fine",
+      "sourceName": "0.16mm Fine @U1",
+      "keys": {
+        "layer_height": "0.16",
+        "wall_loops": "3",
+        "sparse_infill_pattern": "gyroid"
+      }
+    }
+  ],
+  "activeProcessProfileId": "v4-process-fine",
+  "printers": [
+    {
+      "id": "u1-primary-v4",
+      "nickname": "Workshop U1",
+      "kind": "MOONRAKER",
+      "moonrakerUrl": "http://127.0.0.1:7125",
+      "extruderPresets": [
+        {"index": 0, "color": "#E53935", "materialType": "PLA", "filamentProfileId": 11},
+        {"index": 1, "color": "#1E88E5", "materialType": "PETG", "filamentProfileId": 12},
+        {"index": 3, "color": "#43A047", "materialType": "TPU", "filamentProfileId": 13}
+      ],
+      "selectedWebcamUid": "u1-cam-primary"
+    },
+    {
+      "id": "u1-secondary-v4",
+      "nickname": "Spare U1",
+      "kind": "MOONRAKER",
+      "moonrakerUrl": "http://127.0.0.1:7126",
+      "extruderPresets": [
+        {"index": 0, "color": "#8E24AA", "materialType": "PLA", "filamentProfileId": 21},
+        {"index": 2, "color": "#FDD835", "materialType": "ABS", "filamentProfileId": 22}
+      ],
+      "selectedWebcamUid": "u1-cam-secondary"
+    },
+    {
+      "id": "bambu-a1-v4",
+      "nickname": "Offline Bambu",
+      "kind": "BAMBU_LAN",
+      "moonrakerUrl": "",
+      "bambu": {
+        "ip": "127.0.0.1",
+        "accessCode": "fixture-only-access-code",
+        "serial": "fixture-a1-serial",
+        "model": "A1"
+      },
+      "extruderPresets": []
+    }
+  ],
+  "activePrinterId": "u1-secondary-v4"
+}

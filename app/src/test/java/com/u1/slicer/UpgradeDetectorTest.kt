@@ -191,6 +191,23 @@ class UpgradeDetectorTest {
     }
 
     @Test
+    fun `upgradeTransientFiles preserves durable machine profile cache`() {
+        val dir = tempDir.root
+        val profiles = File(dir, "machine_profiles").apply { mkdirs() }
+        File(profiles, "generic-klipper-300.json").writeText("{\"id\":\"generic-klipper-300\"}")
+        File(profiles, "generic-klipper-300.json.bak").writeText("rollback")
+        File(dir, "embedded_stale.3mf").createNewFile()
+
+        val files = UpgradeDetector.upgradeTransientFiles(dir)
+        val names = files.map { it.name }.toSet()
+
+        assertFalse("machine profile cache directory must survive upgrade", "machine_profiles" in names)
+        assertFalse("saved machine profile must survive upgrade", "generic-klipper-300.json" in names)
+        assertFalse("machine profile rollback copy must survive upgrade", "generic-klipper-300.json.bak" in names)
+        assertTrue("stale pipeline output must still be cleared", "embedded_stale.3mf" in names)
+    }
+
+    @Test
     fun `filesToClearOnStartup also clears stale files on normal launch`() {
         // Even without upgrade detection, SAME_APK clears transient files
         // as a safety net against stale cache from a crash-killed process
